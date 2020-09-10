@@ -204,6 +204,61 @@ public:
 		BMMQ::CML::setFlags(&AF.lo, flags);
 	}		
 
+	DataType* ld_r8_r8_GetRegister(DataType regcode) {
+		switch (regcode) {
+			case 0:
+				return &BC.hi;
+			case 1:
+				return &BC.lo;
+			case 2:
+				return &DE.hi;
+			case 3:
+				return &DE.lo;
+			case 4:
+				return &HL.hi;
+			case 5:
+				return &HL.lo;
+			case 6:
+				return mem.getPos((std::size_t)HL.value);
+			case 7:
+				return &AF.hi;	
+		}
+	}
+
+	std::pair<DataType*, DataType*> ld_r8_r8_GetOperands(DataType opcode) {
+		DataType destReg = (opcode & 38) >> 3;
+		DataType srcReg = (opcode & 7);
+		
+		return std::make_pair(ld_r8_r8_GetRegister(destReg), ld_r8_r8_GetRegister(srcReg) );
+	}
+	
+	void math_r8(DataType opcode){
+		DataType mathFunc = (opcode & 38) >> 3;
+		DataType* srcReg = ld_r8_r8_GetRegister(opcode & 7);
+		bool carryFlag = (AF.lo & 0x10);
+		
+		switch (mathFunc) {
+			case 0:
+				BMMQ::CML::add(&AF.hi, srcReg);
+				break;
+			case 1:
+				BMMQ::CML::adc(&AF.hi, srcReg, carryFlag);
+				break;
+			case 2:
+				BMMQ::CML::sub(&AF.hi, srcReg);
+			case 3:
+				BMMQ::CML::sbc(&AF.hi, srcReg, carryFlag);
+			case 4:
+				BMMQ::CML::iand(&AF.hi, srcReg);
+			case 5:
+				BMMQ::CML::ixor(&AF.hi, srcReg);
+			case 6:
+				BMMQ::CML::ior(&AF.hi, srcReg);
+			case 7:
+				BMMQ::CML::cmp(&AF.hi, srcReg);
+		}
+	}
+	
 	void populateOpcodes() {
 		microcodeList.registerMicrocode("jr_i8", [this]() {BMMQ::CML::jr( (&this->PC.value), this->mdr.value, true ); } );
 		microcodeList.registerMicrocode("jrcc_i8", [this]() {BMMQ::CML::jr( (&this->PC.value), this->mdr.value, checkJumpCond(cip) ); } );
@@ -216,6 +271,8 @@ public:
 		microcodeList.registerMicrocode("rotateAccumulator", [this](){rotateAccumulator(cip);});
 		microcodeList.registerMicrocode("manipulateAccumulator", [this](){manipulateAccumulator(cip);});
 		microcodeList.registerMicrocode("manipulateCarry", [this](){ manipulateCarry(cip);});
+		microcodeList.registerMicrocode("ld_r8_r8", [this](){auto operands = ld_r8_r8_GetOperands(cip);BMMQ::CML::loadtmp( operands.first, operands.second );});
+		microcodeList.registerMicrocode("math_r8", [this](){math_r8(cip);});
 	}
 };
 
