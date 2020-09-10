@@ -37,6 +37,7 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType> {
 	LR3592_RegisterPair mdr;
 	LR3592_RegisterPair md2;
 	DataType cip;
+	bool ime;
 public:
 	LR3592_Register SP, PC;
 	LR3592_RegisterPair AF, BC, DE, HL;
@@ -246,22 +247,177 @@ public:
 				break;
 			case 2:
 				BMMQ::CML::sub(&AF.hi, srcReg);
+				break;
 			case 3:
 				BMMQ::CML::sbc(&AF.hi, srcReg, carryFlag);
+				break;
 			case 4:
 				BMMQ::CML::iand(&AF.hi, srcReg);
+				break;
 			case 5:
 				BMMQ::CML::ixor(&AF.hi, srcReg);
+				break;
 			case 6:
 				BMMQ::CML::ior(&AF.hi, srcReg);
+				break;
 			case 7:
 				BMMQ::CML::cmp(&AF.hi, srcReg);
+				break;
+		}
+	}
+
+	void math_i8(DataType opcode){
+		DataType mathFunc = (opcode & 38) >> 3;
+		bool carryFlag = (AF.lo & 0x10);
+		
+		switch (mathFunc) {
+			case 0:
+				BMMQ::CML::add(&AF.hi, mdr.value);
+				break;
+			case 1:
+				BMMQ::CML::adc(&AF.hi, mdr.value, carryFlag);
+				break;
+			case 2:
+				BMMQ::CML::sub(&AF.hi, mdr.value);
+				break;
+			case 3:
+				BMMQ::CML::sbc(&AF.hi, mdr.value, carryFlag);
+				break;
+			case 4:
+				BMMQ::CML::iand(&AF.hi, mdr.value);
+				break;
+			case 5:
+				BMMQ::CML::ixor(&AF.hi, mdr.value);
+				break;
+			case 6:
+				BMMQ::CML::ior(&AF.hi, mdr.value);
+				break;
+			case 7:
+				BMMQ::CML::cmp(&AF.hi, mdr.value);
+				break;
 		}
 	}
 	
+	void ret() {
+		PC.value = mem.read(SP.value);
+		SP.value += 2;	
+	}
+	
+	void ret_cc(DataType opcode){
+		if ( checkJumpCond(opcode)) 
+			ret();
+	}
+	
+	AddressType *push_pop_GetRegister(DataType opcode) {
+		DataType regCode = (opcode & 0x10) >> 4;
+		
+		switch (regCode) {
+			case 0:
+				return &BC.value;
+			case 1:
+				return &DE.value;
+			case 2:
+				return &HL.value;
+			case 3:
+				return &AF.value;
+		}
+	}
+	
+	void pop(DataType opcode) {
+		AddressType *reg = push_pop_GetRegister(opcode);
+		*reg = mem.read(SP.value);
+		SP.value += 2;
+	}
+	
+	void push(DataType opcode) {
+		AddressType *reg = push_pop_GetRegister(opcode);
+		*mem.getPos(SP.value) = *reg;
+		SP.value += 2;
+	}	
+	
+	void call() {
+		*mem.getPos(SP.value) = PC.value;
+		BMMQ::CML::jr( &PC.value, mdr.value, true );
+		SP.value -=2;
+	}
+	
+	void call_cc(DataType opcode) {
+		if( checkJumpCond(opcode)) {
+			call();
+		}
+	}
+	
+	void rst(DataType opcode) {
+		DataType rstPos = (opcode & 0x38);
+		*mem.getPos(SP.value) = PC.value;
+		BMMQ::CML::jr( &PC.value, rstPos, true );
+	}
+	
+	void ldh(DataType opcode) {
+		DataType* dest;
+		DataType* src;
+		
+		auto srcSet = (opcode & 0x10) >> 4; // checks if Accumulator is the source
+		
+		if (srcSet) {
+			src = &AF.hi;
+			dest = mem.getPos(mdr.value + 0xFF00);
+		} else {
+			src = &AF.hi;
+			dest = mem.getPos(mdr.value + 0xFF00);		
+		}
+		
+		BMMQ::CML::loadtmp(dest, src);
+	}
+	
+	void ld_ir16_r8(DataType opcode){
+		DataType* dest;
+		DataType* src;
+		
+		auto regSet = (opcode & 8) >> 3;
+		auto srcSet = (opcode & 0x10) >> 4;
+		
+		switch (srcSet) {
+			case 0:
+				src = &AF.hi;
+				dest = (regSet) ? mem.getPos( BC.lo + 0xFF00 ) : mem.getPos(mdr.value);
+				break;
+			case 1:
+				src = (regSet) ? mem.getPos(BC.lo + 0xFF00) : mem.getPos(mdr.value);
+				dest = &AF.hi;
+		}
+		
+		BMMQ::CML::loadtmp(dest, src);
+	}
+	
+	void ei_di(DataType opcode){
+		ime = (opcode & 8 ) >> 3;
+	}
+	
+	void ld_hl_sp(DataType opcode) {
+		AddressType *dest;
+		AddressType *src;
+		
+		DataType srcSet = (opcode & 1);
+		
+		switch (srcSet){
+			case 0:
+				dest = &HL.value;
+				src = &SP.value;
+				*src += mdr.lo;
+			case 1:
+				dest = &SP.value;
+				src = &HL.value;
+		}
+		
+		BMMQ::CML::loadtmp(dest, src);
+	}
+	
 	void populateOpcodes() {
+		microcodeList.registerMicrocode("jp_i8", [this]() {BMMQ::CML::jp( (&this->PC.value), this->mdr.value, true ); } );
+		microcodeList.registerMicrocode("jpcc_i8", [this]() {BMMQ::CML::jp( (&this->PC.value), this->mdr.value, checkJumpCond(cip) ); } );	
 		microcodeList.registerMicrocode("jr_i8", [this]() {BMMQ::CML::jr( (&this->PC.value), this->mdr.value, true ); } );
-		microcodeList.registerMicrocode("jrcc_i8", [this]() {BMMQ::CML::jr( (&this->PC.value), this->mdr.value, checkJumpCond(cip) ); } );
+		microcodeList.registerMicrocode("jrcc_i8", [this]() {BMMQ::CML::jr( (&this->PC.value), this->mdr.value, checkJumpCond(cip) ); } );		
 		microcodeList.registerMicrocode("ld_ir16_SP", [this](){BMMQ::CML::loadtmp( (&this->mar.value), this->SP.value );});
 		microcodeList.registerMicrocode("ld_r16_i16", [this](){BMMQ::CML::loadtmp( ld_R16_I16_GetRegister(cip), this->mdr.value );});
 		microcodeList.registerMicrocode("add_HL_r16", [this](){auto operands = ld_r16_8_GetOperands(cip);BMMQ::CML::add( operands.first, operands.second );});
@@ -273,6 +429,21 @@ public:
 		microcodeList.registerMicrocode("manipulateCarry", [this](){ manipulateCarry(cip);});
 		microcodeList.registerMicrocode("ld_r8_r8", [this](){auto operands = ld_r8_r8_GetOperands(cip);BMMQ::CML::loadtmp( operands.first, operands.second );});
 		microcodeList.registerMicrocode("math_r8", [this](){math_r8(cip);});
+		microcodeList.registerMicrocode("math_i8", [this](){math_i8(cip);});
+		microcodeList.registerMicrocode("ret_cc", [this](){ret_cc(cip); });
+		microcodeList.registerMicrocode("ret", [this](){ret(); });
+		microcodeList.registerMicrocode("pop", [this](){pop(cip);} );
+		microcodeList.registerMicrocode("push", [this](){push(cip);} );
+		microcodeList.registerMicrocode("call", [this](){call();});
+		microcodeList.registerMicrocode("call_cc", [this](){call_cc(cip);});
+		microcodeList.registerMicrocode("rst", [this](){rst(cip);});
+		microcodeList.registerMicrocode("ldh", [this](){ldh(cip);});
+		microcodeList.registerMicrocode("ld_ir16_r8", [this](){ld_ir16_r8(cip);});
+		microcodeList.registerMicrocode("add_sp_r8", [this](){BMMQ::CML::add(&SP.value, mdr.value);});
+		microcodeList.registerMicrocode("jp_hl", [this](){BMMQ::CML::loadtmp(&PC.value, mem.getPos(HL.value) );});
+		microcodeList.registerMicrocode("ei_di", [this]() {ei_di(cip); });
+		microcodeList.registerMicrocode("ld_hl_sp", [this](){ld_hl_sp(cip);});
+		
 	}
 };
 

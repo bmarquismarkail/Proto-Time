@@ -83,6 +83,12 @@ namespace BMMQ {
     }
 
     template<typename T1, typename T2>
+    static void jp(T1 *temp, T2 value, bool condition)
+    {
+        if (condition) *temp = value;
+    }
+
+    template<typename T1, typename T2>
     static void jr(T1 *temp, T2 value, bool condition)
     {
         if (condition) *temp += value;
