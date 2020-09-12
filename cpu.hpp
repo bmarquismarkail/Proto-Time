@@ -23,7 +23,6 @@ public:
 };
  
  DataType read(std::size_t address){
-    bool is_found = false;
 	std::size_t index;
     std::size_t temp = 0;
 
@@ -40,7 +39,6 @@ public:
 }
 
  DataType *getPos(std::size_t address){
-    bool is_found = false;
 	std::size_t index;
     std::size_t temp = 0;
 

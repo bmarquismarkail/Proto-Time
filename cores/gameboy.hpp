@@ -35,12 +35,16 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType> {
 	BMMQ::MemoryPool<AddressType, DataType> mem;
 	LR3592_Register mar;
 	LR3592_RegisterPair mdr;
-	LR3592_RegisterPair md2;
+	uint16_t flagset;
 	DataType cip;
-	bool ime;
+	bool ime = false, stopFlag = false;
 public:
 	LR3592_Register SP, PC;
 	LR3592_RegisterPair AF, BC, DE, HL;
+	
+	LR3592_DMG(){
+		populateOpcodes();
+	}
 	
     BMMQ::fetchBlock<AddressType, DataType> fetch()
     {
@@ -48,7 +52,9 @@ public:
         BMMQ::fetchBlock<AddressType, DataType> f ;
         f.baseAddress = 0;
 
-        BMMQ::fetchBlockData<AddressType, DataType> data {0, std::vector<DataType> {0} };
+        BMMQ::fetchBlockData<AddressType, DataType> data {0, std::vector<DataType> {0x3E} };
+		
+		f.blockData.push_back(data);
         return f;
     };
 
@@ -56,8 +62,11 @@ public:
     {
         // building a static execution block
         BMMQ::executionBlock b;
-        BMMQ::IOpcode code = oplist.at(0);
-        b.push_back(code);
+		mdr.value = 255;
+        for(auto i : fetchData.blockData){
+			for (auto data : i.data)
+				b.push_back(opcodeList[data]);
+		}
         return b;
     };
 
@@ -123,12 +132,14 @@ public:
 				return std::make_pair(temp, accumulator);
 			case 1: // Accumulator Destination
 				return std::make_pair(accumulator, temp);
+			default:
+				throw new std::invalid_argument("error in decoding register. invalid argument");
 		}
 	}
 	
 	DataType* ld_r8_i8_GetRegister(DataType opcode){
 		auto regSet = (opcode & 0x38) >> 3;
-		
+		std::cout << regSet << '\n';
 		switch (regSet) {
 			case 0:
 				return &BC.hi;
@@ -145,7 +156,10 @@ public:
 			case 6:
 				return mem.getPos((std::size_t)HL.value);
 			case 7:
-				return &AF.hi;			
+				std::cout << "A\n";
+				return &AF.hi;
+			default:
+				throw new std::invalid_argument("error in decoding register. invalid argument");
 		}
 	}
 	
@@ -223,6 +237,8 @@ public:
 				return mem.getPos((std::size_t)HL.value);
 			case 7:
 				return &AF.hi;	
+			default:
+				throw new std::invalid_argument("error in decoding register. invalid argument");
 		}
 	}
 
@@ -320,6 +336,8 @@ public:
 				return &HL.value;
 			case 3:
 				return &AF.value;
+			default:
+				throw new std::invalid_argument("error in decoding register. invalid argument");
 		}
 	}
 	
@@ -413,16 +431,131 @@ public:
 		BMMQ::CML::loadtmp(dest, src);
 	}
 	
+	void cb_execute(DataType opcode){
+		auto operation = ( opcode & 0xF8 ) >> 3;
+		DataType testBit = (opcode & 38) >> 3;
+		auto reg = ( opcode & 7 );
+		auto dest = ld_r8_r8_GetRegister(reg);
+		
+		auto quadrant = opcode >> 6;
+		
+		DataType* tempFlag;
+		switch(quadrant) {
+			case 1:			
+				BMMQ::CML::testbit8(tempFlag, dest, testBit);
+				break;
+			case 2:
+				BMMQ::CML::resetbit8(dest, testBit);
+				break;
+			case 3:
+				BMMQ::CML::setbit8(dest, testBit);
+				break;
+			case 0:
+				switch (operation){
+					case 0:
+						BMMQ::CML::rlc8(dest);
+						break;
+					case 1:
+						BMMQ::CML::rrc8(dest);
+						break;
+					case 2:
+						BMMQ::CML::rl8(dest, (AF.lo & 0x10) );
+						break;
+					case 3:
+						BMMQ::CML::rr8(dest, (AF.lo & 0x10) );
+						break;
+					case 4: 
+						BMMQ::CML::sla8(dest);
+						break;
+					case 5:
+						BMMQ::CML::sra8(dest);
+						break;
+					case 6:
+						BMMQ::CML::swap8(dest);
+						break;
+					case 7:
+						BMMQ::CML::srl8(dest);
+						break;
+				}
+				break;
+		}
+	}
+	
+	//	calculation flags:
+	//	each flag has two bytes, read in the endianness of the system
+	//	so, for a system with 4 flag bits, the flags hold 8 bits.
+	//	Values:
+	//  00: No check, 01: Check Flag, 10: reset flag, 11: set flag
+	// 	the second bit takes precidence
+	void calculateflags(uint16_t calculationFlags){
+		bool newflags[4] = {0,0,0,0};
+		
+		// Zero flag
+		switch(calculationFlags & 0xc0){
+			case 0xC0:
+				newflags[0] = 1;
+				break;
+			case 0x80:
+				newflags[0] = 0;
+				break;
+			case 0x40:
+				newflags[0] = (&AF.hi == 0);
+				break;
+		}
+		
+		// Negative flag
+		switch(calculationFlags & 0x30){
+			case 0x30:
+				newflags[1] = 1;
+				break;
+			case 0x20:
+				newflags[1] = 0;
+				break;
+		//	case 0x10:
+		//	TODO: Any Negative checks
+		}
+		
+		// Half-Carry Flag
+		switch(calculationFlags & 0xC){
+			case 0xC:
+				newflags[2] = 1;
+				break;
+			case 0x8:
+				newflags[2] = 0;
+				break;
+			case 0x4:
+				newflags[2] = ( ( (mdr.value & 0xF) + (AF.hi & 0xF) ) & 0x10 ) == 0x10;
+		}
+		
+		// Carry Flag
+		switch(calculationFlags & 3){
+			case 3:
+				newflags[3] = 1;
+			case 2:
+				newflags[3] = 0;
+			case 1:
+				newflags[3] = (AF.hi - mdr.value) > (AF.hi - 255);
+		}
+		
+		AF.lo = (newflags[0] << 7) | (newflags[1] << 6) | (newflags[2] << 5) | (newflags[3] << 4);
+	}
+	
+	void nop()  {}
+	void stop() {stopFlag = true;}
+	
 	void populateOpcodes() {
-		microcodeList.registerMicrocode("jp_i8", [this]() {BMMQ::CML::jp( (&this->PC.value), this->mdr.value, true ); } );
-		microcodeList.registerMicrocode("jpcc_i8", [this]() {BMMQ::CML::jp( (&this->PC.value), this->mdr.value, checkJumpCond(cip) ); } );	
+		microcodeList.registerMicrocode("jp_i16", [this]() {BMMQ::CML::jp( (&this->PC.value), this->mdr.value, true ); } );
+		microcodeList.registerMicrocode("jpcc_i16", [this]() {BMMQ::CML::jp( (&this->PC.value), this->mdr.value, checkJumpCond(cip) ); } );	
 		microcodeList.registerMicrocode("jr_i8", [this]() {BMMQ::CML::jr( (&this->PC.value), this->mdr.value, true ); } );
 		microcodeList.registerMicrocode("jrcc_i8", [this]() {BMMQ::CML::jr( (&this->PC.value), this->mdr.value, checkJumpCond(cip) ); } );		
 		microcodeList.registerMicrocode("ld_ir16_SP", [this](){BMMQ::CML::loadtmp( (&this->mar.value), this->SP.value );});
 		microcodeList.registerMicrocode("ld_r16_i16", [this](){BMMQ::CML::loadtmp( ld_R16_I16_GetRegister(cip), this->mdr.value );});
+		microcodeList.registerMicrocode("ld_r16_8", [this](){auto operands = ld_r16_8_GetOperands(cip);BMMQ::CML::loadtmp( operands.first, operands.second );});
 		microcodeList.registerMicrocode("add_HL_r16", [this](){auto operands = ld_r16_8_GetOperands(cip);BMMQ::CML::add( operands.first, operands.second );});
 		microcodeList.registerMicrocode("inc16", [this](){BMMQ::CML::inc(ld_R16_I16_GetRegister(cip));});
-		microcodeList.registerMicrocode("dec16", [this](){BMMQ::CML::dec(ld_R16_I16_GetRegister(cip));});
+		microcodeList.registerMicrocode("dec16", [this](){BMMQ::CML::dec(ld_R16_I16_GetRegister(cip));});		
+		microcodeList.registerMicrocode("inc8", [this](){BMMQ::CML::inc(ld_r8_i8_GetRegister(cip));});
+		microcodeList.registerMicrocode("dec8", [this](){BMMQ::CML::dec(ld_r8_i8_GetRegister(cip));});
 		microcodeList.registerMicrocode("ld_r8_i8", [this](){BMMQ::CML::loadtmp( ld_r8_i8_GetRegister(cip), mdr.value); });
 		microcodeList.registerMicrocode("rotateAccumulator", [this](){rotateAccumulator(cip);});
 		microcodeList.registerMicrocode("manipulateAccumulator", [this](){manipulateAccumulator(cip);});
@@ -443,7 +576,65 @@ public:
 		microcodeList.registerMicrocode("jp_hl", [this](){BMMQ::CML::loadtmp(&PC.value, mem.getPos(HL.value) );});
 		microcodeList.registerMicrocode("ei_di", [this]() {ei_di(cip); });
 		microcodeList.registerMicrocode("ld_hl_sp", [this](){ld_hl_sp(cip);});
+		microcodeList.registerMicrocode("cb", [this](){cb_execute(mdr.value);} );
+		microcodeList.registerMicrocode("nop", [this](){nop();});
+		microcodeList.registerMicrocode("stop", [this](){stop();});
+		microcodeList.registerMicrocode("manipulateFlags", [this](){calculateflags(flagset);});
 		
+		
+		BMMQ::IOpcode NOP {microcodeList.findMicrocode("nop")};																				// 00h
+		BMMQ::IOpcode LD_R16_I16{microcodeList.findMicrocode("ld_r16_i16")};																// 01h, 11h, 21h, 31h
+		BMMQ::IOpcode LD_R16_8{microcodeList.findMicrocode("ld_r16_8")};																	// 02h, 0Ah, 12h, 1Ah, 22h, 2Ah, 32h, 3Ah
+		BMMQ::IOpcode INC16 {microcodeList.findMicrocode("inc16") };																		// 03h, 13h, 23h, 33h
+		BMMQ::IOpcode INC8 {microcodeList.findMicrocode("inc8"), microcodeList.findMicrocode("manipulateFlags")};							// 04h, 0Ch, 14h, 1Ch, 24h, 2Ch, 34h, 3Ch
+		BMMQ::IOpcode DEC8 {microcodeList.findMicrocode("dec8"), microcodeList.findMicrocode("manipulateFlags")};							// 05h, 0Dh, 15h, 1Dh, 25h, 2Dh, 35h, 3Dh
+		BMMQ::IOpcode LD_R8_I8 {microcodeList.findMicrocode("ld_r8_i8")};																	// 06h, 0Eh, 16h, 1Eh, 26h, 2Eh, 36h, 3Eh
+		BMMQ::IOpcode ROTATE_A {microcodeList.findMicrocode("rotateAccumulator"), microcodeList.findMicrocode("manipulateFlags")};			// 07h, 0Fh, 17h, 1Fh
+		BMMQ::IOpcode LD_IR16_SP {microcodeList.findMicrocode("ld_ir16_SP")};																// 08h
+		BMMQ::IOpcode ADD_HL_R16 {microcodeList.findMicrocode("add_HL_r16"), microcodeList.findMicrocode("manipulateFlags")};				// 09h, 19h, 29h, 39h
+		BMMQ::IOpcode DEC16 {microcodeList.findMicrocode("dec16")};																			// 0Bh, 1Bh, 2Bh, 3Bh
+		BMMQ::IOpcode STOP {microcodeList.findMicrocode("stop")};
+		BMMQ::IOpcode JR_I8 {microcodeList.findMicrocode("jr_i8")};																			// 18h
+		BMMQ::IOpcode JR_CC_8 {microcodeList.findMicrocode("jrcc_i8")};																		// 20h, 28h, 30h, 38h
+		BMMQ::IOpcode MANIPULATE_A {microcodeList.findMicrocode("manipulateAccumulator"), microcodeList.findMicrocode("manipulateFlags")};	// 27h, 3Fh
+		BMMQ::IOpcode MANIPULATE_CF {microcodeList.findMicrocode("manipulateCarry")};														// 37h, 3Fh
+		BMMQ::IOpcode LD_R8_R8 {microcodeList.findMicrocode("ld_r8_r8")};																	// 40h - 7Fh
+		BMMQ::IOpcode MATH_R8 {microcodeList.findMicrocode("math_r8"), microcodeList.findMicrocode("manipulateFlags")}; 					// 80h - BFh
+		BMMQ::IOpcode RET_CC {microcodeList.findMicrocode("ret_cc")};																		// C0h, C8h, D0h, D8h
+		BMMQ::IOpcode POP {microcodeList.findMicrocode("pop")};																				// C1h, D1h, E1h, F1h
+		BMMQ::IOpcode JPCC_I16 {microcodeList.findMicrocode("jp_i16")};																		// C2h, CAh, D2h, DAh
+		BMMQ::IOpcode JP_I16 {microcodeList.findMicrocode("jpcc_i16")};																		// C3h
+		BMMQ::IOpcode CALLCC_I16 {microcodeList.findMicrocode("call_cc")};																	// C4h, CCh, D4h, DCh
+		BMMQ::IOpcode PUSH {microcodeList.findMicrocode("push")};																			// C5h, D5h, E5h, F5h
+		BMMQ::IOpcode MATH_I8 {microcodeList.findMicrocode("math_i8"), microcodeList.findMicrocode("manipulateFlags")};						// C6h, CEh, D6h, DEh, E6h, EEh, F6h, FFh
+		BMMQ::IOpcode RST {microcodeList.findMicrocode("rst")};																				// C7h, CFh, D7h, DFh, E7h, EFh, F7h, FFh
+		BMMQ::IOpcode RET {microcodeList.findMicrocode("ret")};																				// C9h, D9h
+		BMMQ::IOpcode CB {microcodeList.findMicrocode("cb")};																				// CBh
+		BMMQ::IOpcode CALL {microcodeList.findMicrocode("call")};																			// CDh
+		BMMQ::IOpcode LDH {microcodeList.findMicrocode("ldh")};																				// E0h, F0h
+		BMMQ::IOpcode LD_IR16_R8 {microcodeList.findMicrocode("ld_ir16_r8")};																// E2h, EAh, F2h, FAh
+		BMMQ::IOpcode EI_DI {microcodeList.findMicrocode("ei_di")};																			// F3h, FBh
+		BMMQ::IOpcode ADD_SP_R8 {microcodeList.findMicrocode("add_sp_r8")};																	// E8h
+		BMMQ::IOpcode JP_HL {microcodeList.findMicrocode("jp_hl")};																			// E9h
+		BMMQ::IOpcode LD_HL_SP {microcodeList.findMicrocode("ld_hl_sp")};																	// F8h
+		opcodeList.assign({
+			{NOP},      {LD_R16_I16}, {LD_R16_8},   {INC16},    {INC8},       {DEC8},     {LD_R8_I8}, {ROTATE_A},      {LD_IR16_SP}, {ADD_HL_R16}, {LD_R16_8},   {DEC16},    {INC8},       {DEC8},     {LD_R8_I8}, {ROTATE_A},
+			{STOP},     {LD_R16_I16}, {LD_R16_8},   {INC16},    {INC8},       {DEC8},     {LD_R8_I8}, {ROTATE_A},      {JR_I8},      {ADD_HL_R16}, {LD_R16_8},   {DEC16},    {INC8},       {DEC8},     {LD_R8_I8}, {ROTATE_A},
+			{JR_CC_8},  {LD_R16_I16}, {LD_R16_8},   {INC16},    {INC8},       {DEC8},     {LD_R8_I8}, {MANIPULATE_A},  {JR_CC_8},    {ADD_HL_R16}, {LD_R16_8},   {DEC16},    {INC8},       {DEC8},     {LD_R8_I8}, {MANIPULATE_A},
+			{JR_CC_8},  {LD_R16_I16}, {LD_R16_8},   {INC16},    {INC8},       {DEC8},     {LD_R8_I8}, {MANIPULATE_CF}, {JR_CC_8},    {ADD_HL_R16}, {LD_R16_8},   {DEC16},    {INC8},       {DEC8},     {LD_R8_I8}, {MANIPULATE_CF},
+			{LD_R8_R8}, {LD_R8_R8},   {LD_R8_R8},   {LD_R8_R8}, {LD_R8_R8},   {LD_R8_R8}, {LD_R8_R8}, {LD_R8_R8},      {LD_R8_R8},   {LD_R8_R8},   {LD_R8_R8},   {LD_R8_R8}, {LD_R8_R8},   {LD_R8_R8}, {LD_R8_R8}, {LD_R8_R8},
+			{LD_R8_R8}, {LD_R8_R8},   {LD_R8_R8},   {LD_R8_R8}, {LD_R8_R8},   {LD_R8_R8}, {LD_R8_R8}, {LD_R8_R8},      {LD_R8_R8},   {LD_R8_R8},   {LD_R8_R8},   {LD_R8_R8}, {LD_R8_R8},   {LD_R8_R8}, {LD_R8_R8}, {LD_R8_R8},
+			{LD_R8_R8}, {LD_R8_R8},   {LD_R8_R8},   {LD_R8_R8}, {LD_R8_R8},   {LD_R8_R8}, {LD_R8_R8}, {LD_R8_R8},      {LD_R8_R8},   {LD_R8_R8},   {LD_R8_R8},   {LD_R8_R8}, {LD_R8_R8},   {LD_R8_R8}, {LD_R8_R8}, {LD_R8_R8},
+			{LD_R8_R8}, {LD_R8_R8},   {LD_R8_R8},   {LD_R8_R8}, {LD_R8_R8},   {LD_R8_R8}, {LD_R8_R8}, {LD_R8_R8},      {LD_R8_R8},   {LD_R8_R8},   {LD_R8_R8},   {LD_R8_R8}, {LD_R8_R8},   {LD_R8_R8}, {LD_R8_R8}, {LD_R8_R8},
+			{MATH_R8},  {MATH_R8},	  {MATH_R8},    {MATH_R8},  {MATH_R8},    {MATH_R8},  {MATH_R8},  {MATH_R8},       {MATH_R8},    {MATH_R8},    {MATH_R8},    {MATH_R8},  {MATH_R8},    {MATH_R8},  {MATH_R8},  {MATH_R8},
+			{MATH_R8},  {MATH_R8},	  {MATH_R8},    {MATH_R8},  {MATH_R8},    {MATH_R8},  {MATH_R8},  {MATH_R8},       {MATH_R8},    {MATH_R8},    {MATH_R8},    {MATH_R8},  {MATH_R8},    {MATH_R8},  {MATH_R8},  {MATH_R8},
+			{MATH_R8},  {MATH_R8},	  {MATH_R8},    {MATH_R8},  {MATH_R8},    {MATH_R8},  {MATH_R8},  {MATH_R8},       {MATH_R8},    {MATH_R8},    {MATH_R8},    {MATH_R8},  {MATH_R8},    {MATH_R8},  {MATH_R8},  {MATH_R8},
+			{MATH_R8},  {MATH_R8},	  {MATH_R8},    {MATH_R8},  {MATH_R8},    {MATH_R8},  {MATH_R8},  {MATH_R8},       {MATH_R8},    {MATH_R8},    {MATH_R8},    {MATH_R8},  {MATH_R8},    {MATH_R8},  {MATH_R8},  {MATH_R8},
+			{RET_CC},   {POP},        {JPCC_I16},   {JP_I16},   {CALLCC_I16}, {PUSH},     {MATH_I8},  {RST},           {RET_CC},     {RET},        {JPCC_I16},   {CB},       {CALLCC_I16}, {CALL},     {MATH_I8},  {RST},  
+			{RET_CC},   {POP},        {JPCC_I16},   {NOP},      {CALLCC_I16}, {PUSH},     {MATH_I8},  {RST},           {RET_CC},     {RET},        {JPCC_I16},   {NOP},      {CALLCC_I16}, {NOP},      {MATH_I8},  {RST},  
+			{LDH},      {POP},        {LD_IR16_R8}, {NOP},      {NOP},        {PUSH},     {MATH_I8},  {RST},           {ADD_SP_R8},  {JP_HL},      {LD_IR16_R8}, {NOP},      {NOP},        {NOP},      {MATH_I8},  {RST},
+			{LDH},      {POP},        {LD_IR16_R8}, {EI_DI},    {NOP},        {PUSH},     {MATH_I8},  {RST},           {LD_HL_SP},   {LD_HL_SP},   {LD_IR16_R8}, {EI_DI},    {NOP},        {NOP},      {MATH_I8},  {RST}
+		});
 	}
 };
 

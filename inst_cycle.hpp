@@ -18,7 +18,7 @@ struct fetchBlock {
 };
 
 template<typename DataType>
-using OpcodeList = std::map<DataType, IOpcode>;
+using OpcodeList = std::vector<IOpcode>;
 
 using executionBlock = std::vector<IOpcode>;
 }
