@@ -8,26 +8,13 @@
 #include "../inst_cycle.hpp"
 #include "../cpu.hpp"
 #include "../common_microcode.hpp"
+#include "../templ/reg_uint16.hpp"
 
 using AddressType = uint16_t;
 using DataType = uint8_t;
 using LR3592_RegisterBase = BMMQ::_register<AddressType>;
 using LR3592_Register = BMMQ::CPU_Register<AddressType>;
 using LR3592_RegisterPair = BMMQ::CPU_RegisterPair<AddressType>;
-
-template<>
-struct BMMQ::CPU_RegisterPair<uint16_t> :  public BMMQ::_register<uint16_t> {
-    union {
-        struct {
-			uint8_t lo;
-			uint8_t hi;
-        };
-        uint16_t value;
-    };
-	
-	uint16_t operator()(){return value;}
-};
-
 
 class LR3592_DMG : public BMMQ::CPU<AddressType, DataType> {
 	BMMQ::Imicrocode microcodeList;
@@ -39,13 +26,32 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType> {
 	DataType cip;
 	bool ime = false, stopFlag = false;
 public:
-	LR3592_Register SP, PC;
-	LR3592_RegisterPair AF, BC, DE, HL;
-	
+	BMMQ::RegisterFile<AddressType> file;
+	BMMQ::RegisterInfo<AddressType> AF, BC, DE, HL, SP, PC;
+
+	//CTOR
+
 	LR3592_DMG(){
+		file.addRegister("AF", true);
+		file.addRegister("BC", true);
+		file.addRegister("DE", true);
+		file.addRegister("HL", true);
+		file.addRegister("SP", false);
+		file.addRegister("PC", false);
+		//file.addRegister // mar
+		//file.addRegister // mdr
+		
+		AF.registration(file, "AF");
+		BC.registration(file, "BC");
+		DE.registration(file, "DE");
+		HL.registration(file, "HL");
+		SP.registration(file, "SP");
+		PC.registration(file, "PC");
+		
 		populateOpcodes();
 	}
-	
+
+	//	
     BMMQ::fetchBlock<AddressType, DataType> fetch()
     {
         // building a static fetchblock for testing
@@ -72,30 +78,32 @@ public:
 
     void execute(const BMMQ::executionBlock& block)
     {
-        for (auto e : block)
-            (e)();
+        for (auto e : block){
+			(e)();
+		}
     };
-	
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////	
 	bool checkJumpCond(DataType opcode){
-		// Zero Flag is AF.lo & 0x80
-		// Carry Flag is AF.lo & 0x10
-		bool checkFlag = (opcode & 0x10) == 0x10 ? ((AF.lo & 0x80) >> 7) : ((AF.lo & 0x10) >> 4);
+		auto &A = (LR3592_RegisterPair&)AF;
+		bool checkFlag = (opcode & 0x10) == 0x10 ? ((A.lo & 0x80) >> 7) : ((A.lo & 0x10) >> 4);
 		bool checkSet = opcode & 0x8;
 		return !(checkFlag ^ checkSet);
 	}
 	
 	AddressType* ld_R16_I16_GetRegister(DataType opcode){
+		
 		uint8_t regInd = (opcode & 0x30) >> 4;
 		
 		switch (regInd){
 			case 0:
-				return &BC.value;
+				return &BC()->value;
 			case 1:
-				return &DE.value;
+				return &DE()->value;
 			case 2:
-				return &HL.value;
+				return &HL()->value;
 			case 3:
-				return &SP.value;
+				return &SP()->value;
 			default:
 				throw new std::invalid_argument("error in decoding register. invalid argument");
 		}
@@ -108,12 +116,12 @@ public:
 	AddressType* ld_r16_8_GetRegister(DataType opcode) {
 		switch (opcode & 0x30 >> 4) {
 			case 0:
-				return &BC.value;
+				return &BC()->value;
 			case 1:
-				return &DE.value;
+				return &DE()->value;
 			case 2:
 			case 3:
-				return &HL.value;
+				return &HL()->value;
 			default:
 				throw new std::invalid_argument("error in decoding register. invalid argument");
 		}
@@ -122,7 +130,7 @@ public:
  	// LD ir16/8 <-> A
 	std::pair<DataType*, DataType*>  ld_r16_8_GetOperands(DataType opcode){
 		AddressType *reg16 = ld_R16_I16_GetRegister(opcode);
-		DataType *accumulator = &AF.hi;
+		DataType *accumulator = &((LR3592_RegisterPair*)AF())->hi;
 		
 		DataType *temp = mem.getPos((std::size_t)(*reg16));
 		
@@ -142,22 +150,22 @@ public:
 		std::cout << regSet << '\n';
 		switch (regSet) {
 			case 0:
-				return &BC.hi;
+				return &((LR3592_RegisterPair*)BC())->hi;
 			case 1:
-				return &BC.lo;
+				return &((LR3592_RegisterPair*)BC())->lo;
 			case 2:
-				return &DE.hi;
+				return &((LR3592_RegisterPair*)DE())->hi;
 			case 3:
-				return &DE.lo;
+				return &((LR3592_RegisterPair*)DE())->lo;
 			case 4:
-				return &HL.hi;
+				return &((LR3592_RegisterPair*)HL())->hi;
 			case 5:
-				return &HL.lo;
+				return &((LR3592_RegisterPair*)HL())->lo;
 			case 6:
-				return mem.getPos((std::size_t)HL.value);
+				return mem.getPos((std::size_t)HL()->value);
 			case 7:
 				std::cout << "A\n";
-				return &AF.hi;
+				return &((LR3592_RegisterPair*)AF())->hi;
 			default:
 				throw new std::invalid_argument("error in decoding register. invalid argument");
 		}
@@ -165,34 +173,38 @@ public:
 	
 	void rotateAccumulator(DataType opcode){
 		
-		bool carryFlag = (AF.lo & 0x10);
+		auto &A = (LR3592_RegisterPair&)AF;
+		
+		bool carryFlag = (A.lo & 0x10);
 		DataType lrSet = (opcode & 0x18) >> 3;
 			
 		switch (lrSet) {
 			case 0:
-				BMMQ::CML::rlc8(&AF.hi);
+				BMMQ::CML::rlc8(&A.hi);
 				break;
 			case 1:
-				BMMQ::CML::rrc8(&AF.hi);
+				BMMQ::CML::rrc8(&A.hi);
 				break;
 			case 2:
-				BMMQ::CML::rl8(&AF.hi, carryFlag);
+				BMMQ::CML::rl8(&A.hi, carryFlag);
 				break;
 			case 3:
-				BMMQ::CML::rr8(&AF.hi, carryFlag);
+				BMMQ::CML::rr8(&A.hi, carryFlag);
 				break;
 		}			
 	}		
 	
 	void manipulateAccumulator(DataType opcode){
+		
+		auto &A = ((LR3592_RegisterPair&)AF).hi;
 		DataType opSet = (opcode & 8) >> 3;
 		
 		switch (opSet) {
 			case 0:
-				BMMQ::CML::daa(&AF.hi);
+				BMMQ::CML::daa(&A);
 				break;
 			case 1:
-				BMMQ::CML::cpl(&AF.hi);
+				BMMQ::CML::cpl(&A);
 				break;
 			default:
 				throw new std::invalid_argument("error in decoding register. invalid argument");
@@ -203,7 +215,8 @@ public:
 	void manipulateCarry(DataType opcode) {
 		DataType opSet =  (opcode & 0x8) >> 3;
 		
-		DataType flags = AF.lo;
+		auto &F = ((LR3592_RegisterPair&)AF).lo;
+		DataType flags = F;
 		
 		switch (opSet) {
 			case 0:
@@ -216,27 +229,27 @@ public:
 				throw new std::invalid_argument("error in decoding register. invalid argument");
 		}
 		
-		BMMQ::CML::setFlags(&AF.lo, flags);
+		BMMQ::CML::setFlags(&F, flags);
 	}		
 
 	DataType* ld_r8_r8_GetRegister(DataType regcode) {
 		switch (regcode) {
 			case 0:
-				return &BC.hi;
+				return &((LR3592_RegisterPair*)BC())->hi;
 			case 1:
-				return &BC.lo;
+				return &((LR3592_RegisterPair*)BC())->lo;
 			case 2:
-				return &DE.hi;
+				return &((LR3592_RegisterPair*)DE())->hi;
 			case 3:
-				return &DE.lo;
+				return &((LR3592_RegisterPair*)DE())->lo;
 			case 4:
-				return &HL.hi;
+				return &((LR3592_RegisterPair*)HL())->hi;
 			case 5:
-				return &HL.lo;
+				return &((LR3592_RegisterPair*)HL())->lo;
 			case 6:
-				return mem.getPos((std::size_t)HL.value);
+				return mem.getPos((std::size_t)HL()->value);
 			case 7:
-				return &AF.hi;	
+				return &((LR3592_RegisterPair*)AF())->hi;	
 			default:
 				throw new std::invalid_argument("error in decoding register. invalid argument");
 		}
@@ -252,71 +265,75 @@ public:
 	void math_r8(DataType opcode){
 		DataType mathFunc = (opcode & 38) >> 3;
 		DataType* srcReg = ld_r8_r8_GetRegister(opcode & 7);
-		bool carryFlag = (AF.lo & 0x10);
+		
+		auto &A = (LR3592_RegisterPair&)AF;
+		bool carryFlag = (A.lo & 0x10);
 		
 		switch (mathFunc) {
 			case 0:
-				BMMQ::CML::add(&AF.hi, srcReg);
+				BMMQ::CML::add(&A.hi, srcReg);
 				break;
 			case 1:
-				BMMQ::CML::adc(&AF.hi, srcReg, carryFlag);
+				BMMQ::CML::adc(&A.hi, srcReg, carryFlag);
 				break;
 			case 2:
-				BMMQ::CML::sub(&AF.hi, srcReg);
+				BMMQ::CML::sub(&A.hi, srcReg);
 				break;
 			case 3:
-				BMMQ::CML::sbc(&AF.hi, srcReg, carryFlag);
+				BMMQ::CML::sbc(&A.hi, srcReg, carryFlag);
 				break;
 			case 4:
-				BMMQ::CML::iand(&AF.hi, srcReg);
+				BMMQ::CML::iand(&A.hi, srcReg);
 				break;
 			case 5:
-				BMMQ::CML::ixor(&AF.hi, srcReg);
+				BMMQ::CML::ixor(&A.hi, srcReg);
 				break;
 			case 6:
-				BMMQ::CML::ior(&AF.hi, srcReg);
+				BMMQ::CML::ior(&A.hi, srcReg);
 				break;
 			case 7:
-				BMMQ::CML::cmp(&AF.hi, srcReg);
+				BMMQ::CML::cmp(&A.hi, srcReg);
 				break;
 		}
 	}
 
 	void math_i8(DataType opcode){
 		DataType mathFunc = (opcode & 38) >> 3;
-		bool carryFlag = (AF.lo & 0x10);
+		
+		auto &A = (LR3592_RegisterPair&)AF;
+		bool carryFlag = (A.lo & 0x10);
 		
 		switch (mathFunc) {
 			case 0:
-				BMMQ::CML::add(&AF.hi, mdr.value);
+				BMMQ::CML::add(&A.hi, mdr.value);
 				break;
 			case 1:
-				BMMQ::CML::adc(&AF.hi, mdr.value, carryFlag);
+				BMMQ::CML::adc(&A.hi, mdr.value, carryFlag);
 				break;
 			case 2:
-				BMMQ::CML::sub(&AF.hi, mdr.value);
+				BMMQ::CML::sub(&A.hi, mdr.value);
 				break;
 			case 3:
-				BMMQ::CML::sbc(&AF.hi, mdr.value, carryFlag);
+				BMMQ::CML::sbc(&A.hi, mdr.value, carryFlag);
 				break;
 			case 4:
-				BMMQ::CML::iand(&AF.hi, mdr.value);
+				BMMQ::CML::iand(&A.hi, mdr.value);
 				break;
 			case 5:
-				BMMQ::CML::ixor(&AF.hi, mdr.value);
+				BMMQ::CML::ixor(&A.hi, mdr.value);
 				break;
 			case 6:
-				BMMQ::CML::ior(&AF.hi, mdr.value);
+				BMMQ::CML::ior(&A.hi, mdr.value);
 				break;
 			case 7:
-				BMMQ::CML::cmp(&AF.hi, mdr.value);
+				BMMQ::CML::cmp(&A.hi, mdr.value);
 				break;
 		}
 	}
 	
 	void ret() {
-		PC.value = mem.read(SP.value);
-		SP.value += 2;	
+		PC()->value = mem.read(SP()->value);
+		SP()->value += 2;	
 	}
 	
 	void ret_cc(DataType opcode){
@@ -329,13 +346,13 @@ public:
 		
 		switch (regCode) {
 			case 0:
-				return &BC.value;
+				return &BC()->value;
 			case 1:
-				return &DE.value;
+				return &DE()->value;
 			case 2:
-				return &HL.value;
+				return &HL()->value;
 			case 3:
-				return &AF.value;
+				return &AF()->value;
 			default:
 				throw new std::invalid_argument("error in decoding register. invalid argument");
 		}
@@ -343,20 +360,20 @@ public:
 	
 	void pop(DataType opcode) {
 		AddressType *reg = push_pop_GetRegister(opcode);
-		*reg = mem.read(SP.value);
-		SP.value += 2;
+		*reg = mem.read(SP()->value);
+		SP()->value += 2;
 	}
 	
 	void push(DataType opcode) {
 		AddressType *reg = push_pop_GetRegister(opcode);
-		*mem.getPos(SP.value) = *reg;
-		SP.value += 2;
+		*mem.getPos(SP()->value) = *reg;
+		SP()->value += 2;
 	}	
 	
 	void call() {
-		*mem.getPos(SP.value) = PC.value;
-		BMMQ::CML::jr( &PC.value, mdr.value, true );
-		SP.value -=2;
+		*mem.getPos(SP()->value) = PC()->value;
+		BMMQ::CML::jr( &PC()->value, mdr.value, true );
+		SP()->value -=2;
 	}
 	
 	void call_cc(DataType opcode) {
@@ -367,8 +384,8 @@ public:
 	
 	void rst(DataType opcode) {
 		DataType rstPos = (opcode & 0x38);
-		*mem.getPos(SP.value) = PC.value;
-		BMMQ::CML::jr( &PC.value, rstPos, true );
+		*mem.getPos(SP()->value) = PC()->value;
+		BMMQ::CML::jr( &PC()->value, rstPos, true );
 	}
 	
 	void ldh(DataType opcode) {
@@ -377,11 +394,12 @@ public:
 		
 		auto srcSet = (opcode & 0x10) >> 4; // checks if Accumulator is the source
 		
+		auto &A = (LR3592_RegisterPair&)AF;
 		if (srcSet) {
-			src = &AF.hi;
+			src = &A.hi;
 			dest = mem.getPos(mdr.value + 0xFF00);
 		} else {
-			src = &AF.hi;
+			src = &A.hi;
 			dest = mem.getPos(mdr.value + 0xFF00);		
 		}
 		
@@ -395,14 +413,16 @@ public:
 		auto regSet = (opcode & 8) >> 3;
 		auto srcSet = (opcode & 0x10) >> 4;
 		
+		auto &A = (LR3592_RegisterPair&)AF;
+		auto &C = (LR3592_RegisterPair&)BC;
 		switch (srcSet) {
 			case 0:
-				src = &AF.hi;
-				dest = (regSet) ? mem.getPos( BC.lo + 0xFF00 ) : mem.getPos(mdr.value);
+				src = &A.hi;
+				dest = (regSet) ? mem.getPos( C.lo + 0xFF00 ) : mem.getPos(mdr.value);
 				break;
 			case 1:
-				src = (regSet) ? mem.getPos(BC.lo + 0xFF00) : mem.getPos(mdr.value);
-				dest = &AF.hi;
+				src = (regSet) ? mem.getPos(C.lo + 0xFF00) : mem.getPos(mdr.value);
+				dest = &A.hi;
 		}
 		
 		BMMQ::CML::loadtmp(dest, src);
@@ -420,12 +440,12 @@ public:
 		
 		switch (srcSet){
 			case 0:
-				dest = &HL.value;
-				src = &SP.value;
+				dest = &HL()->value;
+				src = &SP()->value;
 				*src += mdr.lo;
 			case 1:
-				dest = &SP.value;
-				src = &HL.value;
+				dest = &SP()->value;
+				src = &HL()->value;
 		}
 		
 		BMMQ::CML::loadtmp(dest, src);
@@ -440,6 +460,7 @@ public:
 		auto quadrant = opcode >> 6;
 		
 		DataType* tempFlag;
+		auto &F = ((LR3592_RegisterPair&)AF).lo;
 		switch(quadrant) {
 			case 1:			
 				BMMQ::CML::testbit8(tempFlag, dest, testBit);
@@ -459,10 +480,10 @@ public:
 						BMMQ::CML::rrc8(dest);
 						break;
 					case 2:
-						BMMQ::CML::rl8(dest, (AF.lo & 0x10) );
+						BMMQ::CML::rl8(dest, (F & 0x10) );
 						break;
 					case 3:
-						BMMQ::CML::rr8(dest, (AF.lo & 0x10) );
+						BMMQ::CML::rr8(dest, (F & 0x10) );
 						break;
 					case 4: 
 						BMMQ::CML::sla8(dest);
@@ -490,6 +511,8 @@ public:
 	void calculateflags(uint16_t calculationFlags){
 		bool newflags[4] = {0,0,0,0};
 		
+		auto &A = ((LR3592_RegisterPair&)AF).hi;
+		auto &F = ((LR3592_RegisterPair&)AF).lo;
 		// Zero flag
 		switch(calculationFlags & 0xc0){
 			case 0xC0:
@@ -499,7 +522,7 @@ public:
 				newflags[0] = 0;
 				break;
 			case 0x40:
-				newflags[0] = (&AF.hi == 0);
+				newflags[0] = (&A == 0);
 				break;
 		}
 		
@@ -524,7 +547,7 @@ public:
 				newflags[2] = 0;
 				break;
 			case 0x4:
-				newflags[2] = ( ( (mdr.value & 0xF) + (AF.hi & 0xF) ) & 0x10 ) == 0x10;
+				newflags[2] = ( ( (mdr.value & 0xF) + (A & 0xF) ) & 0x10 ) == 0x10;
 		}
 		
 		// Carry Flag
@@ -534,21 +557,21 @@ public:
 			case 2:
 				newflags[3] = 0;
 			case 1:
-				newflags[3] = (AF.hi - mdr.value) > (AF.hi - 255);
+				newflags[3] = (A - mdr.value) > (A - 255);
 		}
 		
-		AF.lo = (newflags[0] << 7) | (newflags[1] << 6) | (newflags[2] << 5) | (newflags[3] << 4);
+		F = (newflags[0] << 7) | (newflags[1] << 6) | (newflags[2] << 5) | (newflags[3] << 4);
 	}
 	
 	void nop()  {}
 	void stop() {stopFlag = true;}
 	
 	void populateOpcodes() {
-		microcodeList.registerMicrocode("jp_i16", [this]() {BMMQ::CML::jp( (&this->PC.value), this->mdr.value, true ); } );
-		microcodeList.registerMicrocode("jpcc_i16", [this]() {BMMQ::CML::jp( (&this->PC.value), this->mdr.value, checkJumpCond(cip) ); } );	
-		microcodeList.registerMicrocode("jr_i8", [this]() {BMMQ::CML::jr( (&this->PC.value), this->mdr.value, true ); } );
-		microcodeList.registerMicrocode("jrcc_i8", [this]() {BMMQ::CML::jr( (&this->PC.value), this->mdr.value, checkJumpCond(cip) ); } );		
-		microcodeList.registerMicrocode("ld_ir16_SP", [this](){BMMQ::CML::loadtmp( (&this->mar.value), this->SP.value );});
+		microcodeList.registerMicrocode("jp_i16", [this]() {BMMQ::CML::jp( (&this->PC()->value), this->mdr.value, true ); } );
+		microcodeList.registerMicrocode("jpcc_i16", [this]() {BMMQ::CML::jp( (&this->PC()->value), this->mdr.value, checkJumpCond(cip) ); } );	
+		microcodeList.registerMicrocode("jr_i8", [this]() {BMMQ::CML::jr( (&this->PC()->value), this->mdr.value, true ); } );
+		microcodeList.registerMicrocode("jrcc_i8", [this]() {BMMQ::CML::jr( (&this->PC()->value), this->mdr.value, checkJumpCond(cip) ); } );		
+		microcodeList.registerMicrocode("ld_ir16_SP", [this](){BMMQ::CML::loadtmp( (&this->mar.value), this->SP()->value );});
 		microcodeList.registerMicrocode("ld_r16_i16", [this](){BMMQ::CML::loadtmp( ld_R16_I16_GetRegister(cip), this->mdr.value );});
 		microcodeList.registerMicrocode("ld_r16_8", [this](){auto operands = ld_r16_8_GetOperands(cip);BMMQ::CML::loadtmp( operands.first, operands.second );});
 		microcodeList.registerMicrocode("add_HL_r16", [this](){auto operands = ld_r16_8_GetOperands(cip);BMMQ::CML::add( operands.first, operands.second );});
@@ -572,8 +595,8 @@ public:
 		microcodeList.registerMicrocode("rst", [this](){rst(cip);});
 		microcodeList.registerMicrocode("ldh", [this](){ldh(cip);});
 		microcodeList.registerMicrocode("ld_ir16_r8", [this](){ld_ir16_r8(cip);});
-		microcodeList.registerMicrocode("add_sp_r8", [this](){BMMQ::CML::add(&SP.value, mdr.value);});
-		microcodeList.registerMicrocode("jp_hl", [this](){BMMQ::CML::loadtmp(&PC.value, mem.getPos(HL.value) );});
+		microcodeList.registerMicrocode("add_sp_r8", [this](){BMMQ::CML::add(&SP()->value, mdr.value);});
+		microcodeList.registerMicrocode("jp_hl", [this](){BMMQ::CML::loadtmp(&PC()->value, mem.getPos(HL()->value) );});
 		microcodeList.registerMicrocode("ei_di", [this]() {ei_di(cip); });
 		microcodeList.registerMicrocode("ld_hl_sp", [this](){ld_hl_sp(cip);});
 		microcodeList.registerMicrocode("cb", [this](){cb_execute(mdr.value);} );
@@ -635,7 +658,7 @@ public:
 			{LDH},      {POP},        {LD_IR16_R8}, {NOP},      {NOP},        {PUSH},     {MATH_I8},  {RST},           {ADD_SP_R8},  {JP_HL},      {LD_IR16_R8}, {NOP},      {NOP},        {NOP},      {MATH_I8},  {RST},
 			{LDH},      {POP},        {LD_IR16_R8}, {EI_DI},    {NOP},        {PUSH},     {MATH_I8},  {RST},           {LD_HL_SP},   {LD_HL_SP},   {LD_IR16_R8}, {EI_DI},    {NOP},        {NOP},      {MATH_I8},  {RST}
 		});
-	}
+	}	
 };
 
 #endif //DMG_CPU

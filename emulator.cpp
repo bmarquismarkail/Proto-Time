@@ -17,7 +17,6 @@
 
 int main(int argc, char** argv)
 {
-
     int a = 2;
     int b = 2;
     BMMQ::derivedMicrocode mc;
@@ -29,6 +28,5 @@ int main(int argc, char** argv)
     BMMQ::executionBlock xb = cpu.decode(opcodeList, bl);
     cpu.execute(xb);
 	//std:: cout << cpu.AF.lo;
-
     return 0;
 }

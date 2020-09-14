@@ -1,8 +1,11 @@
 #ifndef BMMQ_CPU
 #define BMMQ_CPU
 
+#include <string_view>
+
 #include "opcode.hpp"
 #include "inst_cycle.hpp"
+#include "templ/reg_base.hpp"
 
 namespace BMMQ {
 ///////////////////////////////////////////////////////////////////////
@@ -79,31 +82,6 @@ private:
 };
 
 ///////////////////////////////////////////////////////////////////////
-
-
-template<typename T>
-struct _register {
-    virtual T operator()() = 0;
-};
-
-template<typename T>
-struct CPU_Register :  public _register<T> {
-    T value;
-	T operator()(){return value;}
-};
-
-template<typename T>
-struct CPU_RegisterPair :  public _register<T> {
-    union {
-        struct {
-			T lo: sizeof(T) * 4;
-			T hi: sizeof(T) * 4;
-        };
-        T value;
-    };
-	
-	T operator()(){return value;}
-};
 
 template<typename AddressType, typename DataType>
 class CPU {
