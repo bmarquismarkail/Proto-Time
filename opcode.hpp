@@ -55,21 +55,24 @@ class IOpcode {
     std::vector<const std::function<void()> *> microcode;
 
 public:
-	
-	IOpcode() = default;
-	
-	IOpcode(Imicrocode& library, const std::string id){
-		push_microcode(library, id);
-	}
-	
-	IOpcode(const std::function<void()> *func){
-		push_microcode(func);
-	}
-	
-	IOpcode(std::initializer_list<const std::function<void()> *> list)
-		: microcode(list) {
-		}
-	
+
+    IOpcode() = default;
+
+    IOpcode(Imicrocode& library, const std::string id)
+    {
+        push_microcode(library, id);
+    }
+
+    IOpcode(const std::function<void()> *func)
+    {
+        push_microcode(func);
+    }
+
+    IOpcode(std::initializer_list<const std::function<void()> *> list)
+        : microcode(list)
+    {
+    }
+
     void push_microcode(const std::function<void()> *func)
     {
         microcode.push_back(func);
