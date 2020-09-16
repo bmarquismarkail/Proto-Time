@@ -24,8 +24,9 @@ public:
 	std::vector<std::pair< std::string, CPU_Register<uint16_t>* >>& operator()(){return file;}
 	std::pair< std::string, CPU_Register<uint16_t>*> *findRegister(std::string_view id){
 		for (auto& i : file)
-			if (id.compare(i.first) )
+			if (id.compare(i.first) == 0)
 				return &i;
+		return nullptr;
 	}
 	void addRegister(const std::string id, bool isPair){
 		if (!isPair)
@@ -50,9 +51,9 @@ public:
 		info = file.findRegister(id);
 	}
 	void registration(RegisterFile<uint16_t> &file, std::string_view id){
-		for (auto i : file()) {
-			if (i.first.compare(id))
-				info->second = i.second;
+		for (auto &i : file()) {
+			if (i.first.compare(id) == 0)
+				info = &i;
 		}
 	}
 	
@@ -60,6 +61,9 @@ public:
 		return info->second;
 	}
 	
+	CPU_Register<uint16_t> *operator->(){
+		return info->second;
+	}
 };
 
 #endif //_TEMP_UINT16

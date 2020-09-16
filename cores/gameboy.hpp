@@ -9,6 +9,7 @@
 #include "../cpu.hpp"
 #include "../common_microcode.hpp"
 #include "../templ/reg_uint16.hpp"
+#include "../memory_pool.hpp"
 
 using AddressType = uint16_t;
 using DataType = uint8_t;
@@ -97,13 +98,13 @@ public:
 		
 		switch (regInd){
 			case 0:
-				return &BC()->value;
+				return &BC->value;
 			case 1:
-				return &DE()->value;
+				return &DE->value;
 			case 2:
-				return &HL()->value;
+				return &HL->value;
 			case 3:
-				return &SP()->value;
+				return &SP->value;
 			default:
 				throw new std::invalid_argument("error in decoding register. invalid argument");
 		}
@@ -116,12 +117,12 @@ public:
 	AddressType* ld_r16_8_GetRegister(DataType opcode) {
 		switch (opcode & 0x30 >> 4) {
 			case 0:
-				return &BC()->value;
+				return &BC->value;
 			case 1:
-				return &DE()->value;
+				return &DE->value;
 			case 2:
 			case 3:
-				return &HL()->value;
+				return &HL->value;
 			default:
 				throw new std::invalid_argument("error in decoding register. invalid argument");
 		}
@@ -162,7 +163,7 @@ public:
 			case 5:
 				return &((LR3592_RegisterPair*)HL())->lo;
 			case 6:
-				return mem.getPos((std::size_t)HL()->value);
+				return mem.getPos((std::size_t)HL->value);
 			case 7:
 				std::cout << "A\n";
 				return &((LR3592_RegisterPair*)AF())->hi;
@@ -247,7 +248,7 @@ public:
 			case 5:
 				return &((LR3592_RegisterPair*)HL())->lo;
 			case 6:
-				return mem.getPos((std::size_t)HL()->value);
+				return mem.getPos((std::size_t)HL->value);
 			case 7:
 				return &((LR3592_RegisterPair*)AF())->hi;	
 			default:
@@ -332,8 +333,8 @@ public:
 	}
 	
 	void ret() {
-		PC()->value = mem.read(SP()->value);
-		SP()->value += 2;	
+		PC->value = mem.read(SP->value);
+		SP->value += 2;	
 	}
 	
 	void ret_cc(DataType opcode){
@@ -346,13 +347,13 @@ public:
 		
 		switch (regCode) {
 			case 0:
-				return &BC()->value;
+				return &BC->value;
 			case 1:
-				return &DE()->value;
+				return &DE->value;
 			case 2:
-				return &HL()->value;
+				return &HL->value;
 			case 3:
-				return &AF()->value;
+				return &AF->value;
 			default:
 				throw new std::invalid_argument("error in decoding register. invalid argument");
 		}
@@ -360,20 +361,20 @@ public:
 	
 	void pop(DataType opcode) {
 		AddressType *reg = push_pop_GetRegister(opcode);
-		*reg = mem.read(SP()->value);
-		SP()->value += 2;
+		*reg = mem.read(SP->value);
+		SP->value += 2;
 	}
 	
 	void push(DataType opcode) {
 		AddressType *reg = push_pop_GetRegister(opcode);
-		*mem.getPos(SP()->value) = *reg;
-		SP()->value += 2;
+		*mem.getPos(SP->value) = *reg;
+		SP->value += 2;
 	}	
 	
 	void call() {
-		*mem.getPos(SP()->value) = PC()->value;
-		BMMQ::CML::jr( &PC()->value, mdr.value, true );
-		SP()->value -=2;
+		*mem.getPos(SP->value) = PC->value;
+		BMMQ::CML::jr( &PC->value, mdr.value, true );
+		SP->value -=2;
 	}
 	
 	void call_cc(DataType opcode) {
@@ -384,8 +385,8 @@ public:
 	
 	void rst(DataType opcode) {
 		DataType rstPos = (opcode & 0x38);
-		*mem.getPos(SP()->value) = PC()->value;
-		BMMQ::CML::jr( &PC()->value, rstPos, true );
+		*mem.getPos(SP->value) = PC->value;
+		BMMQ::CML::jr( &PC->value, rstPos, true );
 	}
 	
 	void ldh(DataType opcode) {
@@ -440,12 +441,12 @@ public:
 		
 		switch (srcSet){
 			case 0:
-				dest = &HL()->value;
-				src = &SP()->value;
+				dest = &HL->value;
+				src = &SP->value;
 				*src += mdr.lo;
 			case 1:
-				dest = &SP()->value;
-				src = &HL()->value;
+				dest = &SP->value;
+				src = &HL->value;
 		}
 		
 		BMMQ::CML::loadtmp(dest, src);
@@ -567,11 +568,11 @@ public:
 	void stop() {stopFlag = true;}
 	
 	void populateOpcodes() {
-		microcodeList.registerMicrocode("jp_i16", [this]() {BMMQ::CML::jp( (&this->PC()->value), this->mdr.value, true ); } );
-		microcodeList.registerMicrocode("jpcc_i16", [this]() {BMMQ::CML::jp( (&this->PC()->value), this->mdr.value, checkJumpCond(cip) ); } );	
-		microcodeList.registerMicrocode("jr_i8", [this]() {BMMQ::CML::jr( (&this->PC()->value), this->mdr.value, true ); } );
-		microcodeList.registerMicrocode("jrcc_i8", [this]() {BMMQ::CML::jr( (&this->PC()->value), this->mdr.value, checkJumpCond(cip) ); } );		
-		microcodeList.registerMicrocode("ld_ir16_SP", [this](){BMMQ::CML::loadtmp( (&this->mar.value), this->SP()->value );});
+		microcodeList.registerMicrocode("jp_i16", [this]() {BMMQ::CML::jp( (&this->PC->value), this->mdr.value, true ); } );
+		microcodeList.registerMicrocode("jpcc_i16", [this]() {BMMQ::CML::jp( (&this->PC->value), this->mdr.value, checkJumpCond(cip) ); } );	
+		microcodeList.registerMicrocode("jr_i8", [this]() {BMMQ::CML::jr( (&this->PC->value), this->mdr.value, true ); } );
+		microcodeList.registerMicrocode("jrcc_i8", [this]() {BMMQ::CML::jr( (&this->PC->value), this->mdr.value, checkJumpCond(cip) ); } );		
+		microcodeList.registerMicrocode("ld_ir16_SP", [this](){BMMQ::CML::loadtmp( (&this->mar.value), this->SP->value );});
 		microcodeList.registerMicrocode("ld_r16_i16", [this](){BMMQ::CML::loadtmp( ld_R16_I16_GetRegister(cip), this->mdr.value );});
 		microcodeList.registerMicrocode("ld_r16_8", [this](){auto operands = ld_r16_8_GetOperands(cip);BMMQ::CML::loadtmp( operands.first, operands.second );});
 		microcodeList.registerMicrocode("add_HL_r16", [this](){auto operands = ld_r16_8_GetOperands(cip);BMMQ::CML::add( operands.first, operands.second );});
@@ -595,8 +596,8 @@ public:
 		microcodeList.registerMicrocode("rst", [this](){rst(cip);});
 		microcodeList.registerMicrocode("ldh", [this](){ldh(cip);});
 		microcodeList.registerMicrocode("ld_ir16_r8", [this](){ld_ir16_r8(cip);});
-		microcodeList.registerMicrocode("add_sp_r8", [this](){BMMQ::CML::add(&SP()->value, mdr.value);});
-		microcodeList.registerMicrocode("jp_hl", [this](){BMMQ::CML::loadtmp(&PC()->value, mem.getPos(HL()->value) );});
+		microcodeList.registerMicrocode("add_sp_r8", [this](){BMMQ::CML::add(&SP->value, mdr.value);});
+		microcodeList.registerMicrocode("jp_hl", [this](){BMMQ::CML::loadtmp(&PC->value, mem.getPos(HL->value) );});
 		microcodeList.registerMicrocode("ei_di", [this]() {ei_di(cip); });
 		microcodeList.registerMicrocode("ld_hl_sp", [this](){ld_hl_sp(cip);});
 		microcodeList.registerMicrocode("cb", [this](){cb_execute(mdr.value);} );
