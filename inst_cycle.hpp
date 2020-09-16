@@ -20,7 +20,8 @@ struct fetchBlock {
 template<typename DataType>
 using OpcodeList = std::vector<IOpcode>;
 
-using executionBlock = std::vector<IOpcode>;
+template<typename DataType>
+using executionBlock = std::vector<std::pair<DataType, IOpcode>>;
 }
 
 #endif // INSTRUCTION_CYCLE

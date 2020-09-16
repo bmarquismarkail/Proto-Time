@@ -66,22 +66,22 @@ public:
         return f;
     };
 
-    BMMQ::executionBlock decode(BMMQ::OpcodeList<DataType> &oplist, const BMMQ::fetchBlock<AddressType, DataType>& fetchData)
+    BMMQ::executionBlock<DataType> decode(BMMQ::OpcodeList<DataType> &oplist, const BMMQ::fetchBlock<AddressType, DataType>& fetchData)
     {
         // building a static execution block
-        BMMQ::executionBlock b;
+        BMMQ::executionBlock<DataType> b;
         mdr.value = 255;
         for(auto i : fetchData.blockData) {
             for (auto data : i.data)
-                b.push_back(opcodeList[data]);
+                b.push_back(std::make_pair( (fetchData.baseAddress + i.offset ), opcodeList[data]) );
         }
         return b;
     };
 
-    void execute(const BMMQ::executionBlock& block)
+    void execute(const BMMQ::executionBlock<DataType>& block)
     {
         for (auto e : block) {
-            (e)();
+            (e.second)();
         }
     };
 

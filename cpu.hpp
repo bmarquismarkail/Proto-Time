@@ -14,8 +14,8 @@ template<typename AddressType, typename DataType>
 class CPU {
 public:
     virtual fetchBlock<AddressType, DataType> fetch()=0;
-    virtual executionBlock decode(OpcodeList<DataType> &oplist, const fetchBlock<AddressType, DataType>& fetchData)=0;
-    virtual void execute(const executionBlock& block)=0;
+    virtual executionBlock<DataType> decode(OpcodeList<DataType> &oplist, const fetchBlock<AddressType, DataType>& fetchData)=0;
+    virtual void execute(const executionBlock<DataType>& block)=0;
 };
 }
 
