@@ -76,6 +76,7 @@ public:
     {
         return info->second;
     }
+	
 };
 
 #endif //_TEMP_UINT16

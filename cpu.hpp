@@ -5,6 +5,7 @@
 
 #include "opcode.hpp"
 #include "inst_cycle.hpp"
+#include "inst_cycle.hpp"
 #include "templ/reg_base.hpp"
 
 namespace BMMQ {
@@ -14,8 +15,8 @@ template<typename AddressType, typename DataType>
 class CPU {
 public:
     virtual fetchBlock<AddressType, DataType> fetch()=0;
-    virtual executionBlock<DataType> decode(OpcodeList<DataType> &oplist, const fetchBlock<AddressType, DataType>& fetchData)=0;
-    virtual void execute(const executionBlock<DataType>& block)=0;
+    virtual executionBlock<AddressType, DataType> decode(OpcodeList<AddressType, DataType> &oplist, fetchBlock<AddressType, DataType>& fetchData)=0;
+    virtual void execute(const executionBlock<AddressType, DataType>& block, BMMQ::fetchBlock<AddressType, DataType> &fb)=0;
 };
 }
 

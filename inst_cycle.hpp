@@ -1,7 +1,8 @@
 #ifndef INSTRUCTION_CYCLE
 #define INSTRUCTION_CYCLE
 
-#include "opcode.hpp"
+#include "templ/reg_base.hpp"
+#include "memory_pool.hpp"
 
 namespace BMMQ {
 
@@ -12,16 +13,18 @@ struct fetchBlockData {
 };
 
 template<typename AddressType, typename DataType>
-struct fetchBlock {
+class fetchBlock {
     AddressType baseAddress;
+	memoryStorage<AddressType, DataType> store;
+	RegisterFile<AddressType> baseRegister;
     std::vector<fetchBlockData<AddressType, DataType>> blockData;
+
+public:
+// Public Methods
+	void setbaseAddress(AddressType address){baseAddress = address;}
+	AddressType getbaseAddress() const {return baseAddress;} 
+	std::vector<fetchBlockData<AddressType, DataType>> &getblockData() {return blockData;}
 };
-
-template<typename DataType>
-using OpcodeList = std::vector<IOpcode>;
-
-template<typename DataType>
-using executionBlock = std::vector<std::pair<DataType, IOpcode>>;
 }
 
 #endif // INSTRUCTION_CYCLE

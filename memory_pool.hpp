@@ -78,5 +78,9 @@ private:
     std::vector<std::tuple<AddressType, AddressType, memAccess>> memoryMap;
     std::vector<DataType> mem;
 };
+//////////////////////////////////////////////////////////
+
+template<typename AddressType, typename DataType>
+using memoryStorage =  std::pair<AddressType, DataType*>;
 }
 #endif // __MEMPOOL

@@ -79,6 +79,7 @@ public:
     {
         return info.second;
     }
+	explicit operator CPU_Register<T>*() {return info.second;}
 };
 
 } // BMMQ
