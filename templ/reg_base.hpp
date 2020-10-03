@@ -1,6 +1,8 @@
 #ifndef __REG_BASE
 #define __REG_BASE
 
+#include <string_view>
+
 namespace BMMQ {
 
 template<typename T>
@@ -37,49 +39,73 @@ T hi:
 
 template<typename T>
 class RegisterFile {
-    std::vector< std::pair< std::string, CPU_Register<T> >> file;
+    std::vector< std::pair< std::string, CPU_Register<T>* >> file;
 public:
 
-    std::pair<std::string, CPU_Register<T>> operator()()
+    std::vector<std::pair< std::string, CPU_Register<T>* >>& operator()()
     {
         return file;
     }
-    std::pair< std::string, CPU_Register<T>> &findRegister(std::string_view id)
+
+    bool hasRegister(std::string id)
     {
-        for (auto i : file)
-            if (id.compare(i.first) )
-                return i;
+        for (auto i: file)
+            if ( id.compare(i.first) )
+                return true;
+
+        return false;
+    }
+
+    std::pair< std::string, CPU_Register<T>*> *findRegister(std::string_view id)
+    {
+        for (auto& i : file)
+            if (id.compare(i.first) == 0)
+                return &i;
+        return nullptr;
     }
 
     void addRegister(const std::string id, bool isPair)
     {
         if (!isPair)
-            file.push_back(std::make_pair(id, CPU_Register<T> {}));
+            file.push_back(std::make_pair(id, new CPU_Register<T> {}));
         else
-            file.push_back(std::make_pair(id, CPU_RegisterPair<T> {}));
+            file.push_back(std::make_pair(id, new CPU_RegisterPair<T> {}));
     }
 
 };
 
 template<typename T>
 class RegisterInfo {
-    // NOTE: This struct is designed to short-circuit to the register file
-    // As such, references are not needed.
-    std::pair< std::string, CPU_Register<T>* > info;
+    std::pair< std::string, CPU_Register<T>*> *info;
 public:
+
+    RegisterInfo() :info(new std::pair< std::string, CPU_Register<T>*>("", nullptr)) {};
+
+    RegisterInfo(const std::string &id)
+        :info(new std::pair< std::string, CPU_Register<T>*>(id, nullptr)) {}
+
+    RegisterInfo(RegisterFile<T> &file, const std::string &id)
+    {
+        info = file.findRegister(id);
+    }
     void registration(RegisterFile<T> &file, std::string_view id)
     {
-        for (auto i : file.file) {
-            if (i.first.compare(id))
-                info.second = &i.second;
+        for (auto &i : file()) {
+            if (i.first.compare(id) == 0)
+                info = &i;
         }
     }
 
     CPU_Register<T> *operator()()
     {
-        return info.second;
+        return info->second;
     }
-	explicit operator CPU_Register<T>*() {return info.second;}
+
+    CPU_Register<T> *operator->()
+    {
+        return info->second;
+    }
+
 };
 
 } // BMMQ

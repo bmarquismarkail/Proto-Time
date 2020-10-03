@@ -17,8 +17,8 @@ using LR3592_Register = BMMQ::CPU_Register<AddressType>;
 using LR3592_RegisterPair = BMMQ::CPU_RegisterPair<AddressType>;
 
 class LR3592_DMG : public BMMQ::CPU<AddressType, DataType> {
-    BMMQ::Imicrocode<AddressType, DataType> microcodeList;
-    BMMQ::OpcodeList<AddressType, DataType> opcodeList;
+    BMMQ::Imicrocode microcodeList;
+    BMMQ::OpcodeList opcodeList;
     BMMQ::MemoryPool<AddressType, DataType> mem;
     LR3592_Register mar;
     LR3592_RegisterPair mdr;
@@ -45,11 +45,12 @@ public:
         populateOpcodes();
     }
 
-	BMMQ::RegisterFile<AddressType> buildRegisterfile(){
-		
-		BMMQ::RegisterFile<AddressType> regfile;
-		
-		regfile.addRegister("AF", true);
+    BMMQ::RegisterFile<AddressType> buildRegisterfile()
+    {
+
+        BMMQ::RegisterFile<AddressType> regfile;
+
+        regfile.addRegister("AF", true);
         regfile.addRegister("BC", true);
         regfile.addRegister("DE", true);
         regfile.addRegister("HL", true);
@@ -57,15 +58,16 @@ public:
         regfile.addRegister("PC", false);
         //regfile.addRegister // mar
         //regfile.addRegister // mdr
-		
-		return regfile;
-	}
+
+        return regfile;
+    }
     //
     BMMQ::fetchBlock<AddressType, DataType> fetch()
     {
         // building a static fetchblock for testing
         BMMQ::fetchBlock<AddressType, DataType> f ;
-        f.setbaseAddress(0);
+        f.setbaseAddress(cip);
+        f.setRegisterFile(buildRegisterfile());
 
         BMMQ::fetchBlockData<AddressType, DataType> data {0, std::vector<DataType> {0x3E} };
 
@@ -73,23 +75,23 @@ public:
         return f;
     };
 
-    BMMQ::executionBlock<AddressType, DataType> decode(BMMQ::OpcodeList<AddressType, DataType> &oplist, BMMQ::fetchBlock<AddressType, DataType>& fetchData)
+    BMMQ::executionBlock decode(BMMQ::OpcodeList &oplist, BMMQ::fetchBlock<AddressType, DataType>& fetchData)
     {
         // building a static execution block
-        BMMQ::executionBlock<AddressType, DataType> b;
+        BMMQ::executionBlock b;
         mdr.value = 255;
-		auto &fb = fetchData.getblockData();
+        auto &fb = fetchData.getblockData();
         for( auto& i : fb ) {
             for (auto data : i.data)
-                b.push_back(std::make_pair( (fetchData.getbaseAddress() + i.offset ), opcodeList[data]) );
+                b.push_back(opcodeList[data]);
         }
         return b;
     };
 
-    void execute(const BMMQ::executionBlock<AddressType, DataType>& block, BMMQ::fetchBlock<AddressType, DataType> &fb )
+    void execute(const BMMQ::executionBlock& block, BMMQ::fetchBlock<AddressType, DataType> &fb )
     {
         for (auto e : block) {
-            (e.second)(fb);
+            (e)(fb);
         }
     };
 
@@ -609,115 +611,115 @@ public:
 
     void populateOpcodes()
     {
-        microcodeList.registerMicrocode("jp_i16", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
-            BMMQ::CML::jp( (&this->PC->value), this->mdr.value, true );
+        microcodeList.registerMicrocode("jp_i16", [this]() {
+            BMMQ::CML::jp( &this->PC->value, this->mdr.value, true );
         } );
-        microcodeList.registerMicrocode("jpcc_i16", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("jpcc_i16", [this]() {
             BMMQ::CML::jp( (&this->PC->value), this->mdr.value, checkJumpCond(cip) );
         } );
-        microcodeList.registerMicrocode("jr_i8", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("jr_i8", [this]() {
             BMMQ::CML::jr( (&this->PC->value), this->mdr.value, true );
         } );
-        microcodeList.registerMicrocode("jrcc_i8", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("jrcc_i8", [this]() {
             BMMQ::CML::jr( (&this->PC->value), this->mdr.value, checkJumpCond(cip) );
         } );
-        microcodeList.registerMicrocode("ld_ir16_SP", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("ld_ir16_SP", [this]() {
             BMMQ::CML::loadtmp( (&this->mar.value), this->SP->value );
         });
-        microcodeList.registerMicrocode("ld_r16_i16", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("ld_r16_i16", [this]() {
             BMMQ::CML::loadtmp( ld_R16_I16_GetRegister(cip), this->mdr.value );
         });
-        microcodeList.registerMicrocode("ld_r16_8", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("ld_r16_8", [this]() {
             auto operands = ld_r16_8_GetOperands(cip);
             BMMQ::CML::loadtmp( operands.first, operands.second );
         });
-        microcodeList.registerMicrocode("add_HL_r16", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("add_HL_r16", [this]() {
             auto operands = ld_r16_8_GetOperands(cip);
             BMMQ::CML::add( operands.first, operands.second );
         });
-        microcodeList.registerMicrocode("inc16", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("inc16", [this]() {
             BMMQ::CML::inc(ld_R16_I16_GetRegister(cip));
         });
-        microcodeList.registerMicrocode("dec16", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("dec16", [this]() {
             BMMQ::CML::dec(ld_R16_I16_GetRegister(cip));
         });
-        microcodeList.registerMicrocode("inc8", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("inc8", [this]() {
             BMMQ::CML::inc(ld_r8_i8_GetRegister(cip));
         });
-        microcodeList.registerMicrocode("dec8", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("dec8", [this]() {
             BMMQ::CML::dec(ld_r8_i8_GetRegister(cip));
         });
-        microcodeList.registerMicrocode("ld_r8_i8", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("ld_r8_i8", [this]() {
             BMMQ::CML::loadtmp( ld_r8_i8_GetRegister(cip), mdr.value);
         });
-        microcodeList.registerMicrocode("rotateAccumulator", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("rotateAccumulator", [this]() {
             rotateAccumulator(cip);
         });
-        microcodeList.registerMicrocode("manipulateAccumulator", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("manipulateAccumulator", [this]() {
             manipulateAccumulator(cip);
         });
-        microcodeList.registerMicrocode("manipulateCarry", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("manipulateCarry", [this]() {
             manipulateCarry(cip);
         });
-        microcodeList.registerMicrocode("ld_r8_r8", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("ld_r8_r8", [this]() {
             auto operands = ld_r8_r8_GetOperands(cip);
             BMMQ::CML::loadtmp( operands.first, operands.second );
         });
-        microcodeList.registerMicrocode("math_r8", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("math_r8", [this]() {
             math_r8(cip);
         });
-        microcodeList.registerMicrocode("math_i8", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("math_i8", [this]() {
             math_i8(cip);
         });
-        microcodeList.registerMicrocode("ret_cc", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("ret_cc", [this]() {
             ret_cc(cip);
         });
-        microcodeList.registerMicrocode("ret", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("ret", [this]() {
             ret();
         });
-        microcodeList.registerMicrocode("pop", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("pop", [this]() {
             pop(cip);
         } );
-        microcodeList.registerMicrocode("push", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("push", [this]() {
             push(cip);
         } );
-        microcodeList.registerMicrocode("call", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("call", [this]() {
             call();
         });
-        microcodeList.registerMicrocode("call_cc", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("call_cc", [this]() {
             call_cc(cip);
         });
-        microcodeList.registerMicrocode("rst", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("rst", [this]() {
             rst(cip);
         });
-        microcodeList.registerMicrocode("ldh", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("ldh", [this]() {
             ldh(cip);
         });
-        microcodeList.registerMicrocode("ld_ir16_r8", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("ld_ir16_r8", [this]() {
             ld_ir16_r8(cip);
         });
-        microcodeList.registerMicrocode("add_sp_r8", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("add_sp_r8", [this]() {
             BMMQ::CML::add(&SP->value, mdr.value);
         });
-        microcodeList.registerMicrocode("jp_hl", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("jp_hl", [this]() {
             BMMQ::CML::loadtmp(&PC->value, mem.getPos(HL->value) );
         });
-        microcodeList.registerMicrocode("ei_di", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("ei_di", [this]() {
             ei_di(cip);
         });
-        microcodeList.registerMicrocode("ld_hl_sp", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("ld_hl_sp", [this]() {
             ld_hl_sp(cip);
         });
-        microcodeList.registerMicrocode("cb", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("cb", [this]() {
             cb_execute(mdr.value);
         } );
-        microcodeList.registerMicrocode("nop", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("nop", [this]() {
             nop();
         });
-        microcodeList.registerMicrocode("stop", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("stop", [this]() {
             stop();
         });
-        microcodeList.registerMicrocode("manipulateFlags", [this](BMMQ::fetchBlock<AddressType, DataType> fb) {
+        microcodeList.registerMicrocode("manipulateFlags", [this]() {
             calculateflags(flagset);
         });
 
