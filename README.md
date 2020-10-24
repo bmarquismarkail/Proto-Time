@@ -17,6 +17,7 @@ There are no installation instructions.
 #### fetchBlockData
 ```template<typename AddressType, typename DataType>
 struct fetchBlockData```
+
 #### fetchBlock
 ```template<typename AddressType, typename DataType>
 class fetchBlock```
