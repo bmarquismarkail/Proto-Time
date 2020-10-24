@@ -8,16 +8,16 @@ In this pre-alpha stage, there is no build automation, so to build, either make 
 
 `$ g++ -o ./bin/emulator -std=c++17 emulator.cpp`
 
-##Installation
+## Installation
 
 There are no installation instructions.
 
 ## The API
 ### Structures
 #### fetchBlockData
-``` template<typename AddressType, typename DataType>
-struct fetchBlockData```
+`template<typename AddressType, typename DataType>
+	struct fetchBlockData`
 
 #### fetchBlock
-``` template<typename AddressType, typename DataType>
-class fetchBlock```
+`template<typename AddressType, typename DataType>
+	class fetchBlock`
