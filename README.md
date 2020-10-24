@@ -15,9 +15,9 @@ There are no installation instructions.
 ## The API
 ### Structures
 #### fetchBlockData
-```template<typename AddressType, typename DataType>
+``` template<typename AddressType, typename DataType>
 struct fetchBlockData```
 
 #### fetchBlock
-```template<typename AddressType, typename DataType>
+``` template<typename AddressType, typename DataType>
 class fetchBlock```
