@@ -14,10 +14,17 @@ There are no installation instructions.
 
 ## The API
 ### Structures
-#### fetchBlockData
+#### Fetch/Decode/Execute
+##### fetchBlockData
 `template<typename AddressType, typename DataType>
 	struct fetchBlockData`
 
-#### fetchBlock
+##### fetchBlock
 `template<typename AddressType, typename DataType>
 	class fetchBlock`
+
+##### Imicrocode
+`class Imicrocode`
+
+##### IOpcode
+`class IOpcode`

@@ -40,18 +40,7 @@ public:
 };
 
 std::map<std::string, microcodeFunc > Imicrocode::v;
-// Let's make a class derived from the microcode struct and add a function
-// A common microcode library will be made for convenience,
-// But the implementer will be able to make microcode functions is required or desired.
 
-class derivedMicrocode: public Imicrocode {
-public:
-    template<typename T>
-    void iadd(T a, T b)
-    {
-        std::cout << a+b << '\n';
-    }
-};
 
 // Next, we need a group of microcodes to create an opcode
 class IOpcode {
