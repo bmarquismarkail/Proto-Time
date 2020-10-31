@@ -17,7 +17,6 @@ using LR3592_Register = BMMQ::CPU_Register<AddressType>;
 using LR3592_RegisterPair = BMMQ::CPU_RegisterPair<AddressType>;
 
 class LR3592_DMG : public BMMQ::CPU<AddressType, DataType> {
-    BMMQ::Imicrocode microcodeList;
     BMMQ::OpcodeList opcodeList;
     BMMQ::MemoryPool<AddressType, DataType> mem;
     LR3592_Register mar;
@@ -611,155 +610,82 @@ public:
 
     void populateOpcodes()
     {
-        microcodeList.registerMicrocode("jp_i16", [this]() {
-            BMMQ::CML::jp( &this->PC->value, this->mdr.value, true );
-        } );
-        microcodeList.registerMicrocode("jpcc_i16", [this]() {
-            BMMQ::CML::jp( (&this->PC->value), this->mdr.value, checkJumpCond(cip) );
-        } );
-        microcodeList.registerMicrocode("jr_i8", [this]() {
-            BMMQ::CML::jr( (&this->PC->value), this->mdr.value, true );
-        } );
-        microcodeList.registerMicrocode("jrcc_i8", [this]() {
-            BMMQ::CML::jr( (&this->PC->value), this->mdr.value, checkJumpCond(cip) );
-        } );
-        microcodeList.registerMicrocode("ld_ir16_SP", [this]() {
-            BMMQ::CML::loadtmp( (&this->mar.value), this->SP->value );
-        });
-        microcodeList.registerMicrocode("ld_r16_i16", [this]() {
-            BMMQ::CML::loadtmp( ld_R16_I16_GetRegister(cip), this->mdr.value );
-        });
-        microcodeList.registerMicrocode("ld_r16_8", [this]() {
-            auto operands = ld_r16_8_GetOperands(cip);
-            BMMQ::CML::loadtmp( operands.first, operands.second );
-        });
-        microcodeList.registerMicrocode("add_HL_r16", [this]() {
-            auto operands = ld_r16_8_GetOperands(cip);
-            BMMQ::CML::add( operands.first, operands.second );
-        });
-        microcodeList.registerMicrocode("inc16", [this]() {
-            BMMQ::CML::inc(ld_R16_I16_GetRegister(cip));
-        });
-        microcodeList.registerMicrocode("dec16", [this]() {
-            BMMQ::CML::dec(ld_R16_I16_GetRegister(cip));
-        });
-        microcodeList.registerMicrocode("inc8", [this]() {
-            BMMQ::CML::inc(ld_r8_i8_GetRegister(cip));
-        });
-        microcodeList.registerMicrocode("dec8", [this]() {
-            BMMQ::CML::dec(ld_r8_i8_GetRegister(cip));
-        });
-        microcodeList.registerMicrocode("ld_r8_i8", [this]() {
-            BMMQ::CML::loadtmp( ld_r8_i8_GetRegister(cip), mdr.value);
-        });
-        microcodeList.registerMicrocode("rotateAccumulator", [this]() {
-            rotateAccumulator(cip);
-        });
-        microcodeList.registerMicrocode("manipulateAccumulator", [this]() {
-            manipulateAccumulator(cip);
-        });
-        microcodeList.registerMicrocode("manipulateCarry", [this]() {
-            manipulateCarry(cip);
-        });
-        microcodeList.registerMicrocode("ld_r8_r8", [this]() {
-            auto operands = ld_r8_r8_GetOperands(cip);
-            BMMQ::CML::loadtmp( operands.first, operands.second );
-        });
-        microcodeList.registerMicrocode("math_r8", [this]() {
-            math_r8(cip);
-        });
-        microcodeList.registerMicrocode("math_i8", [this]() {
-            math_i8(cip);
-        });
-        microcodeList.registerMicrocode("ret_cc", [this]() {
-            ret_cc(cip);
-        });
-        microcodeList.registerMicrocode("ret", [this]() {
-            ret();
-        });
-        microcodeList.registerMicrocode("pop", [this]() {
-            pop(cip);
-        } );
-        microcodeList.registerMicrocode("push", [this]() {
-            push(cip);
-        } );
-        microcodeList.registerMicrocode("call", [this]() {
-            call();
-        });
-        microcodeList.registerMicrocode("call_cc", [this]() {
-            call_cc(cip);
-        });
-        microcodeList.registerMicrocode("rst", [this]() {
-            rst(cip);
-        });
-        microcodeList.registerMicrocode("ldh", [this]() {
-            ldh(cip);
-        });
-        microcodeList.registerMicrocode("ld_ir16_r8", [this]() {
-            ld_ir16_r8(cip);
-        });
-        microcodeList.registerMicrocode("add_sp_r8", [this]() {
-            BMMQ::CML::add(&SP->value, mdr.value);
-        });
-        microcodeList.registerMicrocode("jp_hl", [this]() {
-            BMMQ::CML::loadtmp(&PC->value, mem.getPos(HL->value) );
-        });
-        microcodeList.registerMicrocode("ei_di", [this]() {
-            ei_di(cip);
-        });
-        microcodeList.registerMicrocode("ld_hl_sp", [this]() {
-            ld_hl_sp(cip);
-        });
-        microcodeList.registerMicrocode("cb", [this]() {
-            cb_execute(mdr.value);
-        } );
-        microcodeList.registerMicrocode("nop", [this]() {
-            nop();
-        });
-        microcodeList.registerMicrocode("stop", [this]() {
-            stop();
-        });
-        microcodeList.registerMicrocode("manipulateFlags", [this]() {
-            calculateflags(flagset);
-        });
-
-
-        BMMQ::IOpcode NOP {microcodeList.findMicrocode("nop")};																				// 00h
-        BMMQ::IOpcode LD_R16_I16{microcodeList.findMicrocode("ld_r16_i16")};																// 01h, 11h, 21h, 31h
-        BMMQ::IOpcode LD_R16_8{microcodeList.findMicrocode("ld_r16_8")};																	// 02h, 0Ah, 12h, 1Ah, 22h, 2Ah, 32h, 3Ah
-        BMMQ::IOpcode INC16 {microcodeList.findMicrocode("inc16") };																		// 03h, 13h, 23h, 33h
-        BMMQ::IOpcode INC8 {microcodeList.findMicrocode("inc8"), microcodeList.findMicrocode("manipulateFlags")};							// 04h, 0Ch, 14h, 1Ch, 24h, 2Ch, 34h, 3Ch
-        BMMQ::IOpcode DEC8 {microcodeList.findMicrocode("dec8"), microcodeList.findMicrocode("manipulateFlags")};							// 05h, 0Dh, 15h, 1Dh, 25h, 2Dh, 35h, 3Dh
-        BMMQ::IOpcode LD_R8_I8 {microcodeList.findMicrocode("ld_r8_i8")};																	// 06h, 0Eh, 16h, 1Eh, 26h, 2Eh, 36h, 3Eh
-        BMMQ::IOpcode ROTATE_A {microcodeList.findMicrocode("rotateAccumulator"), microcodeList.findMicrocode("manipulateFlags")};			// 07h, 0Fh, 17h, 1Fh
-        BMMQ::IOpcode LD_IR16_SP {microcodeList.findMicrocode("ld_ir16_SP")};																// 08h
-        BMMQ::IOpcode ADD_HL_R16 {microcodeList.findMicrocode("add_HL_r16"), microcodeList.findMicrocode("manipulateFlags")};				// 09h, 19h, 29h, 39h
-        BMMQ::IOpcode DEC16 {microcodeList.findMicrocode("dec16")};																			// 0Bh, 1Bh, 2Bh, 3Bh
-        BMMQ::IOpcode STOP {microcodeList.findMicrocode("stop")};
-        BMMQ::IOpcode JR_I8 {microcodeList.findMicrocode("jr_i8")};																			// 18h
-        BMMQ::IOpcode JR_CC_8 {microcodeList.findMicrocode("jrcc_i8")};																		// 20h, 28h, 30h, 38h
-        BMMQ::IOpcode MANIPULATE_A {microcodeList.findMicrocode("manipulateAccumulator"), microcodeList.findMicrocode("manipulateFlags")};	// 27h, 3Fh
-        BMMQ::IOpcode MANIPULATE_CF {microcodeList.findMicrocode("manipulateCarry")};														// 37h, 3Fh
-        BMMQ::IOpcode LD_R8_R8 {microcodeList.findMicrocode("ld_r8_r8")};																	// 40h - 7Fh
-        BMMQ::IOpcode MATH_R8 {microcodeList.findMicrocode("math_r8"), microcodeList.findMicrocode("manipulateFlags")}; 					// 80h - BFh
-        BMMQ::IOpcode RET_CC {microcodeList.findMicrocode("ret_cc")};																		// C0h, C8h, D0h, D8h
-        BMMQ::IOpcode POP {microcodeList.findMicrocode("pop")};																				// C1h, D1h, E1h, F1h
-        BMMQ::IOpcode JPCC_I16 {microcodeList.findMicrocode("jp_i16")};																		// C2h, CAh, D2h, DAh
-        BMMQ::IOpcode JP_I16 {microcodeList.findMicrocode("jpcc_i16")};																		// C3h
-        BMMQ::IOpcode CALLCC_I16 {microcodeList.findMicrocode("call_cc")};																	// C4h, CCh, D4h, DCh
-        BMMQ::IOpcode PUSH {microcodeList.findMicrocode("push")};																			// C5h, D5h, E5h, F5h
-        BMMQ::IOpcode MATH_I8 {microcodeList.findMicrocode("math_i8"), microcodeList.findMicrocode("manipulateFlags")};						// C6h, CEh, D6h, DEh, E6h, EEh, F6h, FFh
-        BMMQ::IOpcode RST {microcodeList.findMicrocode("rst")};																				// C7h, CFh, D7h, DFh, E7h, EFh, F7h, FFh
-        BMMQ::IOpcode RET {microcodeList.findMicrocode("ret")};																				// C9h, D9h
-        BMMQ::IOpcode CB {microcodeList.findMicrocode("cb")};																				// CBh
-        BMMQ::IOpcode CALL {microcodeList.findMicrocode("call")};																			// CDh
-        BMMQ::IOpcode LDH {microcodeList.findMicrocode("ldh")};																				// E0h, F0h
-        BMMQ::IOpcode LD_IR16_R8 {microcodeList.findMicrocode("ld_ir16_r8")};																// E2h, EAh, F2h, FAh
-        BMMQ::IOpcode EI_DI {microcodeList.findMicrocode("ei_di")};																			// F3h, FBh
-        BMMQ::IOpcode ADD_SP_R8 {microcodeList.findMicrocode("add_sp_r8")};																	// E8h
-        BMMQ::IOpcode JP_HL {microcodeList.findMicrocode("jp_hl")};																			// E9h
-        BMMQ::IOpcode LD_HL_SP {microcodeList.findMicrocode("ld_hl_sp")};																	// F8h
-        opcodeList.assign({
+		std::function<void()> uf_jp_i16 = [this]() { BMMQ::CML::jp( &this->PC->value, this->mdr.value, true );};
+        std::function<void()> uf_jpcc_i16 = [this]() { BMMQ::CML::jp( (&this->PC->value), this->mdr.value, checkJumpCond(cip) );};
+        std::function<void()> uf_jr_i8 = [this]() { BMMQ::CML::jr( (&this->PC->value), this->mdr.value, true );};
+        std::function<void()> uf_jrcc_i8 = [this]() { BMMQ::CML::jr( (&this->PC->value), this->mdr.value, checkJumpCond(cip) );};
+        std::function<void()> uf_ld_ir16_SP = [this]() { BMMQ::CML::loadtmp( (&this->mar.value), this->SP->value );};
+		std::function<void()> uf_ld_r16_i16 = [this]() {BMMQ::CML::loadtmp( ld_R16_I16_GetRegister(cip), this->mdr.value );};
+        std::function<void()> uf_ld_r16_8 = [this]() { auto operands = ld_r16_8_GetOperands(cip); BMMQ::CML::loadtmp( operands.first, operands.second );};
+        std::function<void()> uf_add_HL_r16 = [this]() {auto operands = ld_r16_8_GetOperands(cip);BMMQ::CML::add( operands.first, operands.second );};
+        std::function<void()> uf_inc16 = [this]() { BMMQ::CML::inc(ld_R16_I16_GetRegister(cip));};
+        std::function<void()> uf_dec16 = [this]() { BMMQ::CML::dec(ld_R16_I16_GetRegister(cip));};
+        std::function<void()> uf_inc8 = [this]() { BMMQ::CML::inc(ld_r8_i8_GetRegister(cip));};
+        std::function<void()> uf_dec8 = [this]() { BMMQ::CML::dec(ld_r8_i8_GetRegister(cip));};
+        std::function<void()> uf_ld_r8_i8 = [this]() { BMMQ::CML::loadtmp( ld_r8_i8_GetRegister(cip), mdr.value);};
+        std::function<void()> uf_rotateAccumulator = [this]() { rotateAccumulator(cip);};
+        std::function<void()> uf_manipulateAccumulator = [this]() { manipulateAccumulator(cip);};
+        std::function<void()> uf_manipulateCarry = [this]() { manipulateCarry(cip);};
+        std::function<void()> uf_ld_r8_r8 = [this]() {auto operands = ld_r8_r8_GetOperands(cip); BMMQ::CML::loadtmp( operands.first, operands.second );};
+        std::function<void()> uf_math_r8 = [this]() { math_r8(cip);};
+        std::function<void()> uf_math_i8 = [this]() { math_i8(cip);};
+        std::function<void()> uf_ret_cc = [this]() { ret_cc(cip);};
+        std::function<void()> uf_ret = [this]() { ret();};
+        std::function<void()> uf_pop = [this]() { pop(cip);};
+        std::function<void()> uf_push = [this]() { push(cip);};
+        std::function<void()> uf_call = [this]() { call();};
+        std::function<void()> uf_call_cc = [this]() { call_cc(cip);};
+        std::function<void()> uf_rst = [this]() { rst(cip);};
+        std::function<void()> uf_ldh = [this]() { ldh(cip);};
+        std::function<void()> uf_ld_ir16_r8 = [this]() { ld_ir16_r8(cip);};
+        std::function<void()> uf_add_sp_r8 = [this]() { BMMQ::CML::add(&SP->value, mdr.value);};
+        std::function<void()> uf_jp_hl = [this]() { BMMQ::CML::loadtmp(&PC->value, mem.getPos(HL->value) );};
+        std::function<void()> uf_ei_di = [this]() { ei_di(cip);};
+        std::function<void()> uf_ld_hl_sp = [this]() { ld_hl_sp(cip);};
+        std::function<void()> uf_cb = [this]() { cb_execute(mdr.value);};
+		std::function<void()> uf_nop = [this]() {nop();};
+        std::function<void()> uf_stop = [this]() { stop();};
+        std::function<void()> uf_manipulateFlags = [this]() { calculateflags(flagset);};
+		
+		// Common Microcode
+		BMMQ::Imicrocode *mc_manipulateFlags = new BMMQ::Imicrocode("manipulateFlags", &uf_manipulateFlags);
+		
+        BMMQ::IOpcode NOP {new BMMQ::Imicrocode("nop", &uf_nop)};																											// 00h
+        BMMQ::IOpcode LD_R16_I16{new BMMQ::Imicrocode("ld_r16_i16", &uf_ld_r16_i16)};																						// 01h, 11h, 21h, 31h
+        BMMQ::IOpcode LD_R16_8{new BMMQ::Imicrocode("ld_r16_8", &uf_ld_r16_8)};																								// 02h, 0Ah, 12h, 1Ah, 22h, 2Ah, 32h, 3Ah
+        BMMQ::IOpcode INC16 {new BMMQ::Imicrocode("inc16", &uf_inc16)};																										// 03h, 13h, 23h, 33h
+        BMMQ::IOpcode INC8 {new BMMQ::Imicrocode("inc8", &uf_inc8),  mc_manipulateFlags };																					// 04h, 0Ch, 14h, 1Ch, 24h, 2Ch, 34h, 3Ch
+        BMMQ::IOpcode DEC8 {new BMMQ::Imicrocode("dec8", &uf_dec8), mc_manipulateFlags };																					// 05h, 0Dh, 15h, 1Dh, 25h, 2Dh, 35h, 3Dh
+        BMMQ::IOpcode LD_R8_I8 {new BMMQ::Imicrocode("ld_r8_i8", &uf_ld_r8_i8)};																							// 06h, 0Eh, 16h, 1Eh, 26h, 2Eh, 36h, 3Eh
+        BMMQ::IOpcode ROTATE_A {new BMMQ::Imicrocode("rotateAccumulator", &uf_rotateAccumulator), mc_manipulateFlags};														// 07h, 0Fh, 17h, 1Fh
+        BMMQ::IOpcode LD_IR16_SP {new BMMQ::Imicrocode("ld_ir16_SP", &uf_ld_ir16_SP)};																						// 08h
+        BMMQ::IOpcode ADD_HL_R16 {new BMMQ::Imicrocode("add_HL_r16", &uf_add_HL_r16), mc_manipulateFlags};																	// 09h, 19h, 29h, 39h
+        BMMQ::IOpcode DEC16 {new BMMQ::Imicrocode("dec16", &uf_dec16)};																										// 0Bh, 1Bh, 2Bh, 3Bh
+        BMMQ::IOpcode STOP {new BMMQ::Imicrocode("stop", &uf_stop)};																										// 10h
+        BMMQ::IOpcode JR_I8 {new BMMQ::Imicrocode("jr_i8", &uf_jr_i8)};																										// 18h
+        BMMQ::IOpcode JR_CC_8 {new BMMQ::Imicrocode("jrcc_i8", &uf_jrcc_i8)};																								// 20h, 28h, 30h, 38h
+        BMMQ::IOpcode MANIPULATE_A {new BMMQ::Imicrocode("manipulateAccumulator", &uf_manipulateAccumulator), mc_manipulateFlags};											// 27h, 3Fh
+        BMMQ::IOpcode MANIPULATE_CF {new BMMQ::Imicrocode("manipulateCarry", &uf_manipulateCarry)};																			// 37h, 3Fh
+        BMMQ::IOpcode LD_R8_R8 {new BMMQ::Imicrocode("ld_r8_r8", &uf_ld_r8_r8)};																							// 40h - 7Fh
+        BMMQ::IOpcode MATH_R8 {new BMMQ::Imicrocode("math_r8", &uf_math_r8), mc_manipulateFlags};								 											// 80h - BFh
+        BMMQ::IOpcode RET_CC {new BMMQ::Imicrocode("ret_cc", &uf_ret_cc)};																									// C0h, C8h, D0h, D8h
+        BMMQ::IOpcode POP {new BMMQ::Imicrocode("pop", &uf_pop)};																											// C1h, D1h, E1h, F1h
+        BMMQ::IOpcode JPCC_I16 {new BMMQ::Imicrocode("jpcc_i16", &uf_jpcc_i16)};																								// C2h, CAh, D2h, DAh
+        BMMQ::IOpcode JP_I16 {new BMMQ::Imicrocode("jp_i16", &uf_jp_i16)};																								// C3h
+        BMMQ::IOpcode CALLCC_I16 {new BMMQ::Imicrocode("call_cc", &uf_call_cc)};																							// C4h, CCh, D4h, DCh
+        BMMQ::IOpcode PUSH {new BMMQ::Imicrocode("push", &uf_push)};																										// C5h, D5h, E5h, F5h
+        BMMQ::IOpcode MATH_I8 {new BMMQ::Imicrocode("math_i8", &uf_math_i8), mc_manipulateFlags};																			// C6h, CEh, D6h, DEh, E6h, EEh, F6h, FFh
+        BMMQ::IOpcode RST {new BMMQ::Imicrocode("rst", &uf_rst)};																											// C7h, CFh, D7h, DFh, E7h, EFh, F7h, FFh
+        BMMQ::IOpcode RET {new BMMQ::Imicrocode("ret", &uf_ret)};																											// C9h, D9h
+        BMMQ::IOpcode CB {new BMMQ::Imicrocode("cb", &uf_cb)};																												// CBh
+        BMMQ::IOpcode CALL {new BMMQ::Imicrocode("call", &uf_call)};																										// CDh
+        BMMQ::IOpcode LDH {new BMMQ::Imicrocode("ldh", &uf_ldh)};																											// E0h, F0h
+        BMMQ::IOpcode LD_IR16_R8 {new BMMQ::Imicrocode("ld_ir16_r8", &uf_ld_ir16_r8)};																						// E2h, EAh, F2h, FAh
+        BMMQ::IOpcode EI_DI {new BMMQ::Imicrocode("ei_di", &uf_ei_di)};																										// F3h, FBh
+        BMMQ::IOpcode ADD_SP_R8 {new BMMQ::Imicrocode("add_sp_r8", &uf_add_sp_r8)};																							// E8h
+        BMMQ::IOpcode JP_HL {new BMMQ::Imicrocode("jp_hl", &uf_jp_hl)};																																// E9h
+        BMMQ::IOpcode LD_HL_SP {new BMMQ::Imicrocode("ld_hl_sp", &uf_ld_hl_sp)};																														// F8h
+         opcodeList.assign({
             {NOP},      {LD_R16_I16}, {LD_R16_8},   {INC16},    {INC8},       {DEC8},     {LD_R8_I8}, {ROTATE_A},      {LD_IR16_SP}, {ADD_HL_R16}, {LD_R16_8},   {DEC16},    {INC8},       {DEC8},     {LD_R8_I8}, {ROTATE_A},
             {STOP},     {LD_R16_I16}, {LD_R16_8},   {INC16},    {INC8},       {DEC8},     {LD_R8_I8}, {ROTATE_A},      {JR_I8},      {ADD_HL_R16}, {LD_R16_8},   {DEC16},    {INC8},       {DEC8},     {LD_R8_I8}, {ROTATE_A},
             {JR_CC_8},  {LD_R16_I16}, {LD_R16_8},   {INC16},    {INC8},       {DEC8},     {LD_R8_I8}, {MANIPULATE_A},  {JR_CC_8},    {ADD_HL_R16}, {LD_R16_8},   {DEC16},    {INC8},       {DEC8},     {LD_R8_I8}, {MANIPULATE_A},
@@ -776,7 +702,7 @@ public:
             {RET_CC},   {POP},        {JPCC_I16},   {NOP},      {CALLCC_I16}, {PUSH},     {MATH_I8},  {RST},           {RET_CC},     {RET},        {JPCC_I16},   {NOP},      {CALLCC_I16}, {NOP},      {MATH_I8},  {RST},
             {LDH},      {POP},        {LD_IR16_R8}, {NOP},      {NOP},        {PUSH},     {MATH_I8},  {RST},           {ADD_SP_R8},  {JP_HL},      {LD_IR16_R8}, {NOP},      {NOP},        {NOP},      {MATH_I8},  {RST},
             {LDH},      {POP},        {LD_IR16_R8}, {EI_DI},    {NOP},        {PUSH},     {MATH_I8},  {RST},           {LD_HL_SP},   {LD_HL_SP},   {LD_IR16_R8}, {EI_DI},    {NOP},        {NOP},      {MATH_I8},  {RST}
-        });
+        }); 
     }
 };
 

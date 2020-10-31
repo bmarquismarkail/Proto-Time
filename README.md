@@ -123,6 +123,7 @@ An enumerator that indicates how a certain part of the memory pool can be access
 - 1: Read Access
 - 2: Write Access
 - 3: Read and Write Access
+
 ##### MemoryPool
 `template<typename AddressType, typename DataType> class MemoryPool`
 
@@ -148,6 +149,16 @@ Functions:
 - virtual fetchBlock<AddressType, DataType> fetch()=0  
 Fetches Data and creates a fetchBlock instance.
 - virtual executionBlock decode(OpcodeList &oplist, fetchBlock<AddressType, DataType>& fetchData)=0
-Using an OpcodeList reference *&oplist* and fetchBlock reference *&fetchData*, creates an executionBlock with it
+Using an OpcodeList reference *&oplist* and fetchBlock reference \*&fetchData*, creates an executionBlock with it
 - virtual void execute(const executionBlock& block, fetchBlock<AddressType, DataType> &fb)=0
 Executes all opcodes in reference *&block* using data from *&fb*
+
+---
+
+## Implementing a New Core
+
+To implement a core, you make a class derived from the BMMG::CPU class, and define its fetch, decode, and execute function
+
+Unless needed, the fetch() function usually requires reading from memory, so the MemoryPool class was made to make contiguous memory, and a fetchBlock class to hold raw, undecode data from the memory pool
+
+The decode() function will most likely be the function with the most deviation, because it requires architecture-specific code. However, the end result is the same: a list of \<IOpcode\>s

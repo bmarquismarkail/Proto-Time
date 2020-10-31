@@ -17,9 +17,13 @@ using microcodeFunc = std::function<void()>;
 
 //	First, we need a microcode class. This microcode class will hold simple functions
 class Imicrocode {
-    static std::map< std::string, microcodeFunc  > v;
+    static std::map< std::string, microcodeFunc*  > v;
 public:
-
+	
+	Imicrocode(const std::string id, microcodeFunc *func){
+		registerMicrocode(id, func);
+	}
+	
     //	searches the microcode by its id.
     //	Returns the address of the function target executed, or null if not found.
     //	Return value may be used for caching.
@@ -28,54 +32,52 @@ public:
     {
         const auto i = v.find(id);
         if (i == v.end()) return nullptr;
-        return &i->second;
+        return i->second;
 
     }
 
-    void registerMicrocode(const std::string id, microcodeFunc func)
+    void registerMicrocode(const std::string id, microcodeFunc *func)
     {
         v.insert(std::make_pair (id, func) );
     }
-
+	
+	void operator()() const {
+		for(auto e: v){
+			(*e.second)();
+		}
+	}
 };
 
-std::map<std::string, microcodeFunc > Imicrocode::v;
+std::map<std::string, microcodeFunc* > Imicrocode::v;
 
 
 // Next, we need a group of microcodes to create an opcode
 class IOpcode {
     // list of functions
-    std::vector<const microcodeFunc *> microcode;
+    std::vector<const Imicrocode *> microcode;
 
 public:
 
     IOpcode() = default;
 
-    IOpcode(Imicrocode& library, const std::string id)
-    {
-        push_microcode(library, id);
-    }
-
-    IOpcode(const microcodeFunc  *func)
+    IOpcode(const Imicrocode  *func)
     {
         push_microcode(func);
     }
 
-    IOpcode(std::initializer_list<const microcodeFunc  *> list)
+    IOpcode(const std::string id, microcodeFunc  *func)
+    {
+        push_microcode(new Imicrocode(id, func) );
+    }
+
+    IOpcode(std::initializer_list<const Imicrocode  *> list)
         : microcode(list)
     {
     }
 
-    void push_microcode(const microcodeFunc  *func)
+    void push_microcode(const Imicrocode  *func)
     {
         microcode.push_back(func);
-    }
-
-    void push_microcode(Imicrocode& library, const std::string id)
-    {
-        const microcodeFunc  *func = library.findMicrocode(id);
-        if (func != nullptr)
-            push_microcode(func);
     }
 	
 	template<typename AddressType, typename DataType>
