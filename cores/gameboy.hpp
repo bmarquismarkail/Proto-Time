@@ -9,7 +9,7 @@
 #include "../cpu.hpp"
 #include "../common_microcode.hpp"
 #include "../templ/reg_uint16.hpp"
-#include "../memory_pool.hpp"
+#include "../MemoryPool.hpp"
 
 using AddressType = uint16_t;
 using DataType = uint8_t;
@@ -497,11 +497,11 @@ public:
 
         auto quadrant = opcode >> 6;
 
-        DataType* tempFlag;
+        DataType tempFlag;
         auto &F = ((LR3592_RegisterPair&)AF).lo;
         switch(quadrant) {
         case 1:
-            BMMQ::CML::testbit8(tempFlag, dest, testBit);
+            BMMQ::CML::testbit8(&tempFlag, dest, testBit);
             break;
         case 2:
             BMMQ::CML::resetbit8(dest, testBit);
@@ -561,7 +561,7 @@ public:
             newflags[0] = 0;
             break;
         case 0x40:
-            newflags[0] = (&A == 0);
+            newflags[0] = (A == 0);
             break;
         }
 
@@ -610,46 +610,122 @@ public:
 
     void populateOpcodes()
     {
-		std::function<void()> uf_jp_i16 = [this]() { BMMQ::CML::jp( &this->PC->value, this->mdr.value, true );};
-        std::function<void()> uf_jpcc_i16 = [this]() { BMMQ::CML::jp( (&this->PC->value), this->mdr.value, checkJumpCond(cip) );};
-        std::function<void()> uf_jr_i8 = [this]() { BMMQ::CML::jr( (&this->PC->value), this->mdr.value, true );};
-        std::function<void()> uf_jrcc_i8 = [this]() { BMMQ::CML::jr( (&this->PC->value), this->mdr.value, checkJumpCond(cip) );};
-        std::function<void()> uf_ld_ir16_SP = [this]() { BMMQ::CML::loadtmp( (&this->mar.value), this->SP->value );};
-		std::function<void()> uf_ld_r16_i16 = [this]() {BMMQ::CML::loadtmp( ld_R16_I16_GetRegister(cip), this->mdr.value );};
-        std::function<void()> uf_ld_r16_8 = [this]() { auto operands = ld_r16_8_GetOperands(cip); BMMQ::CML::loadtmp( operands.first, operands.second );};
-        std::function<void()> uf_add_HL_r16 = [this]() {auto operands = ld_r16_8_GetOperands(cip);BMMQ::CML::add( operands.first, operands.second );};
-        std::function<void()> uf_inc16 = [this]() { BMMQ::CML::inc(ld_R16_I16_GetRegister(cip));};
-        std::function<void()> uf_dec16 = [this]() { BMMQ::CML::dec(ld_R16_I16_GetRegister(cip));};
-        std::function<void()> uf_inc8 = [this]() { BMMQ::CML::inc(ld_r8_i8_GetRegister(cip));};
-        std::function<void()> uf_dec8 = [this]() { BMMQ::CML::dec(ld_r8_i8_GetRegister(cip));};
-        std::function<void()> uf_ld_r8_i8 = [this]() { BMMQ::CML::loadtmp( ld_r8_i8_GetRegister(cip), mdr.value);};
-        std::function<void()> uf_rotateAccumulator = [this]() { rotateAccumulator(cip);};
-        std::function<void()> uf_manipulateAccumulator = [this]() { manipulateAccumulator(cip);};
-        std::function<void()> uf_manipulateCarry = [this]() { manipulateCarry(cip);};
-        std::function<void()> uf_ld_r8_r8 = [this]() {auto operands = ld_r8_r8_GetOperands(cip); BMMQ::CML::loadtmp( operands.first, operands.second );};
-        std::function<void()> uf_math_r8 = [this]() { math_r8(cip);};
-        std::function<void()> uf_math_i8 = [this]() { math_i8(cip);};
-        std::function<void()> uf_ret_cc = [this]() { ret_cc(cip);};
-        std::function<void()> uf_ret = [this]() { ret();};
-        std::function<void()> uf_pop = [this]() { pop(cip);};
-        std::function<void()> uf_push = [this]() { push(cip);};
-        std::function<void()> uf_call = [this]() { call();};
-        std::function<void()> uf_call_cc = [this]() { call_cc(cip);};
-        std::function<void()> uf_rst = [this]() { rst(cip);};
-        std::function<void()> uf_ldh = [this]() { ldh(cip);};
-        std::function<void()> uf_ld_ir16_r8 = [this]() { ld_ir16_r8(cip);};
-        std::function<void()> uf_add_sp_r8 = [this]() { BMMQ::CML::add(&SP->value, mdr.value);};
-        std::function<void()> uf_jp_hl = [this]() { BMMQ::CML::loadtmp(&PC->value, mem.getPos(HL->value) );};
-        std::function<void()> uf_ei_di = [this]() { ei_di(cip);};
-        std::function<void()> uf_ld_hl_sp = [this]() { ld_hl_sp(cip);};
-        std::function<void()> uf_cb = [this]() { cb_execute(mdr.value);};
-		std::function<void()> uf_nop = [this]() {nop();};
-        std::function<void()> uf_stop = [this]() { stop();};
-        std::function<void()> uf_manipulateFlags = [this]() { calculateflags(flagset);};
-		
-		// Common Microcode
-		BMMQ::Imicrocode *mc_manipulateFlags = new BMMQ::Imicrocode("manipulateFlags", &uf_manipulateFlags);
-		
+        std::function<void()> uf_jp_i16 = [this]() {
+            BMMQ::CML::jp( &this->PC->value, this->mdr.value, true );
+        };
+        std::function<void()> uf_jpcc_i16 = [this]() {
+            BMMQ::CML::jp( (&this->PC->value), this->mdr.value, checkJumpCond(cip) );
+        };
+        std::function<void()> uf_jr_i8 = [this]() {
+            BMMQ::CML::jr( (&this->PC->value), this->mdr.value, true );
+        };
+        std::function<void()> uf_jrcc_i8 = [this]() {
+            BMMQ::CML::jr( (&this->PC->value), this->mdr.value, checkJumpCond(cip) );
+        };
+        std::function<void()> uf_ld_ir16_SP = [this]() {
+            BMMQ::CML::loadtmp( (&this->mar.value), this->SP->value );
+        };
+        std::function<void()> uf_ld_r16_i16 = [this]() {
+            BMMQ::CML::loadtmp( ld_R16_I16_GetRegister(cip), this->mdr.value );
+        };
+        std::function<void()> uf_ld_r16_8 = [this]() {
+            auto operands = ld_r16_8_GetOperands(cip);
+            BMMQ::CML::loadtmp( operands.first, operands.second );
+        };
+        std::function<void()> uf_add_HL_r16 = [this]() {
+            auto operands = ld_r16_8_GetOperands(cip);
+            BMMQ::CML::add( operands.first, operands.second );
+        };
+        std::function<void()> uf_inc16 = [this]() {
+            BMMQ::CML::inc(ld_R16_I16_GetRegister(cip));
+        };
+        std::function<void()> uf_dec16 = [this]() {
+            BMMQ::CML::dec(ld_R16_I16_GetRegister(cip));
+        };
+        std::function<void()> uf_inc8 = [this]() {
+            BMMQ::CML::inc(ld_r8_i8_GetRegister(cip));
+        };
+        std::function<void()> uf_dec8 = [this]() {
+            BMMQ::CML::dec(ld_r8_i8_GetRegister(cip));
+        };
+        std::function<void()> uf_ld_r8_i8 = [this]() {
+            BMMQ::CML::loadtmp( ld_r8_i8_GetRegister(cip), mdr.value);
+        };
+        std::function<void()> uf_rotateAccumulator = [this]() {
+            rotateAccumulator(cip);
+        };
+        std::function<void()> uf_manipulateAccumulator = [this]() {
+            manipulateAccumulator(cip);
+        };
+        std::function<void()> uf_manipulateCarry = [this]() {
+            manipulateCarry(cip);
+        };
+        std::function<void()> uf_ld_r8_r8 = [this]() {
+            auto operands = ld_r8_r8_GetOperands(cip);
+            BMMQ::CML::loadtmp( operands.first, operands.second );
+        };
+        std::function<void()> uf_math_r8 = [this]() {
+            math_r8(cip);
+        };
+        std::function<void()> uf_math_i8 = [this]() {
+            math_i8(cip);
+        };
+        std::function<void()> uf_ret_cc = [this]() {
+            ret_cc(cip);
+        };
+        std::function<void()> uf_ret = [this]() {
+            ret();
+        };
+        std::function<void()> uf_pop = [this]() {
+            pop(cip);
+        };
+        std::function<void()> uf_push = [this]() {
+            push(cip);
+        };
+        std::function<void()> uf_call = [this]() {
+            call();
+        };
+        std::function<void()> uf_call_cc = [this]() {
+            call_cc(cip);
+        };
+        std::function<void()> uf_rst = [this]() {
+            rst(cip);
+        };
+        std::function<void()> uf_ldh = [this]() {
+            ldh(cip);
+        };
+        std::function<void()> uf_ld_ir16_r8 = [this]() {
+            ld_ir16_r8(cip);
+        };
+        std::function<void()> uf_add_sp_r8 = [this]() {
+            BMMQ::CML::add(&SP->value, mdr.value);
+        };
+        std::function<void()> uf_jp_hl = [this]() {
+            BMMQ::CML::loadtmp(&PC->value, mem.getPos(HL->value) );
+        };
+        std::function<void()> uf_ei_di = [this]() {
+            ei_di(cip);
+        };
+        std::function<void()> uf_ld_hl_sp = [this]() {
+            ld_hl_sp(cip);
+        };
+        std::function<void()> uf_cb = [this]() {
+            cb_execute(mdr.value);
+        };
+        std::function<void()> uf_nop = [this]() {
+            nop();
+        };
+        std::function<void()> uf_stop = [this]() {
+            stop();
+        };
+        std::function<void()> uf_manipulateFlags = [this]() {
+            calculateflags(flagset);
+        };
+
+        // Common Microcode
+        BMMQ::Imicrocode *mc_manipulateFlags = new BMMQ::Imicrocode("manipulateFlags", &uf_manipulateFlags);
+
+        // Opcodes
         BMMQ::IOpcode NOP {new BMMQ::Imicrocode("nop", &uf_nop)};																											// 00h
         BMMQ::IOpcode LD_R16_I16{new BMMQ::Imicrocode("ld_r16_i16", &uf_ld_r16_i16)};																						// 01h, 11h, 21h, 31h
         BMMQ::IOpcode LD_R16_8{new BMMQ::Imicrocode("ld_r16_8", &uf_ld_r16_8)};																								// 02h, 0Ah, 12h, 1Ah, 22h, 2Ah, 32h, 3Ah
@@ -685,7 +761,9 @@ public:
         BMMQ::IOpcode ADD_SP_R8 {new BMMQ::Imicrocode("add_sp_r8", &uf_add_sp_r8)};																							// E8h
         BMMQ::IOpcode JP_HL {new BMMQ::Imicrocode("jp_hl", &uf_jp_hl)};																																// E9h
         BMMQ::IOpcode LD_HL_SP {new BMMQ::Imicrocode("ld_hl_sp", &uf_ld_hl_sp)};																														// F8h
-         opcodeList.assign({
+
+        // now populate the list
+        opcodeList.assign({
             {NOP},      {LD_R16_I16}, {LD_R16_8},   {INC16},    {INC8},       {DEC8},     {LD_R8_I8}, {ROTATE_A},      {LD_IR16_SP}, {ADD_HL_R16}, {LD_R16_8},   {DEC16},    {INC8},       {DEC8},     {LD_R8_I8}, {ROTATE_A},
             {STOP},     {LD_R16_I16}, {LD_R16_8},   {INC16},    {INC8},       {DEC8},     {LD_R8_I8}, {ROTATE_A},      {JR_I8},      {ADD_HL_R16}, {LD_R16_8},   {DEC16},    {INC8},       {DEC8},     {LD_R8_I8}, {ROTATE_A},
             {JR_CC_8},  {LD_R16_I16}, {LD_R16_8},   {INC16},    {INC8},       {DEC8},     {LD_R8_I8}, {MANIPULATE_A},  {JR_CC_8},    {ADD_HL_R16}, {LD_R16_8},   {DEC16},    {INC8},       {DEC8},     {LD_R8_I8}, {MANIPULATE_A},
@@ -702,7 +780,7 @@ public:
             {RET_CC},   {POP},        {JPCC_I16},   {NOP},      {CALLCC_I16}, {PUSH},     {MATH_I8},  {RST},           {RET_CC},     {RET},        {JPCC_I16},   {NOP},      {CALLCC_I16}, {NOP},      {MATH_I8},  {RST},
             {LDH},      {POP},        {LD_IR16_R8}, {NOP},      {NOP},        {PUSH},     {MATH_I8},  {RST},           {ADD_SP_R8},  {JP_HL},      {LD_IR16_R8}, {NOP},      {NOP},        {NOP},      {MATH_I8},  {RST},
             {LDH},      {POP},        {LD_IR16_R8}, {EI_DI},    {NOP},        {PUSH},     {MATH_I8},  {RST},           {LD_HL_SP},   {LD_HL_SP},   {LD_IR16_R8}, {EI_DI},    {NOP},        {NOP},      {MATH_I8},  {RST}
-        }); 
+        });
     }
 };
 

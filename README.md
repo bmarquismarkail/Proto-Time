@@ -59,7 +59,7 @@ sets *baseRegister* into value *rf*
 returns the register identified with string id with value at offset on either file, baseRegister or mainFile, if neither has it
 ---
 ##### microcodefunc
-`using microcodeFunc = std::function<void()>`<br>
+`using microcodeFunc = std::function<void()>`  
 a microcode function.
 
 ##### Imicrocode
@@ -136,7 +136,7 @@ A vector of 3-member tuples:
   - The Absolute End of the Map, represented by an AddressType  
   - And Read/Write Access, represented by an memAccess emumeration  
 - std::vector<DataType> mem  
-The Raw memory array of *DataType\**'s
+The Raw memory array of *DataType\**s
 
 ---
 
@@ -161,4 +161,4 @@ To implement a core, you make a class derived from the BMMG::CPU class, and defi
 
 Unless needed, the fetch() function usually requires reading from memory, so the MemoryPool class was made to make contiguous memory, and a fetchBlock class to hold raw, undecode data from the memory pool
 
-The decode() function will most likely be the function with the most deviation, because it requires architecture-specific code. However, the end result is the same: a list of \<IOpcode\>s
+The decode() function will most likely be the function with the most deviation, because it requires architecture-specific code. However, the end result is the same: a list of *IOpcode*s 

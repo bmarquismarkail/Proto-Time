@@ -97,5 +97,7 @@ int main(int argc, char** argv)
         failed = failure("RegisterInfo SP does not reflect register in file. Failure.");
     }
 
-    return 0;
+    if (!failed)
+        std::cout<< "Success!!\n";
+    return failed;
 }

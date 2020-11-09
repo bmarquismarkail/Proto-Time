@@ -1,8 +1,11 @@
 #ifndef INSTRUCTION_CYCLE
 #define INSTRUCTION_CYCLE
 
+#include <vector>
+#include <string>
+
 #include "templ/reg_base.hpp"
-#include "memory_pool.hpp"
+#include "MemoryPool.hpp"
 
 namespace BMMQ {
 
@@ -20,30 +23,13 @@ class fetchBlock {
     std::vector<fetchBlockData<AddressType, DataType>> blockData;
 
 public:
-// Public Methods
-    void setbaseAddress(AddressType address)
-    {
-        baseAddress = address;
-    }
-    AddressType getbaseAddress() const
-    {
-        return baseAddress;
-    }
-    std::vector<fetchBlockData<AddressType, DataType>> &getblockData()
-    {
-        return blockData;
-    }
-    void setRegisterFile(RegisterFile<AddressType> rf)
-    {
-        baseRegister = rf;
-    }
-    CPU_Register<AddressType> *getRegisterAt(const std::string id, AddressType offset, RegisterFile<AddressType> mainFile )
-    {
-        if (file.hasRegister(id) )
-            return file.findRegister(id)->second;
-        else return mainFile.findRegister(id)->second;
-    }
+    void setbaseAddress(AddressType address);
+    AddressType getbaseAddress() const;
+    std::vector<fetchBlockData<AddressType, DataType>> &getblockData();
+    void setRegisterFile(RegisterFile<AddressType> rf);
+    CPU_Register<AddressType> *getRegisterAt(const std::string id, AddressType offset, RegisterFile<AddressType> mainFile );
 };
 }
 
+#include "inst_cycle.impl.hpp"
 #endif // INSTRUCTION_CYCLE
