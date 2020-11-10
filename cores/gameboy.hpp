@@ -82,14 +82,14 @@ public:
         auto &fb = fetchData.getblockData();
         for( auto& i : fb ) {
             for (auto data : i.data)
-                b.push_back(opcodeList[data]);
+                b.getBlock().push_back(opcodeList[data]);
         }
         return b;
     };
 
     void execute(const BMMQ::executionBlock& block, BMMQ::fetchBlock<AddressType, DataType> &fb )
     {
-        for (auto e : block) {
+        for (auto e : block.getBlock() ) {
             (e)(fb);
         }
     };

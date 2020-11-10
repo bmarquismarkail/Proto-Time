@@ -38,11 +38,24 @@ public:
     template<typename AddressType, typename DataType>
     void operator()(fetchBlock<AddressType, DataType> &fb);
 };
+
+// This is where we will hold blocks of execution
+class executionBlock {
+	public:
+		std::vector<IOpcode> &getBlock();
+		const std::vector<IOpcode> &getBlock() const;
+	private:
+		std::vector<IOpcode> code;
+};
+	
 ///////////////
+// This will hold the entire instruction set.
+// Not to be confused with executionBlock, 
+// which will only hold snippets of instructions mostly made in this list
 using OpcodeList = std::vector<IOpcode>;
-using executionBlock = std::vector<IOpcode>;
 ///////////////
 }
 
 #include "templ/IOpcode.impl.hpp"
+#include "templ/executionBlock.impl.hpp"
 #endif //OPCODE_TYPES
