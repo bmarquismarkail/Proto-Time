@@ -6,7 +6,7 @@
 
 #include "../opcode.hpp"
 #include "../inst_cycle.hpp"
-#include "../cpu.hpp"
+#include "../CPU.hpp"
 #include "../common_microcode.hpp"
 #include "../templ/reg_uint16.hpp"
 #include "../MemoryPool.hpp"
