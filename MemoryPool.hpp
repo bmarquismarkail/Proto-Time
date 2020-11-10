@@ -32,5 +32,5 @@ template<typename AddressType, typename DataType>
 using memoryStorage =  std::pair<AddressType, DataType*>;
 }
 
-#include "MemoryPool.impl.hpp"
+#include "templ/MemoryPool.impl.hpp"
 #endif // __MEMPOOL

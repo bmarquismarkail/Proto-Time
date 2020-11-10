@@ -31,5 +31,5 @@ public:
 };
 }
 
-#include "inst_cycle.impl.hpp"
+#include "templ/inst_cycle.impl.hpp"
 #endif // INSTRUCTION_CYCLE
