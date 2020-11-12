@@ -5,8 +5,10 @@
 
 #include "gameboy.hpp"
 
+//	bool LR3592_DMG::checkJumpCond(executionBlock& block, DataType opcode)
 	bool LR3592_DMG::checkJumpCond(DataType opcode)
     {
+//		auto &A = (LR3592_RegisterPair&)block.emplace(AF);
         auto &A = (LR3592_RegisterPair&)AF;
         bool checkFlag = (opcode & 0x10) == 0x10 ? ((A.lo & 0x80) >> 7) : ((A.lo & 0x10) >> 4);
         bool checkSet = opcode & 0x8;

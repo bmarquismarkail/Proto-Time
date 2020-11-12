@@ -8,6 +8,7 @@
 #include <initializer_list>
 
 #include "inst_cycle.hpp"
+#include "templ/reg_base.hpp"
 
 namespace BMMQ {
 
@@ -40,12 +41,16 @@ public:
 };
 
 // This is where we will hold blocks of execution
+template<typename regType>
 class executionBlock {
 	public:
 		std::vector<IOpcode> &getBlock();
 		const std::vector<IOpcode> &getBlock() const;
+		
+		CPU_Register<regType> emplaceRegister(std::string, bool );
 	private:
 		std::vector<IOpcode> code;
+		RegisterFile<regType> file;
 };
 	
 ///////////////

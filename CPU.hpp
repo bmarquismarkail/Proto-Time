@@ -15,8 +15,8 @@ template<typename AddressType, typename DataType>
 class CPU {
 public:
     virtual fetchBlock<AddressType, DataType> fetch()=0;
-    virtual executionBlock decode(OpcodeList &oplist, fetchBlock<AddressType, DataType>& fetchData)=0;
-    virtual void execute(const executionBlock& block, BMMQ::fetchBlock<AddressType, DataType> &fb)=0;
+    virtual executionBlock<AddressType> decode(OpcodeList &oplist, fetchBlock<AddressType, DataType>& fetchData)=0;
+    virtual void execute(const executionBlock<AddressType>& block, BMMQ::fetchBlock<AddressType, DataType> &fb)=0;
 };
 }
 

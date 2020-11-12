@@ -65,7 +65,7 @@ public:
     LR3592_DMG();
     BMMQ::RegisterFile<AddressType> buildRegisterfile();
     BMMQ::fetchBlock<AddressType, DataType> fetch();
-    BMMQ::executionBlock decode(BMMQ::OpcodeList &oplist, BMMQ::fetchBlock<AddressType, DataType>& fetchData);
-    void execute(const BMMQ::executionBlock& block, BMMQ::fetchBlock<AddressType, DataType> &fb );
+    BMMQ::executionBlock<AddressType> decode(BMMQ::OpcodeList &oplist, BMMQ::fetchBlock<AddressType, DataType>& fetchData);
+    void execute(const BMMQ::executionBlock<AddressType>& block, BMMQ::fetchBlock<AddressType, DataType> &fb );
 };
 #endif //DMG_CPU

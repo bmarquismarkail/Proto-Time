@@ -48,10 +48,10 @@ using LR3592_RegisterPair = BMMQ::CPU_RegisterPair<AddressType>;
         return f;
     };
 
-    BMMQ::executionBlock LR3592_DMG::decode(BMMQ::OpcodeList &oplist, BMMQ::fetchBlock<AddressType, DataType>& fetchData)
+    BMMQ::executionBlock<AddressType> LR3592_DMG::decode(BMMQ::OpcodeList &oplist, BMMQ::fetchBlock<AddressType, DataType>& fetchData)
     {
         // building a static execution block
-        BMMQ::executionBlock b;
+        BMMQ::executionBlock<AddressType> b;
         mdr.value = 255;
         auto &fb = fetchData.getblockData();
         for( auto& i : fb ) {
@@ -61,7 +61,7 @@ using LR3592_RegisterPair = BMMQ::CPU_RegisterPair<AddressType>;
         return b;
     };
 
-    void LR3592_DMG::execute(const BMMQ::executionBlock& block, BMMQ::fetchBlock<AddressType, DataType> &fb )
+    void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType>& block, BMMQ::fetchBlock<AddressType, DataType> &fb )
     {
         for (auto e : block.getBlock() ) {
             (e)(fb);

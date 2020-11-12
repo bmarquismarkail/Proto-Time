@@ -29,7 +29,7 @@ template<typename T>
     }
 
 template<typename T>
-std::pair< std::string, CPU_Register<T>*>* RegisterFile<T>::findRegister(std::string_view id)
+std::pair< std::string, CPU_Register<T>*> *RegisterFile<T>::findRegister(std::string_view id)
 {
 	for (auto& i : file)
 		if (id.compare(i.first) == 0)
@@ -37,12 +37,14 @@ std::pair< std::string, CPU_Register<T>*>* RegisterFile<T>::findRegister(std::st
 	return nullptr;
 }
 template<typename T>
-void RegisterFile<T>::addRegister(const std::string id, bool isPair)
+std::pair< std::string, CPU_Register<T>*>* RegisterFile<T>::addRegister(const std::string id, bool isPair)
 {
 	if (!isPair)
 		file.push_back(std::make_pair(id, new CPU_Register<T> {}));
 	else
 		file.push_back(std::make_pair(id, new CPU_RegisterPair<T> {}));
+	
+	return &file.back();
 }
 
 template<typename T>
@@ -78,4 +80,8 @@ CPU_Register<T>* RegisterInfo<T>::operator->()
 	return info->second;
 }
 
+template<typename T>
+std::string_view RegisterInfo<T>::getRegisterID(){
+	return info->first;
+}
 } // BMMQ
