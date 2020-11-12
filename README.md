@@ -42,12 +42,6 @@ An entire fetchblock.
 Members:
 - baseAddress:  
 The starting address of the fetchBlock
-- store:  
-A struct holding changes in memory while executing data in the block
-- baseRegister:  
-The initial register state
-- file:  
-The current register state of the block, which starts with the same values as baseRegister
 - blockData:  
 A dynamic array of fetchBlockData types
 
@@ -58,10 +52,6 @@ Sets the base address of the *fetchBlock*
 Gets the base address of the *fetchBlock*
 - std::vector<fetchBlockData<AddressType, DataType>> &getblockData()  
 returns a reference of *blockData*
-- void setRegisterFile(RegisterFile<AddressType> rf)  
-sets *baseRegister* into value *rf*
-- CPU_Register<AddressType> \*getRegisterAt(const std::string id, AddressType offset, RegisterFile<AddressType> mainFile )  
-returns the register identified with string id with value at offset on either file, baseRegister or mainFile, if neither has it
 ---
 ##### microcodefunc
 `using microcodeFunc = std::function<void()>`  
