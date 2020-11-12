@@ -21,18 +21,4 @@ std::vector<fetchBlockData<AddressType, DataType>>& fetchBlock<AddressType, Data
 {
     return blockData;
 }
-
-template<typename AddressType, typename DataType>
-void fetchBlock<AddressType, DataType>::setRegisterFile(RegisterFile<AddressType> rf)
-{
-    baseRegister = rf;
-}
-
-template<typename AddressType, typename DataType>
-CPU_Register<AddressType>* fetchBlock<AddressType, DataType>::getRegisterAt(const std::string id, AddressType offset, RegisterFile<AddressType> mainFile )
-{
-    if (file.hasRegister(id) )
-        return file.findRegister(id)->second;
-    else return mainFile.findRegister(id)->second;
-}
 }
