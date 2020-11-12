@@ -6,8 +6,8 @@ Welcome to T.I.M.E: The Infinite Modder's Emulator. As of right now(23 Oct, 2020
 
 This project uses the cmake build system. To use:
 
-` $ cmake `  
-` $ make `
+> $ cmake  
+> $ make 
 
 It is recommended to make a build directory and run cmake as follows
 
