@@ -4,9 +4,14 @@ Welcome to T.I.M.E: The Infinite Modder's Emulator. As of right now(23 Oct, 2020
 
 ## Build Instructions
 
-In this pre-alpha stage, there is no build automation, so to build, either make a project of your choice or on the command line, type:
+This project uses the cmake build system. To use:
 
-`$ g++ -o ./bin/emulator -std=c++17 emulator.cpp`
+` $ cmake `
+` $ make `
+
+It is recommended to make a build directory and run cmake as follows
+
+`$ cmake [Path To Project]`
 
 ## Installation
 

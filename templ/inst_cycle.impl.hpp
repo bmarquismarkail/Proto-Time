@@ -1,6 +1,6 @@
 #include <vector>
 #include <string>
-#include "templ/reg_base.hpp"
+#include "reg_base.hpp"
 
 namespace BMMQ {
 
