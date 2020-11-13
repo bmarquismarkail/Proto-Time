@@ -8,6 +8,7 @@
 namespace BMMQ {
 
 enum memAccess {
+	MEM_UNMAPPED,
     MEM_READ 		= 1,
     MEM_WRITE		= 2,
     MEM_READ_WRITE	= 3
