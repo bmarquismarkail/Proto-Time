@@ -12,6 +12,7 @@ T CPU_RegisterPair<T>::operator()()
 	return value;
 }
 
+////////////////////////////////////////////////////////////////
 template<typename T>
 std::vector<std::pair< std::string, CPU_Register<T>* >>& RegisterFile<T>::operator()()
 {
@@ -47,6 +48,15 @@ std::pair< std::string, CPU_Register<T>*>* RegisterFile<T>::addRegister(const st
 	return &file.back();
 }
 
+template<typename T>
+std::pair< std::string, CPU_Register<T>*>* RegisterFile<T>::findOrInsert(const std::string id, bool isPair){
+	auto pair = findRegister(id, isPair);
+	if (pair == nullptr)
+		pair = addRegister(id, isPair);
+	return pair;
+}
+
+/////////////////////////////////////////////////////////
 template<typename T>
 RegisterInfo<T>::RegisterInfo() :info(new std::pair< std::string, CPU_Register<T>*>("", nullptr)) {};
 
