@@ -23,18 +23,18 @@ using LR3592_RegisterPair = BMMQ::CPU_RegisterPair<AddressType>;
 	BMMQ::MemoryPool<AddressType, DataType> LR3592_DMG::buildMemoryPool()
 	{
 		BMMQ::MemoryPool<AddressType, DataType> pool;
-		pool.setMemBlock(0x0000, 0x4000, BMMQ::memAccess::MEM_READ);
-		pool.setMemBlock(0x4000, 0x4000, BMMQ::memAccess::MEM_READ);
-		pool.setMemBlock(0x8000, 0x2000, BMMQ::memAccess::MEM_READ_WRITE);
-		pool.setMemBlock(0xa000, 0x2000, BMMQ::memAccess::MEM_READ_WRITE);
-		pool.setMemBlock(0xc000, 0x2000, BMMQ::memAccess::MEM_READ_WRITE);		
-		pool.setMemBlock(0xe000, 0x1e00, BMMQ::memAccess::MEM_UNMAPPED);
-		pool.setMemBlock(0xfe00, 0x00a0, BMMQ::memAccess::MEM_READ_WRITE);
-		pool.setMemBlock(0xfea0, 0x0060, BMMQ::memAccess::MEM_UNMAPPED);
-		pool.setMemBlock(0xff00, 0x004c, BMMQ::memAccess::MEM_READ_WRITE);
-		pool.setMemBlock(0xff4c, 0x0034, BMMQ::memAccess::MEM_UNMAPPED);
-		pool.setMemBlock(0xff80, 0x007f, BMMQ::memAccess::MEM_READ_WRITE);
-		pool.setMemBlock(0xffff, 0x0001, BMMQ::memAccess::MEM_READ_WRITE);
+		pool.addMemBlock(std::make_tuple(0x0000, 0x4000, BMMQ::memAccess::MEM_READ));
+		pool.addMemBlock(std::make_tuple(0x4000, 0x4000, BMMQ::memAccess::MEM_READ));
+		pool.addMemBlock(std::make_tuple(0x8000, 0x2000, BMMQ::memAccess::MEM_READ_WRITE));
+		pool.addMemBlock(std::make_tuple(0xa000, 0x2000, BMMQ::memAccess::MEM_READ_WRITE));
+		pool.addMemBlock(std::make_tuple(0xc000, 0x2000, BMMQ::memAccess::MEM_READ_WRITE));		
+		pool.addMemBlock(std::make_tuple(0xe000, 0x1e00, BMMQ::memAccess::MEM_UNMAPPED));
+		pool.addMemBlock(std::make_tuple(0xfe00, 0x00a0, BMMQ::memAccess::MEM_READ_WRITE));
+		pool.addMemBlock(std::make_tuple(0xfea0, 0x0060, BMMQ::memAccess::MEM_UNMAPPED));
+		pool.addMemBlock(std::make_tuple(0xff00, 0x004c, BMMQ::memAccess::MEM_READ_WRITE));
+		pool.addMemBlock(std::make_tuple(0xff4c, 0x0034, BMMQ::memAccess::MEM_UNMAPPED));
+		pool.addMemBlock(std::make_tuple(0xff80, 0x007f, BMMQ::memAccess::MEM_READ_WRITE));
+		pool.addMemBlock(std::make_tuple(0xffff, 0x0001, BMMQ::memAccess::MEM_READ_WRITE));
 		return pool;
 	}
 

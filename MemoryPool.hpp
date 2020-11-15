@@ -19,7 +19,10 @@ enum memAccess {
 template<typename AddressType, typename DataType>
 class MemoryPool {
 public:
-    void setMemBlock(AddressType blockStart, AddressType blockLength, memAccess memType);
+	void addMemBlock(std::tuple<AddressType, AddressType, memAccess> memBlock);
+	void addReadOnlyMem(std::pair<AddressType, AddressType> romBlock);
+	void addWriteOnlyMem(std::pair<AddressType, AddressType> womBlock);
+	void addMem(std::pair<AddressType, AddressType> block);
     DataType read(std::size_t address);
     DataType *getPos(std::size_t address);
     void write(std::size_t address, void *value, std::streamsize count = 1);
