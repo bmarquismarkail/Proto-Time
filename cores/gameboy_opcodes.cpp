@@ -7,6 +7,9 @@
 // LR3592_RegisterPair = BMMQ::CPU_RegisterPair<AddressType>;
 #include "gameboy.hpp"
 
+typedef BMMQ::Imicrocode<AddressType, DataType, AddressType> LR3592_IMicrocode;
+typedef BMMQ::IOpcode<AddressType, DataType, AddressType> LR3592_Opcode;
+
 //	bool LR3592_DMG::checkJumpCond(executionBlock& block, DataType opcode)
 	bool LR3592_DMG::checkJumpCond(DataType opcode)
     {
@@ -524,193 +527,193 @@
 
     void LR3592_DMG::populateOpcodes()
     {
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_jp_i16 = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_jp_i16 = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             BMMQ::CML::jp( &this->PC->value, this->mdr.value, true );
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_jpcc_i16 = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_jpcc_i16 = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             BMMQ::CML::jp( (&this->PC->value), this->mdr.value, checkJumpCond( cip) );
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_jr_i8 = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_jr_i8 = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             BMMQ::CML::jr( (&this->PC->value), this->mdr.value, true );
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_jrcc_i8 = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_jrcc_i8 = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             BMMQ::CML::jr( (&this->PC->value), this->mdr.value, checkJumpCond( cip) );
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_ld_ir16_SP = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_ld_ir16_SP = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             BMMQ::CML::loadtmp( (&this->mar.value), this->SP->value );
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_ld_r16_i16 = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_ld_r16_i16 = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             BMMQ::CML::loadtmp( ld_R16_I16_GetRegister( cip), this->mdr.value );
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_ld_r16_8 = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_ld_r16_8 = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             auto operands = ld_r16_8_GetOperands( cip);
             BMMQ::CML::loadtmp( operands.first, operands.second );
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_add_HL_r16 = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_add_HL_r16 = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             auto operands = ld_r16_8_GetOperands( cip);
             BMMQ::CML::add( operands.first, operands.second );
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_inc16 = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_inc16 = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             BMMQ::CML::inc(ld_R16_I16_GetRegister( cip));
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_dec16 = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_dec16 = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             BMMQ::CML::dec(ld_R16_I16_GetRegister( cip));
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_inc8 = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_inc8 = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             BMMQ::CML::inc(ld_r8_i8_GetRegister( cip));
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_dec8 = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_dec8 = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             BMMQ::CML::dec(ld_r8_i8_GetRegister( cip));
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_ld_r8_i8 = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_ld_r8_i8 = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             BMMQ::CML::loadtmp( ld_r8_i8_GetRegister( cip), mdr.value);
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_rotateAccumulator = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_rotateAccumulator = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             rotateAccumulator( cip);
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_manipulateAccumulator = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_manipulateAccumulator = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             manipulateAccumulator( cip);
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_manipulateCarry = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_manipulateCarry = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             manipulateCarry( cip);
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_ld_r8_r8 = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_ld_r8_r8 = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             auto operands = ld_r8_r8_GetOperands( cip);
             BMMQ::CML::loadtmp( operands.first, operands.second );
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_math_r8 = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_math_r8 = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             math_r8( cip);
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_math_i8 = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_math_i8 = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             math_i8( cip);
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_ret_cc = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_ret_cc = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             ret_cc( cip);
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_ret = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_ret = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             ret();
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_pop = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_pop = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             pop( cip);
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_push = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_push = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             push( cip);
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_call = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_call = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             call();
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_call_cc = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_call_cc = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             call_cc( cip);
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_rst = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_rst = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             rst( cip);
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_ldh = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_ldh = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             ldh( cip);
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_ld_ir16_r8 = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_ld_ir16_r8 = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             ld_ir16_r8( cip);
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_add_sp_r8 = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_add_sp_r8 = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             BMMQ::CML::add(&SP->value, mdr.value);
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_jp_hl = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_jp_hl = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             BMMQ::CML::loadtmp(&PC->value, mem.pool.getPos(HL->value) );
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_ei_di = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_ei_di = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             ei_di( cip);
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_ld_hl_sp = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_ld_hl_sp = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             ld_hl_sp( cip);
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_cb = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_cb = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             cb_execute( mdr.value);
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_nop = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_nop = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             nop();
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_stop = 
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_stop = 
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             stop();
         };
-        std::function<void(BMMQ::RegisterFile<AddressType>)> uf_manipulateFlags =
-			[this](BMMQ::RegisterFile<AddressType> file) {
+        std::function<void(BMMQ::MemoryMap<AddressType, DataType, AddressType>)> uf_manipulateFlags =
+			[this](BMMQ::MemoryMap<AddressType, DataType, AddressType> file) {
             calculateflags( flagset);
         };
 
         // Common Microcode
-        BMMQ::Imicrocode<AddressType> *mc_manipulateFlags = new BMMQ::Imicrocode("manipulateFlags", &uf_manipulateFlags);
+        LR3592_IMicrocode *mc_manipulateFlags = new LR3592_IMicrocode("manipulateFlags", &uf_manipulateFlags);
 
         // Opcodes
-        BMMQ::IOpcode<AddressType> NOP {new BMMQ::Imicrocode("nop", &uf_nop)};																											// 00h
-        BMMQ::IOpcode<AddressType> LD_R16_I16{new BMMQ::Imicrocode("ld_r16_i16", &uf_ld_r16_i16)};																						// 01h, 11h, 21h, 31h
-        BMMQ::IOpcode<AddressType> LD_R16_8{new BMMQ::Imicrocode("ld_r16_8", &uf_ld_r16_8)};																								// 02h, 0Ah, 12h, 1Ah, 22h, 2Ah, 32h, 3Ah
-        BMMQ::IOpcode<AddressType> INC16 {new BMMQ::Imicrocode("inc16", &uf_inc16)};																										// 03h, 13h, 23h, 33h
-        BMMQ::IOpcode<AddressType> INC8 {new BMMQ::Imicrocode("inc8", &uf_inc8),  mc_manipulateFlags };																					// 04h, 0Ch, 14h, 1Ch, 24h, 2Ch, 34h, 3Ch
-        BMMQ::IOpcode<AddressType> DEC8 {new BMMQ::Imicrocode("dec8", &uf_dec8), mc_manipulateFlags };																					// 05h, 0Dh, 15h, 1Dh, 25h, 2Dh, 35h, 3Dh
-        BMMQ::IOpcode<AddressType> LD_R8_I8 {new BMMQ::Imicrocode("ld_r8_i8", &uf_ld_r8_i8)};																							// 06h, 0Eh, 16h, 1Eh, 26h, 2Eh, 36h, 3Eh
-        BMMQ::IOpcode<AddressType> ROTATE_A {new BMMQ::Imicrocode("rotateAccumulator", &uf_rotateAccumulator), mc_manipulateFlags};														// 07h, 0Fh, 17h, 1Fh
-        BMMQ::IOpcode<AddressType> LD_IR16_SP {new BMMQ::Imicrocode("ld_ir16_SP", &uf_ld_ir16_SP)};																						// 08h
-        BMMQ::IOpcode<AddressType> ADD_HL_R16 {new BMMQ::Imicrocode("add_HL_r16", &uf_add_HL_r16), mc_manipulateFlags};																	// 09h, 19h, 29h, 39h
-        BMMQ::IOpcode<AddressType> DEC16 {new BMMQ::Imicrocode("dec16", &uf_dec16)};																										// 0Bh, 1Bh, 2Bh, 3Bh
-        BMMQ::IOpcode<AddressType> STOP {new BMMQ::Imicrocode("stop", &uf_stop)};																										// 10h
-        BMMQ::IOpcode<AddressType> JR_I8 {new BMMQ::Imicrocode("jr_i8", &uf_jr_i8)};																										// 18h
-        BMMQ::IOpcode<AddressType> JR_CC_8 {new BMMQ::Imicrocode("jrcc_i8", &uf_jrcc_i8)};																								// 20h, 28h, 30h, 38h
-        BMMQ::IOpcode<AddressType> MANIPULATE_A {new BMMQ::Imicrocode("manipulateAccumulator", &uf_manipulateAccumulator), mc_manipulateFlags};											// 27h, 3Fh
-        BMMQ::IOpcode<AddressType> MANIPULATE_CF {new BMMQ::Imicrocode("manipulateCarry", &uf_manipulateCarry)};																			// 37h, 3Fh
-        BMMQ::IOpcode<AddressType> LD_R8_R8 {new BMMQ::Imicrocode("ld_r8_r8", &uf_ld_r8_r8)};																							// 40h - 7Fh
-        BMMQ::IOpcode<AddressType> MATH_R8 {new BMMQ::Imicrocode("math_r8", &uf_math_r8), mc_manipulateFlags};								 											// 80h - BFh
-        BMMQ::IOpcode<AddressType> RET_CC {new BMMQ::Imicrocode("ret_cc", &uf_ret_cc)};																									// C0h, C8h, D0h, D8h
-        BMMQ::IOpcode<AddressType> POP {new BMMQ::Imicrocode("pop", &uf_pop)};																											// C1h, D1h, E1h, F1h
-        BMMQ::IOpcode<AddressType> JPCC_I16 {new BMMQ::Imicrocode("jpcc_i16", &uf_jpcc_i16)};																								// C2h, CAh, D2h, DAh
-        BMMQ::IOpcode<AddressType> JP_I16 {new BMMQ::Imicrocode("jp_i16", &uf_jp_i16)};																								// C3h
-        BMMQ::IOpcode<AddressType> CALLCC_I16 {new BMMQ::Imicrocode("call_cc", &uf_call_cc)};																							// C4h, CCh, D4h, DCh
-        BMMQ::IOpcode<AddressType> PUSH {new BMMQ::Imicrocode("push", &uf_push)};																										// C5h, D5h, E5h, F5h
-        BMMQ::IOpcode<AddressType> MATH_I8 {new BMMQ::Imicrocode("math_i8", &uf_math_i8), mc_manipulateFlags};																			// C6h, CEh, D6h, DEh, E6h, EEh, F6h, FFh
-        BMMQ::IOpcode<AddressType> RST {new BMMQ::Imicrocode("rst", &uf_rst)};																											// C7h, CFh, D7h, DFh, E7h, EFh, F7h, FFh
-        BMMQ::IOpcode<AddressType> RET {new BMMQ::Imicrocode("ret", &uf_ret)};																											// C9h, D9h
-        BMMQ::IOpcode<AddressType> CB {new BMMQ::Imicrocode("cb", &uf_cb)};																												// CBh
-        BMMQ::IOpcode<AddressType> CALL {new BMMQ::Imicrocode("call", &uf_call)};																										// CDh
-        BMMQ::IOpcode<AddressType> LDH {new BMMQ::Imicrocode("ldh", &uf_ldh)};																											// E0h, F0h
-        BMMQ::IOpcode<AddressType> LD_IR16_R8 {new BMMQ::Imicrocode("ld_ir16_r8", &uf_ld_ir16_r8)};																						// E2h, EAh, F2h, FAh
-        BMMQ::IOpcode<AddressType> EI_DI {new BMMQ::Imicrocode("ei_di", &uf_ei_di)};																										// F3h, FBh
-        BMMQ::IOpcode<AddressType> ADD_SP_R8 {new BMMQ::Imicrocode("add_sp_r8", &uf_add_sp_r8)};																							// E8h
-        BMMQ::IOpcode<AddressType> JP_HL {new BMMQ::Imicrocode("jp_hl", &uf_jp_hl)};																																// E9h
-        BMMQ::IOpcode<AddressType> LD_HL_SP {new BMMQ::Imicrocode("ld_hl_sp", &uf_ld_hl_sp)};																														// F8h
+        LR3592_Opcode NOP {new LR3592_IMicrocode("nop", &uf_nop)};																											// 00h
+        LR3592_Opcode LD_R16_I16{new LR3592_IMicrocode("ld_r16_i16", &uf_ld_r16_i16)};																						// 01h, 11h, 21h, 31h
+        LR3592_Opcode LD_R16_8{new LR3592_IMicrocode("ld_r16_8", &uf_ld_r16_8)};																								// 02h, 0Ah, 12h, 1Ah, 22h, 2Ah, 32h, 3Ah
+        LR3592_Opcode INC16 {new LR3592_IMicrocode("inc16", &uf_inc16)};																										// 03h, 13h, 23h, 33h
+        LR3592_Opcode INC8 {new LR3592_IMicrocode("inc8", &uf_inc8),  mc_manipulateFlags };																					// 04h, 0Ch, 14h, 1Ch, 24h, 2Ch, 34h, 3Ch
+        LR3592_Opcode DEC8 {new LR3592_IMicrocode("dec8", &uf_dec8), mc_manipulateFlags };																					// 05h, 0Dh, 15h, 1Dh, 25h, 2Dh, 35h, 3Dh
+        LR3592_Opcode LD_R8_I8 {new LR3592_IMicrocode("ld_r8_i8", &uf_ld_r8_i8)};																							// 06h, 0Eh, 16h, 1Eh, 26h, 2Eh, 36h, 3Eh
+        LR3592_Opcode ROTATE_A {new LR3592_IMicrocode("rotateAccumulator", &uf_rotateAccumulator), mc_manipulateFlags};														// 07h, 0Fh, 17h, 1Fh
+        LR3592_Opcode LD_IR16_SP {new LR3592_IMicrocode("ld_ir16_SP", &uf_ld_ir16_SP)};																						// 08h
+        LR3592_Opcode ADD_HL_R16 {new LR3592_IMicrocode("add_HL_r16", &uf_add_HL_r16), mc_manipulateFlags};																	// 09h, 19h, 29h, 39h
+        LR3592_Opcode DEC16 {new LR3592_IMicrocode("dec16", &uf_dec16)};																										// 0Bh, 1Bh, 2Bh, 3Bh
+        LR3592_Opcode STOP {new LR3592_IMicrocode("stop", &uf_stop)};																										// 10h
+        LR3592_Opcode JR_I8 {new LR3592_IMicrocode("jr_i8", &uf_jr_i8)};																										// 18h
+        LR3592_Opcode JR_CC_8 {new LR3592_IMicrocode("jrcc_i8", &uf_jrcc_i8)};																								// 20h, 28h, 30h, 38h
+        LR3592_Opcode MANIPULATE_A {new LR3592_IMicrocode("manipulateAccumulator", &uf_manipulateAccumulator), mc_manipulateFlags};											// 27h, 3Fh
+        LR3592_Opcode MANIPULATE_CF {new LR3592_IMicrocode("manipulateCarry", &uf_manipulateCarry)};																			// 37h, 3Fh
+        LR3592_Opcode LD_R8_R8 {new LR3592_IMicrocode("ld_r8_r8", &uf_ld_r8_r8)};																							// 40h - 7Fh
+        LR3592_Opcode MATH_R8 {new LR3592_IMicrocode("math_r8", &uf_math_r8), mc_manipulateFlags};								 											// 80h - BFh
+        LR3592_Opcode RET_CC {new LR3592_IMicrocode("ret_cc", &uf_ret_cc)};																									// C0h, C8h, D0h, D8h
+        LR3592_Opcode POP {new LR3592_IMicrocode("pop", &uf_pop)};																											// C1h, D1h, E1h, F1h
+        LR3592_Opcode JPCC_I16 {new LR3592_IMicrocode("jpcc_i16", &uf_jpcc_i16)};																								// C2h, CAh, D2h, DAh
+        LR3592_Opcode JP_I16 {new LR3592_IMicrocode("jp_i16", &uf_jp_i16)};																								// C3h
+        LR3592_Opcode CALLCC_I16 {new LR3592_IMicrocode("call_cc", &uf_call_cc)};																							// C4h, CCh, D4h, DCh
+        LR3592_Opcode PUSH {new LR3592_IMicrocode("push", &uf_push)};																										// C5h, D5h, E5h, F5h
+        LR3592_Opcode MATH_I8 {new LR3592_IMicrocode("math_i8", &uf_math_i8), mc_manipulateFlags};																			// C6h, CEh, D6h, DEh, E6h, EEh, F6h, FFh
+        LR3592_Opcode RST {new LR3592_IMicrocode("rst", &uf_rst)};																											// C7h, CFh, D7h, DFh, E7h, EFh, F7h, FFh
+        LR3592_Opcode RET {new LR3592_IMicrocode("ret", &uf_ret)};																											// C9h, D9h
+        LR3592_Opcode CB {new LR3592_IMicrocode("cb", &uf_cb)};																												// CBh
+        LR3592_Opcode CALL {new LR3592_IMicrocode("call", &uf_call)};																										// CDh
+        LR3592_Opcode LDH {new LR3592_IMicrocode("ldh", &uf_ldh)};																											// E0h, F0h
+        LR3592_Opcode LD_IR16_R8 {new LR3592_IMicrocode("ld_ir16_r8", &uf_ld_ir16_r8)};																						// E2h, EAh, F2h, FAh
+        LR3592_Opcode EI_DI {new LR3592_IMicrocode("ei_di", &uf_ei_di)};																										// F3h, FBh
+        LR3592_Opcode ADD_SP_R8 {new LR3592_IMicrocode("add_sp_r8", &uf_add_sp_r8)};																							// E8h
+        LR3592_Opcode JP_HL {new LR3592_IMicrocode("jp_hl", &uf_jp_hl)};																																// E9h
+        LR3592_Opcode LD_HL_SP {new LR3592_IMicrocode("ld_hl_sp", &uf_ld_hl_sp)};																														// F8h
 
         // now populate the list
         opcodeList.assign({

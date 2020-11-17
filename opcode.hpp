@@ -10,58 +10,62 @@
 #include "inst_cycle.hpp"
 #include "templ/reg_base.hpp"
 
+#include "MemoryMap.hpp"
 
 namespace BMMQ {
 
-template<typename regType>
-using microcodeFunc = std::function<void(RegisterFile<regType>)>;
+/*template<typename regType>
+using microcodeFunc = std::function<void(RegisterFile<regType>)>;*/
+
+template<typename AddressType, typename DataType, typename RegType>
+	using microcodeFunc = std::function<void(MemoryMap<AddressType, DataType, RegType>)>;
 //////////////////////////////////
 // Opcode Creation
 
 //	First, we need a microcode class. This microcode class will hold simple functions
-template<typename regType>
+template<typename AddressType, typename DataType, typename RegType>
 class Imicrocode {
-    static std::map< std::string, microcodeFunc<regType>*  > v;
+    static std::map< std::string, microcodeFunc<AddressType, DataType, RegType>*  > v;
 public:
-    Imicrocode(const std::string id, microcodeFunc<regType> *func);
-    const microcodeFunc<regType> *findMicrocode(const std::string id);
-    void registerMicrocode(const std::string id, microcodeFunc<regType> *func);
-    void operator()(const RegisterFile<regType>& file) const;
+    Imicrocode(const std::string id, microcodeFunc<AddressType, DataType, RegType> *func);
+    const microcodeFunc<AddressType, DataType, RegType> *findMicrocode(const std::string id);
+    void registerMicrocode(const std::string id, microcodeFunc<AddressType, DataType, RegType> *func);
+    void operator()(const MemoryMap<AddressType, DataType, RegType>& file) const;
 };
 
 // Next, we need a group of microcodes to create an opcode
-template<typename regType>
+template<typename AddressType, typename DataType, typename RegType>
 class IOpcode {
-    std::vector<const Imicrocode<regType>*> microcode;
+    std::vector<const Imicrocode<AddressType, DataType, RegType>*> microcode;
 
 public:
     IOpcode() = default;
-    IOpcode(const Imicrocode<regType>  *func);
-    IOpcode(const std::string id, microcodeFunc<regType>  *func);
-    IOpcode(std::initializer_list<const Imicrocode<regType>  *> list);
-    void push_microcode(const Imicrocode<regType>  *func);
-	void operator()(const RegisterFile<regType>& file);
+    IOpcode(const Imicrocode<AddressType, DataType, RegType>  *func);
+    IOpcode(const std::string id, microcodeFunc<AddressType, DataType, RegType>  *func);
+    IOpcode(std::initializer_list<const Imicrocode<AddressType, DataType, RegType>  *> list);
+    void push_microcode(const Imicrocode<AddressType, DataType, RegType>  *func);
+	void operator()(const MemoryMap<AddressType, DataType, RegType>& file);
 };
 
 // This is where we will hold blocks of execution
-template<typename regType>
+template<typename AddressType, typename DataType, typename RegType>
 class executionBlock {
 	public:
-		std::vector<IOpcode<regType>> &getBlock();
-		const std::vector<IOpcode<regType>> &getBlock() const;
-		CPU_Register<regType>& emplaceRegister(std::string_view, bool );
-		const RegisterFile<regType>& getRegisterFile() const;
+		std::vector<IOpcode<AddressType, DataType, RegType>> &getBlock();
+		const std::vector<IOpcode<AddressType, DataType, RegType>> &getBlock() const;
+		CPU_Register<RegType>& emplaceRegister(std::string_view, bool );
+		const MemoryMap<AddressType, DataType, RegType>& getMemory() const;
 	private:
-		std::vector<IOpcode<regType>> code;
-		RegisterFile<regType> file;
+		std::vector<IOpcode<AddressType, DataType, RegType>> code;
+		MemoryMap<AddressType, DataType, RegType> mem;
 };
 	
 ///////////////
 // This will hold the entire instruction set.
 // Not to be confused with executionBlock, 
 // which will only hold snippets of instructions mostly made in this list
-template<typename regType>
-	using OpcodeList = std::vector<IOpcode<regType>>;
+template<typename AddressType, typename DataType, typename RegType>
+	using OpcodeList = std::vector<IOpcode<AddressType, DataType, RegType>>;
 ///////////////
 }
 

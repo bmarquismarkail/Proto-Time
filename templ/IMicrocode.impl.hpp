@@ -1,16 +1,16 @@
 namespace BMMQ {
 
-template<typename regType>
-std::map<std::string, microcodeFunc<regType>* > Imicrocode<regType>::v;
+template<typename AddressType, typename DataType, typename RegType>
+std::map<std::string, microcodeFunc<AddressType, DataType, RegType>* > Imicrocode<AddressType, DataType, RegType>::v;
 
-template<typename regType>
-Imicrocode<regType>::Imicrocode(const std::string id, microcodeFunc<regType> *func)
+template<typename AddressType, typename DataType, typename RegType>
+Imicrocode<AddressType, DataType, RegType>::Imicrocode(const std::string id, microcodeFunc<AddressType, DataType, RegType> *func)
 {
     registerMicrocode(id, func);
 }
 
-template<typename regType>
-const microcodeFunc<regType>* Imicrocode<regType>::findMicrocode(const std::string id)
+template<typename AddressType, typename DataType, typename RegType>
+const microcodeFunc<AddressType, DataType, RegType>* Imicrocode<AddressType, DataType, RegType>::findMicrocode(const std::string id)
 {
     const auto i = v.find(id);
     if (i == v.end()) return nullptr;
@@ -18,14 +18,14 @@ const microcodeFunc<regType>* Imicrocode<regType>::findMicrocode(const std::stri
 
 }
 
-template<typename regType>
-void Imicrocode<regType>::registerMicrocode(const std::string id, microcodeFunc<regType> *func)
+template<typename AddressType, typename DataType, typename RegType>
+void Imicrocode<AddressType, DataType, RegType>::registerMicrocode(const std::string id, microcodeFunc<AddressType, DataType, RegType> *func)
 {
     v.insert(std::make_pair (id, func) );
 }
 
-template<typename regType>
-void Imicrocode<regType>::operator()(const RegisterFile<regType>& file) const
+template<typename AddressType, typename DataType, typename RegType>
+void Imicrocode<AddressType, DataType, RegType>::operator()(const MemoryMap<AddressType, DataType, RegType>& file) const
 {
     for(auto e: v) {
         (*e.second)(file);

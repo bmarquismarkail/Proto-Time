@@ -11,12 +11,12 @@
 namespace BMMQ {
 ///////////////////////////////////////////////////////////////////////
 // The CPU Class
-template<typename AddressType, typename DataType>
+template<typename AddressType, typename DataType, typename RegType>
 class CPU {
 public:
     virtual fetchBlock<AddressType, DataType> fetch()=0;
-    virtual executionBlock<AddressType> decode(OpcodeList<AddressType> &oplist, fetchBlock<AddressType, DataType>& fetchData)=0;
-    virtual void execute(const executionBlock<AddressType>& block, BMMQ::fetchBlock<AddressType, DataType> &fb)=0;
+    virtual executionBlock<AddressType, DataType, RegType> decode(OpcodeList<AddressType, DataType, RegType> &oplist, fetchBlock<AddressType, DataType>& fetchData)=0;
+    virtual void execute(const executionBlock<AddressType, DataType, RegType>& block, BMMQ::fetchBlock<AddressType, DataType> &fb)=0;
 };
 }
 

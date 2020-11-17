@@ -5,6 +5,7 @@ using DataType = uint8_t;
 using LR3592_Register = BMMQ::CPU_Register<AddressType>;
 using LR3592_RegisterPair = BMMQ::CPU_RegisterPair<AddressType>;
 
+
     LR3592_DMG::LR3592_DMG()
     {
         mem.file = buildRegisterfile();
@@ -67,10 +68,10 @@ using LR3592_RegisterPair = BMMQ::CPU_RegisterPair<AddressType>;
         return f;
     };
 
-    BMMQ::executionBlock<AddressType> LR3592_DMG::decode(BMMQ::OpcodeList<AddressType> &oplist, BMMQ::fetchBlock<AddressType, DataType>& fetchData)
+    BMMQ::executionBlock<AddressType, DataType, AddressType> LR3592_DMG::decode(BMMQ::OpcodeList<AddressType, DataType, AddressType> &oplist, BMMQ::fetchBlock<AddressType, DataType>& fetchData)
     {
         // building a static execution block
-        BMMQ::executionBlock<AddressType> b;
+        BMMQ::executionBlock<AddressType, DataType, AddressType> b;
         mdr.value = 255;
         auto &fb = fetchData.getblockData();
         for( auto& i : fb ) {
@@ -80,9 +81,9 @@ using LR3592_RegisterPair = BMMQ::CPU_RegisterPair<AddressType>;
         return b;
     };
 
-    void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType>& block, BMMQ::fetchBlock<AddressType, DataType> &fb )
+    void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, AddressType>& block, BMMQ::fetchBlock<AddressType, DataType> &fb )
     {
         for (auto e : block.getBlock() ) {
-            (e)(block.getRegisterFile());
+            (e)(block.getMemory());
         }
     };
