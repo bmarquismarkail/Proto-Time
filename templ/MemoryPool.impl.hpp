@@ -21,7 +21,7 @@ void MemoryPool<AddressType,DataType>::addWriteOnlyMem(std::pair<AddressType, Ad
 }
 
 template<typename AddressType, typename DataType>
-void MemoryPool<AddressType,DataType>::addMem(std::pair<AddressType, AddressType> block){	
+void MemoryPool<AddressType,DataType>::addReadWriteMem(std::pair<AddressType, AddressType> block){	
 	auto memBlock = std::tuple_cat(block, memAccess::MEM_READ_WRITE);
 	addMemBlock(memBlock);	
 }
