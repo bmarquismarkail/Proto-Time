@@ -4,8 +4,8 @@
 #include <vector>
 #include <string>
 
-#include "templ/reg_base.hpp"
-#include "MemoryPool.hpp"
+#include "memory/reg_base.hpp"
+#include "memory/MemoryPool.hpp"
 
 namespace BMMQ {
 

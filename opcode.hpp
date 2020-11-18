@@ -8,9 +8,8 @@
 #include <initializer_list>
 
 #include "inst_cycle.hpp"
-#include "templ/reg_base.hpp"
-
-#include "MemoryMap.hpp"
+#include "memory/reg_base.hpp"
+#include "memory/MemoryMap.hpp"
 
 namespace BMMQ {
 

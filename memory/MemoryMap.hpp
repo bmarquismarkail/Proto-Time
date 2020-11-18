@@ -2,7 +2,7 @@
 #define MEM_MAP
 
 #include "MemoryPool.hpp"
-#include "templ/reg_base.hpp"
+#include "reg_base.hpp"
 namespace BMMQ {
 	
 	template<typename AddressType, typename DataType, typename RegType>

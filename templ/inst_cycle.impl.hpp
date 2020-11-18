@@ -1,7 +1,3 @@
-#include <vector>
-#include <string>
-#include "reg_base.hpp"
-
 namespace BMMQ {
 
 template<typename AddressType, typename DataType>

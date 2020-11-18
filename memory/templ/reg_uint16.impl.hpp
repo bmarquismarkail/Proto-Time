@@ -1,7 +1,7 @@
 #ifndef _TEMP_UINT16
 #define _TEMP_UINT16
 
-#include "reg_base.hpp"
+#include "../reg_base.hpp"
 
 namespace BMMQ {
 

@@ -59,5 +59,5 @@ public:
 
 } // BMMQ
 
-#include "reg_base.impl.hpp"
+#include "templ/reg_base.impl.hpp"
 #endif // __REG_BASE

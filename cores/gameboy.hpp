@@ -8,8 +8,8 @@
 #include "../inst_cycle.hpp"
 #include "../CPU.hpp"
 #include "../common_microcode.hpp"
-#include "../templ/reg_uint16.hpp"
-#include "../MemoryMap.hpp"
+#include "../memory/templ/reg_uint16.impl.hpp"
+#include "../memory/MemoryMap.hpp"
 
 using AddressType = uint16_t;
 using DataType = uint8_t;
