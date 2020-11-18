@@ -26,7 +26,7 @@ void IOpcode<AddressType, DataType, RegType>::push_microcode(const Imicrocode<Ad
 
 
 template<typename AddressType, typename DataType, typename RegType>
-void IOpcode<AddressType, DataType, RegType>::operator()(const MemoryMap<AddressType, DataType, RegType>& file)
+void IOpcode<AddressType, DataType, RegType>::operator()(const MemoryPool<AddressType, DataType, RegType>& file)
 {
     for(auto e : microcode) {
         (*e)(file);

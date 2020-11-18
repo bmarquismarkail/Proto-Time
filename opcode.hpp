@@ -9,7 +9,7 @@
 
 #include "inst_cycle.hpp"
 #include "memory/reg_base.hpp"
-#include "memory/MemoryMap.hpp"
+#include "memory/MemoryPool.hpp"
 
 namespace BMMQ {
 
@@ -17,7 +17,7 @@ namespace BMMQ {
 using microcodeFunc = std::function<void(RegisterFile<regType>)>;*/
 
 template<typename AddressType, typename DataType, typename RegType>
-	using microcodeFunc = std::function<void(MemoryMap<AddressType, DataType, RegType>)>;
+	using microcodeFunc = std::function<void(MemoryPool<AddressType, DataType, RegType>)>;
 //////////////////////////////////
 // Opcode Creation
 
@@ -29,7 +29,7 @@ public:
     Imicrocode(const std::string id, microcodeFunc<AddressType, DataType, RegType> *func);
     const microcodeFunc<AddressType, DataType, RegType> *findMicrocode(const std::string id);
     void registerMicrocode(const std::string id, microcodeFunc<AddressType, DataType, RegType> *func);
-    void operator()(const MemoryMap<AddressType, DataType, RegType>& file) const;
+    void operator()(const MemoryPool<AddressType, DataType, RegType>& file) const;
 };
 
 // Next, we need a group of microcodes to create an opcode
@@ -43,7 +43,7 @@ public:
     IOpcode(const std::string id, microcodeFunc<AddressType, DataType, RegType>  *func);
     IOpcode(std::initializer_list<const Imicrocode<AddressType, DataType, RegType>  *> list);
     void push_microcode(const Imicrocode<AddressType, DataType, RegType>  *func);
-	void operator()(const MemoryMap<AddressType, DataType, RegType>& file);
+	void operator()(const MemoryPool<AddressType, DataType, RegType>& file);
 };
 
 // This is where we will hold blocks of execution
@@ -53,10 +53,10 @@ class executionBlock {
 		std::vector<IOpcode<AddressType, DataType, RegType>> &getBlock();
 		const std::vector<IOpcode<AddressType, DataType, RegType>> &getBlock() const;
 		CPU_Register<RegType>& emplaceRegister(std::string_view, bool );
-		const MemoryMap<AddressType, DataType, RegType>& getMemory() const;
+		const MemoryPool<AddressType, DataType, RegType>& getMemory() const;
 	private:
 		std::vector<IOpcode<AddressType, DataType, RegType>> code;
-		MemoryMap<AddressType, DataType, RegType> mem;
+		MemoryPool<AddressType, DataType, RegType> mem;
 };
 	
 ///////////////

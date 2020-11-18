@@ -1,40 +1,16 @@
 #ifndef __MEMPOOL
 #define __MEMPOOL
 
-#include<ios>
-#include<vector>
-#include<tuple>
+#include "MemoryMap.hpp"
+#include "reg_base.hpp"
 
 namespace BMMQ {
 
-enum memAccess {
-	MEM_UNMAPPED,
-    MEM_READ 		= 1,
-    MEM_WRITE		= 2,
-    MEM_READ_WRITE	= 3
-};
+template<typename AddressType, typename DataType, typename RegType>
+	struct MemoryPool {
+		MemoryMap<AddressType, DataType> map;
+		RegisterFile<RegType> file;
+	};
 
-// The Memory
-// A pool of memory
-template<typename AddressType, typename DataType>
-class MemoryPool {
-public:
-	void addMemBlock(std::tuple<AddressType, AddressType, memAccess> memBlock);
-	void addReadOnlyMem(std::pair<AddressType, AddressType> romBlock);
-	void addWriteOnlyMem(std::pair<AddressType, AddressType> womBlock);
-	void addReadWriteMem(std::pair<AddressType, AddressType> block);
-    DataType read(std::size_t address);
-    DataType *getPos(std::size_t address);
-    void write(std::size_t address, void *value, std::streamsize count = 1);
-private:
-    std::vector<std::tuple<AddressType, AddressType, memAccess>> memoryMap;
-    std::vector<DataType> mem;
-};
-//////////////////////////////////////////////////////////
-
-template<typename AddressType, typename DataType>
-using memoryStorage =  std::pair<AddressType, DataType*>;
 }
-
-#include "templ/MemoryPool.impl.hpp"
 #endif // __MEMPOOL

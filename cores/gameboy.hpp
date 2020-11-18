@@ -9,7 +9,7 @@
 #include "../CPU.hpp"
 #include "../common_microcode.hpp"
 #include "../memory/templ/reg_uint16.impl.hpp"
-#include "../memory/MemoryMap.hpp"
+#include "../memory/MemoryPool.hpp"
 
 using AddressType = uint16_t;
 using DataType = uint8_t;
@@ -18,7 +18,7 @@ using LR3592_RegisterPair = BMMQ::CPU_RegisterPair<AddressType>;
 
 class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
     BMMQ::OpcodeList<AddressType, DataType, AddressType> opcodeList;
-    BMMQ::MemoryMap<AddressType, DataType, AddressType> mem;
+    BMMQ::MemoryPool<AddressType, DataType, AddressType> mem;
     LR3592_Register mar;
     LR3592_RegisterPair mdr;
     uint16_t flagset;
@@ -62,7 +62,7 @@ public:
     //CTOR
 
     LR3592_DMG();
-	BMMQ::MemoryPool<AddressType, DataType> buildMemoryPool();
+	BMMQ::MemoryMap<AddressType, DataType> buildMemoryMap();
     BMMQ::RegisterFile<AddressType> buildRegisterfile();
     BMMQ::fetchBlock<AddressType, DataType> fetch();
     BMMQ::executionBlock<AddressType, DataType, AddressType> decode(BMMQ::OpcodeList<AddressType, DataType, AddressType> &oplist, BMMQ::fetchBlock<AddressType, DataType>& fetchData);

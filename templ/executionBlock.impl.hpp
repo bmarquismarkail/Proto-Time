@@ -18,7 +18,7 @@ template<typename AddressType, typename DataType, typename RegType>
 	}
 
 template<typename AddressType, typename DataType, typename RegType>
-const MemoryMap<AddressType, DataType, RegType>& executionBlock<AddressType, DataType, RegType>::getMemory() const {
+const MemoryPool<AddressType, DataType, RegType>& executionBlock<AddressType, DataType, RegType>::getMemory() const {
 	return mem;
 }
 }

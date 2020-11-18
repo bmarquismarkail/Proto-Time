@@ -25,7 +25,7 @@ void Imicrocode<AddressType, DataType, RegType>::registerMicrocode(const std::st
 }
 
 template<typename AddressType, typename DataType, typename RegType>
-void Imicrocode<AddressType, DataType, RegType>::operator()(const MemoryMap<AddressType, DataType, RegType>& file) const
+void Imicrocode<AddressType, DataType, RegType>::operator()(const MemoryPool<AddressType, DataType, RegType>& file) const
 {
     for(auto e: v) {
         (*e.second)(file);
