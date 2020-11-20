@@ -7,10 +7,10 @@
 namespace BMMQ {
 
 template<typename AddressType, typename DataType, typename RegType>
-	struct MemoryPool {
-		MemoryMap<AddressType, DataType> map;
-		RegisterFile<RegType> file;
-	};
+struct MemoryPool {
+    MemoryMap<AddressType, DataType> map;
+    RegisterFile<RegType> file;
+};
 
 }
 #endif // __MEMPOOL

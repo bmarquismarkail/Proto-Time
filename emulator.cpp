@@ -25,5 +25,5 @@ bool failure(std::string message)
 int main(int argc, char** argv)
 {
     LR3592_DMG cpu;
-	return 0;
+    return 0;
 }

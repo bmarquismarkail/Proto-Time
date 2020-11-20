@@ -17,7 +17,7 @@ namespace BMMQ {
 using microcodeFunc = std::function<void(RegisterFile<regType>)>;*/
 
 template<typename AddressType, typename DataType, typename RegType>
-	using microcodeFunc = std::function<void(MemoryPool<AddressType, DataType, RegType>)>;
+using microcodeFunc = std::function<void(MemoryPool<AddressType, DataType, RegType>)>;
 //////////////////////////////////
 // Opcode Creation
 
@@ -43,28 +43,28 @@ public:
     IOpcode(const std::string id, microcodeFunc<AddressType, DataType, RegType>  *func);
     IOpcode(std::initializer_list<const Imicrocode<AddressType, DataType, RegType>  *> list);
     void push_microcode(const Imicrocode<AddressType, DataType, RegType>  *func);
-	void operator()(const MemoryPool<AddressType, DataType, RegType>& file);
+    void operator()(const MemoryPool<AddressType, DataType, RegType>& file);
 };
 
 // This is where we will hold blocks of execution
 template<typename AddressType, typename DataType, typename RegType>
 class executionBlock {
-	public:
-		std::vector<IOpcode<AddressType, DataType, RegType>> &getBlock();
-		const std::vector<IOpcode<AddressType, DataType, RegType>> &getBlock() const;
-		CPU_Register<RegType>& emplaceRegister(std::string_view, bool );
-		const MemoryPool<AddressType, DataType, RegType>& getMemory() const;
-	private:
-		std::vector<IOpcode<AddressType, DataType, RegType>> code;
-		MemoryPool<AddressType, DataType, RegType> mem;
+public:
+    std::vector<IOpcode<AddressType, DataType, RegType>> &getBlock();
+    const std::vector<IOpcode<AddressType, DataType, RegType>> &getBlock() const;
+    CPU_Register<RegType>& emplaceRegister(std::string_view, bool );
+    const MemoryPool<AddressType, DataType, RegType>& getMemory() const;
+private:
+    std::vector<IOpcode<AddressType, DataType, RegType>> code;
+    MemoryPool<AddressType, DataType, RegType> mem;
 };
-	
+
 ///////////////
 // This will hold the entire instruction set.
-// Not to be confused with executionBlock, 
+// Not to be confused with executionBlock,
 // which will only hold snippets of instructions mostly made in this list
 template<typename AddressType, typename DataType, typename RegType>
-	using OpcodeList = std::vector<IOpcode<AddressType, DataType, RegType>>;
+using OpcodeList = std::vector<IOpcode<AddressType, DataType, RegType>>;
 ///////////////
 }
 

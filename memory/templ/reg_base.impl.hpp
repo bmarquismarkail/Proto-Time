@@ -9,6 +9,6 @@ T CPU_Register<T>::operator()()
 template<typename T>
 T CPU_RegisterPair<T>::operator()()
 {
-	return value;
+    return value;
 }
 } // BMMQ

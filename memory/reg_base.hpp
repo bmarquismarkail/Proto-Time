@@ -41,7 +41,7 @@ public:
     bool hasRegister(std::string id);
     std::pair< std::string, CPU_Register<T>*>* findRegister(std::string_view id);
     std::pair< std::string, CPU_Register<T>*>* addRegister(const std::string id, bool isPair);
-	std::pair< std::string, CPU_Register<T>*>* findOrInsert(const std::string id, bool isPair);
+    std::pair< std::string, CPU_Register<T>*>* findOrInsert(const std::string id, bool isPair);
 };
 
 template<typename T>
@@ -54,7 +54,7 @@ public:
     void registration(RegisterFile<T> &file, std::string_view id);
     CPU_Register<T> *operator()();
     CPU_Register<T> *operator->();
-	std::string_view getRegisterID();
+    std::string_view getRegisterID();
 };
 
 } // BMMQ
