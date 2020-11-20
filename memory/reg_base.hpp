@@ -60,4 +60,6 @@ public:
 } // BMMQ
 
 #include "templ/reg_base.impl.hpp"
+#include "templ/RegisterFile.impl.hpp"
+#include "templ/RegisterInfo.impl.hpp"
 #endif // __REG_BASE
