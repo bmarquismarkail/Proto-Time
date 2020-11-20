@@ -84,4 +84,9 @@ void MemoryMap<AddressType,DataType>::write(std::size_t address, void *value, st
     for (int c = 0; c < count; c++)
         (*mem)[index + c] = *ptr++;
 }
+
+template<typename AddressType, typename DataType>
+void MemoryMap<AddressType,DataType>::setMem(std::vector<DataType> *m){
+	mem = m;
+}
 }

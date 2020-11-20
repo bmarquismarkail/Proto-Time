@@ -24,8 +24,8 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
     uint16_t flagset;
     DataType cip;
     bool ime = false, stopFlag = false;
-	
-	//Gameboy-specific opcode generation
+
+	//Gameboy-specific Decode Helper Functions
 	bool checkJumpCond(DataType opcode);
 	AddressType* ld_R16_I16_GetRegister(DataType opcode);
 	AddressType* add_HL_r16_GetRegister(DataType opcode);
@@ -55,14 +55,14 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
 	void calculateflags(uint16_t calculationFlags);
 	void nop();
 	void stop();
-	void populateOpcodes();	
+	void populateOpcodes();
 public:
     BMMQ::RegisterInfo<AddressType> AF, BC, DE, HL, SP, PC;
 
     //CTOR
 
     LR3592_DMG();
-	BMMQ::MemoryMap<AddressType, DataType> buildMemoryMap();
+    BMMQ::MemoryMap<AddressType, DataType> buildMemoryMap();
     BMMQ::RegisterFile<AddressType> buildRegisterfile();
     BMMQ::fetchBlock<AddressType, DataType> fetch();
     BMMQ::executionBlock<AddressType, DataType, AddressType> decode(BMMQ::OpcodeList<AddressType, DataType, AddressType> &oplist, BMMQ::fetchBlock<AddressType, DataType>& fetchData);
