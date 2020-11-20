@@ -2,17 +2,20 @@
 namespace BMMQ {
 
 template<typename AddressType, typename DataType, typename RegType>
-std::vector<IOpcode<AddressType, DataType, RegType>>& executionBlock<AddressType, DataType, RegType>::getBlock() {
+std::vector<IOpcode<AddressType, DataType, RegType>>& executionBlock<AddressType, DataType, RegType>::getBlock()
+{
     return code;
 }
 
 template<typename AddressType, typename DataType, typename RegType>
-const std::vector<IOpcode<AddressType, DataType, RegType>>& executionBlock<AddressType, DataType, RegType>::getBlock() const {
+const std::vector<IOpcode<AddressType, DataType, RegType>>& executionBlock<AddressType, DataType, RegType>::getBlock() const
+{
     return code;
 }
 
 template<typename AddressType, typename DataType, typename RegType>
-CPU_Register<RegType>& executionBlock<AddressType, DataType, RegType>::emplaceRegister(std::string_view id, bool isPtr) {
+CPU_Register<RegType>& executionBlock<AddressType, DataType, RegType>::emplaceRegister(std::string_view id, bool isPtr)
+{
 
     auto check = mem.file.findRegister(id);
     if ( check != nullptr)
@@ -22,7 +25,8 @@ CPU_Register<RegType>& executionBlock<AddressType, DataType, RegType>::emplaceRe
 }
 
 template<typename AddressType, typename DataType, typename RegType>
-const MemoryPool<AddressType, DataType, RegType>& executionBlock<AddressType, DataType, RegType>::getMemory() const {
+const MemoryPool<AddressType, DataType, RegType>& executionBlock<AddressType, DataType, RegType>::getMemory() const
+{
     return mem;
 }
 }

@@ -33,7 +33,8 @@ CPU_Register<T>* RegisterInfo<T>::operator->()
 }
 
 template<typename T>
-std::string_view RegisterInfo<T>::getRegisterID() {
+std::string_view RegisterInfo<T>::getRegisterID()
+{
     return info->first;
 }
 }

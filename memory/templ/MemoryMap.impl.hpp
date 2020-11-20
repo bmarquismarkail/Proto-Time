@@ -3,25 +3,29 @@
 namespace BMMQ {
 
 template<typename AddressType, typename DataType>
-void MemoryMap<AddressType,DataType>::addMemBlock(std::tuple<AddressType, AddressType, memAccess> memBlock) {
+void MemoryMap<AddressType,DataType>::addMemBlock(std::tuple<AddressType, AddressType, memAccess> memBlock)
+{
     map.push_back(memBlock);
     (*mem).resize( std::get<1>(memBlock) );
 }
 
 template<typename AddressType, typename DataType>
-void MemoryMap<AddressType,DataType>::addReadOnlyMem(std::pair<AddressType, AddressType> romBlock) {
+void MemoryMap<AddressType,DataType>::addReadOnlyMem(std::pair<AddressType, AddressType> romBlock)
+{
     auto memBlock = std::tuple_cat(romBlock, memAccess::MEM_READ);
     addMemBlock(memBlock);
 }
 
 template<typename AddressType, typename DataType>
-void MemoryMap<AddressType,DataType>::addWriteOnlyMem(std::pair<AddressType, AddressType> womBlock) {
+void MemoryMap<AddressType,DataType>::addWriteOnlyMem(std::pair<AddressType, AddressType> womBlock)
+{
     auto memBlock = std::tuple_cat(womBlock, memAccess::MEM_WRITE);
     addMemBlock(memBlock);
 }
 
 template<typename AddressType, typename DataType>
-void MemoryMap<AddressType,DataType>::addReadWriteMem(std::pair<AddressType, AddressType> block) {
+void MemoryMap<AddressType,DataType>::addReadWriteMem(std::pair<AddressType, AddressType> block)
+{
     auto memBlock = std::tuple_cat(block, memAccess::MEM_READ_WRITE);
     addMemBlock(memBlock);
 }
@@ -86,7 +90,8 @@ void MemoryMap<AddressType,DataType>::write(std::size_t address, void *value, st
 }
 
 template<typename AddressType, typename DataType>
-void MemoryMap<AddressType,DataType>::setMem(std::vector<DataType> *m) {
+void MemoryMap<AddressType,DataType>::setMem(std::vector<DataType> *m)
+{
     mem = m;
 }
 }
