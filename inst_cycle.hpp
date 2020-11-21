@@ -4,9 +4,6 @@
 #include <vector>
 #include <string>
 
-#include "memory/reg_base.hpp"
-#include "memory/MemoryPool.hpp"
-
 namespace BMMQ {
 
 template<typename AddressType, typename DataType>

@@ -7,14 +7,10 @@
 #include <vector>
 #include <initializer_list>
 
-#include "inst_cycle.hpp"
 #include "memory/reg_base.hpp"
 #include "memory/MemoryPool.hpp"
 
 namespace BMMQ {
-
-/*template<typename regType>
-using microcodeFunc = std::function<void(RegisterFile<regType>)>;*/
 
 template<typename AddressType, typename DataType, typename RegType>
 using microcodeFunc = std::function<void(MemoryPool<AddressType, DataType, RegType>)>;

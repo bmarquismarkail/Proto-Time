@@ -5,7 +5,6 @@
 
 #include "opcode.hpp"
 #include "inst_cycle.hpp"
-#include "memory/reg_base.hpp"
 
 namespace BMMQ {
 ///////////////////////////////////////////////////////////////////////
