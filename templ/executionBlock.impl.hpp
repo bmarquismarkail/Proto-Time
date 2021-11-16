@@ -17,16 +17,16 @@ template<typename AddressType, typename DataType, typename RegType>
 CPU_Register<RegType>& executionBlock<AddressType, DataType, RegType>::emplaceRegister(std::string_view id, bool isPtr)
 {
 
-    auto check = mem.file.findRegister(id);
+    auto check = snapshot.file.findRegister(id);
     if ( check != nullptr)
         return check;
-    return (mem.file.addRegister(id, isPtr) ).second; ;
+    return (snapshot.file.addRegister(id, isPtr) ).second; ;
 
 }
 
 template<typename AddressType, typename DataType, typename RegType>
-const MemoryPool<AddressType, DataType, RegType>& executionBlock<AddressType, DataType, RegType>::getMemory() const
+const MemorySnapshot<AddressType, DataType, RegType>& executionBlock<AddressType, DataType, RegType>::getMemory() const
 {
-    return mem;
+    return snapshot;
 }
 }

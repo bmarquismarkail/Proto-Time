@@ -39,9 +39,9 @@ class RegisterFile {
 public:
     std::vector<std::pair< std::string, CPU_Register<T>* >>& operator()();
     bool hasRegister(std::string id);
-    std::pair< std::string, CPU_Register<T>*>* findRegister(std::string_view id);
-    std::pair< std::string, CPU_Register<T>*>* addRegister(const std::string id, bool isPair);
-    std::pair< std::string, CPU_Register<T>*>* findOrInsert(const std::string id, bool isPair);
+    std::pair< std::string, CPU_Register<T>*>* findRegister(const std::string_view& id);
+    std::pair< std::string, CPU_Register<T>*>* addRegister(const std::string& id, bool isPair);
+    std::pair< std::string, CPU_Register<T>*>* findOrInsert(const std::string& id, bool isPair);
 };
 
 template<typename T>

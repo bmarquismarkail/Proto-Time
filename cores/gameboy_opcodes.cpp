@@ -397,9 +397,11 @@ void LR3592_DMG::ld_hl_sp(DataType opcode)
         dest = &HL->value;
         src = &SP->value;
         *src += mdr.lo;
+		break;
     case 1:
         dest = &SP->value;
         src = &HL->value;
+		break;
     }
 
     BMMQ::CML::loadtmp(dest, src);
@@ -504,16 +506,20 @@ void LR3592_DMG::calculateflags(uint16_t calculationFlags)
         break;
     case 0x4:
         newflags[2] = ( ( (mdr.value & 0xF) + (A & 0xF) ) & 0x10 ) == 0x10;
+		break;
     }
 
     // Carry Flag
     switch(calculationFlags & 3) {
     case 3:
         newflags[3] = 1;
+		break;
     case 2:
         newflags[3] = 0;
+		break;
     case 1:
         newflags[3] = (A - mdr.value) > (A - 255);
+		break;
     }
 
     F = (newflags[0] << 7) | (newflags[1] << 6) | (newflags[2] << 5) | (newflags[3] << 4);
@@ -527,151 +533,151 @@ void LR3592_DMG::stop()
 
 void LR3592_DMG::populateOpcodes()
 {
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_jp_i16 =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
-        BMMQ::CML::jp( &this->PC->value, this->mdr.value, true );
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_jp_i16 =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
+        BMMQ::CML::jp( &file.findOrCreateNewRegister("PC")->value, file.file.findRegister("mdr")->second->value, true );
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_jpcc_i16 =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
-        BMMQ::CML::jp( (&this->PC->value), this->mdr.value, checkJumpCond( cip) );
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_jpcc_i16 =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
+        BMMQ::CML::jp( (&file.findOrCreateNewRegister("PC")->value), file.findOrCreateNewRegister("mdr")->value, checkJumpCond( cip) );
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_jr_i8 =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
-        BMMQ::CML::jr( (&this->PC->value), this->mdr.value, true );
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_jr_i8 =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
+        BMMQ::CML::jr( (&file.findOrCreateNewRegister("PC")->value), file.findOrCreateNewRegister("mdr")->value, true );
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_jrcc_i8 =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
-        BMMQ::CML::jr( (&this->PC->value), this->mdr.value, checkJumpCond( cip) );
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_jrcc_i8 =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
+        BMMQ::CML::jr( (&file.findOrCreateNewRegister("PC")->value), file.findOrCreateNewRegister("mdr")->value, checkJumpCond( cip) );
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_ld_ir16_SP =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
-        BMMQ::CML::loadtmp( (&this->mar.value), this->SP->value );
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_ld_ir16_SP =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
+        BMMQ::CML::loadtmp( (&file.findOrCreateNewRegister("mar")->value), &file.findOrCreateNewRegister("SP")->value );
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_ld_r16_i16 =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
-        BMMQ::CML::loadtmp( ld_R16_I16_GetRegister( cip), this->mdr.value );
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_ld_r16_i16 =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
+        BMMQ::CML::loadtmp( ld_R16_I16_GetRegister( cip), &file.file.findRegister("mdr")->second->value );
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_ld_r16_8 =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_ld_r16_8 =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         auto operands = ld_r16_8_GetOperands( cip);
         BMMQ::CML::loadtmp( operands.first, operands.second );
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_add_HL_r16 =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_add_HL_r16 =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         auto operands = ld_r16_8_GetOperands( cip);
         BMMQ::CML::add( operands.first, operands.second );
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_inc16 =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_inc16 =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         BMMQ::CML::inc(ld_R16_I16_GetRegister( cip));
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_dec16 =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_dec16 =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         BMMQ::CML::dec(ld_R16_I16_GetRegister( cip));
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_inc8 =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_inc8 =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         BMMQ::CML::inc(ld_r8_i8_GetRegister( cip));
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_dec8 =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_dec8 =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         BMMQ::CML::dec(ld_r8_i8_GetRegister( cip));
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_ld_r8_i8 =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_ld_r8_i8 =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         BMMQ::CML::loadtmp( ld_r8_i8_GetRegister( cip), mdr.value);
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_rotateAccumulator =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_rotateAccumulator =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         rotateAccumulator( cip);
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_manipulateAccumulator =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_manipulateAccumulator =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         manipulateAccumulator( cip);
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_manipulateCarry =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_manipulateCarry =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         manipulateCarry( cip);
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_ld_r8_r8 =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_ld_r8_r8 =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         auto operands = ld_r8_r8_GetOperands( cip);
         BMMQ::CML::loadtmp( operands.first, operands.second );
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_math_r8 =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_math_r8 =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         math_r8( cip);
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_math_i8 =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_math_i8 =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         math_i8( cip);
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_ret_cc =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_ret_cc =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         ret_cc( cip);
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_ret =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_ret =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         ret();
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_pop =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_pop =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         pop( cip);
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_push =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_push =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         push( cip);
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_call =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_call =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         call();
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_call_cc =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_call_cc =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         call_cc( cip);
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_rst =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_rst =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         rst( cip);
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_ldh =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_ldh =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         ldh( cip);
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_ld_ir16_r8 =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_ld_ir16_r8 =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         ld_ir16_r8( cip);
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_add_sp_r8 =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_add_sp_r8 =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         BMMQ::CML::add(&SP->value, mdr.value);
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_jp_hl =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_jp_hl =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         BMMQ::CML::loadtmp(&PC->value, mem.map.getPos(HL->value) );
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_ei_di =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_ei_di =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         ei_di( cip);
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_ld_hl_sp =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_ld_hl_sp =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         ld_hl_sp( cip);
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_cb =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_cb =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         cb_execute( mdr.value);
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_nop =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_nop =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         nop();
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_stop =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_stop =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         stop();
     };
-    std::function<void(BMMQ::MemoryPool<AddressType, DataType, AddressType>)> uf_manipulateFlags =
-    [this](BMMQ::MemoryPool<AddressType, DataType, AddressType> file) {
+    std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_manipulateFlags =
+    [this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
         calculateflags( flagset);
     };
 

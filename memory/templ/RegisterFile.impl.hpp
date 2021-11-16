@@ -16,7 +16,7 @@ bool RegisterFile<T>::hasRegister(std::string id)
 }
 
 template<typename T>
-std::pair< std::string, CPU_Register<T>*> *RegisterFile<T>::findRegister(std::string_view id)
+std::pair< std::string, CPU_Register<T>*> *RegisterFile<T>::findRegister(const std::string_view& id)
 {
     for (auto& i : file)
         if (id.compare(i.first) == 0)
@@ -24,7 +24,7 @@ std::pair< std::string, CPU_Register<T>*> *RegisterFile<T>::findRegister(std::st
     return nullptr;
 }
 template<typename T>
-std::pair< std::string, CPU_Register<T>*>* RegisterFile<T>::addRegister(const std::string id, bool isPair)
+std::pair< std::string, CPU_Register<T>*>* RegisterFile<T>::addRegister(const std::string& id, bool isPair)
 {
     if (!isPair)
         file.push_back(std::make_pair(id, new CPU_Register<T> {}));
@@ -35,9 +35,9 @@ std::pair< std::string, CPU_Register<T>*>* RegisterFile<T>::addRegister(const st
 }
 
 template<typename T>
-std::pair< std::string, CPU_Register<T>*>* RegisterFile<T>::findOrInsert(const std::string id, bool isPair)
+std::pair< std::string, CPU_Register<T>*>* RegisterFile<T>::findOrInsert(const std::string& id, bool isPair)
 {
-    auto pair = findRegister(id, isPair);
+    auto pair = findRegister(id);
     if (pair == nullptr)
         pair = addRegister(id, isPair);
     return pair;

@@ -8,12 +8,12 @@
 #include <initializer_list>
 
 #include "memory/reg_base.hpp"
-#include "memory/MemoryPool.hpp"
+#include "memory/MemorySnapshot.hpp"
 
 namespace BMMQ {
 
 template<typename AddressType, typename DataType, typename RegType>
-using microcodeFunc = std::function<void(MemoryPool<AddressType, DataType, RegType>)>;
+using microcodeFunc = std::function<void(MemorySnapshot<AddressType, DataType, RegType>)>;
 //////////////////////////////////
 // Opcode Creation
 
@@ -25,7 +25,7 @@ public:
     Imicrocode(const std::string id, microcodeFunc<AddressType, DataType, RegType> *func);
     const microcodeFunc<AddressType, DataType, RegType> *findMicrocode(const std::string id);
     void registerMicrocode(const std::string id, microcodeFunc<AddressType, DataType, RegType> *func);
-    void operator()(const MemoryPool<AddressType, DataType, RegType>& file) const;
+    void operator()(const MemorySnapshot<AddressType, DataType, RegType>& file) const;
 };
 
 // Next, we need a group of microcodes to create an opcode
@@ -39,7 +39,7 @@ public:
     IOpcode(const std::string id, microcodeFunc<AddressType, DataType, RegType>  *func);
     IOpcode(std::initializer_list<const Imicrocode<AddressType, DataType, RegType>  *> list);
     void push_microcode(const Imicrocode<AddressType, DataType, RegType>  *func);
-    void operator()(const MemoryPool<AddressType, DataType, RegType>& file);
+    void operator()(const MemorySnapshot<AddressType, DataType, RegType>& file);
 };
 
 // This is where we will hold blocks of execution
@@ -49,10 +49,10 @@ public:
     std::vector<IOpcode<AddressType, DataType, RegType>> &getBlock();
     const std::vector<IOpcode<AddressType, DataType, RegType>> &getBlock() const;
     CPU_Register<RegType>& emplaceRegister(std::string_view, bool );
-    const MemoryPool<AddressType, DataType, RegType>& getMemory() const;
+    const MemorySnapshot<AddressType, DataType, RegType>& getMemory() const;
 private:
     std::vector<IOpcode<AddressType, DataType, RegType>> code;
-    MemoryPool<AddressType, DataType, RegType> mem;
+	MemorySnapshot<AddressType, DataType, RegType> snapshot;
 };
 
 ///////////////
