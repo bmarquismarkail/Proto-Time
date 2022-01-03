@@ -25,10 +25,9 @@ public:
     DataType read(std::size_t address);
     DataType *getPos(std::size_t address);
     void write(std::size_t address, void *value, std::streamsize count = 1);
-    void setMem(std::vector<DataType> *m);
 private:
     std::vector<std::tuple<AddressType, AddressType, memAccess>> map;
-    std::vector<DataType> *mem;
+    std::vector<DataType> mem;
 };
 //////////////////////////////////////////////////////////
 template<typename AddressType, typename DataType>

@@ -3,7 +3,7 @@
 
 namespace BMMQ {
 	
-	template<typename AddressType, typename DataType>
+  template<typename AddressType, typename DataType>
 	addressReturnData<AddressType, DataType>::addressReturnData(bool retFlag, std::pair< AddressType, std::size_t>* entry, bool contigFlag)
 		: isAddressInSnapshot(retFlag), nearest_entry(entry), contiguous(contigFlag){}
 	
@@ -51,7 +51,7 @@ namespace BMMQ {
 		
 		}
 	
-	template<typename AddressType, typename DataType, typename RegType>
+  template<typename AddressType, typename DataType, typename RegType>
 		void MemorySnapshot<AddressType, DataType, RegType>::copyRegisterFromMainFile
 			(std::string_view regId, RegisterFile<AddressType>& from){
 			*(file.findOrInsert(regId)).value = *(from.findRegister(regId)).value;
