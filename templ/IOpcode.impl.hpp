@@ -24,12 +24,4 @@ void IOpcode<AddressType, DataType, RegType>::push_microcode(const Imicrocode<Ad
     microcode.push_back(func);
 }
 
-
-template<typename AddressType, typename DataType, typename RegType>
-void IOpcode<AddressType, DataType, RegType>::operator()(const MemorySnapshot<AddressType, DataType, RegType>& file)
-{
-    for(auto e : microcode) {
-        (*e)(file);
-    }
-}
 }

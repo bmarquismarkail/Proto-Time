@@ -40,7 +40,7 @@ public:
     IOpcode(const std::string id, microcodeFunc<AddressType, DataType, RegType>  *func);
     IOpcode(std::initializer_list<const Imicrocode<AddressType, DataType, RegType> *> list);
     void push_microcode(const Imicrocode<AddressType, DataType, RegType>  *func);
-    void operator()(const MemorySnapshot<AddressType, DataType, RegType>& file);
+    virtual void operator()() = 0;
 };
 
 // This is where we will hold blocks of execution
