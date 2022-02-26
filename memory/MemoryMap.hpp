@@ -22,9 +22,10 @@ public:
     void addReadOnlyMem(std::pair<AddressType, AddressType> romBlock);
     void addWriteOnlyMem(std::pair<AddressType, AddressType> womBlock);
     void addReadWriteMem(std::pair<AddressType, AddressType> block);
-    DataType read(std::size_t address);
-    DataType *getPos(std::size_t address);
+    //DataType read(std::size_t address);
+	void read(DataType* stream, std::size_t address, std::streamsize count = 1);
     void write(std::size_t address, void *value, std::streamsize count = 1);
+    DataType *getPos(std::size_t address);
 private:
     std::vector<std::tuple<AddressType, AddressType, memAccess>> map;
     std::vector<DataType> mem;

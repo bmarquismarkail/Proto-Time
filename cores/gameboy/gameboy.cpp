@@ -55,6 +55,12 @@ BMMQ::RegisterFile<AddressType> LR3592_DMG::buildRegisterfile()
 
     return regfile;
 }
+
+BMMQ::MemoryPool<AddressType, DataType, AddressType>& LR3592_DMG::getMemory()
+{
+	return mem;
+}
+
 //
 BMMQ::fetchBlock<AddressType, DataType> LR3592_DMG::fetch()
 {
@@ -87,3 +93,7 @@ void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, Addre
         (e)(block.getMemory());
     }
 };
+
+void LR3592_DMG::setStopFlag(bool f){
+	stopFlag = f;
+}

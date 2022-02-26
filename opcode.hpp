@@ -8,7 +8,7 @@
 #include <initializer_list>
 
 #include "memory/reg_base.hpp"
-#include "memory/MemorySnapshot.hpp"
+#include "memory/MemorySnapshot/MemorySnapshot.hpp"
 
 namespace BMMQ {
 
@@ -29,6 +29,7 @@ public:
 };
 
 // Next, we need a group of microcodes to create an opcode
+// TODO: make a memorymap/regfile variant of operator ()
 template<typename AddressType, typename DataType, typename RegType>
 class IOpcode {
     std::vector<const Imicrocode<AddressType, DataType, RegType>*> microcode;
@@ -37,7 +38,7 @@ public:
     IOpcode() = default;
     IOpcode(const Imicrocode<AddressType, DataType, RegType>  *func);
     IOpcode(const std::string id, microcodeFunc<AddressType, DataType, RegType>  *func);
-    IOpcode(std::initializer_list<const Imicrocode<AddressType, DataType, RegType>  *> list);
+    IOpcode(std::initializer_list<const Imicrocode<AddressType, DataType, RegType> *> list);
     void push_microcode(const Imicrocode<AddressType, DataType, RegType>  *func);
     void operator()(const MemorySnapshot<AddressType, DataType, RegType>& file);
 };

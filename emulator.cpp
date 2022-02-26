@@ -14,7 +14,7 @@
 #include <vector>
 #include <cstdlib>
 
-#include "cores/gameboy.hpp"
+#include "cores/gameboy/gameboy.hpp"
 
 bool failure(std::string message)
 {

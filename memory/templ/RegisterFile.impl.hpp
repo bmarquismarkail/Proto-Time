@@ -35,11 +35,14 @@ std::pair< std::string, CPU_Register<T>*>* RegisterFile<T>::addRegister(const st
 }
 
 template<typename T>
-std::pair< std::string, CPU_Register<T>*>* RegisterFile<T>::findOrInsert(const std::string& id, bool isPair)
+std::pair< std::string, CPU_Register<T>*>* RegisterFile<T>::findOrInsert(const std::string_view& id, bool isPair)
 {
     auto pair = findRegister(id);
     if (pair == nullptr)
-        pair = addRegister(id, isPair);
+	{
+		std::string newRegID{id};
+        pair = addRegister(newRegID, isPair);
+	}
     return pair;
 }
 }

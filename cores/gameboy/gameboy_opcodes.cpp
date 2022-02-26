@@ -7,63 +7,66 @@
 // LR3592_RegisterPair = BMMQ::CPU_RegisterPair<AddressType>;
 #include "gameboy.hpp"
 
-typedef	BMMQ::Imicrocode<AddressType, DataType,	AddressType> LR3592_IMicrocode;
-typedef	BMMQ::IOpcode<AddressType, DataType, AddressType> LR3592_Opcode;
+
+LR3592_Register& LR3592_DMG::GetRegister(BMMQ::RegisterInfo<AddressType>& Reg, LR3592_RegisterFile* file)
+{
+	return (file == nullptr) ? (LR3592_Register&)Reg : *(file->findOrInsert(Reg.getRegisterID(),true)->second);
+}
 
 //	bool	LR3592_DMG::checkJumpCond(executionBlock& block, DataType opcode)
-bool LR3592_DMG::checkJumpCond(DataType	opcode)
+bool LR3592_DMG::checkJumpCond(DataType	opcode, LR3592_RegisterFile* )
 {
-//		auto &A	= (LR3592_RegisterPair&)block.emplace(AF);
-	auto &A = (LR3592_RegisterPair&)AF;
+	auto A = (LR3592_RegisterPair&)GetRegister(AF, file);
+
 	bool checkFlag	= (opcode &	0x10) == 0x10 ? ((A.lo & 0x80) >> 7) : ((A.lo & 0x10) >> 4);
 	bool checkSet = opcode & 0x8;
 	return	!(checkFlag ^ checkSet);
 }
 
-AddressType* LR3592_DMG::ld_R16_I16_GetRegister(DataType opcode)
+AddressType* LR3592_DMG::ld_R16_I16_GetRegister(DataType opcode, LR3592_RegisterFile* )
 {
 
 	uint8_t regInd = (opcode & 0x30) >> 4;
 
 	switch (regInd) {
 	case 0:
-		return &BC->value;
+		return &(GetRegister(BC,file).value);
 	case 1:
-		return &DE->value;
+		return &(GetRegister(DE,file).value);
 	case 2:
-		return &HL->value;
+		return &(GetRegister(HL,file).value);
 	case 3:
-		return &SP->value;
+		return &(GetRegister(SP,file).value);
 	default:
 		throw new std::invalid_argument("error in decoding register. invalid argument");
 	}
 }
 
-AddressType* LR3592_DMG::add_HL_r16_GetRegister(DataType opcode)
+AddressType* LR3592_DMG::add_HL_r16_GetRegister(DataType opcode, LR3592_RegisterFile* )
 {
-	return ld_R16_I16_GetRegister(opcode);
+	return ld_R16_I16_GetRegister(opcode, file);
 }
 
-AddressType* LR3592_DMG::ld_r16_8_GetRegister(DataType opcode)
+AddressType* LR3592_DMG::ld_r16_8_GetRegister(DataType opcode, LR3592_RegisterFile* )
 {
 	switch (opcode & 0x30 >> 4) {
 	case 0:
-		return &BC->value;
+		return &(GetRegister(BC,file).value);
 	case 1:
-		return &DE->value;
+		return &(GetRegister(DE,file).value);
 	case 2:
 	case 3:
-		return &HL->value;
+		return &(GetRegister(HL,file).value);
 	default:
 		throw new std::invalid_argument("error in decoding register. invalid argument");
 	}
 }
 
 // LD ir16/8 <-> A
-std::pair<DataType*, DataType*> LR3592_DMG::ld_r16_8_GetOperands(DataType opcode)
+std::pair<DataType*, DataType*> LR3592_DMG::ld_r16_8_GetOperands(DataType opcode, LR3592_RegisterFile* )
 {
-	AddressType *reg16 = ld_R16_I16_GetRegister(opcode);
-	DataType *accumulator = &((LR3592_RegisterPair*)AF())->hi;
+	AddressType *reg16 = ld_R16_I16_GetRegister(opcode, file);
+	DataType *accumulator = &((LR3592_RegisterPair*)AF())->hi;  //GetRegister
 
 	DataType *temp = mem.map.getPos((std::size_t)(*reg16));
 
@@ -78,37 +81,37 @@ std::pair<DataType*, DataType*> LR3592_DMG::ld_r16_8_GetOperands(DataType opcode
 	}
 }
 
-DataType* LR3592_DMG::ld_r8_i8_GetRegister(DataType opcode)
+DataType* LR3592_DMG::ld_r8_i8_GetRegister(DataType opcode, LR3592_RegisterFile* )
 {
 	auto regSet = (opcode & 0x38) >> 3;
 	std::cout << regSet << '\n';
 	switch (regSet) {
 	case 0:
-		return &((LR3592_RegisterPair*)BC())->hi;
+		return &((LR3592_RegisterPair*)BC())->hi;		//GetRegister
 	case 1:
-		return &((LR3592_RegisterPair*)BC())->lo;
+		return &((LR3592_RegisterPair*)BC())->lo;		//GetRegister
 	case 2:
-		return &((LR3592_RegisterPair*)DE())->hi;
+		return &((LR3592_RegisterPair*)DE())->hi;		//GetRegister
 	case 3:
-		return &((LR3592_RegisterPair*)DE())->lo;
+		return &((LR3592_RegisterPair*)DE())->lo;		//GetRegister
 	case 4:
-		return &((LR3592_RegisterPair*)HL())->hi;
+		return &((LR3592_RegisterPair*)HL())->hi;		//GetRegister
 	case 5:
-		return &((LR3592_RegisterPair*)HL())->lo;
+		return &((LR3592_RegisterPair*)HL())->lo;		//GetRegister
 	case 6:
-		return mem.map.getPos((std::size_t)HL->value);
+		return mem.map.getPos((std::size_t)HL->value);	//GetRegister
 	case 7:
 		std::cout<< "A\n";
-		return &((LR3592_RegisterPair*)AF())->hi;
+		return &((LR3592_RegisterPair*)AF())->hi;		//GetRegister
 	default:
 		throw new std::invalid_argument("error in decoding register. invalid argument");
 	}
 }
 
-void LR3592_DMG::rotateAccumulator(DataType opcode)
+void LR3592_DMG::rotateAccumulator(DataType opcode, LR3592_RegisterFile* )
 {
 
-	auto &A = (LR3592_RegisterPair&)AF;
+	auto &A = (LR3592_RegisterPair&)AF;			//GetRegister
 
 	bool carryFlag = (A.lo & 0x10);
 	DataType lrSet = (opcode & 0x18) >> 3;
@@ -129,10 +132,10 @@ void LR3592_DMG::rotateAccumulator(DataType opcode)
 	}
 }
 
-void LR3592_DMG::manipulateAccumulator(DataType opcode)
+void LR3592_DMG::manipulateAccumulator(DataType opcode, LR3592_RegisterFile* )
 {
 
-	auto &A = ((LR3592_RegisterPair&)AF).hi;
+	auto &A = ((LR3592_RegisterPair&)AF).hi;		//GetRegister
 	DataType opSet = (opcode & 8) >> 3;
 
 	switch (opSet) {
@@ -148,11 +151,11 @@ void LR3592_DMG::manipulateAccumulator(DataType opcode)
 }
 
 // Incomplete. need	to build the mask
-void LR3592_DMG::manipulateCarry(DataType opcode)
+void LR3592_DMG::manipulateCarry(DataType opcode, LR3592_RegisterFile* )
 {
 	DataType opSet =  (opcode & 0x8) >> 3;
 
-	auto &F = ((LR3592_RegisterPair&)AF).lo;
+	auto &F = ((LR3592_RegisterPair&)AF).lo;	//GetRegister
 	DataType flags = F;
 
 	switch (opSet) {
@@ -169,44 +172,44 @@ void LR3592_DMG::manipulateCarry(DataType opcode)
 	BMMQ::CML::setFlags(&F, flags);
 }
 
-DataType* LR3592_DMG::ld_r8_r8_GetRegister(DataType regcode)
+DataType* LR3592_DMG::ld_r8_r8_GetRegister(DataType regcode, LR3592_RegisterFile* )
 {
 	switch (regcode) {
 	case 0:
-		return &((LR3592_RegisterPair*)BC())->hi;
+		return &((LR3592_RegisterPair*)BC())->hi;		//GetRegister
 	case 1:
-		return &((LR3592_RegisterPair*)BC())->lo;
+		return &((LR3592_RegisterPair*)BC())->lo;		//GetRegister
 	case 2:
-		return &((LR3592_RegisterPair*)DE())->hi;
+		return &((LR3592_RegisterPair*)DE())->hi;		//GetRegister
 	case 3:
-		return &((LR3592_RegisterPair*)DE())->lo;
+		return &((LR3592_RegisterPair*)DE())->lo;		//GetRegister
 	case 4:
-		return &((LR3592_RegisterPair*)HL())->hi;
+		return &((LR3592_RegisterPair*)HL())->hi;		//GetRegister
 	case 5:
-		return &((LR3592_RegisterPair*)HL())->lo;
+		return &((LR3592_RegisterPair*)HL())->lo;		//GetRegister
 	case 6:
-		return mem.map.getPos((std::size_t)HL->value);
+		return mem.map.getPos((std::size_t)HL->value);	//GetRegister
 	case 7:
-		return &((LR3592_RegisterPair*)AF())->hi;
+		return &((LR3592_RegisterPair*)AF())->hi;		//GetRegister
 	default:
 		throw new std::invalid_argument("error in decoding register. invalid argument");
 	}
 }
 
-std::pair<DataType*, DataType*> LR3592_DMG::ld_r8_r8_GetOperands(DataType opcode)
+std::pair<DataType*, DataType*> LR3592_DMG::ld_r8_r8_GetOperands(DataType opcode, LR3592_RegisterFile* )
 {
 	DataType destReg = (opcode & 38) >> 3;
 	DataType srcReg = (opcode & 7);
 
-	return std::make_pair(ld_r8_r8_GetRegister(destReg), ld_r8_r8_GetRegister(srcReg) );
+	return std::make_pair(ld_r8_r8_GetRegister(destReg, file), ld_r8_r8_GetRegister(srcReg, file) );
 }
 
-void LR3592_DMG::math_r8(DataType opcode)
+void LR3592_DMG::math_r8(DataType opcode, LR3592_RegisterFile* )
 {
 	DataType mathFunc = (opcode & 38) >> 3;
-	DataType* srcReg = ld_r8_r8_GetRegister(opcode & 7);
+	DataType* srcReg = ld_r8_r8_GetRegister(opcode & 7, file);
 
-	auto &A = (LR3592_RegisterPair&)AF;
+	auto &A = (LR3592_RegisterPair&)AF; //GetRegister
 	bool carryFlag = (A.lo & 0x10);
 
 	switch (mathFunc) {
@@ -237,11 +240,11 @@ void LR3592_DMG::math_r8(DataType opcode)
 	}
 }
 
-void LR3592_DMG::math_i8(DataType opcode)
+void LR3592_DMG::math_i8(DataType opcode, LR3592_RegisterFile* )
 {
 	DataType mathFunc = (opcode & 38) >> 3;
 
-	auto &A = (LR3592_RegisterPair&)AF;
+	auto &A = (LR3592_RegisterPair&)AF;		//GetRegister
 	bool carryFlag = (A.lo & 0x10);
 
 	switch (mathFunc) {
@@ -272,82 +275,82 @@ void LR3592_DMG::math_i8(DataType opcode)
 	}
 }
 
-void LR3592_DMG::ret()
+void LR3592_DMG::ret(LR3592_RegisterFile* )
 {
 	PC->value = mem.map.read(SP->value);
 	SP->value += 2;
 }
 
-void LR3592_DMG::ret_cc(DataType opcode)
+void LR3592_DMG::ret_cc(DataType opcode, LR3592_RegisterFile* )
 {
-	if ( checkJumpCond(opcode))
-		ret();
+	if ( checkJumpCond(opcode, file))
+		ret(file);
 }
 
-AddressType* LR3592_DMG::push_pop_GetRegister(DataType opcode)
+AddressType* LR3592_DMG::push_pop_GetRegister(DataType opcode, LR3592_RegisterFile* )
 {
 	DataType regCode =	(opcode	& 0x10)	>> 4;
 
 	switch (regCode) {
 	case 0:
-		return &BC->value;
+		return &(GetRegister(BC,file).value);
 	case 1:
-		return &DE->value;
+		return &(GetRegister(DE,file).value);
 	case 2:
-		return &HL->value;
+		return &(GetRegister(HL,file).value);
 	case 3:
-		return &AF->value;
+		return &AF->value;						//GetRegister
 	default:
 		throw new std::invalid_argument("error in decoding register. invalid argument");
 	}
 }
 
-void LR3592_DMG::pop(DataType opcode)
+void LR3592_DMG::pop(DataType opcode, LR3592_RegisterFile* )
 {
-	AddressType *reg =	push_pop_GetRegister(opcode);
-	*reg = mem.map.read(SP->value);
+	AddressType *reg =	push_pop_GetRegister(opcode, file);
+	*reg = mem.map.read(SP->value);							//GetRegister
 	SP->value += 2;
 }
 
-void LR3592_DMG::push(DataType opcode)
+void LR3592_DMG::push(DataType opcode, LR3592_RegisterFile* )
 {
-	AddressType *reg = push_pop_GetRegister(opcode);
-	*mem.map.getPos(SP->value)	= *reg;
+	AddressType *reg = push_pop_GetRegister(opcode, file);
+	*mem.map.getPos(SP->value)	= *reg;						//GetRegister
 	SP->value += 2;
 }
 
-void LR3592_DMG::call()
+void LR3592_DMG::call(LR3592_RegisterFile* )
 {
-	*mem.map.getPos(SP->value) = PC->value;
-	BMMQ::CML::jr(	&PC->value, mdr.value, true);
+	*mem.map.getPos(SP->value) = PC->value;				//GetRegister
+	BMMQ::CML::jr(	&PC->value, mdr.value, true);		//GetREgister
 	SP->value -=2;
 }
 
-void LR3592_DMG::call_cc(DataType opcode)
+void LR3592_DMG::call_cc(DataType opcode, LR3592_RegisterFile* )
 {
-	if( checkJumpCond(opcode) ) {
+	if( checkJumpCond(opcode, file) ) {
 		call();
 	}
 }
 
-void LR3592_DMG::rst(DataType opcode)
+void LR3592_DMG::rst(DataType opcode, LR3592_RegisterFile* )
 {
 	DataType rstPos = (opcode & 0x38);
-	*mem.map.getPos(SP->value) = PC->value;
-	BMMQ::CML::jr( &PC->value, rstPos, true );
+	*mem.map.getPos(SP->value) = PC->value;			//GetRegister
+	BMMQ::CML::jr( &PC->value, rstPos, true );		//GetRegister
 }
 
-void LR3592_DMG::ldh(DataType opcode)
+void LR3592_DMG::ldh(DataType opcode, LR3592_RegisterFile* )
 {
 	DataType* dest;
 	DataType* src;
 
 	auto srcSet = (opcode & 0x10) >> 4; //	checks if Accumulator is the source
 
-	auto &A = (LR3592_RegisterPair&)AF;
+	auto &A = (LR3592_RegisterPair&)AF;					//GetRegister
 	if (srcSet) {
 		src = &A.hi;
-		dest = mem.map.getPos(mdr.value + 0xFF00);
+		dest = mem.map.getPos(mdr.value + 0xFF00);		//GetRegister
 	}
 	else {
 		src = &A.hi;
@@ -357,7 +360,7 @@ void LR3592_DMG::ldh(DataType opcode)
 	BMMQ::CML::loadtmp(dest, src);
 }
 
-void LR3592_DMG::ld_ir16_r8(DataType opcode)
+void LR3592_DMG::ld_ir16_r8(DataType opcode, LR3592_RegisterFile* )
 {
 	DataType* dest;
 	DataType* src;
@@ -365,12 +368,12 @@ void LR3592_DMG::ld_ir16_r8(DataType opcode)
 	auto regSet = (opcode & 8)	>> 3;
 	auto srcSet = (opcode & 0x10) >> 4;
 
-	auto &A = (LR3592_RegisterPair&)AF;
-	auto &C = (LR3592_RegisterPair&)BC;
+	auto &A = (LR3592_RegisterPair&)AF;													//GetRegister
+	auto &C = (LR3592_RegisterPair&)BC;													//GetRegister
 	switch	(srcSet) {
 	case 0:
 		src = &A.hi;
-		dest = (regSet) ? mem.map.getPos( C.lo + 0xFF00 ) : mem.map.getPos(mdr.value);
+		dest = (regSet) ? mem.map.getPos( C.lo + 0xFF00 ) : mem.map.getPos(mdr.value);	//GetRegister
 		break;
 	case 1:
 		src = (regSet) ? mem.map.getPos(C.lo + 0xFF00) : mem.map.getPos(mdr.value);
@@ -380,12 +383,12 @@ void LR3592_DMG::ld_ir16_r8(DataType opcode)
 	BMMQ::CML::loadtmp(dest, src);
 }
 
-void LR3592_DMG::ei_di(DataType	opcode)
+void LR3592_DMG::ei_di(DataType	opcode, LR3592_RegisterFile* )
 {
 	ime = (opcode & 8 ) >> 3;
 }
 
-void LR3592_DMG::ld_hl_sp(DataType opcode)
+void LR3592_DMG::ld_hl_sp(DataType opcode, LR3592_RegisterFile* )
 {
 	AddressType *dest;
 	AddressType *src;
@@ -394,20 +397,20 @@ void LR3592_DMG::ld_hl_sp(DataType opcode)
 
 	switch	(srcSet) {
 	case 0:
-		dest = &HL->value;
-		src = &SP->value;
+		dest = &(GetRegister(HL,file).value);
+		src = &(GetRegister(SP,file).value);
 		*src += mdr.lo;
 		break;
 	case 1:
-		dest = &SP->value;
-		src = &HL->value;
+		dest = &(GetRegister(SP,file).value);
+		src = &(GetRegister(HL,file).value);
 		break;
 	}
 
 	BMMQ::CML::loadtmp(dest, src);
 }
 
-void LR3592_DMG::cb_execute(DataType opcode)
+void LR3592_DMG::cb_execute(DataType opcode, LR3592_RegisterFile* )
 {
 	auto operation	= ( opcode & 0xF8 ) >> 3;
 	DataType testBit = (opcode & 38) >> 3;
@@ -465,7 +468,7 @@ void LR3592_DMG::cb_execute(DataType opcode)
 //	Values:
 //	00: No check, 01: Check Flag, 10: reset flag, 11: set flag
 // 	the	second bit takes precidence
-void LR3592_DMG::calculateflags(uint16_t calculationFlags)
+void LR3592_DMG::calculateflags(uint16_t calculationFlags, LR3592_RegisterFile* )
 {
 	bool newflags[4] =	{0,0,0,0};
 
@@ -649,8 +652,8 @@ void LR3592_DMG::populateOpcodes()
 		ld_ir16_r8( cip);
 	};
 	std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_add_sp_r8	=
-	[this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
-		BMMQ::CML::add(&SP->value, mdr.value);
+	[this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> snapshot) {
+		BMMQ::CML::add(&(GetRegister(SP,&snapshot.file).value), mdr.value);
 	};
 	std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_jp_hl	=
 	[this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
