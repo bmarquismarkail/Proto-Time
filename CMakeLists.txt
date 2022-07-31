@@ -10,7 +10,6 @@ add_compile_options(-Wall -Wextra )
 add_library(time-gameboy-interpreter-core
 	cores/gameboy/decode/gb_decoder.cpp
 	cores/gameboy/decode/gb_interpreter.cpp
-	cores/gameboy/gameboy_opcodes.cpp
 	cores/gameboy/gameboy.cpp
 )
 add_executable(timeEmulator emulator.cpp)

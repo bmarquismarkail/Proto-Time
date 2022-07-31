@@ -7,7 +7,7 @@
 		BMMQ::MemorySnapshot<AddressType, DataType, AddressType> *snap;
 	public:
 		//Class Helper Functions
-		void useSnapshot(BMMQ::MemorySnapshot<AddressType, DataType, AddressType> *s);
+		void setSnapshot(BMMQ::MemorySnapshot<AddressType, DataType, AddressType> *s);
 		LR3592_RegisterPair* GetRegister(std::string_view id);
 		//Gameboy-Specific Decoding Functions
 		bool checkJumpCond(DataType opcode);

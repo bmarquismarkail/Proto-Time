@@ -1,6 +1,6 @@
 #include "gb_interpreter.hpp"
 
-void LR3592_Interpreter_Decode::useSnapshot(BMMQ::MemorySnapshot<AddressType, DataType, AddressType> *s)
+void LR3592_Interpreter_Decode::setSnapshot(BMMQ::MemorySnapshot<AddressType, DataType, AddressType> *s)
 {
 	snap = s;
 }
