@@ -21,9 +21,9 @@ LR3592_DMG::LR3592_DMG()
 //        populateOpcodes();
 }
 
-BMMQ::MemoryMap<AddressType, DataType> LR3592_DMG::buildMemoryMap()
+BMMQ::MemoryStorage<AddressType, DataType> LR3592_DMG::buildMemoryStore()
 {
-    BMMQ::MemoryMap<AddressType, DataType> map;
+    BMMQ::MemoryStorage<AddressType, DataType> map;
     map.addMemBlock(std::make_tuple(0x0000, 0x4000, BMMQ::memAccess::MEM_READ));
     map.addMemBlock(std::make_tuple(0x4000, 0x4000, BMMQ::memAccess::MEM_READ));
     map.addMemBlock(std::make_tuple(0x8000, 0x2000, BMMQ::memAccess::MEM_READ_WRITE));

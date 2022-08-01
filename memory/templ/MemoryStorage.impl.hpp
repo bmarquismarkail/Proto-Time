@@ -1,39 +1,39 @@
-#include "../MemoryMap.hpp"
+#include "../MemoryStorage.hpp"
 
 #include <limits>
 
 namespace BMMQ {
 
 template<typename AddressType, typename DataType>
-void MemoryMap<AddressType,DataType>::addMemBlock(std::tuple<AddressType, AddressType, memAccess> memBlock)
+void MemoryStorage<AddressType,DataType>::addMemBlock(std::tuple<AddressType, AddressType, memAccess> memBlock)
 {
     map.push_back(memBlock);
     mem.resize( std::get<1>(memBlock) );
 }
 
 template<typename AddressType, typename DataType>
-void MemoryMap<AddressType,DataType>::addReadOnlyMem(std::pair<AddressType, AddressType> romBlock)
+void MemoryStorage<AddressType,DataType>::addReadOnlyMem(std::pair<AddressType, AddressType> romBlock)
 {
     auto memBlock = std::tuple_cat(romBlock, memAccess::MEM_READ);
     addMemBlock(memBlock);
 }
 
 template<typename AddressType, typename DataType>
-void MemoryMap<AddressType,DataType>::addWriteOnlyMem(std::pair<AddressType, AddressType> womBlock)
+void MemoryStorage<AddressType,DataType>::addWriteOnlyMem(std::pair<AddressType, AddressType> womBlock)
 {
     auto memBlock = std::tuple_cat(womBlock, memAccess::MEM_WRITE);
     addMemBlock(memBlock);
 }
 
 template<typename AddressType, typename DataType>
-void MemoryMap<AddressType,DataType>::addReadWriteMem(std::pair<AddressType, AddressType> block)
+void MemoryStorage<AddressType,DataType>::addReadWriteMem(std::pair<AddressType, AddressType> block)
 {
     auto memBlock = std::tuple_cat(block, memAccess::MEM_READ_WRITE);
     addMemBlock(memBlock);
 }
 /*
 template<typename AddressType, typename DataType>
-DataType MemoryMap<AddressType,DataType>::read(std::size_t address)
+DataType MemoryStorage<AddressType,DataType>::read(std::size_t address)
 {
     std::size_t index;
     std::size_t temp = 0;
@@ -51,7 +51,7 @@ DataType MemoryMap<AddressType,DataType>::read(std::size_t address)
 }
 	*/
 template<typename AddressType, typename DataType>
-void MemoryMap<AddressType,DataType>::read(DataType* stream, std::size_t address, std::streamsize count){
+void MemoryStorage<AddressType,DataType>::read(DataType* stream, std::size_t address, std::streamsize count){
 	
 	AddressType maxaddress = std::numeric_limits<AddressType>::max();
 	AddressType bounds = maxaddress - address;
@@ -84,7 +84,7 @@ void MemoryMap<AddressType,DataType>::read(DataType* stream, std::size_t address
 }
 
 template<typename AddressType, typename DataType>
-void MemoryMap<AddressType,DataType>::write(std::size_t address, void *value, std::streamsize count )
+void MemoryStorage<AddressType,DataType>::write(std::size_t address, void *value, std::streamsize count )
 {
     std::size_t index;
     std::size_t temp = 0;
@@ -105,7 +105,7 @@ void MemoryMap<AddressType,DataType>::write(std::size_t address, void *value, st
 }
 
 template<typename AddressType, typename DataType>
-DataType* MemoryMap<AddressType,DataType>::getPos(std::size_t address)
+DataType* MemoryStorage<AddressType,DataType>::getPos(std::size_t address)
 {
     std::size_t index;
     std::size_t temp = 0;

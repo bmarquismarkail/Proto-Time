@@ -6,7 +6,7 @@
 #include <string_view>
 #include <iostream>
 
-#include "../../MemoryMap.hpp"
+#include "../../MemoryStorage.hpp"
 
 template<typename T>
 using poolsizetype = typename std::vector< std::pair< T, std::size_t>>::size_type;
@@ -18,6 +18,7 @@ namespace BMMQ {
 
 	template<typename A, typename D>
 	struct SnapshotAddressData {
+		
 		bool isAddressInSnapshot;
 
 		// a tuple that houses:
@@ -30,13 +31,13 @@ namespace BMMQ {
 
 	template<typename AddressType, typename DataType>
 	class SnapshotStorage {
-		MemoryMap<AddressType, DataType>& map;
+		MemoryStorage<AddressType, DataType>& map;
 		std::vector< std::pair< AddressType, std::size_t>> pool;
 		std::vector<DataType> mem;
 		SnapshotAddressData<AddressType, DataType> isAddressInSnapshot(AddressType at);
 		AddressType maxAccessed;
 	public:
-		SnapshotStorage(MemoryMap<AddressType, DataType>& m);
+		SnapshotStorage(MemoryStorage<AddressType, DataType>& m);
 		void read(DataType* stream, AddressType address, AddressType count);
 		void write(DataType* stream, AddressType address, AddressType count);
 		DataType& at(AddressType idx);

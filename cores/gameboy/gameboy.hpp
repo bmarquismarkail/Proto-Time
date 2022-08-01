@@ -65,7 +65,7 @@ public:
     //CTOR
 
     LR3592_DMG();
-    BMMQ::MemoryMap<AddressType, DataType> buildMemoryMap();
+    BMMQ::MemoryStorage<AddressType, DataType> buildMemoryStore();
     LR3592_RegisterFile buildRegisterfile();
     BMMQ::fetchBlock<AddressType, DataType> fetch();
     BMMQ::executionBlock<AddressType, DataType, AddressType> decode(BMMQ::OpcodeList<AddressType, DataType, AddressType> &oplist, BMMQ::fetchBlock<AddressType, DataType>& fetchData);

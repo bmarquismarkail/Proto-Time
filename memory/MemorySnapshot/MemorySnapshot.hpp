@@ -4,8 +4,8 @@
 #include <utility>
 #include <vector>
 #include <string_view>
+#include "IMemory.hpp"
 #include "reg_base.hpp"
-#include "MemoryMap.hpp"
 #include "SnapshotStorage/SnapshotStorage.h"
 
 namespace BMMQ {

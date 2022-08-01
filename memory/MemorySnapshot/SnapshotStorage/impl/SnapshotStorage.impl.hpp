@@ -62,7 +62,7 @@ namespace BMMQ {
 	}
 
 	template<typename AddressType, typename DataType>
-	SnapshotStorage<AddressType, DataType>::SnapshotStorage(MemoryMap<AddressType, DataType>& m)
+	SnapshotStorage<AddressType, DataType>::SnapshotStorage(MemoryStorage<AddressType, DataType>& m)
 	: map(m) {
 	}
 

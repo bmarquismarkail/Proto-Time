@@ -16,7 +16,7 @@ enum memAccess {
 
 // The Memory Map
 template<typename AddressType, typename DataType>
-class MemoryMap {
+class MemoryStorage {
 public:
     void addMemBlock(std::tuple<AddressType, AddressType, memAccess> memBlock);
     void addReadOnlyMem(std::pair<AddressType, AddressType> romBlock);
@@ -31,9 +31,6 @@ private:
     std::vector<DataType> mem;
 };
 //////////////////////////////////////////////////////////
-template<typename AddressType, typename DataType>
-using memoryStorage =  std::pair<AddressType, DataType*>;
 }
-
-#include "templ/MemoryMap.impl.hpp"
+#include "templ/MemoryStorage.impl.hpp"
 #endif
