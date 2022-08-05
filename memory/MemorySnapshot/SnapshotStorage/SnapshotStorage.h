@@ -31,7 +31,7 @@ namespace BMMQ {
 
 	template<typename AddressType, typename DataType>
 	class SnapshotStorage {
-		MemoryStorage<AddressType, DataType>& map;
+		MemoryStorage<AddressType, DataType>& store;
 		std::vector< std::pair< AddressType, std::size_t>> pool;
 		std::vector<DataType> mem;
 		SnapshotAddressData<AddressType, DataType> isAddressInSnapshot(AddressType at);
