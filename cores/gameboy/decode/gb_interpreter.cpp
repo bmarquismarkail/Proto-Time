@@ -570,33 +570,33 @@ void LR3592_Interpreter_Decode::populateOpcodes()
 {
 	std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_jp_i16 =
 	[this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file ) {
-		useSnapshot(&file);
+		setSnapshot(&file);
 		BMMQ::CML::jp( &GetRegister("PC")->value, GetRegister("mdr")->value, true );
 	};
 	
 	std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_jpcc_i16 =
 	[this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
-		useSnapshot(&file);
+		setSnapshot(&file);
 		BMMQ::CML::jp( &GetRegister("PC")->value, GetRegister("mdr")->value, checkJumpCond( cip) );
 	};
 	std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_jr_i8	=
 	[this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
-		useSnapshot(&file);
+		setSnapshot(&file);
 		BMMQ::CML::jr( (&GetRegister("PC")->value), GetRegister("mdr")->value, true );
 	};
 	std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_jrcc_i8 =
 	[this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
-		useSnapshot(&file);
+		setSnapshot(&file);
 		BMMQ::CML::jr( (&GetRegister("PC")->value), GetRegister("mdr")->value, checkJumpCond( cip) );
 	};
 	std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_ld_ir16_SP =
 	[this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
-		useSnapshot(&file);
+		setSnapshot(&file);
 		BMMQ::CML::loadtmp( (&GetRegister("mar")->value), &GetRegister("SP")->value);
 	};
 	std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_ld_r16_i16 =
 	[this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
-		useSnapshot(&file);
+		setSnapshot(&file);
 		BMMQ::CML::loadtmp( ld_R16_I16_GetRegister( cip), GetRegister("mdr")->value );
 	};
 	std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_ld_r16_8 =
@@ -692,12 +692,12 @@ void LR3592_Interpreter_Decode::populateOpcodes()
 	};
 	std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_add_sp_r8	=
 	[this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> snapshot) {
-		useSnapshot(&file);
+		setSnapshot(&file);
 		BMMQ::CML::add(&GetRegister("SP")-> value, GetRegister("mdr")->value);
 	};
 	std::function<void(BMMQ::MemorySnapshot<AddressType, DataType, AddressType>)> uf_jp_hl	=
 	[this](BMMQ::MemorySnapshot<AddressType, DataType, AddressType> file) {
-		useSnapshot(&file);
+		setSnapshot(&file);
 		DataType tmp;
 		snap->mem.write(&tmp, GetRegister("HL")->value, 1);
 		BMMQ::CML::loadtmp(&GetRegister("PC")->value, &tmp );
