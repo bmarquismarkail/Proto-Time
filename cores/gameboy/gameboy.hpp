@@ -4,8 +4,8 @@
 #include <stdexcept>
 #include <cstdio>
 
-#include "../../opcode.hpp"
-#include "../../inst_cycle.hpp"
+#include "../../inst_cycle/execute/opcode.hpp"
+#include "../../inst_cycle/fetch/fetchBlock.hpp"
 #include "../../CPU.hpp"
 #include "../../common_microcode.hpp"
 #include "../../memory/templ/reg_uint16.impl.hpp"
@@ -19,7 +19,7 @@ using LR3592_RegisterPair = BMMQ::CPU_RegisterPair<AddressType>;
 using LR3592_RegisterFile = BMMQ::RegisterFile<AddressType>;
 
 class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
-    BMMQ::OpcodeList<AddressType, DataType, AddressType> opcodeList;
+    //BMMQ::OpcodeList<AddressType, DataType, AddressType> opcodeList;
     BMMQ::MemoryPool<AddressType, DataType, AddressType> mem;
     LR3592_Register mar;
     LR3592_RegisterPair mdr;

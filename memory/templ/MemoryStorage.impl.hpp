@@ -51,31 +51,29 @@ DataType MemoryStorage<AddressType,DataType>::read(std::size_t address)
 }
 	*/
 template<typename AddressType, typename DataType>
-void MemoryStorage<AddressType,DataType>::read(DataType* stream, std::size_t address, std::streamsize count){
+void MemoryStorage<AddressType,DataType>::read(DataType* stream, AddressType address, AddressType count){
 	
 	AddressType maxaddress = std::numeric_limits<AddressType>::max();
 	AddressType bounds = maxaddress - address;
 	count = std::min(bounds, count);
 	if (count == 0) return;
 	
-	AddressType endAddress = address + count;
-	std::size_t index = address;
-	std::size_t temp = 0;
-	std::size_t cap = 0;
-	DataType *ptr = stream;
+	AddressType index = address;
+	AddressType temp = 0;
+	AddressType cap = 0;
 	
 	// Check if the addresses are readable
 	for(auto i = map.begin(); i != map.end(); ++i) {
         if ( std::get<0>(*i) <= address && address < ( std::get<0>(*i) + std::get<1>(*i) ) ) {
-			if ( std::get<2>(i) & MEM_READ ) {
+			if ( std::get<2>(*i) & MEM_READ ) {
 				index = temp + (address - std::get<0>(*i));
-				cap = (std::next(i) == map.end ? mem.length() : std::get<1>(*std::next(i) )) - index;
+                auto next_it = std::next(i);
+				cap = ( std::next(i) == map.end() ? mem.size() : std::get<1>(*next_it)) - index;
 				break;
 			}
 			return;
         }
-
-        temp+= std::get<1>(i);
+        temp+= std::get<1>(*i);
     }
 	
 	for(int i = 0; i < count; i--){
@@ -84,7 +82,7 @@ void MemoryStorage<AddressType,DataType>::read(DataType* stream, std::size_t add
 }
 
 template<typename AddressType, typename DataType>
-void MemoryStorage<AddressType,DataType>::write(std::size_t address, void *value, std::streamsize count )
+void MemoryStorage<AddressType,DataType>::write(DataType* stream, AddressType address, AddressType count )
 {
     std::size_t index;
     std::size_t temp = 0;
@@ -99,7 +97,7 @@ void MemoryStorage<AddressType,DataType>::write(std::size_t address, void *value
         temp+= std::get<1>(i);
     }
 
-    char *ptr = (char*)value;
+    char *ptr = (char*)stream;
     for (int c = 0; c < count; c++)
         mem[index + c] = *ptr++;
 }

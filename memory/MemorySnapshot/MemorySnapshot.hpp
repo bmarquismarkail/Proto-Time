@@ -11,8 +11,11 @@
 namespace BMMQ {
 	
 	template<typename AddressType, typename DataType, typename RegType>
-	struct MemorySnapshot {
-		void copyRegisterFromMainFile(std::string_view regId, RegisterFile<AddressType>& from);
+	struct MemorySnapshot : virtual public IMemory<AddressType, DataType, RegType> {
+		MemorySnapshot(MemoryStorage<AddressType, DataType>& m);
+		virtual void read(DataType* stream, AddressType address, AddressType count);
+		virtual void write(DataType* stream, AddressType address, AddressType count);
+		void copyRegisterFromMainFile(std::string_view regId, RegisterFile<RegType>& from);
 		CPU_Register<RegType>* findOrCreateNewRegister(const std::string& regId, bool isPair= false);
 		RegisterFile<RegType> file;
 		SnapshotStorage<AddressType, DataType> mem;

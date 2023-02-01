@@ -74,25 +74,25 @@ BMMQ::fetchBlock<AddressType, DataType> LR3592_DMG::fetch()
     return f;
 };
 
-BMMQ::executionBlock<AddressType, DataType, AddressType> LR3592_DMG::decode(BMMQ::OpcodeList<AddressType, DataType, AddressType> &oplist, BMMQ::fetchBlock<AddressType, DataType>& fetchData)
-{
-    // building a static execution block
-    BMMQ::executionBlock<AddressType, DataType, AddressType> b;
-    mdr.value = 255;
-    auto &fb = fetchData.getblockData();
-    for( auto& i : fb ) {
-        for (auto data : i.data)
-            b.getBlock().push_back(opcodeList[data]);
-    }
-    return b;
-};
+// BMMQ::executionBlock<AddressType, DataType, AddressType> LR3592_DMG::decode(BMMQ::OpcodeList<AddressType, DataType, AddressType> &oplist, BMMQ::fetchBlock<AddressType, DataType>& fetchData)
+// {
+//     // building a static execution block
+//     BMMQ::executionBlock<AddressType, DataType, AddressType> b;
+//     mdr.value = 255;
+//     auto &fb = fetchData.getblockData();
+//     for( auto& i : fb ) {
+//         for (auto data : i.data)
+//             b.getBlock().push_back(opcodeList[data]);
+//     }
+//     return b;
+// };
 
-void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, AddressType>& block, BMMQ::fetchBlock<AddressType, DataType> &fb )
-{
-    for (auto e : block.getBlock() ) {
-        (e)(block.getMemory());
-    }
-};
+// void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, AddressType>& block, BMMQ::fetchBlock<AddressType, DataType> &fb )
+// {
+//     for (auto e : block.getBlock() ) {
+//         (e)(block.getMemory());
+//     }
+// };
 
 void LR3592_DMG::setStopFlag(bool f){
 	stopFlag = f;

@@ -24,5 +24,5 @@ public:
 };
 }
 
-#include "templ/inst_cycle.impl.hpp"
+#include "templ/fetchBlock.impl.hpp"
 #endif // INSTRUCTION_CYCLE

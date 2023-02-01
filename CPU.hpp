@@ -3,8 +3,8 @@
 
 #include <string_view>
 
-#include "opcode.hpp"
-#include "inst_cycle.hpp"
+#include "inst_cycle/execute/opcode.hpp"
+#include "inst_cycle/fetch/fetchBlock.hpp"
 
 namespace BMMQ {
 ///////////////////////////////////////////////////////////////////////
