@@ -17,7 +17,7 @@ struct return_type_tuple_impl<T(Args...)>{
 
 // Might need a catch-all for pointers, references, void and volitile, etc...
 template<class F, class... Args>
-struct return_type_tuple_impl<F(*)(Args...)> : return_type_tuple_impl<F(Args...){};
+struct return_type_tuple_impl<F(*)(Args...)> : return_type_tuple_impl<F(Args...)>{};
 
 template<class F, class... Fs>
 struct return_type_tuple{

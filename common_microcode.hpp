@@ -129,7 +129,7 @@ static void iand(T1 *temp, T2 *reg)
 template<typename T1, typename T2>
 static void iand(T1 *temp, T2 imm)
 {
-    iand(temp, imm);
+    iand(temp, &imm);
 }
 
 template<typename T1, typename T2>
@@ -141,7 +141,7 @@ static void ixor(T1 *temp, T2 *reg)
 template<typename T1, typename T2>
 static void ixor(T1 *temp, T2 imm)
 {
-    ixor(temp, imm);
+    ixor(temp, &imm);
 }
 
 template<typename T1, typename T2>
@@ -153,7 +153,7 @@ static void ior(T1 *temp, T2 *reg)
 template<typename T1, typename T2>
 static void ior(T1 *temp, T2 imm)
 {
-    ior(temp, imm);
+    ior(temp, &imm);
 }
 
 template<typename T1, typename T2>
@@ -165,7 +165,7 @@ static void cmp(T1 *temp, T2 *reg)
 template<typename T1, typename T2>
 static void cmp(T1 *temp, T2 imm)
 {
-    cmp(temp, imm);
+    cmp(temp, &imm);
 }
 
 template<typename T1>

@@ -1,7 +1,5 @@
 #include "../gameboy.hpp"
 
-typedef	BMMQ::Imicrocode<AddressType, DataType,	AddressType> LR3592_IMicrocode;
-typedef	BMMQ::IOpcode<AddressType, DataType, AddressType> LR3592_Opcode;
 	class LR3592_Decode {
 	protected:
 		LR3592_DMG *cpu;

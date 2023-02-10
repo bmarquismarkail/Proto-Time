@@ -46,8 +46,8 @@ namespace BMMQ {
 		// This class will be used as a middleman to prevent allocation when none is needed
 		
 		class Proxy {
-			AddressType address;
 			SnapshotStorage* parent;
+			AddressType address;
 			static DataType def;
 		public:
 			Proxy(SnapshotStorage* p, AddressType a);

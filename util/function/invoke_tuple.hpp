@@ -1,4 +1,8 @@
 #include <utility>
+
+#include "../tuple/sub_tuple.hpp"
+#include "void_invocable.hpp"
+#include "arity.hpp"
 //*******************************************************************************
 // Helper Function to invoke depending on return type, might not be needed.
 template <typename F, typename... Args>
@@ -18,7 +22,7 @@ constexpr void invoke_all(FuncList func_list, auto return_list,
     using func_t =
         std::remove_pointer_t<typename std::tuple_element_t<funcInd, FuncList>>;
     constexpr size_t f_arity = arity_v<func_t>;
-    constexpr bool ret_void = invocable_returns_void<func_t>::value;
+    constexpr bool ret_void = void_invocable<func_t>::value;
 
     constexpr std::size_t nextFuncInd = funcInd + 1;
     constexpr std::size_t nextRetInd = retInd + (ret_void ? 0 : 1);

@@ -3,7 +3,7 @@
 
 #include <string_view>
 
-#include "inst_cycle/execute/opcode.hpp"
+#include "inst_cycle/execute/executionBlock.hpp"
 #include "inst_cycle/fetch/fetchBlock.hpp"
 
 namespace BMMQ {
@@ -13,7 +13,8 @@ template<typename AddressType, typename DataType, typename RegType>
 class CPU {
 public:
     virtual fetchBlock<AddressType, DataType> fetch()=0;
-    virtual executionBlock<AddressType, DataType, RegType> decode(OpcodeList<AddressType, DataType, RegType> &oplist, fetchBlock<AddressType, DataType>& fetchData)=0;
+    executionBlock<AddressType, DataType, RegType> 
+        decode(auto &oplist, fetchBlock<AddressType, DataType>& fetchData);
     virtual void execute(const executionBlock<AddressType, DataType, RegType>& block, BMMQ::fetchBlock<AddressType, DataType> &fb)=0;
 };
 }

@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <cstdio>
 
-#include "../../inst_cycle/execute/opcode.hpp"
+#include "../../inst_cycle/execute/executionBlock.hpp"
 #include "../../inst_cycle/fetch/fetchBlock.hpp"
 #include "../../CPU.hpp"
 #include "../../common_microcode.hpp"
@@ -68,8 +68,12 @@ public:
     BMMQ::MemoryStorage<AddressType, DataType> buildMemoryStore();
     LR3592_RegisterFile buildRegisterfile();
     BMMQ::fetchBlock<AddressType, DataType> fetch();
-    BMMQ::executionBlock<AddressType, DataType, AddressType> decode(BMMQ::OpcodeList<AddressType, DataType, AddressType> &oplist, BMMQ::fetchBlock<AddressType, DataType>& fetchData);
+
+    BMMQ::executionBlock<AddressType, DataType, AddressType> 
+        decode(auto &oplist, BMMQ::fetchBlock<AddressType, DataType>& fetchData);
+
     void execute(const BMMQ::executionBlock<AddressType, DataType, AddressType>& block, BMMQ::fetchBlock<AddressType, DataType> &fb );
+
 	BMMQ::MemoryPool<AddressType, DataType, AddressType>& getMemory();
 	void setStopFlag(bool f);
 };
