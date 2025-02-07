@@ -367,25 +367,29 @@ void LR3592_Interpreter_Decode::rst(DataType opcode)
 	BMMQ::CML::jr( &PC->value, rstPos, true );
 }
 
+// This is an issue
 void LR3592_Interpreter_Decode::ldh(DataType opcode)
 {
-	DataType* dest;
-	DataType* src;
+	DataType* dest = nullptr;
+	DataType* src = nullptr;
 
-	auto srcSet = (opcode & 0x10) >> 4;
+	// Check if the Accumulator is the source
+	auto srcSet = !( (opcode & 0x10) >> 4);
 
 	auto A = GetRegister("AF");
 	auto mdr = GetRegister("mdr");
 	if (srcSet) {
 		src = &A->hi;
+		dest = new DataType;
 		snap->mem.write(dest, mdr->value + 0xFF00, 1);
 	}
 	else {
-		src = &A->hi;
-		snap->mem.write(dest, mdr->value + 0xFF00, 1);
+		dest = &A->hi;
+		src = new DataType;
+		snap->mem.write(src, mdr->value + 0xFF00, 1);
 	}
 
-	BMMQ::CML::loadtmp(dest, src);
+	BMMQ::CML::loadtmp(dest, *src);
 }
 
 void LR3592_Interpreter_Decode::ld_ir16_r8(DataType opcode)
@@ -402,9 +406,11 @@ void LR3592_Interpreter_Decode::ld_ir16_r8(DataType opcode)
 	switch	(srcSet) {
 	case 0:
 		src = &A->hi;
+		dest = new DataType;
 		snap->mem.write(dest, regSet ? ( C->lo + 0xFF00 ) : mdr->value, 1);
 		break;
 	case 1:
+		src = new DataType;
 		snap->mem.write(src, regSet ? ( C->lo + 0xFF00 ) : mdr->value, 1);
 		dest = &A->hi;
 	}

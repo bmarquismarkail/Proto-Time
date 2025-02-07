@@ -3,6 +3,7 @@
 
 #include "../reg_base.hpp"
 
+#include <cstdint>
 namespace BMMQ {
 
 template<>

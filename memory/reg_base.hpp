@@ -1,6 +1,7 @@
 #ifndef __REG_BASE
 #define __REG_BASE
 
+#include <vector>
 #include <string>
 #include <string_view>
 #include <utility>

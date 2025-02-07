@@ -16,7 +16,7 @@ namespace BMMQ
         Opcode(MCs... mcs) : microcodeList(std::make_tuple(mcs...)){
         }
 
-        // The default function call constructor is intentially deleted
+        // The default function call constructor is intentionally deleted
         virtual void operator()() = delete;
     };
 
