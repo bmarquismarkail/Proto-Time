@@ -53,26 +53,15 @@ Gets the base address of the *fetchBlock*
 - std::vector<fetchBlockData<AddressType, DataType>> &getblockData()  
 returns a reference of *blockData*
 ---
-##### microcodefunc
-`using microcodeFunc = std::function<void()>`  
-a microcode function.
 
 ##### Imicrocode
 `class Imicrocode`
 
 The Microcode interface.
 
-This type hold multiple *microcodefunc*'s instances. this allows one microcode to be a combination of functions.
-
 Members:
-- static std::map< std::string, microcodeFunc  > v  
-A map of string keys to *microcodeFunc*'s
 
 Functions:
-- const microcodeFunc \*findMicrocode(const std::string id)  
-searches for microcode identified by string *id*
-- void registerMicrocode(const std::string id, microcodeFunc func)  
-inserts function *func* into *v* with string key *id*
 
 ---
 
@@ -81,28 +70,13 @@ inserts function *func* into *v* with string key *id*
 
 The Opcode Interface
 
-This holds multiple *Imicrocode*'s, which in turn creates a CPU operation. Like a *Imicrocode* is able to obtain multiple *microcodeFunc*'s, an *IOpcode* can have multiple *Imicrocode*'s
+This holds multiple *Imicrocode*'s, which in turn creates a CPU operation.
 
 Members:
-- std::vector<const microcodeFunc *> microcode  
-A dynamic array of *microcodeFunc*'s  
-> **TODO**: implement this as a vector of *Imicrocode*'s
 
 Functions:
 - IOpcode(Imicrocode& library, const std::string id)  
 Creates an IOpcode, adding microcode in *library* with string *id*  
-> **TODO**: this needs to add ALL of *library* after above is implementated
-- IOpcode(const microcodeFunc  \*func)  
-Creates an IOpcode, adding microcodeFunc pointer *\*func* into it  
-> **TODO**: Remove this when above is implemented
-- IOpcode(std::initializer_list<const microcodeFunc  *> list): microcode(list)  
-Creates an IOpcode, adding *list* to vector  
-> **TODO**: Remove this when above is implemented
-- void push_microcode(const microcodeFunc  *func)  
-Adds microcodeFunc pointer *\*func* in *microcode*
-> **TODO**: Change *func* from *microcodeFunc* to *Imicrocode* after above is implemented
-- void push_microcode(Imicrocode& library, const std::string id)  
-Adds microcode in *library* with string *id*<br>
 > **TODO**: this needs to add ALL of *library* after above is implementated
 - template<typename AddressType, typename DataType>
 void operator()(fetchBlock<AddressType, DataType> &fb)  
