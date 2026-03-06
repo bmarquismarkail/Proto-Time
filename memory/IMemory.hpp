@@ -4,6 +4,7 @@
 namespace BMMQ {	
 	template<typename AddressType, typename DataType, typename RegType>
 	class IMemory{
+	public:
 		virtual void read(DataType* stream, AddressType address, AddressType count) = 0;
 		virtual void write(DataType* stream, AddressType address, AddressType count) = 0;
 	};

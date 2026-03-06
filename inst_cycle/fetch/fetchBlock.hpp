@@ -21,6 +21,7 @@ public:
     void setbaseAddress(AddressType address);
     AddressType getbaseAddress() const;
     std::vector<fetchBlockData<AddressType, DataType>> &getblockData();
+    const std::vector<fetchBlockData<AddressType, DataType>> &getblockData() const;
 };
 }
 

@@ -17,4 +17,10 @@ std::vector<fetchBlockData<AddressType, DataType>>& fetchBlock<AddressType, Data
 {
     return blockData;
 }
+
+template<typename AddressType, typename DataType>
+const std::vector<fetchBlockData<AddressType, DataType>>& fetchBlock<AddressType, DataType>::getblockData() const
+{
+    return blockData;
+}
 }

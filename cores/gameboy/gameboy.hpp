@@ -24,6 +24,7 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
     LR3592_Register mar;
     LR3592_RegisterPair mdr;
     uint16_t flagset;
+    BMMQ::CpuFeedback feedback;
     DataType cip;
     bool ime = false, stopFlag = false;
 
@@ -69,10 +70,11 @@ public:
     LR3592_RegisterFile buildRegisterfile();
     BMMQ::fetchBlock<AddressType, DataType> fetch();
 
-    BMMQ::executionBlock<AddressType, DataType, AddressType> 
-        decode(auto &oplist, BMMQ::fetchBlock<AddressType, DataType>& fetchData);
+    BMMQ::executionBlock<AddressType, DataType, AddressType>
+        decode(BMMQ::fetchBlock<AddressType, DataType>& fetchData) override;
 
-    void execute(const BMMQ::executionBlock<AddressType, DataType, AddressType>& block, BMMQ::fetchBlock<AddressType, DataType> &fb );
+    void execute(const BMMQ::executionBlock<AddressType, DataType, AddressType>& block, BMMQ::fetchBlock<AddressType, DataType> &fb ) override;
+    const BMMQ::CpuFeedback& getLastFeedback() const override;
 
 	BMMQ::MemoryPool<AddressType, DataType, AddressType>& getMemory();
 	void setStopFlag(bool f);

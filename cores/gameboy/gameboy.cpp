@@ -64,39 +64,92 @@ BMMQ::MemoryPool<AddressType, DataType, AddressType>& LR3592_DMG::getMemory()
 //
 BMMQ::fetchBlock<AddressType, DataType> LR3592_DMG::fetch()
 {
-    // building a static fetchblock for testing
+    // Static instruction stream for smoke-cycle validation: LD A,0x12; NOP
     BMMQ::fetchBlock<AddressType, DataType> f ;
     f.setbaseAddress(cip);
 
-    BMMQ::fetchBlockData<AddressType, DataType> data {0, std::vector<DataType> {0x3E} };
+    BMMQ::fetchBlockData<AddressType, DataType> data {
+        0, std::vector<DataType> {0x3E, 0x12, 0x00}
+    };
 
     f.getblockData().push_back(data);
     return f;
 };
 
-// BMMQ::executionBlock<AddressType, DataType, AddressType> LR3592_DMG::decode(BMMQ::OpcodeList<AddressType, DataType, AddressType> &oplist, BMMQ::fetchBlock<AddressType, DataType>& fetchData)
-// {
-//     // building a static execution block
-//     BMMQ::executionBlock<AddressType, DataType, AddressType> b;
-//     mdr.value = 255;
-//     auto &fb = fetchData.getblockData();
-//     for( auto& i : fb ) {
-//         for (auto data : i.data)
-//             b.getBlock().push_back(opcodeList[data]);
-//     }
-//     return b;
-// };
+BMMQ::executionBlock<AddressType, DataType, AddressType>
+LR3592_DMG::decode(BMMQ::fetchBlock<AddressType, DataType>& fetchData)
+{
+    BMMQ::executionBlock<AddressType, DataType, AddressType> block;
+    block.setSnapshot(&mem);
 
-// void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, AddressType>& block, BMMQ::fetchBlock<AddressType, DataType> &fb )
-// {
-//     for (auto e : block.getBlock() ) {
-//         (e)(block.getMemory());
-//     }
-// };
+    for (const auto& dataBlock : fetchData.getblockData()) {
+        for (std::size_t i = 0; i < dataBlock.data.size(); ++i) {
+            const auto opcode = dataBlock.data[i];
+
+            if (opcode == 0x00) {
+                block.addStep([](auto&, auto&) {});
+                continue;
+            }
+
+            if (opcode == 0x3E && (i + 1) < dataBlock.data.size()) {
+                const DataType imm = dataBlock.data[++i];
+                block.addStep([imm](auto& snapshot, auto&) {
+                    auto* pool = dynamic_cast<BMMQ::MemoryPool<AddressType, DataType, AddressType>*>(&snapshot);
+                    if (pool == nullptr) return;
+
+                    auto* afEntry = pool->file.findRegister("AF");
+                    if (afEntry == nullptr || afEntry->second == nullptr) return;
+
+                    auto* af = dynamic_cast<LR3592_RegisterPair*>(afEntry->second);
+                    if (af == nullptr) return;
+
+                    af->hi = imm;
+                });
+            }
+        }
+    }
+
+    return block;
+}
+
 void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, AddressType>& block, BMMQ::fetchBlock<AddressType, DataType> &fb )
 {
-    (void)block;
-    (void)fb;
+    auto* pcEntry = mem.file.findRegister("PC");
+    feedback.pcBefore = (pcEntry != nullptr && pcEntry->second != nullptr)
+        ? static_cast<uint32_t>(pcEntry->second->value)
+        : 0;
+
+    feedback.isControlFlow = false;
+    std::size_t executedByteCount = 0;
+    for (const auto& dataBlock : fb.getblockData()) {
+        executedByteCount += dataBlock.data.size();
+        for (const auto opcode : dataBlock.data) {
+            if (opcode == 0x00 || opcode == 0xC3 || opcode == 0xCD || opcode == 0xC9) {
+                feedback.isControlFlow = true;
+            }
+        }
+    }
+    feedback.segmentBoundaryHint = feedback.isControlFlow;
+
+    auto* snapshot = block.getSnapshot();
+    if (snapshot == nullptr) return;
+
+    for (const auto& step : block.getSteps()) {
+        step(*snapshot, fb);
+    }
+
+    if (pcEntry != nullptr && pcEntry->second != nullptr) {
+        pcEntry->second->value = static_cast<AddressType>(
+            pcEntry->second->value + executedByteCount);
+        feedback.pcAfter = static_cast<uint32_t>(pcEntry->second->value);
+    } else {
+        feedback.pcAfter = feedback.pcBefore;
+    }
+}
+
+const BMMQ::CpuFeedback& LR3592_DMG::getLastFeedback() const
+{
+    return feedback;
 }
 
 void LR3592_DMG::setStopFlag(bool f){
