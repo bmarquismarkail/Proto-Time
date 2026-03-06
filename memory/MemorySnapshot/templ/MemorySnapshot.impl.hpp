@@ -18,10 +18,14 @@ namespace BMMQ {
 		}
 
   template<typename AddressType, typename DataType, typename RegType>
-		void MemorySnapshot<AddressType, DataType, RegType>::copyRegisterFromMainFile
-			(std::string_view regId, RegisterFile<RegType>& from){
-			file.findOrInsert(regId)->second = from.findRegister(regId)->second;
-		}
+			void MemorySnapshot<AddressType, DataType, RegType>::copyRegisterFromMainFile
+				(std::string_view regId, RegisterFile<RegType>& from){
+				auto from_entry = from.findRegister(regId);
+				if (from_entry == nullptr) return;
+				auto isPair = dynamic_cast<CPU_RegisterPair<RegType>*>(from_entry->second) != nullptr;
+				auto to_entry = file.findOrInsert(regId, isPair);
+				to_entry->second->value = from_entry->second->value;
+			}
 
 	template<typename AddressType, typename DataType, typename RegType>
 		CPU_Register<RegType>* MemorySnapshot<AddressType, DataType, RegType>::findOrCreateNewRegister

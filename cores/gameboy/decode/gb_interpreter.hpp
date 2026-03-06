@@ -2,13 +2,18 @@
 
 #include "gb_decoder.hpp"
 	
-	class LR3592_Interpreter_Decode: public LR3592_Decode {
-	private:
-		BMMQ::MemorySnapshot<AddressType, DataType, AddressType> *snap;
-	public:
+		class LR3592_Interpreter_Decode: public LR3592_Decode {
+		private:
+			BMMQ::MemorySnapshot<AddressType, DataType, AddressType> *snap;
+			DataType scratchReadA = 0;
+			DataType scratchReadB = 0;
+			bool scratchToggle = false;
+			DataType* readTempByte(AddressType address);
+		public:
 		//Class Helper Functions
 		void setSnapshot(BMMQ::MemorySnapshot<AddressType, DataType, AddressType> *s);
-		LR3592_RegisterPair* GetRegister(std::string_view id);
+		LR3592_Register* GetRegister(std::string_view id);
+			LR3592_RegisterPair* GetPairRegister(std::string_view id);
 		//Gameboy-Specific Decoding Functions
 		bool checkJumpCond(DataType opcode);
 		AddressType* ld_R16_I16_GetRegister(DataType opcode);

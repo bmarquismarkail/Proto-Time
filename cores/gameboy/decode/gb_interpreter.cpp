@@ -1,21 +1,43 @@
 #include "gb_interpreter.hpp"
 
+DataType* LR3592_Interpreter_Decode::readTempByte(AddressType address)
+{
+	scratchToggle = !scratchToggle;
+	DataType* target = scratchToggle ? &scratchReadA : &scratchReadB;
+	snap->mem.read(target, address, 1);
+	return target;
+}
+
 void LR3592_Interpreter_Decode::setSnapshot(BMMQ::MemorySnapshot<AddressType, DataType, AddressType> *s)
 {
 	snap = s;
 }
 
 
-LR3592_RegisterPair* LR3592_Interpreter_Decode::GetRegister(std::string_view id)
+LR3592_Register* LR3592_Interpreter_Decode::GetRegister(std::string_view id)
 {
-	auto regfile = cpu->getMemory().file;
+	auto& regfile = cpu->getMemory().file;
 	snap->copyRegisterFromMainFile(id, regfile);
-	return (LR3592_RegisterPair*)snap->file.findRegister(id)->second;
+	auto* entry = snap->file.findRegister(id);
+	if (entry == nullptr || entry->second == nullptr) {
+		throw std::invalid_argument("register not found");
+	}
+	return entry->second;
+}
+
+LR3592_RegisterPair* LR3592_Interpreter_Decode::GetPairRegister(std::string_view id)
+{
+	auto* reg = GetRegister(id);
+	auto* pairReg = dynamic_cast<LR3592_RegisterPair*>(reg);
+	if (pairReg == nullptr) {
+		throw std::invalid_argument("register is not a pair");
+	}
+	return pairReg;
 }
 
 bool LR3592_Interpreter_Decode::checkJumpCond(DataType opcode)
 {
-	auto A = GetRegister("AF");
+	auto A = GetPairRegister("AF");
 	bool checkFlag	= (opcode & 0x10) == 0x10 ? ((A->lo & 0x80) >> 7) : ((A->lo & 0x10) >> 4);
 	bool checkSet = opcode & 0x8;
 	return !(checkFlag ^ checkSet);
@@ -29,15 +51,15 @@ AddressType* LR3592_Interpreter_Decode::ld_R16_I16_GetRegister(DataType opcode)
 
 	switch (regInd) {
 	case 0:
-		return &(GetRegister("BC")->value);
+		return &(GetPairRegister("BC")->value);
 	case 1:
-		return &(GetRegister("DE")->value);
+		return &(GetPairRegister("DE")->value);
 	case 2:
-		return &(GetRegister("HL")->value);
+		return &(GetPairRegister("HL")->value);
 	case 3:
 		return &(GetRegister("SP")->value);
 	default:
-		throw new std::invalid_argument("error in decoding register. invalid argument");
+		throw std::invalid_argument("error in decoding register. invalid argument");
 	}
 }
 
@@ -48,16 +70,16 @@ AddressType* LR3592_Interpreter_Decode::add_HL_r16_GetRegister(DataType opcode)
 
 AddressType* LR3592_Interpreter_Decode::ld_r16_8_GetRegister(DataType opcode)
 {
-	switch (opcode & 0x30 >> 4) {
+	switch ((opcode & 0x30) >> 4) {
 	case 0:
-		return &(GetRegister("BC")->value);
+		return &(GetPairRegister("BC")->value);
 	case 1:
-		return &(GetRegister("DE")->value);
+		return &(GetPairRegister("DE")->value);
 	case 2:
 	case 3:
-		return &(GetRegister("HL")->value);
+		return &(GetPairRegister("HL")->value);
 	default:
-		throw new std::invalid_argument("error in decoding register. invalid argument");
+		throw std::invalid_argument("error in decoding register. invalid argument");
 	}
 }
 
@@ -65,11 +87,8 @@ AddressType* LR3592_Interpreter_Decode::ld_r16_8_GetRegister(DataType opcode)
 std::pair<DataType*, DataType*> LR3592_Interpreter_Decode::ld_r16_8_GetOperands(DataType opcode)
 {
 	AddressType *reg16 = ld_R16_I16_GetRegister(opcode);
-	DataType *accumulator = &((LR3592_RegisterPair*)GetRegister("AF"))->hi;
-	DataType *temp = new DataType;
-	auto memMap = cpu->getMemory();
-	snap->mem.read( temp, ((std::size_t)(*reg16)), 1);
-	*temp = snap->mem[*reg16];
+	DataType *accumulator = &GetPairRegister("AF")->hi;
+	DataType *temp = readTempByte(*reg16);
 
 	DataType srcFlag = (opcode & 8) >> 3;
 	switch(srcFlag) {
@@ -78,7 +97,7 @@ std::pair<DataType*, DataType*> LR3592_Interpreter_Decode::ld_r16_8_GetOperands(
 	case 1: // Accumulator Destination
 		return std::make_pair(accumulator, temp);
 	default:
-		throw new std::invalid_argument("error in decoding register. invalid argument");
+		throw std::invalid_argument("error in decoding register. invalid argument");
 	}
 }
 
@@ -87,36 +106,33 @@ DataType* LR3592_Interpreter_Decode::ld_r8_i8_GetRegister(DataType opcode)
 	auto regSet = (opcode & 0x38) >> 3;
 	switch (regSet) {
 	case 0:
-		return &(GetRegister("BC")->hi);
+		return &(GetPairRegister("BC")->hi);
 	case 1:
-		return &((LR3592_RegisterPair*)GetRegister("BC"))->lo;
+		return &GetPairRegister("BC")->lo;
 	case 2:
-		return &((LR3592_RegisterPair*)GetRegister("DE"))->hi;
+		return &GetPairRegister("DE")->hi;
 	case 3:
-		return &((LR3592_RegisterPair*)GetRegister("DE"))->lo;
+		return &GetPairRegister("DE")->lo;
 	case 4:
-		return &((LR3592_RegisterPair*)GetRegister("HL"))->hi;
+		return &GetPairRegister("HL")->hi;
 	case 5:
-		return &((LR3592_RegisterPair*)GetRegister("HL"))->lo;
+		return &GetPairRegister("HL")->lo;
 	case 6:
 		{
-			auto HL = GetRegister("HL");
-			DataType *temp = new DataType;
-			auto memMap = cpu->getMemory();
-			snap->mem.read( temp, ((std::size_t)HL->value), 1);
-			return temp;
+			auto HL = GetPairRegister("HL");
+			return readTempByte(HL->value);
 		}
 	case 7:
-		return &(GetRegister("AF")->hi);
+		return &(GetPairRegister("AF")->hi);
 	default:
-		throw new std::invalid_argument("error in decoding register. invalid argument");
+		throw std::invalid_argument("error in decoding register. invalid argument");
 	}
 }
 
 void LR3592_Interpreter_Decode::rotateAccumulator(DataType opcode)
 {
 
-	auto A =GetRegister("AF");
+	auto A = GetPairRegister("AF");
 
 	bool carryFlag = (A->lo & 0x10);
 	DataType lrSet = (opcode & 0x18) >> 3;
@@ -140,7 +156,7 @@ void LR3592_Interpreter_Decode::rotateAccumulator(DataType opcode)
 void LR3592_Interpreter_Decode::manipulateAccumulator(DataType opcode)
 {
 
-	auto A =GetRegister("AF")->value;
+	auto A =GetPairRegister("AF")->value;
 	DataType opSet = (opcode & 8) >> 3;
 
 	switch (opSet) {
@@ -151,7 +167,7 @@ void LR3592_Interpreter_Decode::manipulateAccumulator(DataType opcode)
 		BMMQ::CML::cpl(&A);
 		break;
 	default:
-		throw new std::invalid_argument("error in decoding register. invalid argument");
+		throw std::invalid_argument("error in decoding register. invalid argument");
 	}
 }
 
@@ -160,7 +176,7 @@ void LR3592_Interpreter_Decode::manipulateCarry(DataType opcode)
 {
 	DataType opSet =  (opcode & 0x8) >> 3;
 
-	auto *F = &(GetRegister("AF")->lo);
+	auto *F = &(GetPairRegister("AF")->lo);
 	DataType flags = *F;
 
 	switch (opSet) {
@@ -171,7 +187,7 @@ void LR3592_Interpreter_Decode::manipulateCarry(DataType opcode)
 		flags &= ~(1 << 4);
 		break;
 	default:
-		throw new std::invalid_argument("error in decoding register. invalid argument");
+		throw std::invalid_argument("error in decoding register. invalid argument");
 	}
 
 	BMMQ::CML::setFlags(F, flags);
@@ -181,35 +197,32 @@ DataType* LR3592_Interpreter_Decode::ld_r8_r8_GetRegister(DataType regcode)
 {
 	switch (regcode) {
 	case 0:
-		return &(GetRegister("BC")->hi);
+		return &(GetPairRegister("BC")->hi);
 	case 1:
-		return &(GetRegister("BC")->lo);
+		return &(GetPairRegister("BC")->lo);
 	case 2:
-		return &(GetRegister("DE")->hi);
+		return &(GetPairRegister("DE")->hi);
 	case 3:
-		return &(GetRegister("DE")->lo);
+		return &(GetPairRegister("DE")->lo);
 	case 4:
-		return &(GetRegister("HL")->hi);
+		return &(GetPairRegister("HL")->hi);
 	case 5:
-		return &(GetRegister("HL")->lo);
+		return &(GetPairRegister("HL")->lo);
 	case 6:
 		{
-			auto HL = GetRegister("HL");
-			DataType *temp = new DataType;
-			auto memMap = cpu->getMemory();
-			snap->mem.read( temp, ((std::size_t)HL->value), 1);
-			return temp;
+			auto HL = GetPairRegister("HL");
+			return readTempByte(HL->value);
 		}
 	case 7:
-		return &(GetRegister("AF")->hi);
+		return &(GetPairRegister("AF")->hi);
 	default:
-		throw new std::invalid_argument("error in decoding register. invalid argument");
+		throw std::invalid_argument("error in decoding register. invalid argument");
 	}
 }
 
 std::pair<DataType*, DataType*> LR3592_Interpreter_Decode::ld_r8_r8_GetOperands(DataType opcode)
 {
-	DataType destReg = (opcode & 38) >> 3;
+	DataType destReg = (opcode & 0x38) >> 3;
 	DataType srcReg = (opcode & 7);
 
 	return std::make_pair(ld_r8_r8_GetRegister(destReg), ld_r8_r8_GetRegister(srcReg) );
@@ -217,10 +230,10 @@ std::pair<DataType*, DataType*> LR3592_Interpreter_Decode::ld_r8_r8_GetOperands(
 
 void LR3592_Interpreter_Decode::math_r8(DataType opcode)
 {
-	DataType mathFunc = (opcode & 38) >> 3;
+	DataType mathFunc = (opcode & 0x38) >> 3;
 	DataType* srcReg = ld_r8_r8_GetRegister(opcode & 7);
 
-	auto A = GetRegister("AF");
+	auto A = GetPairRegister("AF");
 	bool carryFlag = (A->lo & 0x10);
 
 	switch (mathFunc) {
@@ -256,9 +269,9 @@ void LR3592_Interpreter_Decode::math_r8(DataType opcode)
 void LR3592_Interpreter_Decode::math_i8(DataType opcode)
 {
 	DataType mdr= 0;
-	DataType mathFunc = (opcode & 38) >> 3;
+	DataType mathFunc = (opcode & 0x38) >> 3;
 
-	auto A = GetRegister("AF");
+	auto A = GetPairRegister("AF");
 	bool carryFlag = (A->lo & 0x10);
 
 	switch (mathFunc) {
@@ -312,15 +325,15 @@ AddressType* LR3592_Interpreter_Decode::push_pop_GetRegister(DataType opcode)
 
 	switch (regCode) {
 	case 0:
-		return &(GetRegister("BC")->value);
+		return &(GetPairRegister("BC")->value);
 	case 1:
-		return &(GetRegister("DE")->value);
+		return &(GetPairRegister("DE")->value);
 	case 2:
-		return &(GetRegister("HL")->value);
+		return &(GetPairRegister("HL")->value);
 	case 3:
-		return &(GetRegister("AF")->value);
+		return &(GetPairRegister("AF")->value);
 	default:
-		throw new std::invalid_argument("error in decoding register. invalid argument");
+		throw std::invalid_argument("error in decoding register. invalid argument");
 	}
 }
 
@@ -376,20 +389,22 @@ void LR3592_Interpreter_Decode::ldh(DataType opcode)
 	// Check if the Accumulator is the source
 	auto srcSet = !( (opcode & 0x10) >> 4);
 
-	auto A = GetRegister("AF");
+	auto A = GetPairRegister("AF");
 	auto mdr = GetRegister("mdr");
 	if (srcSet) {
 		src = &A->hi;
-		dest = new DataType;
+		DataType temp = 0;
+		dest = &temp;
+		BMMQ::CML::loadtmp(dest, *src);
 		snap->mem.write(dest, mdr->value + 0xFF00, 1);
 	}
 	else {
 		dest = &A->hi;
-		src = new DataType;
-		snap->mem.write(src, mdr->value + 0xFF00, 1);
+		DataType temp = 0;
+		src = &temp;
+		snap->mem.read(src, mdr->value + 0xFF00, 1);
+		BMMQ::CML::loadtmp(dest, *src);
 	}
-
-	BMMQ::CML::loadtmp(dest, *src);
 }
 
 void LR3592_Interpreter_Decode::ld_ir16_r8(DataType opcode)
@@ -400,22 +415,27 @@ void LR3592_Interpreter_Decode::ld_ir16_r8(DataType opcode)
 	auto regSet = (opcode & 8)	>> 3;
 	auto srcSet = (opcode & 0x10) >> 4;
 
-	auto A = GetRegister("AF");
-	auto C = GetRegister("BC");
+	auto A = GetPairRegister("AF");
+	auto C = GetPairRegister("BC");
 	auto mdr = GetRegister("mdr");
 	switch	(srcSet) {
-	case 0:
+	case 0: {
 		src = &A->hi;
-		dest = new DataType;
+		DataType temp = 0;
+		dest = &temp;
+		BMMQ::CML::loadtmp(dest, src);
 		snap->mem.write(dest, regSet ? ( C->lo + 0xFF00 ) : mdr->value, 1);
 		break;
-	case 1:
-		src = new DataType;
-		snap->mem.write(src, regSet ? ( C->lo + 0xFF00 ) : mdr->value, 1);
-		dest = &A->hi;
 	}
-
-	BMMQ::CML::loadtmp(dest, src);
+	case 1: {
+		DataType temp = 0;
+		src = &temp;
+		snap->mem.read(src, regSet ? ( C->lo + 0xFF00 ) : mdr->value, 1);
+		dest = &A->hi;
+		BMMQ::CML::loadtmp(dest, src);
+		break;
+	}
+	}
 }
 
 void LR3592_Interpreter_Decode::ei_di(DataType	opcode)
@@ -434,13 +454,13 @@ void LR3592_Interpreter_Decode::ld_hl_sp(DataType opcode)
 
 	switch	(srcSet) {
 	case 0:
-		dest = &(GetRegister("HL")->value);
+		dest = &(GetPairRegister("HL")->value);
 		src = &(GetRegister("SP")->value);
-		*src += mdr->lo;
+		*src += static_cast<DataType>(mdr->value & 0x00ff);
 		break;
 	case 1:
 		dest = &(GetRegister("SP")->value);
-		src = &(GetRegister("HL")->value);
+		src = &(GetPairRegister("HL")->value);
 		break;
 	}
 
@@ -450,14 +470,14 @@ void LR3592_Interpreter_Decode::ld_hl_sp(DataType opcode)
 void LR3592_Interpreter_Decode::cb_execute(DataType opcode)
 {
 	auto operation	= ( opcode & 0xF8 ) >> 3;
-	DataType testBit = (opcode & 38) >> 3;
+	DataType testBit = (opcode & 0x38) >> 3;
 	auto reg = ( opcode & 7 );
 	auto dest = ld_r8_r8_GetRegister(reg);
 
 	auto quadrant = opcode >> 6;
 
 	DataType tempFlag;
-	auto &F = GetRegister("AF")->lo;
+	auto &F = GetPairRegister("AF")->lo;
 	switch(quadrant) {
 	case 1:
 		BMMQ::CML::testbit8(&tempFlag, dest, testBit);
@@ -509,8 +529,8 @@ void LR3592_Interpreter_Decode::calculateflags(uint16_t calculationFlags)
 {
 	bool newflags[4] =	{0,0,0,0};
 
-	auto &A = GetRegister("AF")->hi;
-	auto &F = GetRegister("AF")->lo;
+	auto &A = GetPairRegister("AF")->hi;
+	auto &F = GetPairRegister("AF")->lo;
 	auto mdr = GetRegister("mdr");
 	// Zero flag
 	switch(calculationFlags & 0xc0) {

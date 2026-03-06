@@ -50,8 +50,8 @@ BMMQ::RegisterFile<AddressType> LR3592_DMG::buildRegisterfile()
     regfile.addRegister("HL", true);
     regfile.addRegister("SP", false);
     regfile.addRegister("PC", false);
-    //regfile.addRegister // mar
-    //regfile.addRegister // mdr
+    regfile.addRegister("mdr", false);
+    regfile.addRegister("ime", false);
 
     return regfile;
 }
@@ -93,6 +93,11 @@ BMMQ::fetchBlock<AddressType, DataType> LR3592_DMG::fetch()
 //         (e)(block.getMemory());
 //     }
 // };
+void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, AddressType>& block, BMMQ::fetchBlock<AddressType, DataType> &fb )
+{
+    (void)block;
+    (void)fb;
+}
 
 void LR3592_DMG::setStopFlag(bool f){
 	stopFlag = f;

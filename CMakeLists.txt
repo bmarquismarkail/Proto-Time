@@ -14,3 +14,9 @@ add_library(time-gameboy-interpreter-core
 )
 add_executable(timeEmulator emulator.cpp)
 target_link_libraries(timeEmulator time-gameboy-interpreter-core)
+
+enable_testing()
+add_executable(time-smoke-snapshot tests/smoke_snapshot.cpp)
+add_test(NAME smoke_snapshot COMMAND time-smoke-snapshot)
+add_executable(time-smoke-register-snapshot tests/smoke_register_snapshot.cpp)
+add_test(NAME smoke_register_snapshot COMMAND time-smoke-register-snapshot)

@@ -75,9 +75,10 @@ void MemoryStorage<AddressType,DataType>::read(DataType* stream, AddressType add
         }
         temp+= std::get<1>(*i);
     }
-	
-	for(int i = 0; i < count; i--){
-		*stream++ = mem[index + count];
+
+	count = std::min(count, cap);
+	for(AddressType i = 0; i < count; ++i){
+		*stream++ = mem[index + i];
 	}
 }
 

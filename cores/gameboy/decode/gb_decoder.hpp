@@ -3,11 +3,11 @@
 	class LR3592_Decode {
 	protected:
 		LR3592_DMG *cpu;
-	public:
-		//ctors and dtors
-		LR3592_Decode(LR3592_DMG *c);
-		// Class Helpers
-		virtual LR3592_Register &GetRegister(BMMQ::RegisterInfo<AddressType>& Reg) = 0;
+		public:
+			//ctors and dtors
+			LR3592_Decode(LR3592_DMG *c);
+			// Class Helpers
+			virtual LR3592_Register* GetRegister(std::string_view id) = 0;
 		// Gameboy-Specific Decoding Functions
 		virtual bool checkJumpCond(DataType opcode) = 0;
 		virtual AddressType* ld_R16_I16_GetRegister(DataType opcode) = 0;
