@@ -1,133 +1,146 @@
 # Project T.I.M.E
 
-Welcome to T.I.M.E: The Infinite Modder's Emulator. As of right now(23 Oct, 2020), it is in its pre-alpha stage
+T.I.M.E (The Infinite Modder's Emulator) is an emulator framework prototype focused on:
 
-## Build Instructions
+- Declarative-ish instruction flow (`fetch -> decode -> execute`)
+- Memory/register snapshotting for traceability
+- Executor-driven orchestration
+- Plugin-oriented extension points for core runtimes and executor policies
 
-This project uses the cmake build system. To use:
+## Current Status
 
-> $ cmake  
-> $ make 
+This repository is still pre-alpha and intentionally incomplete in several areas, but it now has:
 
-It is recommended to make a build directory and run cmake as follows
+- A minimal runnable instruction-cycle slice
+- CPU feedback hooks from core to executor
+- A plugin contract layer
+- Smoke tests covering snapshots, instruction cycle, and plugin executor flow
 
-`$ cmake [Path To Project]`
+## Build
 
-## Installation
+```bash
+cmake -S . -B build-working
+cmake --build build-working -j4
+```
 
-There are no installation instructions.
+Run tests:
 
-## The API
-### Structures
-#### Fetch/Decode/Execute
-##### fetchBlockData
-`template<typename AddressType, typename DataType> struct fetchBlockData`
+```bash
+ctest --test-dir build-working --output-on-failure
+```
 
-The fetchBlockData struct is variable that stores an address offset and a dynamic array of raw execution data.
+## Architecture Overview
 
-Members:
+### 1. Core CPU Contract
 
-- offset:<br>
-The Offset of the data, which coincides with a fetchBlock.
-- data:<br>
-Raw execution data.
+`CPU` defines the main execution cycle and feedback channel:
 
----
+- `fetch() -> fetchBlock`
+- `decode(fetchBlock&) -> executionBlock`
+- `execute(executionBlock&, fetchBlock&)`
+- `getLastFeedback() -> CpuFeedback`
 
-##### fetchBlock
-`template<typename AddressType, typename DataType> class fetchBlock`
+`CpuFeedback` currently exposes:
 
-An entire fetchblock.
+- `segmentBoundaryHint`
+- `isControlFlow`
+- `pcBefore`
+- `pcAfter`
 
-Members:
-- baseAddress:  
-The starting address of the fetchBlock
-- blockData:  
-A dynamic array of fetchBlockData types
+Relevant file:
 
-Functions:
-- void setbaseAddress(AddressType address)  
-Sets the base address of the *fetchBlock*
-- AddressType getbaseAddress() const  
-Gets the base address of the *fetchBlock*
-- std::vector<fetchBlockData<AddressType, DataType>> &getblockData()  
-returns a reference of *blockData*
----
+- `CPU.hpp`
 
-##### Imicrocode
-`class Imicrocode`
+### 2. Instruction Data Structures
 
-The Microcode interface.
+`fetchBlock` and `fetchBlockData` store fetched instruction bytes with offsets and base address.
 
-Members:
+Relevant files:
 
-Functions:
+- `inst_cycle/fetch/fetchBlock.hpp`
+- `inst_cycle/fetch/templ/fetchBlock.impl.hpp`
 
----
+`executionBlock` stores executable step functions and the target memory snapshot pointer.
 
-##### IOpcode
-`class IOpcode`
+Relevant file:
 
-The Opcode Interface
+- `inst_cycle/execute/executionBlock.hpp`
 
-This holds multiple *Imicrocode*'s, which in turn creates a CPU operation.
+### 3. Executor Layer
 
-Members:
+#### Classic executor
 
-Functions:
-- IOpcode(Imicrocode& library, const std::string id)  
-Creates an IOpcode, adding microcode in *library* with string *id*  
-> **TODO**: this needs to add ALL of *library* after above is implementated
-- template<typename AddressType, typename DataType>
-void operator()(fetchBlock<AddressType, DataType> &fb)  
-Executes object by iterating *microcode* and invoking their function call
+`inst_cycle/executor/Executor.hpp`:
 
----
+- Runs one step by default via:
+  - fetch
+  - decode
+  - execute
+- Can record fetched blocks
+- Can segment blocks
+- Can save/load block scripts
 
-#### Memory
-##### memAccess
+Segmentation decisions use both:
 
-An enumerator that indicates how a certain part of the memory pool can be accessed
-- 0: No Access
-- 1: Read Access
-- 2: Write Access
-- 3: Read and Write Access
+- `fetchBlock`
+- `CpuFeedback`
 
-##### MemoryPool
-`template<typename AddressType, typename DataType> class MemoryPool`
+#### Plugin-oriented executor
 
-The MemoryPool. This type will hold the entire memory structure of the CPU being emulated, as well as establish read/write access
+Plugin contracts:
 
-Members:
-- std::vector<std::tuple<AddressType, AddressType, memAccess>> memoryMap  
-A vector of 3-member tuples:  
-  - The Absolute Beginning of the Map, represented by an AddressType  
-  - The Absolute End of the Map, represented by an AddressType  
-  - And Read/Write Access, represented by an memAccess emumeration  
-- std::vector<DataType> mem  
-The Raw memory array of *DataType\**s
+- `inst_cycle/executor/PluginContract.hpp`
 
----
+Defines:
 
-#### The CPU
-`template<typename AddressType, typename DataType> class CPU`
+- `ICpuCoreRuntime`
+- `IExecutorPolicyPlugin`
+- `PluginMetadata`
+- `AbiVersion` + host ABI constants
+- compatibility helpers (`isAbiCompatible`, `validateMetadata`)
+- `PluginDescriptorV1` C-entrypoint descriptor for future dynamic loading
+- `DefaultStepPolicy`
 
-The CPU class
+Plugin runtime executor:
 
-Functions:
-- virtual fetchBlock<AddressType, DataType> fetch()=0  
-Fetches Data and creates a fetchBlock instance.
-- virtual executionBlock decode(OpcodeList &oplist, fetchBlock<AddressType, DataType>& fetchData)=0
-Using an OpcodeList reference *&oplist* and fetchBlock reference \*&fetchData*, creates an executionBlock with it
-- virtual void execute(const executionBlock& block, fetchBlock<AddressType, DataType> &fb)=0
-Executes all opcodes in reference *&block* using data from *&fb*
+- `inst_cycle/executor/PluginExecutor.hpp`
 
----
+Runs a core runtime through the same cycle and delegates recording/segmentation behavior to a policy plugin.
 
-## Implementing a New Core
+### 4. Game Boy Core Adapter
 
-To implement a core, you make a class derived from the BMMG::CPU class, and define its fetch, decode, and execute function
+`LR3592_DMG` implements the CPU contract and produces `CpuFeedback`.
 
-Unless needed, the fetch() function usually requires reading from memory, so the MemoryPool class was made to make contiguous memory, and a fetchBlock class to hold raw, undecode data from the memory pool
+Plugin runtime adapter:
 
-The decode() function will most likely be the function with the most deviation, because it requires architecture-specific code. However, the end result is the same: a list of *IOpcode*s 
+- `cores/gameboy/gameboy_plugin_runtime.hpp`
+
+This wraps `LR3592_DMG` into `ICpuCoreRuntime` so it can be consumed by `PluginExecutor`.
+
+## Tests
+
+Current smoke tests:
+
+- `tests/smoke_snapshot.cpp`
+- `tests/smoke_register_snapshot.cpp`
+- `tests/smoke_instruction_cycle.cpp`
+- `tests/smoke_executor.cpp`
+- `tests/smoke_plugin_executor.cpp`
+- `tests/smoke_plugin_abi.cpp`
+
+These verify:
+
+- Snapshot memory read-through and overlay behavior
+- Register snapshot copy/isolation behavior
+- Minimal `fetch -> decode -> execute` behavior
+- Executor recording/script replay
+- Plugin executor orchestration and feedback-driven policy behavior
+- Plugin ABI compatibility and metadata validation guarantees
+
+## Short-Term Direction
+
+The next practical expansion points are:
+
+- Extend executor file format beyond block scripts into richer trace milestones
+- Replace static test fetch stream with real memory-backed fetch/PC progression
+- Add more opcode coverage while preserving executor/plugin interfaces

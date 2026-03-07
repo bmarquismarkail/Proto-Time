@@ -8,10 +8,11 @@ class LR3592_PluginRuntime final : public BMMQ::Plugin::ICpuCoreRuntime {
 public:
     const BMMQ::Plugin::PluginMetadata& metadata() const override {
         static const BMMQ::Plugin::PluginMetadata meta{
+            sizeof(BMMQ::Plugin::PluginMetadata),
             "bmmq.core.lr3592",
             "LR3592 DMG Core",
             BMMQ::Plugin::PluginKind::CpuCore,
-            BMMQ::Plugin::kPluginAbiVersion
+            BMMQ::Plugin::kHostAbiVersion
         };
         return meta;
     }
