@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-#include "../../CPU.hpp"
+#include "../../machine/CPU.hpp"
 #include "../fetch/fetchBlock.hpp"
 
 namespace BMMQ {

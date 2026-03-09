@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <string>
 
-#include "../../CPU.hpp"
+#include "../../machine/CPU.hpp"
 #include "../execute/executionBlock.hpp"
 #include "../fetch/fetchBlock.hpp"
 
