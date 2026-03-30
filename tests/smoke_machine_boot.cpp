@@ -1,7 +1,26 @@
 #include <cassert>
 #include <cstdint>
+#include <type_traits>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+
+template<typename T, typename = void>
+struct HasStepBaseline : std::false_type {};
+
+template<typename T>
+struct HasStepBaseline<T, std::void_t<decltype(&T::stepBaseline)>> : std::true_type {};
+
+template<typename T, typename = void>
+struct HasHasCpu : std::false_type {};
+
+template<typename T>
+struct HasHasCpu<T, std::void_t<decltype(&T::hasCpu)>> : std::true_type {};
+
+template<typename T, typename = void>
+struct HasHasMemoryMap : std::false_type {};
+
+template<typename T>
+struct HasHasMemoryMap<T, std::void_t<decltype(&T::hasMemoryMap)>> : std::true_type {};
 
 int main() {
     struct FakeRuntimeContext final : BMMQ::RuntimeContext {
@@ -35,5 +54,8 @@ int main() {
     assert(host.guarantee() == BMMQ::ExecutionGuarantee::BaselineFaithful);
     host.step();
     assert(host.readRegisterPair("AF") == static_cast<uint16_t>(0x1200));
+    static_assert(!HasStepBaseline<GameBoyMachine>::value);
+    static_assert(!HasHasCpu<GameBoyMachine>::value);
+    static_assert(!HasHasMemoryMap<GameBoyMachine>::value);
     return 0;
 }

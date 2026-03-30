@@ -49,10 +49,6 @@ public:
         cpu_.cpu().loadProgram(bytes);
     }
 
-    void stepBaseline() {
-        step();
-    }
-
     uint16_t readRegisterPair(std::string_view name) override {
         auto* entry = cpu_.cpu().getMemory().file.findRegister(name);
         if (entry == nullptr || entry->second == nullptr) return 0;
@@ -60,9 +56,6 @@ public:
         auto* reg = dynamic_cast<BMMQ::CPU_RegisterPair<uint16_t>*>(entry->second);
         return reg != nullptr ? reg->value : 0;
     }
-
-    bool hasCpu() const { return true; }
-    bool hasMemoryMap() const { return true; }
 
     BMMQ::RuntimeContext& runtimeContext() override {
         return context_;
