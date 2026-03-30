@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-#include "../../machine/CPU.hpp"
+#include "../../machine/RuntimeContext.hpp"
 #include "../fetch/fetchBlock.hpp"
 
 namespace BMMQ {
@@ -42,8 +42,7 @@ public:
     const std::vector<FetchBlock>& recordedBlocks() const { return recordedBlocks_; }
     const std::vector<Segment>& recordedSegments() const { return segments_; }
 
-    template<typename CpuType>
-    StepResult step(CpuType& cpu) {
+    StepResult step(RuntimeContext& context) {
         FetchBlock fb;
         StepResult result{};
 
@@ -51,13 +50,13 @@ public:
             fb = playbackBlocks_[playbackIndex_++];
             result.usedScript = true;
         } else {
-            fb = cpu.fetch();
+            fb = context.fetch();
         }
 
-        auto execBlock = cpu.decode(fb);
-        cpu.execute(execBlock, fb);
+        auto execBlock = context.decode(fb);
+        context.execute(execBlock, fb);
         result.executed = true;
-        result.feedback = cpu.getLastFeedback();
+        result.feedback = context.getLastFeedback();
 
         if (!result.usedScript && recordingEnabled_) {
             recordBlock(fb, result.feedback);

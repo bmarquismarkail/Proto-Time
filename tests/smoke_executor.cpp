@@ -1,7 +1,9 @@
 #include <cassert>
 #include <cstdint>
+#include <type_traits>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+#include "cores/gameboy/gameboy.hpp"
 #include "inst_cycle/executor/Executor.hpp"
 
 int main()
@@ -20,6 +22,9 @@ int main()
     BMMQ::Machine& host = machine;
 
     BMMQ::Executor<AddressType, DataType> recorder(splitOnControl);
+    static_assert(!std::is_invocable_v<decltype(&BMMQ::Executor<AddressType, DataType>::step),
+                                       BMMQ::Executor<AddressType, DataType>&,
+                                       LR3592_DMG&>);
     const auto stepResultRecord = recorder.step(host.runtimeContext());
     assert(stepResultRecord.executed);
     assert(stepResultRecord.feedback.isControlFlow);
