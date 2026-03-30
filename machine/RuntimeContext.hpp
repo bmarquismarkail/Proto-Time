@@ -27,11 +27,14 @@ public:
     virtual FetchBlock fetch() = 0;
     virtual ExecutionBlock decode(FetchBlock& fetchBlock) = 0;
     virtual void execute(const ExecutionBlock& block, FetchBlock& fetchBlock) = 0;
-    virtual CpuFeedback step() {
-        auto fetchBlock = fetch();
+    virtual CpuFeedback step(FetchBlock& fetchBlock) {
         auto execBlock = decode(fetchBlock);
         execute(execBlock, fetchBlock);
         return getLastFeedback();
+    }
+    virtual CpuFeedback step() {
+        auto fetchBlock = fetch();
+        return step(fetchBlock);
     }
     virtual const CpuFeedback& getLastFeedback() const = 0;
     virtual ExecutionGuarantee guarantee() const = 0;

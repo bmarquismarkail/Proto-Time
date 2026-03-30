@@ -55,17 +55,12 @@ public:
         }
 
         if (result.usedScript) {
-            auto execBlock = context.decode(fb);
-            context.execute(execBlock, fb);
+            result.feedback = context.step(fb);
         } else {
-            fb = context.fetch();
-            result.feedback = context.step();
+            result.feedback = context.step(fb);
         }
         result.executed = true;
         result.guarantee = context.guarantee();
-        if (result.usedScript) {
-            result.feedback = context.getLastFeedback();
-        }
 
         if (!result.usedScript && recordingEnabled_) {
             recordBlock(fb, result.feedback);
