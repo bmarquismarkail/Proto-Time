@@ -1,5 +1,7 @@
 #include <cassert>
 #include <cstdint>
+#include <filesystem>
+#include <string>
 #include <type_traits>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
@@ -62,5 +64,26 @@ int main()
     assert(stepResultRecord.feedback.segmentBoundaryHint);
     assert(recorder.recordedBlocks().size() == 1);
     assert(host.readRegisterPair("AF") == static_cast<uint16_t>(0x1200));
+
+    namespace fs = std::filesystem;
+    const fs::path scriptPath = fs::temp_directory_path() / "time_executor_smoke.blocks";
+    std::string saveError;
+    const bool saved = recorder.saveScript(scriptPath.string(), &saveError);
+    assert(saved);
+    assert(saveError.empty());
+
+    CountingRuntimeContext playbackContext;
+    BMMQ::Executor<AddressType, DataType> player(splitOnControl);
+    std::string loadError;
+    const bool loaded = player.loadScript(scriptPath.string(), &loadError);
+    assert(loaded);
+    assert(loadError.empty());
+
+    const auto playbackResult = player.step(playbackContext);
+    assert(playbackResult.executed);
+    assert(playbackResult.usedScript);
+    assert(playbackContext.fetchCalls == 0);
+
+    fs::remove(scriptPath);
     return 0;
 }
