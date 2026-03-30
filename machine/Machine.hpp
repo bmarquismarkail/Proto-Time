@@ -9,6 +9,7 @@ class Machine {
 public:
     virtual ~Machine() = default;
     virtual RuntimeContext& runtimeContext() = 0;
+    virtual void step() = 0;
 };
 
 } // namespace BMMQ

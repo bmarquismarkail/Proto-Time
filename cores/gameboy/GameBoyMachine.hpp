@@ -50,9 +50,7 @@ public:
     }
 
     void stepBaseline() {
-        auto fetchBlock = cpu_.fetch();
-        auto execBlock = cpu_.decode(fetchBlock);
-        cpu_.execute(execBlock, fetchBlock);
+        step();
     }
 
     uint16_t readRegisterPair(std::string_view name) {
@@ -68,6 +66,12 @@ public:
 
     BMMQ::RuntimeContext& runtimeContext() override {
         return context_;
+    }
+
+    void step() override {
+        auto fetchBlock = context_.fetch();
+        auto execBlock = context_.decode(fetchBlock);
+        context_.execute(execBlock, fetchBlock);
     }
 
 private:
