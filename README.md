@@ -37,6 +37,14 @@ ctest --test-dir build-working --output-on-failure
 
 `GameBoyMachine` is the first reference machine shell. It owns the CPU plugin instance and exposes a `RuntimeContext` that executors run against.
 
+`Machine` is the host-facing contract for:
+
+- `loadRom(...)`
+- `step()`
+- `guarantee()`
+- `readRegisterPair(...)`
+- `runtimeContext()`
+
 Relevant files:
 
 - `cores/gameboy/GameBoyMachine.hpp`
@@ -88,6 +96,7 @@ Relevant file:
 - Can record fetched blocks
 - Can segment blocks
 - Can save/load block scripts
+- Exposes `recordedBlocks()` and `recordedSegments()`
 
 Segmentation decisions use both:
 
@@ -114,7 +123,11 @@ Plugin runtime executor:
 
 - `inst_cycle/executor/PluginExecutor.hpp`
 
-Runs a machine-owned runtime context through the same cycle and delegates recording/segmentation behavior to a policy plugin.
+Runs a machine-owned runtime context through the same cycle and delegates recording/segmentation behavior to a policy plugin. It now mirrors the classic executor surface for:
+
+- `recordedBlocks()`
+- `recordedSegments()`
+- save/load block-script playback
 
 ### 5. Game Boy Core Adapter
 
