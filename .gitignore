@@ -1,5 +1,6 @@
 *.orig
 build/
+build-*/
 .tags
 .vscode/
 .old/
