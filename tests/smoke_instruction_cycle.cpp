@@ -5,6 +5,7 @@
 
 int main()
 {
+    // Preserve the direct CPU contract as a reference path, not the primary host API.
     LR3592_DMG cpu;
 
     auto fetchBlock = cpu.fetch();
