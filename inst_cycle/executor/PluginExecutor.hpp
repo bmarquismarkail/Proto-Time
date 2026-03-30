@@ -26,10 +26,7 @@ public:
 
     StepResult step(BMMQ::RuntimeContext& context) {
         auto fetchBlock = context.fetch();
-        auto execBlock = context.decode(fetchBlock);
-        context.execute(execBlock, fetchBlock);
-
-        const auto feedback = context.getLastFeedback();
+        const auto feedback = context.step();
         recordIfNeeded(fetchBlock, feedback);
         return StepResult{true, policy_.guarantee(), feedback};
     }

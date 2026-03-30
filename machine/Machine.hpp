@@ -18,10 +18,7 @@ public:
         return runtimeContext().guarantee();
     }
     virtual void step() {
-        auto& context = runtimeContext();
-        auto fetchBlock = context.fetch();
-        auto execBlock = context.decode(fetchBlock);
-        context.execute(execBlock, fetchBlock);
+        runtimeContext().step();
     }
     virtual uint16_t readRegisterPair(std::string_view name) = 0;
 };

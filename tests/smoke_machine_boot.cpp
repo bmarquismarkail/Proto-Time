@@ -26,7 +26,7 @@ int main() {
     };
 
     FakeMachine fake;
-    fake.step();
+    fake.runtimeContext().step();
     assert(fake.context.executed);
 
     GameBoyMachine machine;

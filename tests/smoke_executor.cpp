@@ -18,8 +18,8 @@ int main()
     };
 
     GameBoyMachine machine;
-    machine.loadRom({0x3E, 0x12, 0x00});
     BMMQ::Machine& host = machine;
+    host.loadRom({0x3E, 0x12, 0x00});
 
     BMMQ::Executor<AddressType, DataType> recorder(splitOnControl);
     static_assert(!std::is_invocable_v<decltype(&BMMQ::Executor<AddressType, DataType>::step),
