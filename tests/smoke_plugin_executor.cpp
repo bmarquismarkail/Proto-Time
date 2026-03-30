@@ -1,5 +1,7 @@
 #include <cassert>
 #include <cstdint>
+#include <filesystem>
+#include <string>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
 #include "inst_cycle/executor/PluginContract.hpp"
@@ -55,6 +57,26 @@ int main()
     assert(blocks.size() == 1);
 
     assert(host.readRegisterPair("AF") == static_cast<uint16_t>(0x1200));
+
+    namespace fs = std::filesystem;
+    const fs::path scriptPath = fs::temp_directory_path() / "time_plugin_executor_smoke.blocks";
+    std::string saveError;
+    const bool saved = executor.saveScript(scriptPath.string(), &saveError);
+    assert(saved);
+    assert(saveError.empty());
+
+    CountingRuntimeContext playbackContext;
+    BMMQ::Plugin::PluginExecutor player(policy);
+    std::string loadError;
+    const bool loaded = player.loadScript(scriptPath.string(), &loadError);
+    assert(loaded);
+    assert(loadError.empty());
+
+    const auto playbackResult = player.step(playbackContext);
+    assert(playbackResult.executed);
+    assert(playbackContext.fetchCalls == 0);
+
+    fs::remove(scriptPath);
 
     return 0;
 }
