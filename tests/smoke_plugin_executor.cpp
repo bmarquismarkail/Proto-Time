@@ -9,11 +9,12 @@ int main()
 {
     GameBoyMachine machine;
     machine.loadRom({0x3E, 0x12, 0x00});
+    BMMQ::Machine& host = machine;
 
     BMMQ::Plugin::DefaultStepPolicy policy;
     BMMQ::Plugin::PluginExecutor executor(policy);
 
-    const auto result = executor.step(machine.runtimeContext());
+    const auto result = executor.step(host.runtimeContext());
     assert(result.executed);
     assert(result.feedback.isControlFlow);
     assert(result.feedback.segmentBoundaryHint);

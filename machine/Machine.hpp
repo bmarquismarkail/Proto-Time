@@ -3,9 +3,12 @@
 
 namespace BMMQ {
 
+class RuntimeContext;
+
 class Machine {
 public:
     virtual ~Machine() = default;
+    virtual RuntimeContext& runtimeContext() = 0;
 };
 
 } // namespace BMMQ

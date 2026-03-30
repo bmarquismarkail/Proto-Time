@@ -17,9 +17,10 @@ int main()
 
     GameBoyMachine machine;
     machine.loadRom({0x3E, 0x12, 0x00});
+    BMMQ::Machine& host = machine;
 
     BMMQ::Executor<AddressType, DataType> recorder(splitOnControl);
-    const auto stepResultRecord = recorder.step(machine.runtimeContext());
+    const auto stepResultRecord = recorder.step(host.runtimeContext());
     assert(stepResultRecord.executed);
     assert(stepResultRecord.feedback.isControlFlow);
     assert(stepResultRecord.feedback.segmentBoundaryHint);

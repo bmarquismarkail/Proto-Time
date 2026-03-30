@@ -66,7 +66,7 @@ public:
     bool hasCpu() const { return true; }
     bool hasMemoryMap() const { return true; }
 
-    BMMQ::RuntimeContext& runtimeContext() {
+    BMMQ::RuntimeContext& runtimeContext() override {
         return context_;
     }
 
