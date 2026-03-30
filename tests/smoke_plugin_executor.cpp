@@ -74,7 +74,21 @@ int main()
 
     const auto playbackResult = player.step(playbackContext);
     assert(playbackResult.executed);
+    assert(playbackResult.usedScript);
     assert(playbackContext.fetchCalls == 0);
+
+    std::string missingError;
+    const bool missingLoad = player.loadScript(
+        (fs::temp_directory_path() / "time_plugin_executor_missing.blocks").string(),
+        &missingError);
+    assert(!missingLoad);
+    assert(!missingError.empty());
+
+    CountingRuntimeContext failedReloadContext;
+    const auto liveAfterFailedLoad = player.step(failedReloadContext);
+    assert(liveAfterFailedLoad.executed);
+    assert(!liveAfterFailedLoad.usedScript);
+    assert(failedReloadContext.fetchCalls == 1);
 
     fs::remove(scriptPath);
 
