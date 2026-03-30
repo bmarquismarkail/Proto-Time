@@ -18,6 +18,7 @@ LR3592_DMG::LR3592_DMG()
     PC.registration(mem.file, "PC");
 
     mem.store = buildMemoryStore();
+    loadProgram({0x3E, 0x12, 0x00});
 //        populateOpcodes();
 }
 
@@ -64,17 +65,36 @@ BMMQ::MemoryPool<AddressType, DataType, AddressType>& LR3592_DMG::getMemory()
 //
 BMMQ::fetchBlock<AddressType, DataType> LR3592_DMG::fetch()
 {
-    // Static instruction stream for smoke-cycle validation: LD A,0x12; NOP
     BMMQ::fetchBlock<AddressType, DataType> f ;
-    f.setbaseAddress(cip);
+
+    auto* pcEntry = mem.file.findRegister("PC");
+    const auto pc = (pcEntry != nullptr && pcEntry->second != nullptr)
+        ? static_cast<AddressType>(pcEntry->second->value)
+        : static_cast<AddressType>(0);
+
+    f.setbaseAddress(pc);
+
+    std::vector<DataType> stream(3, 0);
+    mem.read(stream.data(), pc, static_cast<AddressType>(stream.size()));
 
     BMMQ::fetchBlockData<AddressType, DataType> data {
-        0, std::vector<DataType> {0x3E, 0x12, 0x00}
+        0, std::move(stream)
     };
 
     f.getblockData().push_back(data);
     return f;
 };
+
+void LR3592_DMG::loadProgram(const std::vector<DataType>& program,
+                             AddressType startAddress)
+{
+    auto* destination = mem.store.getPos(startAddress);
+    if (destination == nullptr) return;
+
+    for (std::size_t i = 0; i < program.size(); ++i) {
+        destination[i] = program[i];
+    }
+}
 
 BMMQ::executionBlock<AddressType, DataType, AddressType>
 LR3592_DMG::decode(BMMQ::fetchBlock<AddressType, DataType>& fetchData)

@@ -23,12 +23,12 @@ public:
     explicit PluginExecutor(IExecutorPolicyPlugin& policy)
         : policy_(policy) {}
 
-    StepResult step(ICpuCoreRuntime& cpu) {
-        auto fetchBlock = cpu.fetch();
-        auto execBlock = cpu.decode(fetchBlock);
-        cpu.execute(execBlock, fetchBlock);
+    StepResult step(BMMQ::RuntimeContext& context) {
+        auto fetchBlock = context.fetch();
+        auto execBlock = context.decode(fetchBlock);
+        context.execute(execBlock, fetchBlock);
 
-        const auto feedback = cpu.getLastFeedback();
+        const auto feedback = context.getLastFeedback();
         recordIfNeeded(fetchBlock, feedback);
         return StepResult{true, feedback};
     }

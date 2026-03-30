@@ -2,6 +2,7 @@
 
 T.I.M.E (The Infinite Modder's Emulator) is an emulator framework prototype focused on:
 
+- Machine-owned execution with a native host runtime
 - Declarative-ish instruction flow (`fetch -> decode -> execute`)
 - Memory/register snapshotting for traceability
 - Executor-driven orchestration
@@ -11,10 +12,11 @@ T.I.M.E (The Infinite Modder's Emulator) is an emulator framework prototype focu
 
 This repository is still pre-alpha and intentionally incomplete in several areas, but it now has:
 
+- A minimal Game Boy reference machine shell
 - A minimal runnable instruction-cycle slice
 - CPU feedback hooks from core to executor
 - A plugin contract layer
-- Smoke tests covering snapshots, instruction cycle, and plugin executor flow
+- Smoke tests covering snapshots, instruction cycle, machine-owned execution, and plugin executor flow
 
 ## Build
 
@@ -31,7 +33,17 @@ ctest --test-dir build-working --output-on-failure
 
 ## Architecture Overview
 
-### 1. Core CPU Contract
+### 1. Native Machine Host
+
+`GameBoyMachine` is the first reference machine shell. It owns the CPU plugin instance and exposes a `RuntimeContext` that executors run against.
+
+Relevant files:
+
+- `cores/gameboy/GameBoyMachine.hpp`
+- `machine/Machine.hpp`
+- `machine/RuntimeContext.hpp`
+
+### 2. Core CPU Contract
 
 `CPU` defines the main execution cycle and feedback channel:
 
@@ -51,7 +63,7 @@ Relevant file:
 
 - `CPU.hpp`
 
-### 2. Instruction Data Structures
+### 3. Instruction Data Structures
 
 `fetchBlock` and `fetchBlockData` store fetched instruction bytes with offsets and base address.
 
@@ -66,16 +78,13 @@ Relevant file:
 
 - `inst_cycle/execute/executionBlock.hpp`
 
-### 3. Executor Layer
+### 4. Executor Layer
 
 #### Classic executor
 
 `inst_cycle/executor/Executor.hpp`:
 
-- Runs one step by default via:
-  - fetch
-  - decode
-  - execute
+- Runs one step by default through `RuntimeContext`
 - Can record fetched blocks
 - Can segment blocks
 - Can save/load block scripts
@@ -105,9 +114,9 @@ Plugin runtime executor:
 
 - `inst_cycle/executor/PluginExecutor.hpp`
 
-Runs a core runtime through the same cycle and delegates recording/segmentation behavior to a policy plugin.
+Runs a machine-owned runtime context through the same cycle and delegates recording/segmentation behavior to a policy plugin.
 
-### 4. Game Boy Core Adapter
+### 5. Game Boy Core Adapter
 
 `LR3592_DMG` implements the CPU contract and produces `CpuFeedback`.
 
@@ -115,7 +124,7 @@ Plugin runtime adapter:
 
 - `cores/gameboy/gameboy_plugin_runtime.hpp`
 
-This wraps `LR3592_DMG` into `ICpuCoreRuntime` so it can be consumed by `PluginExecutor`.
+This wraps `LR3592_DMG` into `ICpuCoreRuntime`, while `GameBoyMachine` hosts the runtime and ROM-backed memory path.
 
 ## Tests
 
@@ -124,6 +133,7 @@ Current smoke tests:
 - `tests/smoke_snapshot.cpp`
 - `tests/smoke_register_snapshot.cpp`
 - `tests/smoke_instruction_cycle.cpp`
+- `tests/smoke_machine_boot.cpp`
 - `tests/smoke_executor.cpp`
 - `tests/smoke_plugin_executor.cpp`
 - `tests/smoke_plugin_abi.cpp`
@@ -132,15 +142,16 @@ These verify:
 
 - Snapshot memory read-through and overlay behavior
 - Register snapshot copy/isolation behavior
-- Minimal `fetch -> decode -> execute` behavior
-- Executor recording/script replay
+- Minimal direct CPU `fetch -> decode -> execute` behavior
+- Machine-owned ROM-backed execution
+- Executor recording/script replay through `RuntimeContext`
 - Plugin executor orchestration and feedback-driven policy behavior
-- Plugin ABI compatibility and metadata validation guarantees
+- Plugin ABI compatibility, metadata validation, and guarantee labeling
 
 ## Short-Term Direction
 
 The next practical expansion points are:
 
-- Extend executor file format beyond block scripts into richer trace milestones
-- Replace static test fetch stream with real memory-backed fetch/PC progression
+- Extend the machine host beyond the initial Game Boy shell
+- Grow `RuntimeContext` from a narrow baseline API into a capability-based boundary
 - Add more opcode coverage while preserving executor/plugin interfaces

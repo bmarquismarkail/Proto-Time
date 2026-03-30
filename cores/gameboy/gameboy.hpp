@@ -3,6 +3,8 @@
 
 #include <cstdio>
 #include <stdexcept>
+#include <string_view>
+#include <vector>
 
 #include "../../machine/CPU.hpp"
 #include "../../common_microcode.hpp"
@@ -75,6 +77,8 @@ public:
   BMMQ::MemoryStorage<AddressType, DataType> buildMemoryStore();
   LR3592_RegisterFile buildRegisterfile();
   BMMQ::fetchBlock<AddressType, DataType> fetch();
+  void loadProgram(const std::vector<DataType>& program,
+                   AddressType startAddress = 0);
 
   BMMQ::executionBlock<AddressType, DataType, AddressType>
   decode(BMMQ::fetchBlock<AddressType, DataType> &fetchData) override;

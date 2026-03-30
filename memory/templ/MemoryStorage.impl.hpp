@@ -8,7 +8,7 @@ template<typename AddressType, typename DataType>
 void MemoryStorage<AddressType,DataType>::addMemBlock(std::tuple<AddressType, AddressType, memAccess> memBlock)
 {
     map.push_back(memBlock);
-    mem.resize( std::get<1>(memBlock) );
+    mem.resize(mem.size() + std::get<1>(memBlock));
 }
 
 template<typename AddressType, typename DataType>

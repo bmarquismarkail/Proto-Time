@@ -17,6 +17,7 @@ int main()
     assert(error.empty());
     assert(BMMQ::Plugin::validateMetadata(policyMeta, &error));
     assert(error.empty());
+    assert(policy.guarantee() == BMMQ::ExecutionGuarantee::BaselineFaithful);
 
     const BMMQ::Plugin::AbiVersion compatibleMinor{1, 0, 99};
     const BMMQ::Plugin::AbiVersion compatiblePatch{1, 0, 1};

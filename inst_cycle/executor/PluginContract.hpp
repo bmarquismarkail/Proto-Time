@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <string>
 
+#include "../../machine/RuntimeContext.hpp"
 #include "../../machine/CPU.hpp"
 #include "../execute/executionBlock.hpp"
 #include "../fetch/fetchBlock.hpp"
@@ -60,6 +61,7 @@ class IExecutorPolicyPlugin {
 public:
     virtual ~IExecutorPolicyPlugin() = default;
     virtual const PluginMetadata& metadata() const = 0;
+    virtual BMMQ::ExecutionGuarantee guarantee() const = 0;
     virtual bool shouldRecord(const FetchBlock& fb, const BMMQ::CpuFeedback& feedback) const = 0;
     virtual bool shouldSegment(const FetchBlock& fb, const BMMQ::CpuFeedback& feedback) const = 0;
 };
@@ -107,6 +109,10 @@ public:
             kHostAbiVersion
         };
         return meta;
+    }
+
+    BMMQ::ExecutionGuarantee guarantee() const override {
+        return BMMQ::ExecutionGuarantee::BaselineFaithful;
     }
 
     bool shouldRecord(const FetchBlock&, const BMMQ::CpuFeedback&) const override {
