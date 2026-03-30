@@ -53,7 +53,7 @@ public:
         step();
     }
 
-    uint16_t readRegisterPair(std::string_view name) {
+    uint16_t readRegisterPair(std::string_view name) override {
         auto* entry = cpu_.cpu().getMemory().file.findRegister(name);
         if (entry == nullptr || entry->second == nullptr) return 0;
 

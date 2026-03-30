@@ -23,7 +23,7 @@ int main()
     const auto& blocks = executor.recordedBlocks();
     assert(blocks.size() == 1);
 
-    assert(machine.readRegisterPair("AF") == static_cast<uint16_t>(0x1200));
+    assert(host.readRegisterPair("AF") == static_cast<uint16_t>(0x1200));
 
     return 0;
 }

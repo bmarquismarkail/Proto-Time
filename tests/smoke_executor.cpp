@@ -31,6 +31,6 @@ int main()
     assert(stepResultRecord.feedback.isControlFlow);
     assert(stepResultRecord.feedback.segmentBoundaryHint);
     assert(recorder.recordedBlocks().size() == 1);
-    assert(machine.readRegisterPair("AF") == static_cast<uint16_t>(0x1200));
+    assert(host.readRegisterPair("AF") == static_cast<uint16_t>(0x1200));
     return 0;
 }
