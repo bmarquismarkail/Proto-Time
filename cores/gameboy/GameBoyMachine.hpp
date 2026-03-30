@@ -68,12 +68,6 @@ public:
         return context_;
     }
 
-    void step() override {
-        auto fetchBlock = context_.fetch();
-        auto execBlock = context_.decode(fetchBlock);
-        context_.execute(execBlock, fetchBlock);
-    }
-
 private:
     LR3592_PluginRuntime cpu_;
     GameBoyRuntimeContext context_;
