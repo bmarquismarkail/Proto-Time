@@ -55,6 +55,10 @@ int main()
 
     const auto& blocks = executor.recordedBlocks();
     assert(blocks.size() == 1);
+    const auto& recordedSegments = executor.recordedSegments();
+    assert(recordedSegments.size() == 2);
+    assert(recordedSegments[0].blocks.size() == 1);
+    assert(recordedSegments[1].blocks.empty());
 
     assert(host.readRegisterPair("AF") == static_cast<uint16_t>(0x1200));
 

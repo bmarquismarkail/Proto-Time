@@ -67,6 +67,7 @@ public:
     }
 
     const std::vector<FetchBlock>& recordedBlocks() const { return recordedBlocks_; }
+    const std::vector<Segment>& recordedSegments() const { return segments_; }
     const std::vector<Segment>& segments() const { return segments_; }
 
 private:

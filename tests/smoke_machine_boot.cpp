@@ -45,7 +45,8 @@ int main() {
     };
 
     FakeMachine fake;
-    fake.runtimeContext().step();
+    assert(fake.guarantee() == BMMQ::ExecutionGuarantee::BaselineFaithful);
+    fake.step();
     assert(fake.context.executed);
 
     GameBoyMachine machine;
