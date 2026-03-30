@@ -71,6 +71,7 @@ public:
 
     bool loadScript(const std::string& path, std::string* error = nullptr) {
         segments_.clear();
+        recordedBlocks_.clear();
         playbackIndex_ = 0;
         return ExecutorIO::loadBlockScript<FetchBlock>(
             path,

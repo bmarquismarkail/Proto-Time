@@ -72,6 +72,12 @@ int main()
     assert(saved);
     assert(saveError.empty());
 
+    std::string reloadError;
+    const bool reloaded = recorder.loadScript(scriptPath.string(), &reloadError);
+    assert(reloaded);
+    assert(reloadError.empty());
+    assert(recorder.recordedBlocks().empty());
+
     CountingRuntimeContext playbackContext;
     BMMQ::Executor<AddressType, DataType> player(splitOnControl);
     std::string loadError;
