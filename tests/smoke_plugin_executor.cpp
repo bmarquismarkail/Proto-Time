@@ -7,6 +7,37 @@
 
 int main()
 {
+    struct CountingRuntimeContext final : BMMQ::RuntimeContext {
+        int fetchCalls = 0;
+        BMMQ::CpuFeedback feedback{};
+
+        FetchBlock fetch() override {
+            FetchBlock block;
+            block.setbaseAddress(static_cast<uint16_t>(0x200 + fetchCalls));
+            ++fetchCalls;
+            return block;
+        }
+
+        ExecutionBlock decode(FetchBlock&) override { return {}; }
+        void execute(const ExecutionBlock&, FetchBlock&) override {
+            feedback.segmentBoundaryHint = false;
+            feedback.isControlFlow = false;
+        }
+        const BMMQ::CpuFeedback& getLastFeedback() const override { return feedback; }
+        BMMQ::ExecutionGuarantee guarantee() const override {
+            return BMMQ::ExecutionGuarantee::BaselineFaithful;
+        }
+    };
+
+    BMMQ::Plugin::DefaultStepPolicy singleFetchPolicy;
+    BMMQ::Plugin::PluginExecutor singleFetchExecutor(singleFetchPolicy);
+    CountingRuntimeContext countingContext;
+    const auto countedResult = singleFetchExecutor.step(countingContext);
+    assert(countedResult.executed);
+    assert(countingContext.fetchCalls == 1);
+    assert(singleFetchExecutor.recordedBlocks().size() == 1);
+    assert(singleFetchExecutor.recordedBlocks()[0].getbaseAddress() == 0x200);
+
     GameBoyMachine machine;
     BMMQ::Machine& host = machine;
     host.loadRom({0x3E, 0x12, 0x00});
