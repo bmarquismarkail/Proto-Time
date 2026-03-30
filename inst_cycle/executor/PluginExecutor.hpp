@@ -17,6 +17,7 @@ public:
 
     struct StepResult {
         bool executed = false;
+        BMMQ::ExecutionGuarantee guarantee = BMMQ::ExecutionGuarantee::Experimental;
         BMMQ::CpuFeedback feedback {};
     };
 
@@ -30,7 +31,7 @@ public:
 
         const auto feedback = context.getLastFeedback();
         recordIfNeeded(fetchBlock, feedback);
-        return StepResult{true, feedback};
+        return StepResult{true, policy_.guarantee(), feedback};
     }
 
     const std::vector<FetchBlock>& recordedBlocks() const { return recordedBlocks_; }

@@ -27,6 +27,7 @@ int main()
                                        LR3592_DMG&>);
     const auto stepResultRecord = recorder.step(host.runtimeContext());
     assert(stepResultRecord.executed);
+    assert(stepResultRecord.guarantee == BMMQ::ExecutionGuarantee::BaselineFaithful);
     assert(stepResultRecord.feedback.isControlFlow);
     assert(stepResultRecord.feedback.segmentBoundaryHint);
     assert(recorder.recordedBlocks().size() == 1);

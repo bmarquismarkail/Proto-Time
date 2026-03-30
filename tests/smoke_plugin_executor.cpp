@@ -16,6 +16,7 @@ int main()
 
     const auto result = executor.step(host.runtimeContext());
     assert(result.executed);
+    assert(result.guarantee == BMMQ::ExecutionGuarantee::BaselineFaithful);
     assert(result.feedback.isControlFlow);
     assert(result.feedback.segmentBoundaryHint);
 

@@ -28,6 +28,7 @@ public:
     struct StepResult {
         bool usedScript = false;
         bool executed = false;
+        ExecutionGuarantee guarantee = ExecutionGuarantee::Experimental;
         CpuFeedback feedback {};
     };
 
@@ -56,6 +57,7 @@ public:
         auto execBlock = context.decode(fb);
         context.execute(execBlock, fb);
         result.executed = true;
+        result.guarantee = context.guarantee();
         result.feedback = context.getLastFeedback();
 
         if (!result.usedScript && recordingEnabled_) {
