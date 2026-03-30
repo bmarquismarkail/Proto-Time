@@ -45,7 +45,7 @@ public:
     GameBoyMachine()
         : context_(cpu_) {}
 
-    void loadRom(const std::vector<uint8_t>& bytes) {
+    void loadRom(const std::vector<uint8_t>& bytes) override {
         cpu_.cpu().loadProgram(bytes);
     }
 

@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <string_view>
+#include <vector>
 
 namespace BMMQ {
 
@@ -11,6 +12,7 @@ class RuntimeContext;
 class Machine {
 public:
     virtual ~Machine() = default;
+    virtual void loadRom(const std::vector<uint8_t>& bytes) = 0;
     virtual RuntimeContext& runtimeContext() = 0;
     virtual void step() = 0;
     virtual uint16_t readRegisterPair(std::string_view name) = 0;
