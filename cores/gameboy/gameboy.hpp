@@ -3,11 +3,14 @@
 
 #include <cstdio>
 #include <stdexcept>
+#include <array>
+#include <optional>
 #include <string_view>
 #include <vector>
 
 #include "../../machine/CPU.hpp"
 #include "../../common_microcode.hpp"
+#include "../../inst_cycle/opcode.hpp"
 #include "../../inst_cycle/execute/executionBlock.hpp"
 #include "../../inst_cycle/fetch/fetchBlock.hpp"
 #include "../../memory/MemoryPool.hpp"
@@ -21,8 +24,11 @@ using LR3592_RegisterPair = BMMQ::CPU_RegisterPair<AddressType>;
 using LR3592_RegisterFile = BMMQ::RegisterFile<AddressType>;
 
 class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
-  // BMMQ::OpcodeList<AddressType, DataType, AddressType> opcodeList;
+  using Opcode = BMMQ::Opcode<AddressType, DataType, AddressType>;
+  using OpcodeTable = std::array<std::optional<Opcode>, 256>;
+
   BMMQ::MemoryPool<AddressType, DataType, AddressType> mem;
+  OpcodeTable opcodeTable;
   LR3592_Register mar;
   LR3592_RegisterPair mdr;
   uint16_t flagset;

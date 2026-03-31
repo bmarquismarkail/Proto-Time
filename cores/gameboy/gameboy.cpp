@@ -1,9 +1,30 @@
 #include "gameboy.hpp"
 
+#include <cassert>
+#include <iomanip>
+#include <sstream>
+
 using AddressType = uint16_t;
 using DataType = uint8_t;
 using LR3592_Register = BMMQ::CPU_Register<AddressType>;
 using LR3592_RegisterPair = BMMQ::CPU_RegisterPair<AddressType>;
+
+namespace {
+template <typename Snapshot>
+LR3592_RegisterPair* getRegisterPair(Snapshot& snapshot, const char* name) {
+    auto* pool = dynamic_cast<BMMQ::MemoryPool<AddressType, DataType, AddressType>*>(&snapshot);
+    assert(pool != nullptr && "Expected MemoryPool snapshot");
+    if (pool == nullptr) return nullptr;
+
+    auto* entry = pool->file.findRegister(name);
+    assert(entry != nullptr && entry->second != nullptr && "Register missing in snapshot");
+    if (entry == nullptr || entry->second == nullptr) return nullptr;
+
+    auto* regPair = dynamic_cast<LR3592_RegisterPair*>(entry->second);
+    assert(regPair != nullptr && "Register entry is not LR3592_RegisterPair");
+    return regPair;
+}
+}
 
 
 LR3592_DMG::LR3592_DMG()
@@ -19,7 +40,7 @@ LR3592_DMG::LR3592_DMG()
 
     mem.store = buildMemoryStore();
     loadProgram({0x3E, 0x12, 0x00});
-//        populateOpcodes();
+    populateOpcodes();
 }
 
 BMMQ::MemoryStorage<AddressType, DataType> LR3592_DMG::buildMemoryStore()
@@ -102,31 +123,40 @@ LR3592_DMG::decode(BMMQ::fetchBlock<AddressType, DataType>& fetchData)
     BMMQ::executionBlock<AddressType, DataType, AddressType> block;
     block.setSnapshot(&mem);
 
-    for (const auto& dataBlock : fetchData.getblockData()) {
-        for (std::size_t i = 0; i < dataBlock.data.size(); ++i) {
-            const auto opcode = dataBlock.data[i];
-
-            if (opcode == 0x00) {
-                block.addStep([](auto&, auto&) {});
-                continue;
+    auto& blockDataList = fetchData.getblockData();
+    for (auto& dataBlock : blockDataList) {
+        std::size_t i = 0;
+        std::size_t consumedBytes = 0;
+        while (i < dataBlock.data.size()) {
+            const auto opcodeByte = dataBlock.data[i];
+            const auto& entry = opcodeTable[opcodeByte];
+            if (!entry.has_value()) {
+                const AddressType pc = static_cast<AddressType>(
+                    fetchData.getbaseAddress() + dataBlock.offset + i);
+                std::ostringstream oss;
+                oss << "unimplemented opcode 0x"
+                    << std::uppercase << std::hex << std::setw(2) << std::setfill('0')
+                    << static_cast<unsigned>(opcodeByte)
+                    << " at PC=0x"
+                    << std::setw(4) << static_cast<unsigned>(pc);
+                throw std::runtime_error(oss.str());
             }
 
-            if (opcode == 0x3E && (i + 1) < dataBlock.data.size()) {
-                const DataType imm = dataBlock.data[++i];
-                block.addStep([imm](auto& snapshot, auto&) {
-                    auto* pool = dynamic_cast<BMMQ::MemoryPool<AddressType, DataType, AddressType>*>(&snapshot);
-                    if (pool == nullptr) return;
-
-                    auto* afEntry = pool->file.findRegister("AF");
-                    if (afEntry == nullptr || afEntry->second == nullptr) return;
-
-                    auto* af = dynamic_cast<LR3592_RegisterPair*>(afEntry->second);
-                    if (af == nullptr) return;
-
-                    af->hi = imm;
-                });
+            const auto opcodeLength = entry->length();
+            if (opcodeLength == 0) {
+                throw std::runtime_error("invalid opcode length");
             }
+
+            if (i + opcodeLength > dataBlock.data.size()) {
+                throw std::runtime_error("truncated opcode stream");
+            }
+
+            entry->emit(block, dataBlock, i);
+            i += opcodeLength;
+            consumedBytes += opcodeLength;
         }
+
+        dataBlock.data.resize(consumedBytes);
     }
 
     return block;
@@ -174,4 +204,29 @@ const BMMQ::CpuFeedback& LR3592_DMG::getLastFeedback() const
 
 void LR3592_DMG::setStopFlag(bool f){
 	stopFlag = f;
+}
+
+void LR3592_DMG::populateOpcodes()
+{
+    opcodeTable.fill(std::nullopt);
+
+    opcodeTable[0x00] = BMMQ::make_opcode<AddressType, DataType, AddressType>(
+        1,
+        BMMQ::make_microcode<AddressType, DataType, AddressType>(
+            [](auto&, const auto&, std::size_t) {
+                // NOP: intentionally no steps to execute
+            }));
+
+    opcodeTable[0x3E] = BMMQ::make_opcode<AddressType, DataType, AddressType>(
+        2,
+        BMMQ::make_microcode<AddressType, DataType, AddressType>(
+            [](auto& block, const auto& fetchData, std::size_t opcodeIndex) {
+                const DataType imm = fetchData.data[opcodeIndex + 1];
+                block.addStep([imm](auto& snapshot, auto&) {
+                    auto* af = getRegisterPair(snapshot, "AF");
+                    if (af == nullptr) return;
+
+                    af->hi = imm;
+                });
+            }));
 }
