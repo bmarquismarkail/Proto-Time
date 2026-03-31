@@ -10,6 +10,7 @@
 			bool scratchToggle = false;
 			DataType* readTempByte(AddressType address);
 		public:
+		explicit LR3592_Interpreter_Decode(LR3592_DMG* c) : LR3592_Decode(c) {}
 		//Class Helper Functions
 		void setSnapshot(BMMQ::MemorySnapshot<AddressType, DataType, AddressType> *s);
 		LR3592_Register* GetRegister(std::string_view id);

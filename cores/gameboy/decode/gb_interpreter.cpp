@@ -264,11 +264,9 @@ void LR3592_Interpreter_Decode::math_r8(DataType opcode)
 	}
 }
 
-
-//TODO: MDR needs to be converted to a value in the MemorySnapshot
 void LR3592_Interpreter_Decode::math_i8(DataType opcode)
 {
-	DataType mdr= 0;
+	const DataType mdr = static_cast<DataType>(GetRegister("mdr")->value);
 	DataType mathFunc = (opcode & 0x38) >> 3;
 
 	auto A = GetPairRegister("AF");
@@ -303,13 +301,13 @@ void LR3592_Interpreter_Decode::math_i8(DataType opcode)
 }
 
 //TODO: Brainstorm on making read more templatic
-//TODO: third argument in read needs to be dynamic
 void LR3592_Interpreter_Decode::ret()
 {
 	auto PC = GetRegister("PC");
 	auto SP = GetRegister("SP");
 	auto memMap = cpu->getMemory();
-	snap->mem.read( (DataType*)&PC->value, ((std::size_t)SP->value), 1);
+	constexpr AddressType pcByteCount = static_cast<AddressType>(sizeof(PC->value) / sizeof(DataType));
+	snap->mem.read((DataType*)&PC->value, static_cast<AddressType>(SP->value), pcByteCount);
 	SP->value += 2;
 }
 
@@ -553,8 +551,9 @@ void LR3592_Interpreter_Decode::calculateflags(uint16_t calculationFlags)
 	case 0x20:
 		newflags[1] =	0;
 		break;
-		// case 0x10:
-		// TODO: Any Negative	checks
+	case 0x10:
+		newflags[1] = (A & 0x80) != 0;
+		break;
 	}
 
 	// Half-Carry Flag
@@ -586,7 +585,7 @@ void LR3592_Interpreter_Decode::calculateflags(uint16_t calculationFlags)
 	F = (newflags[0] << 7) | (newflags[1] << 6) | (newflags[2] << 5) | (newflags[3] << 4);
 }
 
-void LR3592_Interpreter_Decode::nop()	{}
+void LR3592_Interpreter_Decode::nop(){}
 void LR3592_Interpreter_Decode::stop()
 {
 	cpu->setStopFlag(true);
