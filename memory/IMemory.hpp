@@ -1,12 +1,16 @@
 #ifndef __IMEMORY
 #define __IMEMORY
 
-namespace BMMQ {	
+#include <span>
+
+namespace BMMQ {
+
 	template<typename AddressType, typename DataType, typename RegType>
-	class IMemory{
+	class IMemory {
 	public:
-		virtual void read(DataType* stream, AddressType address, AddressType count) = 0;
-		virtual void write(DataType* stream, AddressType address, AddressType count) = 0;
+		virtual ~IMemory() = default;
+		virtual void read(std::span<DataType> stream, AddressType address) = 0;
+		virtual void write(std::span<const DataType> stream, AddressType address) = 0;
 	};
 }
 

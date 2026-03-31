@@ -1,8 +1,10 @@
 #include <cassert>
 #include <cstdint>
+#include <stdexcept>
 #include <type_traits>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+#include "machine/RegisterId.hpp"
 
 template<typename T, typename = void>
 struct HasStepBaseline : std::false_type {};
@@ -41,7 +43,8 @@ int main() {
 
         void loadRom(const std::vector<uint8_t>&) override {}
         BMMQ::RuntimeContext& runtimeContext() override { return context; }
-        uint16_t readRegisterPair(std::string_view) override { return 0; }
+        const BMMQ::RuntimeContext& runtimeContext() const override { return context; }
+        uint16_t readRegisterPair(BMMQ::RegisterId) const override { return 0; }
     };
 
     FakeMachine fake;
@@ -54,7 +57,14 @@ int main() {
     host.loadRom({0x3E, 0x12, 0x00});
     assert(host.guarantee() == BMMQ::ExecutionGuarantee::BaselineFaithful);
     host.step();
-    assert(host.readRegisterPair("AF") == static_cast<uint16_t>(0x1200));
+    assert(host.readRegisterPair(BMMQ::RegisterId::AF) == static_cast<uint16_t>(0x1200));
+    bool threw = false;
+    try {
+        (void)host.readRegisterPair(BMMQ::RegisterId::MDR);
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    assert(threw);
     static_assert(!HasStepBaseline<GameBoyMachine>::value);
     static_assert(!HasHasCpu<GameBoyMachine>::value);
     static_assert(!HasHasMemoryMap<GameBoyMachine>::value);

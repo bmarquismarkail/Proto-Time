@@ -75,7 +75,12 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   void populateOpcodes();
 
 public:
-  BMMQ::RegisterInfo<AddressType> AF, BC, DE, HL, SP, PC;
+  BMMQ::RegisterInfo<AddressType> AF{BMMQ::RegisterId::AF};
+  BMMQ::RegisterInfo<AddressType> BC{BMMQ::RegisterId::BC};
+  BMMQ::RegisterInfo<AddressType> DE{BMMQ::RegisterId::DE};
+  BMMQ::RegisterInfo<AddressType> HL{BMMQ::RegisterId::HL};
+  BMMQ::RegisterInfo<AddressType> SP{BMMQ::RegisterId::SP};
+  BMMQ::RegisterInfo<AddressType> PC{BMMQ::RegisterId::PC};
 
   // CTOR
 
@@ -95,6 +100,7 @@ public:
   const BMMQ::CpuFeedback &getLastFeedback() const override;
 
   BMMQ::MemoryPool<AddressType, DataType, AddressType> &getMemory();
+  const BMMQ::MemoryPool<AddressType, DataType, AddressType> &getMemory() const;
   void setStopFlag(bool f);
 };
 #endif // DMG_CPU

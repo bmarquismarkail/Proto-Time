@@ -1,12 +1,14 @@
 #include <cassert>
 #include <cstdint>
 #include <filesystem>
+#include <stdexcept>
 #include <string>
 #include <type_traits>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
 #include "cores/gameboy/gameboy.hpp"
 #include "inst_cycle/executor/Executor.hpp"
+#include "machine/RegisterId.hpp"
 
 int main()
 {
@@ -63,39 +65,31 @@ int main()
     assert(stepResultRecord.feedback.isControlFlow);
     assert(stepResultRecord.feedback.segmentBoundaryHint);
     assert(recorder.recordedBlocks().size() == 1);
-    assert(host.readRegisterPair("AF") == static_cast<uint16_t>(0x1200));
+    assert(host.readRegisterPair(BMMQ::RegisterId::AF) == static_cast<uint16_t>(0x1200));
 
     namespace fs = std::filesystem;
     const fs::path scriptPath = fs::temp_directory_path() / "time_executor_smoke.blocks";
-    std::string saveError;
-    const bool saved = recorder.saveScript(scriptPath.string(), &saveError);
-    assert(saved);
-    assert(saveError.empty());
+    recorder.saveScript(scriptPath.string());
 
-    std::string reloadError;
-    const bool reloaded = recorder.loadScript(scriptPath.string(), &reloadError);
-    assert(reloaded);
-    assert(reloadError.empty());
+    recorder.loadScript(scriptPath.string());
     assert(recorder.recordedBlocks().empty());
 
     CountingRuntimeContext playbackContext;
     BMMQ::Executor<AddressType, DataType> player(splitOnControl);
-    std::string loadError;
-    const bool loaded = player.loadScript(scriptPath.string(), &loadError);
-    assert(loaded);
-    assert(loadError.empty());
+    player.loadScript(scriptPath.string());
 
     const auto playbackResult = player.step(playbackContext);
     assert(playbackResult.executed);
     assert(playbackResult.usedScript);
     assert(playbackContext.fetchCalls == 0);
 
-    std::string missingError;
-    const bool missingLoad = player.loadScript(
-        (fs::temp_directory_path() / "time_executor_missing.blocks").string(),
-        &missingError);
-    assert(!missingLoad);
-    assert(!missingError.empty());
+    bool missingLoadThrew = false;
+    try {
+        player.loadScript((fs::temp_directory_path() / "time_executor_missing.blocks").string());
+    } catch (const std::runtime_error&) {
+        missingLoadThrew = true;
+    }
+    assert(missingLoadThrew);
 
     CountingRuntimeContext failedReloadContext;
     const auto liveAfterFailedLoad = player.step(failedReloadContext);

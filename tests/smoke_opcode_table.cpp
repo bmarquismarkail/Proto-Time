@@ -3,6 +3,7 @@
 #include <stdexcept>
 
 #include "cores/gameboy/gameboy.hpp"
+#include "machine/RegisterId.hpp"
 
 int main()
 {
@@ -15,17 +16,17 @@ int main()
         cpu.execute(execBlock, fetchBlock);
 
         auto& mem = cpu.getMemory();
-        auto* afEntry = mem.file.findRegister("AF");
-        auto* pcEntry = mem.file.findRegister("PC");
+        auto* afEntry = mem.file.findRegister(BMMQ::RegisterId::AF);
+        auto* pcEntry = mem.file.findRegister(BMMQ::RegisterId::PC);
         assert(afEntry != nullptr);
-        assert(afEntry->second != nullptr);
+        assert(afEntry->reg != nullptr);
         assert(pcEntry != nullptr);
-        assert(pcEntry->second != nullptr);
+        assert(pcEntry->reg != nullptr);
 
-        auto* af = dynamic_cast<BMMQ::CPU_RegisterPair<uint16_t>*>(afEntry->second);
+        auto* af = dynamic_cast<BMMQ::CPU_RegisterPair<uint16_t>*>(afEntry->reg.get());
         assert(af != nullptr);
         assert(af->hi == 0x00);
-        assert(pcEntry->second->value == 3);
+        assert(pcEntry->reg->value == 3);
     }
 
     {

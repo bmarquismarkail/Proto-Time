@@ -1,4 +1,5 @@
 #include <cassert>
+#include <stdexcept>
 #include <string>
 
 #include "gameboy/gameboy_plugin_runtime.hpp"
@@ -9,14 +10,11 @@ int main()
     LR3592_PluginRuntime runtime;
     BMMQ::Plugin::DefaultStepPolicy policy;
 
-    std::string error;
     const auto& runtimeMeta = runtime.metadata();
     const auto& policyMeta = policy.metadata();
 
-    assert(BMMQ::Plugin::validateMetadata(runtimeMeta, &error));
-    assert(error.empty());
-    assert(BMMQ::Plugin::validateMetadata(policyMeta, &error));
-    assert(error.empty());
+    BMMQ::Plugin::validateMetadata(runtimeMeta);
+    BMMQ::Plugin::validateMetadata(policyMeta);
     assert(runtimeMeta.kind == BMMQ::Plugin::PluginKind::CpuCore);
     assert(policyMeta.kind == BMMQ::Plugin::PluginKind::ExecutorPolicy);
     assert(policy.guarantee() == BMMQ::ExecutionGuarantee::BaselineFaithful);
@@ -33,13 +31,23 @@ int main()
 
     BMMQ::Plugin::PluginMetadata badSize = runtimeMeta;
     badSize.structSize = 0;
-    assert(!BMMQ::Plugin::validateMetadata(badSize, &error));
-    assert(!error.empty());
+    bool badSizeThrew = false;
+    try {
+        BMMQ::Plugin::validateMetadata(badSize);
+    } catch (const std::runtime_error&) {
+        badSizeThrew = true;
+    }
+    assert(badSizeThrew);
 
     BMMQ::Plugin::PluginMetadata badAbi = runtimeMeta;
     badAbi.abiVersion = incompatibleMajor;
-    assert(!BMMQ::Plugin::validateMetadata(badAbi, &error));
-    assert(!error.empty());
+    bool badAbiThrew = false;
+    try {
+        BMMQ::Plugin::validateMetadata(badAbi);
+    } catch (const std::runtime_error&) {
+        badAbiThrew = true;
+    }
+    assert(badAbiThrew);
 
     BMMQ::Plugin::PluginDescriptorV1 descriptor;
     assert(descriptor.structSize == sizeof(BMMQ::Plugin::PluginDescriptorV1));

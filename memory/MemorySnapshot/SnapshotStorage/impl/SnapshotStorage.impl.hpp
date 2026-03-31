@@ -68,8 +68,9 @@ namespace BMMQ {
 
 	template<typename AddressType, typename DataType>
 	void SnapshotStorage<AddressType, DataType>::read
-	(DataType* stream, AddressType address, AddressType count) {
+	(std::span<DataType> stream, AddressType address) {
 
+		AddressType count = static_cast<AddressType>(stream.size());
 		AddressType maxaddress = std::numeric_limits<AddressType>::max();
 		AddressType bounds = maxaddress - address;
 		count = std::min(bounds, count);
@@ -78,10 +79,10 @@ namespace BMMQ {
 		AddressType endAddress = address + count;
 		maxAccessed = std::max(maxAccessed, endAddress);
 		if (pool.empty()) {
-			store.read(stream, address, count);
+			store.read(stream.first(count), address);
 			return;
 		}
-		DataType* streamIterator = stream;
+		DataType* streamIterator = stream.data();
 		AddressType index = address;
 
 		while (count > 0) {
@@ -106,7 +107,7 @@ namespace BMMQ {
 					auto nextaddress = std::next(poolit)->first;
 					readcount = nextaddress - index;
 				}
-				store.read(streamIterator, index, readcount);
+				store.read(std::span<DataType>(streamIterator, readcount), index);
 				streamIterator += readcount;
 				index += readcount;
 				count -= readcount;
@@ -117,8 +118,9 @@ namespace BMMQ {
 
 	template<typename AddressType, typename DataType>
 	void SnapshotStorage<AddressType, DataType>::write
-	(DataType* stream, AddressType address, AddressType count) {
+	(std::span<const DataType> stream, AddressType address) {
 
+		AddressType count = static_cast<AddressType>(stream.size());
 		AddressType maxaddress = std::numeric_limits<AddressType>::max();
 		AddressType bounds = maxaddress - address;
 		count = std::min(bounds, count);
@@ -131,7 +133,7 @@ namespace BMMQ {
 		auto memindex = 0;
 		if (mem.empty())
 		{
-			mem.insert(memit, stream, stream + count);
+			mem.insert(memit, stream.begin(), stream.begin() + count);
 			pool.push_back(std::make_pair(address, 0));
 			return;
 		}
@@ -174,13 +176,12 @@ namespace BMMQ {
 				new_alloc_len -= entrycap;
 			}
 		}
-		auto streamit = stream;
 		std::advance(memit, memindex);
-		mem.insert(memit, streamit, stream + new_alloc_len);
+		mem.insert(memit, stream.begin(), stream.begin() + new_alloc_len);
 		memit = mem.begin();
-		std::advance(memit, new_alloc_len);
-		stream += new_alloc_len;
-		std::for_each_n(memit, count - new_alloc_len, [&stream](auto& d) {d = *stream++; });
+		std::advance(memit, memindex + new_alloc_len);
+		auto streamIterator = stream.begin() + new_alloc_len;
+		std::for_each_n(memit, count - new_alloc_len, [&streamIterator](auto& d) { d = *streamIterator++; });
 		return;
 	}
 

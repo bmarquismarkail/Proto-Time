@@ -17,10 +17,10 @@ LR3592_RegisterPair* getRegisterPair(Snapshot& snapshot, const char* name) {
     if (pool == nullptr) return nullptr;
 
     auto* entry = pool->file.findRegister(name);
-    assert(entry != nullptr && entry->second != nullptr && "Register missing in snapshot");
-    if (entry == nullptr || entry->second == nullptr) return nullptr;
+    assert(entry != nullptr && entry->reg != nullptr && "Register missing in snapshot");
+    if (entry == nullptr || entry->reg == nullptr) return nullptr;
 
-    auto* regPair = dynamic_cast<LR3592_RegisterPair*>(entry->second);
+    auto* regPair = dynamic_cast<LR3592_RegisterPair*>(entry->reg.get());
     assert(regPair != nullptr && "Register entry is not LR3592_RegisterPair");
     return regPair;
 }
@@ -46,18 +46,18 @@ LR3592_DMG::LR3592_DMG()
 BMMQ::MemoryStorage<AddressType, DataType> LR3592_DMG::buildMemoryStore()
 {
     BMMQ::MemoryStorage<AddressType, DataType> store;
-    store.addMemBlock(std::make_tuple(0x0000, 0x4000, BMMQ::memAccess::MEM_READ));
-    store.addMemBlock(std::make_tuple(0x4000, 0x4000, BMMQ::memAccess::MEM_READ));
-    store.addMemBlock(std::make_tuple(0x8000, 0x2000, BMMQ::memAccess::MEM_READ_WRITE));
-    store.addMemBlock(std::make_tuple(0xa000, 0x2000, BMMQ::memAccess::MEM_READ_WRITE));
-    store.addMemBlock(std::make_tuple(0xc000, 0x2000, BMMQ::memAccess::MEM_READ_WRITE));
-    store.addMemBlock(std::make_tuple(0xe000, 0x1e00, BMMQ::memAccess::MEM_UNMAPPED));
-    store.addMemBlock(std::make_tuple(0xfe00, 0x00a0, BMMQ::memAccess::MEM_READ_WRITE));
-    store.addMemBlock(std::make_tuple(0xfea0, 0x0060, BMMQ::memAccess::MEM_UNMAPPED));
-    store.addMemBlock(std::make_tuple(0xff00, 0x004c, BMMQ::memAccess::MEM_READ_WRITE));
-    store.addMemBlock(std::make_tuple(0xff4c, 0x0034, BMMQ::memAccess::MEM_UNMAPPED));
-    store.addMemBlock(std::make_tuple(0xff80, 0x007f, BMMQ::memAccess::MEM_READ_WRITE));
-    store.addMemBlock(std::make_tuple(0xffff, 0x0001, BMMQ::memAccess::MEM_READ_WRITE));
+    store.addMemBlock(std::make_tuple(0x0000, 0x4000, BMMQ::memAccess::Read));
+    store.addMemBlock(std::make_tuple(0x4000, 0x4000, BMMQ::memAccess::Read));
+    store.addMemBlock(std::make_tuple(0x8000, 0x2000, BMMQ::memAccess::ReadWrite));
+    store.addMemBlock(std::make_tuple(0xa000, 0x2000, BMMQ::memAccess::ReadWrite));
+    store.addMemBlock(std::make_tuple(0xc000, 0x2000, BMMQ::memAccess::ReadWrite));
+    store.addMemBlock(std::make_tuple(0xe000, 0x1e00, BMMQ::memAccess::Unmapped));
+    store.addMemBlock(std::make_tuple(0xfe00, 0x00a0, BMMQ::memAccess::ReadWrite));
+    store.addMemBlock(std::make_tuple(0xfea0, 0x0060, BMMQ::memAccess::Unmapped));
+    store.addMemBlock(std::make_tuple(0xff00, 0x004c, BMMQ::memAccess::ReadWrite));
+    store.addMemBlock(std::make_tuple(0xff4c, 0x0034, BMMQ::memAccess::Unmapped));
+    store.addMemBlock(std::make_tuple(0xff80, 0x007f, BMMQ::memAccess::ReadWrite));
+    store.addMemBlock(std::make_tuple(0xffff, 0x0001, BMMQ::memAccess::ReadWrite));
     return store;
 }
 
@@ -83,20 +83,25 @@ BMMQ::MemoryPool<AddressType, DataType, AddressType>& LR3592_DMG::getMemory()
 	return mem;
 }
 
+const BMMQ::MemoryPool<AddressType, DataType, AddressType>& LR3592_DMG::getMemory() const
+{
+    return mem;
+}
+
 //
 BMMQ::fetchBlock<AddressType, DataType> LR3592_DMG::fetch()
 {
     BMMQ::fetchBlock<AddressType, DataType> f ;
 
     auto* pcEntry = mem.file.findRegister("PC");
-    const auto pc = (pcEntry != nullptr && pcEntry->second != nullptr)
-        ? static_cast<AddressType>(pcEntry->second->value)
+    const auto pc = (pcEntry != nullptr && pcEntry->reg != nullptr)
+        ? static_cast<AddressType>(pcEntry->reg->value)
         : static_cast<AddressType>(0);
 
     f.setbaseAddress(pc);
 
     std::vector<DataType> stream(3, 0);
-    mem.read(stream.data(), pc, static_cast<AddressType>(stream.size()));
+    mem.read(std::span<DataType>(stream.data(), stream.size()), pc);
 
     BMMQ::fetchBlockData<AddressType, DataType> data {
         0, std::move(stream)
@@ -109,12 +114,7 @@ BMMQ::fetchBlock<AddressType, DataType> LR3592_DMG::fetch()
 void LR3592_DMG::loadProgram(const std::vector<DataType>& program,
                              AddressType startAddress)
 {
-    auto* destination = mem.store.getPos(startAddress);
-    if (destination == nullptr) return;
-
-    for (std::size_t i = 0; i < program.size(); ++i) {
-        destination[i] = program[i];
-    }
+    mem.store.load(std::span<const DataType>(program.data(), program.size()), startAddress);
 }
 
 BMMQ::executionBlock<AddressType, DataType, AddressType>
@@ -165,8 +165,8 @@ LR3592_DMG::decode(BMMQ::fetchBlock<AddressType, DataType>& fetchData)
 void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, AddressType>& block, BMMQ::fetchBlock<AddressType, DataType> &fb )
 {
     auto* pcEntry = mem.file.findRegister("PC");
-    feedback.pcBefore = (pcEntry != nullptr && pcEntry->second != nullptr)
-        ? static_cast<uint32_t>(pcEntry->second->value)
+    feedback.pcBefore = (pcEntry != nullptr && pcEntry->reg != nullptr)
+        ? static_cast<uint32_t>(pcEntry->reg->value)
         : 0;
 
     feedback.isControlFlow = false;
@@ -188,10 +188,10 @@ void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, Addre
         step(*snapshot, fb);
     }
 
-    if (pcEntry != nullptr && pcEntry->second != nullptr) {
-        pcEntry->second->value = static_cast<AddressType>(
-            pcEntry->second->value + executedByteCount);
-        feedback.pcAfter = static_cast<uint32_t>(pcEntry->second->value);
+    if (pcEntry != nullptr && pcEntry->reg != nullptr) {
+        pcEntry->reg->value = static_cast<AddressType>(
+            pcEntry->reg->value + executedByteCount);
+        feedback.pcAfter = static_cast<uint32_t>(pcEntry->reg->value);
     } else {
         feedback.pcAfter = feedback.pcBefore;
     }

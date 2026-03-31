@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 
 #include "../../machine/RuntimeContext.hpp"
@@ -66,22 +67,16 @@ public:
     virtual bool shouldSegment(const FetchBlock& fb, const BMMQ::CpuFeedback& feedback) const = 0;
 };
 
-inline bool validateMetadata(
-    const PluginMetadata& metadata,
-    std::string* error = nullptr) {
+inline void validateMetadata(const PluginMetadata& metadata) {
     if (metadata.structSize != sizeof(PluginMetadata)) {
-        if (error != nullptr) *error = "plugin metadata size mismatch";
-        return false;
+        throw std::runtime_error("plugin metadata size mismatch");
     }
     if (metadata.id.empty()) {
-        if (error != nullptr) *error = "plugin id is empty";
-        return false;
+        throw std::runtime_error("plugin id is empty");
     }
     if (!isAbiCompatible(metadata.abiVersion)) {
-        if (error != nullptr) *error = "plugin ABI version is not compatible";
-        return false;
+        throw std::runtime_error("plugin ABI version is not compatible");
     }
-    return true;
 }
 
 // C ABI entrypoints for future dynamic plugin loading.

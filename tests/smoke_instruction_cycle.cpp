@@ -2,6 +2,7 @@
 #include <cstdint>
 
 #include "gameboy/gameboy.hpp"
+#include "machine/RegisterId.hpp"
 
 int main()
 {
@@ -13,11 +14,11 @@ int main()
     cpu.execute(execBlock, fetchBlock);
 
     auto& mem = cpu.getMemory();
-    auto* afEntry = mem.file.findRegister("AF");
+    auto* afEntry = mem.file.findRegister(BMMQ::RegisterId::AF);
     assert(afEntry != nullptr);
-    assert(afEntry->second != nullptr);
+    assert(afEntry->reg != nullptr);
 
-    auto* af = dynamic_cast<BMMQ::CPU_RegisterPair<uint16_t>*>(afEntry->second);
+    auto* af = dynamic_cast<BMMQ::CPU_RegisterPair<uint16_t>*>(afEntry->reg.get());
     assert(af != nullptr);
 
     // fetch() currently emits: LD A,0x12; NOP

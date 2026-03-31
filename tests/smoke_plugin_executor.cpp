@@ -1,11 +1,13 @@
 #include <cassert>
 #include <cstdint>
 #include <filesystem>
+#include <stdexcept>
 #include <string>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
 #include "inst_cycle/executor/PluginContract.hpp"
 #include "inst_cycle/executor/PluginExecutor.hpp"
+#include "machine/RegisterId.hpp"
 
 int main()
 {
@@ -60,33 +62,28 @@ int main()
     assert(recordedSegments[0].blocks.size() == 1);
     assert(recordedSegments[1].blocks.empty());
 
-    assert(host.readRegisterPair("AF") == static_cast<uint16_t>(0x1200));
+    assert(host.readRegisterPair(BMMQ::RegisterId::AF) == static_cast<uint16_t>(0x1200));
 
     namespace fs = std::filesystem;
     const fs::path scriptPath = fs::temp_directory_path() / "time_plugin_executor_smoke.blocks";
-    std::string saveError;
-    const bool saved = executor.saveScript(scriptPath.string(), &saveError);
-    assert(saved);
-    assert(saveError.empty());
+    executor.saveScript(scriptPath.string());
 
     CountingRuntimeContext playbackContext;
     BMMQ::Plugin::PluginExecutor player(policy);
-    std::string loadError;
-    const bool loaded = player.loadScript(scriptPath.string(), &loadError);
-    assert(loaded);
-    assert(loadError.empty());
+    player.loadScript(scriptPath.string());
 
     const auto playbackResult = player.step(playbackContext);
     assert(playbackResult.executed);
     assert(playbackResult.usedScript);
     assert(playbackContext.fetchCalls == 0);
 
-    std::string missingError;
-    const bool missingLoad = player.loadScript(
-        (fs::temp_directory_path() / "time_plugin_executor_missing.blocks").string(),
-        &missingError);
-    assert(!missingLoad);
-    assert(!missingError.empty());
+    bool missingLoadThrew = false;
+    try {
+        player.loadScript((fs::temp_directory_path() / "time_plugin_executor_missing.blocks").string());
+    } catch (const std::runtime_error&) {
+        missingLoadThrew = true;
+    }
+    assert(missingLoadThrew);
 
     CountingRuntimeContext failedReloadContext;
     const auto liveAfterFailedLoad = player.step(failedReloadContext);

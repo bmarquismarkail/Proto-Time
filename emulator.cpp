@@ -11,8 +11,8 @@
 /////////////////////////////////////////////////////////////////////////////
 
 #include <iostream>
-#include <vector>
 #include <cstdlib>
+#include <vector>
 
 #include "cores/gameboy/gameboy.hpp"
 
@@ -22,7 +22,7 @@ bool failure(std::string message)
     return true;
 }
 
-int main(int argc, char** argv)
+int main(int, char**)
 {
     LR3592_DMG cpu;
     return 0;

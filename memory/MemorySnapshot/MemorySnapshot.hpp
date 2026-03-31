@@ -3,6 +3,7 @@
 
 #include <utility>
 #include <vector>
+#include <span>
 #include <string_view>
 #include "IMemory.hpp"
 #include "reg_base.hpp"
@@ -13,8 +14,9 @@ namespace BMMQ {
 	template<typename AddressType, typename DataType, typename RegType>
 	struct MemorySnapshot : virtual public IMemory<AddressType, DataType, RegType> {
 		MemorySnapshot(MemoryStorage<AddressType, DataType>& m);
-		virtual void read(DataType* stream, AddressType address, AddressType count);
-		virtual void write(DataType* stream, AddressType address, AddressType count);
+		void read(std::span<DataType> stream, AddressType address) override;
+		void write(std::span<const DataType> stream, AddressType address) override;
+		void copyRegisterFromMainFile(RegisterId regId, RegisterFile<RegType>& from);
 		void copyRegisterFromMainFile(std::string_view regId, RegisterFile<RegType>& from);
 		CPU_Register<RegType>* findOrCreateNewRegister(const std::string& regId, bool isPair= false);
 		RegisterFile<RegType> file;

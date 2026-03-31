@@ -2,6 +2,7 @@
 #define SNAPSHOT_STORAGE_H
 
 #include <utility> //for std::tuple
+#include <span>
 #include <vector>
 #include <string_view>
 #include <iostream>
@@ -38,8 +39,16 @@ namespace BMMQ {
 		AddressType maxAccessed;
 	public:
 		SnapshotStorage(MemoryStorage<AddressType, DataType>& m);
-		void read(DataType* stream, AddressType address, AddressType count);
-		void write(DataType* stream, AddressType address, AddressType count);
+		void read(std::span<DataType> stream, AddressType address);
+		void write(std::span<const DataType> stream, AddressType address);
+		void read(DataType* stream, AddressType address, AddressType count)
+		{
+			read(std::span<DataType>(stream, count), address);
+		}
+		void write(const DataType* stream, AddressType address, AddressType count)
+		{
+			write(std::span<const DataType>(stream, count), address);
+		}
 		DataType& at(AddressType idx);
 
 		// class for reading and writing

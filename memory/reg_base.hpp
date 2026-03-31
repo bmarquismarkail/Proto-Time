@@ -1,64 +1,97 @@
-#ifndef __REG_BASE
-#define __REG_BASE
+#ifndef BMMQ_REG_BASE_HPP
+#define BMMQ_REG_BASE_HPP
 
-#include <vector>
-#include <string>
+#include <deque>
+#include <memory>
 #include <string_view>
 #include <utility>
+
+#include "../machine/RegisterId.hpp"
 
 namespace BMMQ {
 
 template<typename T>
-struct _register {
-    virtual T operator()()=0 ;
+struct CPU_Register {
+    T value {};
+
+    virtual ~CPU_Register() = default;
+    virtual T operator()() const;
+    virtual bool isPair() const noexcept
+    {
+        return false;
+    }
+    virtual std::unique_ptr<CPU_Register<T>> clone() const
+    {
+        return std::make_unique<CPU_Register<T>>(*this);
+    }
 };
 
 template<typename T>
-struct CPU_Register :  public _register<T> {
-    T value;
-    T operator()();
+struct CPU_RegisterPair : public CPU_Register<T> {
+    T operator()() const override;
+    bool isPair() const noexcept override
+    {
+        return true;
+    }
+    std::unique_ptr<CPU_Register<T>> clone() const override
+    {
+        return std::make_unique<CPU_RegisterPair<T>>(*this);
+    }
 };
 
 template<typename T>
-struct CPU_RegisterPair :  public CPU_Register<T> {
-    union {
-        struct {
-T lo:
-            sizeof(T) * 4;
-T hi:
-            sizeof(T) * 4;
-        };
-        T value;
-    };
-
-    T operator()();
+struct RegisterEntry {
+    RegisterId id = RegisterId::AF;
+    std::unique_ptr<CPU_Register<T>> reg;
 };
 
 template<typename T>
 class RegisterFile {
-    std::vector< std::pair< std::string, CPU_Register<T>* >> file;
 public:
-    std::vector<std::pair< std::string, CPU_Register<T>* >>& operator()();
-    bool hasRegister(std::string id);
-    std::pair< std::string, CPU_Register<T>*>* findRegister(const std::string_view& id);
-    std::pair< std::string, CPU_Register<T>*>* addRegister(const std::string& id, bool isPair = false);
-    std::pair< std::string, CPU_Register<T>*>* findOrInsert(const std::string_view& id, bool isPair = false);
+    RegisterFile() = default;
+    RegisterFile(const RegisterFile& other);
+    RegisterFile& operator=(const RegisterFile& other);
+    RegisterFile(RegisterFile&&) noexcept = default;
+    RegisterFile& operator=(RegisterFile&&) noexcept = default;
+    ~RegisterFile() = default;
+
+    const std::deque<RegisterEntry<T>>& entries() const noexcept;
+    bool hasRegister(RegisterId id) const;
+    bool hasRegister(std::string_view id) const;
+    RegisterEntry<T>* findRegister(RegisterId id);
+    const RegisterEntry<T>* findRegister(RegisterId id) const;
+    RegisterEntry<T>* findRegister(std::string_view id);
+    const RegisterEntry<T>* findRegister(std::string_view id) const;
+    RegisterEntry<T>& addRegister(RegisterId id, bool isPair = false);
+    RegisterEntry<T>& addRegister(std::string_view id, bool isPair = false);
+    RegisterEntry<T>& findOrInsert(RegisterId id, bool isPair = false);
+    RegisterEntry<T>& findOrInsert(std::string_view id, bool isPair = false);
+
+private:
+    std::deque<RegisterEntry<T>> file;
 };
 
 template<typename T>
 class RegisterInfo {
-    std::pair< std::string, CPU_Register<T>*> *info;
 public:
-    RegisterInfo();
-    RegisterInfo(const std::string &id);
-    RegisterInfo(RegisterFile<T> &file, const std::string &id);
-    void registration(RegisterFile<T> &file, std::string_view id);
-    CPU_Register<T> *operator()();
-    CPU_Register<T> *operator->();
-    std::string_view getRegisterID();
+    explicit RegisterInfo(RegisterId id) noexcept
+        : id_(id) {}
+
+    RegisterInfo(RegisterFile<T>& file, RegisterId id);
+    RegisterInfo(RegisterFile<T>& file, std::string_view id);
+
+    void registration(RegisterFile<T>& file, RegisterId id);
+    void registration(RegisterFile<T>& file, std::string_view id);
+    CPU_Register<T>* operator()() const;
+    CPU_Register<T>* operator->() const;
+    RegisterId getRegisterID() const noexcept;
+
+private:
+    RegisterId id_;
+    CPU_Register<T>* reg_ = nullptr;
 };
 
-} // BMMQ
+} // namespace BMMQ
 
 #include "templ/reg_base.impl.hpp"
 #include "templ/RegisterFile.impl.hpp"

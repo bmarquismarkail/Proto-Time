@@ -27,24 +27,27 @@ public:
     explicit PluginExecutor(IExecutorPolicyPlugin& policy)
         : policy_(policy) {}
 
-    bool saveScript(const std::string& path, std::string* error = nullptr) const {
-        return BMMQ::ExecutorIO::saveBlockScript<FetchBlock, Segment>(
+    void saveScript(const std::string& path) const {
+        BMMQ::ExecutorIO::saveBlockScript<FetchBlock, Segment>(
             path,
-            segments_,
-            error);
+            segments_);
     }
 
-    bool loadScript(const std::string& path, std::string* error = nullptr) {
-        segments_.clear();
-        recordedBlocks_.clear();
-        playbackBlocks_.clear();
-        playbackIndex_ = 0;
-        return BMMQ::ExecutorIO::loadBlockScript<FetchBlock>(
+    void loadScript(const std::string& path) {
+        std::vector<Segment> tempSegments;
+        std::vector<FetchBlock> tempPlaybackBlocks;
+        std::size_t tempPlaybackIndex = 0;
+
+        BMMQ::ExecutorIO::loadBlockScript<FetchBlock>(
             path,
-            &segments_,
-            &playbackBlocks_,
-            [](std::size_t id) { return Segment{id, {}}; },
-            error);
+            &tempSegments,
+            &tempPlaybackBlocks,
+            [](std::size_t id) { return Segment{id, {}}; });
+
+        segments_ = std::move(tempSegments);
+        playbackBlocks_ = std::move(tempPlaybackBlocks);
+        recordedBlocks_.clear();
+        playbackIndex_ = tempPlaybackIndex;
     }
 
     StepResult step(BMMQ::RuntimeContext& context) {

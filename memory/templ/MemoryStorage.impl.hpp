@@ -1,125 +1,141 @@
 #include "../MemoryStorage.hpp"
 
-#include <limits>
+#include <algorithm>
+#include <stdexcept>
 
 namespace BMMQ {
 
 template<typename AddressType, typename DataType>
-void MemoryStorage<AddressType,DataType>::addMemBlock(std::tuple<AddressType, AddressType, memAccess> memBlock)
+void MemoryStorage<AddressType, DataType>::addMemBlock(
+    std::tuple<AddressType, AddressType, memAccess> memBlock)
 {
     map.push_back(memBlock);
     mem.resize(mem.size() + std::get<1>(memBlock));
 }
 
 template<typename AddressType, typename DataType>
-void MemoryStorage<AddressType,DataType>::addReadOnlyMem(std::pair<AddressType, AddressType> romBlock)
+void MemoryStorage<AddressType, DataType>::addReadOnlyMem(
+    std::pair<AddressType, AddressType> romBlock)
 {
-    auto memBlock = std::tuple_cat(romBlock, memAccess::MEM_READ);
-    addMemBlock(memBlock);
+    addMemBlock({romBlock.first, romBlock.second, memAccess::Read});
 }
 
 template<typename AddressType, typename DataType>
-void MemoryStorage<AddressType,DataType>::addWriteOnlyMem(std::pair<AddressType, AddressType> womBlock)
+void MemoryStorage<AddressType, DataType>::addWriteOnlyMem(
+    std::pair<AddressType, AddressType> womBlock)
 {
-    auto memBlock = std::tuple_cat(womBlock, memAccess::MEM_WRITE);
-    addMemBlock(memBlock);
+    addMemBlock({womBlock.first, womBlock.second, memAccess::Write});
 }
 
 template<typename AddressType, typename DataType>
-void MemoryStorage<AddressType,DataType>::addReadWriteMem(std::pair<AddressType, AddressType> block)
+void MemoryStorage<AddressType, DataType>::addReadWriteMem(
+    std::pair<AddressType, AddressType> block)
 {
-    auto memBlock = std::tuple_cat(block, memAccess::MEM_READ_WRITE);
-    addMemBlock(memBlock);
-}
-/*
-template<typename AddressType, typename DataType>
-DataType MemoryStorage<AddressType,DataType>::read(std::size_t address)
-{
-    std::size_t index;
-    std::size_t temp = 0;
-
-    for(auto i : map) {
-        if ( std::get<0>(i) <= address && address < ( std::get<0>(i) + std::get<1>(i) ) ) {
-            index = temp + (address - std::get<0>(i));
-            return mem[index];
-        }
-
-        temp+= std::get<1>(i);
-    }
-
-    return 0;
-}
-	*/
-template<typename AddressType, typename DataType>
-void MemoryStorage<AddressType,DataType>::read(DataType* stream, AddressType address, AddressType count){
-	
-	AddressType maxaddress = std::numeric_limits<AddressType>::max();
-	AddressType bounds = maxaddress - address;
-	count = std::min(bounds, count);
-	if (count == 0) return;
-	
-	AddressType index = address;
-	AddressType temp = 0;
-	AddressType cap = 0;
-	
-	// Check if the addresses are readable
-	for(auto i = map.begin(); i != map.end(); ++i) {
-        if ( std::get<0>(*i) <= address && address < ( std::get<0>(*i) + std::get<1>(*i) ) ) {
-			if ( std::get<2>(*i) & MEM_READ ) {
-				index = temp + (address - std::get<0>(*i));
-                auto next_it = std::next(i);
-				cap = ( std::next(i) == map.end() ? mem.size() : std::get<1>(*next_it)) - index;
-				break;
-			}
-			return;
-        }
-        temp+= std::get<1>(*i);
-    }
-
-	count = std::min(count, cap);
-	for(AddressType i = 0; i < count; ++i){
-		*stream++ = mem[index + i];
-	}
+    addMemBlock({block.first, block.second, memAccess::ReadWrite});
 }
 
 template<typename AddressType, typename DataType>
-void MemoryStorage<AddressType,DataType>::write(DataType* stream, AddressType address, AddressType count )
+std::span<const DataType> MemoryStorage<AddressType, DataType>::readableSpan(
+    AddressType address,
+    std::size_t count) const
 {
-    std::size_t index;
-    std::size_t temp = 0;
+    if (count == 0) return {};
 
-    for(auto i : map) {
-        if ( std::get<0>(i) <= address && address < ( std::get<0>(i) + std::get<1>(i) ) ) {
-            if ( std::get<2>(i) & MEM_WRITE )
-                index = temp + (address - std::get<0>(i));
-            else return;
-        }
-
-        temp+= std::get<1>(i);
-    }
-
-    char *ptr = (char*)stream;
-    for (int c = 0; c < count; c++)
-        mem[index + c] = *ptr++;
-}
-
-template<typename AddressType, typename DataType>
-DataType* MemoryStorage<AddressType,DataType>::getPos(std::size_t address)
-{
-    std::size_t index;
-    std::size_t temp = 0;
-
-    for(auto i : map) {
-        if ( std::get<0>(i) <= address && address < ( std::get<0>(i) + std::get<1>(i) ) ) {
-            if ( std::get<2>(i) == MEM_READ ) {
-                index = temp + (address - std::get<0>(i));
-                return &(mem[index]);
+    std::size_t offset = 0;
+    for (const auto& entry : map) {
+        const auto base = std::get<0>(entry);
+        const auto length = std::get<1>(entry);
+        const auto access = std::get<2>(entry);
+        if (base <= address && static_cast<AddressType>(address - base) < length) {
+            if (!hasAccess(access, memAccess::Read)) {
+                throw std::out_of_range("address is not readable");
             }
-            else return nullptr;
-        }
 
-        temp+= std::get<1>(i);
+            const auto localOffset = static_cast<std::size_t>(address - base);
+            const auto available = static_cast<std::size_t>(length) - localOffset;
+            if (count > available) {
+                throw std::out_of_range("read extends past mapped range");
+            }
+
+            return std::span<const DataType>(mem).subspan(offset + localOffset, count);
+        }
+        offset += static_cast<std::size_t>(length);
     }
-    return &(mem[0]);
+
+    throw std::out_of_range("address is not mapped");
 }
+
+template<typename AddressType, typename DataType>
+std::span<DataType> MemoryStorage<AddressType, DataType>::writableSpan(
+    AddressType address,
+    std::size_t count)
+{
+    if (count == 0) return {};
+
+    std::size_t offset = 0;
+    for (const auto& entry : map) {
+        const auto base = std::get<0>(entry);
+        const auto length = std::get<1>(entry);
+        const auto access = std::get<2>(entry);
+        if (base <= address && static_cast<AddressType>(address - base) < length) {
+            if (!hasAccess(access, memAccess::Write)) {
+                throw std::out_of_range("address is not writable");
+            }
+
+            const auto localOffset = static_cast<std::size_t>(address - base);
+            const auto available = static_cast<std::size_t>(length) - localOffset;
+            if (count > available) {
+                throw std::out_of_range("write extends past mapped range");
+            }
+
+            return std::span<DataType>(mem).subspan(offset + localOffset, count);
+        }
+        offset += static_cast<std::size_t>(length);
+    }
+
+    throw std::out_of_range("address is not mapped");
 }
+
+template<typename AddressType, typename DataType>
+void MemoryStorage<AddressType, DataType>::read(std::span<DataType> stream, AddressType address) const
+{
+    if (stream.empty()) return;
+    const auto src = readableSpan(address, stream.size());
+    std::copy(src.begin(), src.end(), stream.begin());
+}
+
+template<typename AddressType, typename DataType>
+void MemoryStorage<AddressType, DataType>::write(std::span<const DataType> value, AddressType address)
+{
+    if (value.empty()) return;
+    auto dst = writableSpan(address, value.size());
+    std::copy(value.begin(), value.end(), dst.begin());
+}
+
+template<typename AddressType, typename DataType>
+void MemoryStorage<AddressType, DataType>::load(std::span<const DataType> value, AddressType address)
+{
+    if (value.empty()) return;
+
+    std::size_t offset = 0;
+    for (const auto& entry : map) {
+        const auto base = std::get<0>(entry);
+        const auto length = std::get<1>(entry);
+        if (base <= address && static_cast<AddressType>(address - base) < length) {
+            const auto localOffset = static_cast<std::size_t>(address - base);
+            const auto available = static_cast<std::size_t>(length) - localOffset;
+            if (value.size() > available) {
+                throw std::out_of_range("load extends past mapped range");
+            }
+
+            auto dst = std::span<DataType>(mem).subspan(offset + localOffset, value.size());
+            std::copy(value.begin(), value.end(), dst.begin());
+            return;
+        }
+        offset += static_cast<std::size_t>(length);
+    }
+
+    throw std::out_of_range("address is not mapped");
+}
+
+} // namespace BMMQ

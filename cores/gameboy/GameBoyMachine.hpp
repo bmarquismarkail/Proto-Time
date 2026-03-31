@@ -4,9 +4,11 @@
 #include <cstdint>
 #include <string_view>
 #include <vector>
+#include <stdexcept>
 
 #include "../../machine/Machine.hpp"
 #include "../../machine/MemoryMap.hpp"
+#include "../../machine/RegisterId.hpp"
 #include "../../machine/RomImage.hpp"
 #include "../../machine/RuntimeContext.hpp"
 #include "gameboy_plugin_runtime.hpp"
@@ -49,15 +51,24 @@ public:
         cpu_.cpu().loadProgram(bytes);
     }
 
-    uint16_t readRegisterPair(std::string_view name) override {
-        auto* entry = cpu_.cpu().getMemory().file.findRegister(name);
-        if (entry == nullptr || entry->second == nullptr) return 0;
+    uint16_t readRegisterPair(BMMQ::RegisterId id) const override {
+        auto* entry = cpu_.cpu().getMemory().file.findRegister(id);
+        if (entry == nullptr || entry->reg == nullptr) {
+            throw std::invalid_argument("register not found");
+        }
 
-        auto* reg = dynamic_cast<BMMQ::CPU_RegisterPair<uint16_t>*>(entry->second);
-        return reg != nullptr ? reg->value : 0;
+        auto* reg = dynamic_cast<BMMQ::CPU_RegisterPair<uint16_t>*>(entry->reg.get());
+        if (reg == nullptr) {
+            throw std::invalid_argument("register is not a pair");
+        }
+        return reg->value;
     }
 
     BMMQ::RuntimeContext& runtimeContext() override {
+        return context_;
+    }
+
+    const BMMQ::RuntimeContext& runtimeContext() const override {
         return context_;
     }
 

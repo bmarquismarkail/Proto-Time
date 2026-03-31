@@ -19,10 +19,10 @@ LR3592_Register* LR3592_Interpreter_Decode::GetRegister(std::string_view id)
 	auto& regfile = cpu->getMemory().file;
 	snap->copyRegisterFromMainFile(id, regfile);
 	auto* entry = snap->file.findRegister(id);
-	if (entry == nullptr || entry->second == nullptr) {
+	if (entry == nullptr || entry->reg == nullptr) {
 		throw std::invalid_argument("register not found");
 	}
-	return entry->second;
+	return entry->reg.get();
 }
 
 LR3592_RegisterPair* LR3592_Interpreter_Decode::GetPairRegister(std::string_view id)

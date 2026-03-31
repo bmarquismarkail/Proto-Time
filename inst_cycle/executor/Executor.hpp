@@ -62,24 +62,23 @@ public:
         return result;
     }
 
-    bool saveScript(const std::string& path, std::string* error = nullptr) const {
-        return ExecutorIO::saveBlockScript<FetchBlock, Segment>(
+    // Propagates any exceptions from ExecutorIO::saveBlockScript (e.g., file open failures).
+    void saveScript(const std::string& path) const {
+        ExecutorIO::saveBlockScript<FetchBlock, Segment>(
             path,
-            normalizedSegments(),
-            error);
+            normalizedSegments());
     }
 
-    bool loadScript(const std::string& path, std::string* error = nullptr) {
+    void loadScript(const std::string& path) {
         segments_.clear();
         recordedBlocks_.clear();
         playbackBlocks_.clear();
         playbackIndex_ = 0;
-        return ExecutorIO::loadBlockScript<FetchBlock>(
+        ExecutorIO::loadBlockScript<FetchBlock>(
             path,
             &segments_,
             &playbackBlocks_,
-            [](std::size_t id) { return Segment{id, {}}; },
-            error);
+            [](std::size_t id) { return Segment{id, {}}; });
     }
 
 private:

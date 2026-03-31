@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <fstream>
+#include <stdexcept>
 #include <sstream>
 #include <string>
 #include <type_traits>
@@ -21,13 +22,11 @@ struct ParseBlockResult {
 };
 
 template<typename FetchBlock, typename Segment>
-bool saveBlockScript(const std::string& path,
-                     const std::vector<Segment>& segments,
-                     std::string* error = nullptr) {
+void saveBlockScript(const std::string& path,
+                     const std::vector<Segment>& segments) {
     std::ofstream out(path);
     if (!out.is_open()) {
-        if (error != nullptr) *error = "failed to open output file";
-        return false;
+        throw std::runtime_error("failed to open output file");
     }
 
     out << "TIME_EXECUTOR_BLOCKS_V1\n";
@@ -51,8 +50,6 @@ bool saveBlockScript(const std::string& path,
         }
         out << "ENDSEG\n";
     }
-
-    return true;
 }
 
 template<typename FetchBlock>
@@ -110,21 +107,18 @@ ParseBlockResult<FetchBlock> parseBlockPayload(const std::string& payload) {
 }
 
 template<typename FetchBlock, typename SegmentFactory>
-bool loadBlockScript(const std::string& path,
+void loadBlockScript(const std::string& path,
                      std::vector<typename std::invoke_result_t<SegmentFactory, std::size_t>>* segments,
                      std::vector<FetchBlock>* playbackBlocks,
-                     SegmentFactory makeSegment,
-                     std::string* error = nullptr) {
+                     SegmentFactory makeSegment) {
     std::ifstream in(path);
     if (!in.is_open()) {
-        if (error != nullptr) *error = "failed to open script file";
-        return false;
+        throw std::runtime_error("failed to open script file");
     }
 
     std::string header;
     if (!std::getline(in, header) || header != "TIME_EXECUTOR_BLOCKS_V1") {
-        if (error != nullptr) *error = "invalid script header";
-        return false;
+        throw std::runtime_error("invalid script header");
     }
 
     segments->clear();
@@ -148,22 +142,18 @@ bool loadBlockScript(const std::string& path,
 
         if (line.rfind("BLOCK ", 0) == 0) {
             if (currentSegment == nullptr) {
-                if (error != nullptr) *error = "BLOCK encountered outside segment";
-                return false;
+                throw std::runtime_error("BLOCK encountered outside segment");
             }
 
             auto parsed = parseBlockPayload<FetchBlock>(line.substr(6));
             if (!parsed.ok) {
-                if (error != nullptr) *error = parsed.error;
-                return false;
+                throw std::runtime_error(parsed.error);
             }
 
             currentSegment->blocks.push_back(parsed.block);
             playbackBlocks->push_back(parsed.block);
         }
     }
-
-    return true;
 }
 
 } // namespace BMMQ::ExecutorIO
