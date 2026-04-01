@@ -115,6 +115,11 @@ int main() {
     assert(missingRomThrew);
 
     host.loadRom({0x3E, 0x12, 0x00});
+    std::vector<uint8_t> cartridgeRom(0x8000, 0x00);
+    cartridgeRom[0x0100] = 0x3E;
+    cartridgeRom[0x0101] = 0x12;
+    cartridgeRom[0x0102] = 0x00;
+    host.loadRom(cartridgeRom);
     assert(host.guarantee() == BMMQ::ExecutionGuarantee::BaselineFaithful);
     assert(host.runtimeContext().attachedPolicyMetadata() != nullptr);
     assert(host.runtimeContext().attachedPolicyMetadata()->id == "bmmq.executor.policy.default-step");
@@ -123,15 +128,21 @@ int main() {
     assert(host.runtimeContext().translationCapability() == nullptr);
     assert(host.runtimeContext().invalidationCapability() == nullptr);
     assert(host.runtimeContext().optimizationMetadataCapability() == nullptr);
-    assert(host.runtimeContext().read8(0x0000) == 0x3E);
-    assert(host.runtimeContext().read16(0x0001) == 0x0012);
+    assert(host.runtimeContext().read8(0x0100) == 0x3E);
+    assert(host.runtimeContext().read16(0x0101) == 0x0012);
+    assert(host.runtimeContext().readRegister16(BMMQ::RegisterId::PC) == 0x0100);
+    assert(host.runtimeContext().readRegister16(BMMQ::RegisterId::SP) == 0xFFFE);
+    assert(host.runtimeContext().readRegister16(BMMQ::RegisterId::AF) == 0x01B0);
+    assert(host.runtimeContext().readRegister16(BMMQ::RegisterId::BC) == 0x0013);
+    assert(host.runtimeContext().readRegister16(BMMQ::RegisterId::DE) == 0x00D8);
+    assert(host.runtimeContext().readRegister16(BMMQ::RegisterId::HL) == 0x014D);
     host.runtimeContext().write8(0xC000, 0xAA);
     assert(host.runtimeContext().read8(0xC000) == 0xAA);
     host.runtimeContext().write16(0xC100, 0x3456);
     assert(host.runtimeContext().read16(0xC100) == 0x3456);
     host.step();
-    assert(host.readRegisterPair(BMMQ::RegisterId::AF) == static_cast<uint16_t>(0x1200));
-    assert(host.runtimeContext().readRegister16(BMMQ::RegisterId::AF) == static_cast<uint16_t>(0x1200));
+    assert(host.readRegisterPair(BMMQ::RegisterId::AF) == static_cast<uint16_t>(0x12B0));
+    assert(host.runtimeContext().readRegister16(BMMQ::RegisterId::AF) == static_cast<uint16_t>(0x12B0));
     host.runtimeContext().writeRegister16(BMMQ::RegisterId::BC, 0xBEEF);
     assert(host.runtimeContext().readRegister16(BMMQ::RegisterId::BC) == 0xBEEF);
     host.runtimeContext().writeRegister16(BMMQ::RegisterId::SP, 0xC123);
@@ -139,8 +150,8 @@ int main() {
     host.runtimeContext().writeRegister16(BMMQ::RegisterId::PC, 0x0042);
     assert(host.runtimeContext().readRegister16(BMMQ::RegisterId::PC) == 0x0042);
     host.runtimeContext().commitVisibleState();
-    assert(host.runtimeContext().getLastFeedback().pcBefore == 0);
-    assert(host.runtimeContext().getLastFeedback().pcAfter == 3);
+    assert(host.runtimeContext().getLastFeedback().pcBefore == 0x0100);
+    assert(host.runtimeContext().getLastFeedback().pcAfter == 0x0103);
     host.attachExecutorPolicy(experimentalPolicy);
     assert(host.guarantee() == BMMQ::ExecutionGuarantee::Experimental);
     assert(host.runtimeContext().attachedPolicyMetadata()->id == "bmmq.executor.policy.experimental");
