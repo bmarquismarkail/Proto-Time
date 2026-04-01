@@ -37,5 +37,20 @@ int main()
     map.write8(0xC000, 0x77);
     assert(map.read8(0xC000) == 0x77);
 
+    BMMQ::MemoryMap fullRomMap;
+    fullRomMap.mapRom(0x0000, 0x4000);
+    fullRomMap.mapRom(0x4000, 0x4000);
+    std::vector<uint8_t> fullRom(0x8000);
+    fullRom.front() = 0xAA;
+    fullRom[0x3FFF] = 0xBB;
+    fullRom[0x4000] = 0xCC;
+    fullRom.back() = 0xDD;
+    fullRomMap.installRom(fullRom, 0x0000);
+
+    assert(fullRomMap.read8(0x0000) == 0xAA);
+    assert(fullRomMap.read8(0x3FFF) == 0xBB);
+    assert(fullRomMap.read8(0x4000) == 0xCC);
+    assert(fullRomMap.read8(0x7FFF) == 0xDD);
+
     return 0;
 }

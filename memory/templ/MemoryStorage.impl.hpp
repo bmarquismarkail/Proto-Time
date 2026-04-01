@@ -117,25 +117,37 @@ void MemoryStorage<AddressType, DataType>::load(std::span<const DataType> value,
 {
     if (value.empty()) return;
 
-    std::size_t offset = 0;
+    std::size_t mapOffset = 0;
+    std::size_t valueOffset = 0;
+    bool foundStart = false;
+
     for (const auto& entry : map) {
         const auto base = std::get<0>(entry);
         const auto length = std::get<1>(entry);
-        if (base <= address && static_cast<AddressType>(address - base) < length) {
-            const auto localOffset = static_cast<std::size_t>(address - base);
-            const auto available = static_cast<std::size_t>(length) - localOffset;
-            if (value.size() > available) {
-                throw std::out_of_range("load extends past mapped range");
-            }
+        const auto localOffset = foundStart ? 0 : static_cast<std::size_t>(address - base);
+        const auto startsInBlock = base <= address && static_cast<AddressType>(address - base) < length;
+        const auto continuesInBlock = foundStart && address == base;
 
-            auto dst = std::span<DataType>(mem).subspan(offset + localOffset, value.size());
-            std::copy(value.begin(), value.end(), dst.begin());
+        if (!startsInBlock && !continuesInBlock) {
+            mapOffset += static_cast<std::size_t>(length);
+            continue;
+        }
+
+        foundStart = true;
+        const auto available = static_cast<std::size_t>(length) - localOffset;
+        const auto chunkSize = std::min(available, value.size() - valueOffset);
+        auto dst = std::span<DataType>(mem).subspan(mapOffset + localOffset, chunkSize);
+        std::copy_n(value.begin() + static_cast<std::ptrdiff_t>(valueOffset), chunkSize, dst.begin());
+        valueOffset += chunkSize;
+        if (valueOffset == value.size()) {
             return;
         }
-        offset += static_cast<std::size_t>(length);
+
+        address = static_cast<AddressType>(base + length);
+        mapOffset += static_cast<std::size_t>(length);
     }
 
-    throw std::out_of_range("address is not mapped");
+    throw std::out_of_range(foundStart ? "load extends past mapped range" : "address is not mapped");
 }
 
 } // namespace BMMQ
