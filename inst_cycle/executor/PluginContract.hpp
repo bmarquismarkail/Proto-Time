@@ -63,6 +63,9 @@ public:
     virtual ~IExecutorPolicyPlugin() = default;
     virtual const PluginMetadata& metadata() const = 0;
     virtual BMMQ::ExecutionGuarantee guarantee() const = 0;
+    virtual BMMQ::RuntimeCapabilityProfile capabilityProfile() const {
+        return {};
+    }
     virtual bool shouldRecord(const FetchBlock& fb, const BMMQ::CpuFeedback& feedback) const = 0;
     virtual bool shouldSegment(const FetchBlock& fb, const BMMQ::CpuFeedback& feedback) const = 0;
 };
@@ -76,6 +79,20 @@ inline void validateMetadata(const PluginMetadata& metadata) {
     }
     if (!isAbiCompatible(metadata.abiVersion)) {
         throw std::runtime_error("plugin ABI version is not compatible");
+    }
+}
+
+inline void validateRuntimeStartup(const ICpuCoreRuntime& runtime) {
+    validateMetadata(runtime.metadata());
+    if (runtime.metadata().kind != PluginKind::CpuCore) {
+        throw std::runtime_error("runtime plugin kind is not CpuCore");
+    }
+}
+
+inline void validateExecutorPolicyStartup(const IExecutorPolicyPlugin& policy) {
+    validateMetadata(policy.metadata());
+    if (policy.metadata().kind != PluginKind::ExecutorPolicy) {
+        throw std::runtime_error("executor policy kind is not ExecutorPolicy");
     }
 }
 
@@ -108,6 +125,10 @@ public:
 
     BMMQ::ExecutionGuarantee guarantee() const override {
         return BMMQ::ExecutionGuarantee::BaselineFaithful;
+    }
+
+    BMMQ::RuntimeCapabilityProfile capabilityProfile() const override {
+        return {};
     }
 
     bool shouldRecord(const FetchBlock&, const BMMQ::CpuFeedback&) const override {

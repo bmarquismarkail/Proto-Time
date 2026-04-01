@@ -15,8 +15,12 @@
 
 class GameBoyRuntimeContext final : public BMMQ::RuntimeContext {
 public:
-    GameBoyRuntimeContext(LR3592_PluginRuntime& runtime, const bool& romLoaded)
-        : runtime_(runtime), romLoaded_(romLoaded) {}
+    GameBoyRuntimeContext(
+        LR3592_PluginRuntime& runtime,
+        BMMQ::MemoryMap& memoryMap,
+        const bool& romLoaded,
+        BMMQ::Plugin::IExecutorPolicyPlugin*& activePolicy)
+        : runtime_(runtime), memoryMap_(memoryMap), romLoaded_(romLoaded), activePolicy_(activePolicy) {}
 
     FetchBlock fetch() override {
         if (!romLoaded_) {
@@ -33,23 +37,68 @@ public:
         runtime_.execute(block, fetchBlock);
     }
 
+    DataType read8(AddressType address) const override {
+        return memoryMap_.read8(address);
+    }
+
+    void write8(AddressType address, DataType value) override {
+        memoryMap_.write8(address, value);
+    }
+
+    uint16_t readRegisterPair(BMMQ::RegisterId id) const override {
+        auto* entry = runtime_.cpu().getMemory().file.findRegister(id);
+        if (entry == nullptr || entry->reg == nullptr) {
+            throw std::invalid_argument("register not found");
+        }
+        auto* reg = dynamic_cast<BMMQ::CPU_RegisterPair<uint16_t>*>(entry->reg.get());
+        if (reg == nullptr) {
+            throw std::invalid_argument("register is not a pair");
+        }
+        return reg->value;
+    }
+
+    void writeRegisterPair(BMMQ::RegisterId id, uint16_t value) override {
+        auto* entry = runtime_.cpu().getMemory().file.findRegister(id);
+        if (entry == nullptr || entry->reg == nullptr) {
+            throw std::invalid_argument("register not found");
+        }
+        auto* reg = dynamic_cast<BMMQ::CPU_RegisterPair<uint16_t>*>(entry->reg.get());
+        if (reg == nullptr) {
+            throw std::invalid_argument("register is not a pair");
+        }
+        reg->value = value;
+    }
+
     const BMMQ::CpuFeedback& getLastFeedback() const override {
         return runtime_.getLastFeedback();
     }
 
     BMMQ::ExecutionGuarantee guarantee() const override {
-        return BMMQ::ExecutionGuarantee::BaselineFaithful;
+        return activePolicy_->guarantee();
+    }
+
+    const BMMQ::Plugin::PluginMetadata* attachedPolicyMetadata() const override {
+        return &activePolicy_->metadata();
+    }
+
+    BMMQ::RuntimeCapabilityProfile capabilityProfile() const override {
+        return activePolicy_->capabilityProfile();
     }
 
 private:
     LR3592_PluginRuntime& runtime_;
+    BMMQ::MemoryMap& memoryMap_;
     const bool& romLoaded_;
+    BMMQ::Plugin::IExecutorPolicyPlugin*& activePolicy_;
 };
 
 class GameBoyMachine final : public BMMQ::Machine {
 public:
     GameBoyMachine()
-        : context_(cpu_, romLoaded_) {
+        : activePolicy_(&defaultPolicy_),
+          context_(cpu_, memoryMap_, romLoaded_, activePolicy_) {
+        BMMQ::Plugin::validateRuntimeStartup(cpu_);
+        BMMQ::Plugin::validateExecutorPolicyStartup(defaultPolicy_);
         configureMemoryMap();
         cpu_.attachMemory(memoryMap_.storage());
     }
@@ -89,6 +138,15 @@ public:
         return context_;
     }
 
+    void attachExecutorPolicy(BMMQ::Plugin::IExecutorPolicyPlugin& policy) override {
+        BMMQ::Plugin::validateExecutorPolicyStartup(policy);
+        activePolicy_ = &policy;
+    }
+
+    const BMMQ::Plugin::IExecutorPolicyPlugin& attachedExecutorPolicy() const override {
+        return *activePolicy_;
+    }
+
 private:
     void configureMemoryMap() {
         memoryMap_.reset();
@@ -110,6 +168,8 @@ private:
     BMMQ::MemoryMap memoryMap_;
     bool romLoaded_ = false;
     LR3592_PluginRuntime cpu_;
+    BMMQ::Plugin::DefaultStepPolicy defaultPolicy_;
+    BMMQ::Plugin::IExecutorPolicyPlugin* activePolicy_;
     GameBoyRuntimeContext context_;
 };
 

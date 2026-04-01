@@ -8,6 +8,7 @@
 #include "cores/gameboy/GameBoyMachine.hpp"
 #include "cores/gameboy/gameboy.hpp"
 #include "inst_cycle/executor/Executor.hpp"
+#include "inst_cycle/executor/PluginContract.hpp"
 #include "machine/RegisterId.hpp"
 
 int main()
@@ -18,6 +19,7 @@ int main()
     struct CountingRuntimeContext final : BMMQ::RuntimeContext {
         int fetchCalls = 0;
         BMMQ::CpuFeedback feedback{};
+        BMMQ::RuntimeCapabilityProfile profile{};
 
         FetchBlock fetch() override {
             FetchBlock block;
@@ -31,10 +33,16 @@ int main()
             feedback.segmentBoundaryHint = false;
             feedback.isControlFlow = false;
         }
+        uint8_t read8(AddressType) const override { return 0; }
+        void write8(AddressType, DataType) override {}
+        uint16_t readRegisterPair(BMMQ::RegisterId) const override { return 0; }
+        void writeRegisterPair(BMMQ::RegisterId, uint16_t) override {}
         const BMMQ::CpuFeedback& getLastFeedback() const override { return feedback; }
         BMMQ::ExecutionGuarantee guarantee() const override {
             return BMMQ::ExecutionGuarantee::BaselineFaithful;
         }
+        const BMMQ::Plugin::PluginMetadata* attachedPolicyMetadata() const override { return nullptr; }
+        BMMQ::RuntimeCapabilityProfile capabilityProfile() const override { return profile; }
     };
 
     auto splitOnControl = [](

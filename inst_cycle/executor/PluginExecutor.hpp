@@ -64,7 +64,7 @@ public:
         const auto feedback = context.step(fetchBlock);
         recordIfNeeded(fetchBlock, feedback, result.usedScript);
         result.executed = true;
-        result.guarantee = policy_.guarantee();
+        result.guarantee = context.guarantee();
         result.feedback = feedback;
         return result;
     }

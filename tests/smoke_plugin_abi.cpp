@@ -7,6 +7,44 @@
 
 int main()
 {
+    struct InvalidRuntime final : BMMQ::Plugin::ICpuCoreRuntime {
+        const BMMQ::Plugin::PluginMetadata& metadata() const override {
+            static const BMMQ::Plugin::PluginMetadata meta{
+                0,
+                "bmmq.core.invalid",
+                "Invalid Runtime",
+                BMMQ::Plugin::PluginKind::CpuCore,
+                BMMQ::Plugin::kHostAbiVersion
+            };
+            return meta;
+        }
+        BMMQ::Plugin::FetchBlock fetch() override { return {}; }
+        BMMQ::Plugin::ExecutionBlock decode(BMMQ::Plugin::FetchBlock&) override { return {}; }
+        void execute(const BMMQ::Plugin::ExecutionBlock&, BMMQ::Plugin::FetchBlock&) override {}
+        const BMMQ::CpuFeedback& getLastFeedback() const override {
+            static BMMQ::CpuFeedback feedback{};
+            return feedback;
+        }
+    };
+
+    struct InvalidPolicy final : BMMQ::Plugin::IExecutorPolicyPlugin {
+        const BMMQ::Plugin::PluginMetadata& metadata() const override {
+            static const BMMQ::Plugin::PluginMetadata meta{
+                sizeof(BMMQ::Plugin::PluginMetadata),
+                "bmmq.executor.invalid",
+                "Invalid Policy",
+                BMMQ::Plugin::PluginKind::ExecutorPolicy,
+                BMMQ::Plugin::AbiVersion{2, 0, 0}
+            };
+            return meta;
+        }
+        BMMQ::ExecutionGuarantee guarantee() const override {
+            return BMMQ::ExecutionGuarantee::Experimental;
+        }
+        bool shouldRecord(const BMMQ::Plugin::FetchBlock&, const BMMQ::CpuFeedback&) const override { return true; }
+        bool shouldSegment(const BMMQ::Plugin::FetchBlock&, const BMMQ::CpuFeedback&) const override { return false; }
+    };
+
     LR3592_PluginRuntime runtime;
     BMMQ::Plugin::DefaultStepPolicy policy;
 
@@ -52,6 +90,30 @@ int main()
     BMMQ::Plugin::PluginDescriptorV1 descriptor;
     assert(descriptor.structSize == sizeof(BMMQ::Plugin::PluginDescriptorV1));
     assert(BMMQ::Plugin::isAbiCompatible(descriptor.abiVersion));
+
+    const auto profile = policy.capabilityProfile();
+    assert(!profile.interception);
+    assert(!profile.translation);
+    assert(!profile.invalidation);
+    assert(!profile.optimizationMetadata);
+
+    InvalidRuntime invalidRuntime;
+    bool invalidRuntimeThrew = false;
+    try {
+        BMMQ::Plugin::validateRuntimeStartup(invalidRuntime);
+    } catch (const std::runtime_error&) {
+        invalidRuntimeThrew = true;
+    }
+    assert(invalidRuntimeThrew);
+
+    InvalidPolicy invalidPolicy;
+    bool invalidPolicyThrew = false;
+    try {
+        BMMQ::Plugin::validateExecutorPolicyStartup(invalidPolicy);
+    } catch (const std::runtime_error&) {
+        invalidPolicyThrew = true;
+    }
+    assert(invalidPolicyThrew);
 
     return 0;
 }
