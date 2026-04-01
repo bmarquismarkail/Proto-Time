@@ -1,4 +1,5 @@
 #include <cassert>
+#include <array>
 #include <cstdint>
 #include <stdexcept>
 #include <vector>
@@ -51,6 +52,15 @@ int main()
     assert(fullRomMap.read8(0x3FFF) == 0xBB);
     assert(fullRomMap.read8(0x4000) == 0xCC);
     assert(fullRomMap.read8(0x7FFF) == 0xDD);
+
+    BMMQ::MemoryMap boundaryWriteMap;
+    boundaryWriteMap.mapRam(0xFF80, 0x007F);
+    boundaryWriteMap.mapRam(0xFFFF, 0x0001);
+    const std::array<uint8_t, 2> writeAcrossBoundary {0x34, 0x12};
+    boundaryWriteMap.storage().write(std::span<const uint8_t>(writeAcrossBoundary.data(), writeAcrossBoundary.size()), 0xFFFE);
+
+    assert(boundaryWriteMap.read8(0xFFFE) == 0x34);
+    assert(boundaryWriteMap.read8(0xFFFF) == 0x12);
 
     return 0;
 }

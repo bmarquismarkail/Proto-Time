@@ -108,8 +108,43 @@ template<typename AddressType, typename DataType>
 void MemoryStorage<AddressType, DataType>::write(std::span<const DataType> value, AddressType address)
 {
     if (value.empty()) return;
-    auto dst = writableSpan(address, value.size());
-    std::copy(value.begin(), value.end(), dst.begin());
+
+    std::size_t mapOffset = 0;
+    std::size_t valueOffset = 0;
+    bool foundStart = false;
+
+    for (const auto& entry : map) {
+        const auto base = std::get<0>(entry);
+        const auto length = std::get<1>(entry);
+        const auto access = std::get<2>(entry);
+        const auto localOffset = foundStart ? 0 : static_cast<std::size_t>(address - base);
+        const auto startsInBlock = base <= address && static_cast<AddressType>(address - base) < length;
+        const auto continuesInBlock = foundStart && address == base;
+
+        if (!startsInBlock && !continuesInBlock) {
+            mapOffset += static_cast<std::size_t>(length);
+            continue;
+        }
+
+        foundStart = true;
+        if (!hasAccess(access, memAccess::Write)) {
+            throw std::out_of_range("address is not writable");
+        }
+
+        const auto available = static_cast<std::size_t>(length) - localOffset;
+        const auto chunkSize = std::min(available, value.size() - valueOffset);
+        auto dst = std::span<DataType>(mem).subspan(mapOffset + localOffset, chunkSize);
+        std::copy_n(value.begin() + static_cast<std::ptrdiff_t>(valueOffset), chunkSize, dst.begin());
+        valueOffset += chunkSize;
+        if (valueOffset == value.size()) {
+            return;
+        }
+
+        address = static_cast<AddressType>(base + length);
+        mapOffset += static_cast<std::size_t>(length);
+    }
+
+    throw std::out_of_range(foundStart ? "write extends past mapped range" : "address is not mapped");
 }
 
 template<typename AddressType, typename DataType>
