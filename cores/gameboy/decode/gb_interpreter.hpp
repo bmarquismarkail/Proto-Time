@@ -1,6 +1,7 @@
 
 
 #include "gb_decoder.hpp"
+#include "gb_opcode_decode.hpp"
 	
 		class LR3592_Interpreter_Decode: public LR3592_Decode {
 		private:
