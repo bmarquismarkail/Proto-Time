@@ -3,6 +3,7 @@
 
 #include "gameboy.hpp"
 #include "../../inst_cycle/executor/PluginContract.hpp"
+#include "../../memory/MemoryStorage.hpp"
 
 class LR3592_PluginRuntime final : public BMMQ::Plugin::ICpuCoreRuntime {
 public:
@@ -31,6 +32,10 @@ public:
 
     const BMMQ::CpuFeedback& getLastFeedback() const override {
         return cpu_.getLastFeedback();
+    }
+
+    void attachMemory(BMMQ::MemoryStorage<uint16_t, uint8_t>& store) {
+        cpu_.attachMemory(store);
     }
 
     LR3592_DMG& cpu() { return cpu_; }

@@ -87,6 +87,7 @@ public:
   LR3592_DMG();
   BMMQ::MemoryStorage<AddressType, DataType> buildMemoryStore();
   LR3592_RegisterFile buildRegisterfile();
+  void attachMemory(BMMQ::MemoryStorage<AddressType, DataType>& store);
   BMMQ::fetchBlock<AddressType, DataType> fetch();
   void loadProgram(const std::vector<DataType>& program,
                    AddressType startAddress = 0);

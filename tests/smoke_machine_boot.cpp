@@ -54,10 +54,20 @@ int main() {
 
     GameBoyMachine machine;
     BMMQ::Machine& host = machine;
+    bool missingRomThrew = false;
+    try {
+        host.step();
+    } catch (const std::runtime_error&) {
+        missingRomThrew = true;
+    }
+    assert(missingRomThrew);
+
     host.loadRom({0x3E, 0x12, 0x00});
     assert(host.guarantee() == BMMQ::ExecutionGuarantee::BaselineFaithful);
     host.step();
     assert(host.readRegisterPair(BMMQ::RegisterId::AF) == static_cast<uint16_t>(0x1200));
+    assert(host.runtimeContext().getLastFeedback().pcBefore == 0);
+    assert(host.runtimeContext().getLastFeedback().pcAfter == 3);
     bool threw = false;
     try {
         (void)host.readRegisterPair(BMMQ::RegisterId::MDR);

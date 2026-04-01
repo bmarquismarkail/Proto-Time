@@ -405,6 +405,11 @@ LR3592_DMG::LR3592_DMG()
     populateOpcodes();
 }
 
+void LR3592_DMG::attachMemory(BMMQ::MemoryStorage<AddressType, DataType>& store)
+{
+    mem.attachStore(store);
+}
+
 BMMQ::MemoryStorage<AddressType, DataType> LR3592_DMG::buildMemoryStore()
 {
     BMMQ::MemoryStorage<AddressType, DataType> store;
@@ -479,7 +484,7 @@ BMMQ::fetchBlock<AddressType, DataType> LR3592_DMG::fetch()
 void LR3592_DMG::loadProgram(const std::vector<DataType>& program,
                              AddressType startAddress)
 {
-    mem.store.load(std::span<const DataType>(program.data(), program.size()), startAddress);
+    mem.backingStore().load(std::span<const DataType>(program.data(), program.size()), startAddress);
 }
 
 BMMQ::executionBlock<AddressType, DataType, AddressType>
