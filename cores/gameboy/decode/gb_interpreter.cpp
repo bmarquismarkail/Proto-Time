@@ -1,4 +1,5 @@
 #include "gb_interpreter.hpp"
+#include "gb_opcode_decode.hpp"
 
 DataType* LR3592_Interpreter_Decode::readTempByte(AddressType address)
 {
@@ -38,29 +39,35 @@ LR3592_RegisterPair* LR3592_Interpreter_Decode::GetPairRegister(std::string_view
 bool LR3592_Interpreter_Decode::checkJumpCond(DataType opcode)
 {
 	auto A = GetPairRegister("AF");
-	bool checkFlag	= (opcode & 0x10) == 0x10 ? ((A->lo & 0x80) >> 7) : ((A->lo & 0x10) >> 4);
-	bool checkSet = opcode & 0x8;
-	return !(checkFlag ^ checkSet);
+	const auto condition = GB::Decode::decodeCondition(opcode);
+	switch (condition) {
+	case GB::Decode::Condition::NZ:
+		return (A->lo & 0x80) == 0;
+	case GB::Decode::Condition::Z:
+		return (A->lo & 0x80) != 0;
+	case GB::Decode::Condition::NC:
+		return (A->lo & 0x10) == 0;
+	case GB::Decode::Condition::C:
+		return (A->lo & 0x10) != 0;
+	}
+
+	return false;
 }
 
 AddressType* LR3592_Interpreter_Decode::ld_R16_I16_GetRegister(DataType opcode)
 {
-
-
-	uint8_t regInd = (opcode & 0x30) >> 4;
-
-	switch (regInd) {
-	case 0:
+	switch (GB::Decode::decodeR16(opcode)) {
+	case GB::Decode::R16::BC:
 		return &(GetPairRegister("BC")->value);
-	case 1:
+	case GB::Decode::R16::DE:
 		return &(GetPairRegister("DE")->value);
-	case 2:
+	case GB::Decode::R16::HL:
 		return &(GetPairRegister("HL")->value);
-	case 3:
+	case GB::Decode::R16::SP:
 		return &(GetRegister("SP")->value);
-	default:
-		throw std::invalid_argument("error in decoding register. invalid argument");
 	}
+
+	throw std::invalid_argument("error in decoding register. invalid argument");
 }
 
 AddressType* LR3592_Interpreter_Decode::add_HL_r16_GetRegister(DataType opcode)
@@ -70,17 +77,17 @@ AddressType* LR3592_Interpreter_Decode::add_HL_r16_GetRegister(DataType opcode)
 
 AddressType* LR3592_Interpreter_Decode::ld_r16_8_GetRegister(DataType opcode)
 {
-	switch ((opcode & 0x30) >> 4) {
-	case 0:
+	switch (GB::Decode::decodeR16(opcode)) {
+	case GB::Decode::R16::BC:
 		return &(GetPairRegister("BC")->value);
-	case 1:
+	case GB::Decode::R16::DE:
 		return &(GetPairRegister("DE")->value);
-	case 2:
-	case 3:
+	case GB::Decode::R16::HL:
+	case GB::Decode::R16::SP:
 		return &(GetPairRegister("HL")->value);
-	default:
-		throw std::invalid_argument("error in decoding register. invalid argument");
 	}
+
+	throw std::invalid_argument("error in decoding register. invalid argument");
 }
 
 // LD ir16/8 <-> A
@@ -103,30 +110,29 @@ std::pair<DataType*, DataType*> LR3592_Interpreter_Decode::ld_r16_8_GetOperands(
 
 DataType* LR3592_Interpreter_Decode::ld_r8_i8_GetRegister(DataType opcode)
 {
-	auto regSet = (opcode & 0x38) >> 3;
-	switch (regSet) {
-	case 0:
+	switch (GB::Decode::decodeR8Dest(opcode)) {
+	case GB::Decode::R8::B:
 		return &(GetPairRegister("BC")->hi);
-	case 1:
+	case GB::Decode::R8::C:
 		return &GetPairRegister("BC")->lo;
-	case 2:
+	case GB::Decode::R8::D:
 		return &GetPairRegister("DE")->hi;
-	case 3:
+	case GB::Decode::R8::E:
 		return &GetPairRegister("DE")->lo;
-	case 4:
+	case GB::Decode::R8::H:
 		return &GetPairRegister("HL")->hi;
-	case 5:
+	case GB::Decode::R8::L:
 		return &GetPairRegister("HL")->lo;
-	case 6:
+	case GB::Decode::R8::HLIndirect:
 		{
 			auto HL = GetPairRegister("HL");
 			return readTempByte(HL->value);
 		}
-	case 7:
+	case GB::Decode::R8::A:
 		return &(GetPairRegister("AF")->hi);
-	default:
-		throw std::invalid_argument("error in decoding register. invalid argument");
 	}
+
+	throw std::invalid_argument("error in decoding register. invalid argument");
 }
 
 void LR3592_Interpreter_Decode::rotateAccumulator(DataType opcode)
@@ -195,29 +201,29 @@ void LR3592_Interpreter_Decode::manipulateCarry(DataType opcode)
 
 DataType* LR3592_Interpreter_Decode::ld_r8_r8_GetRegister(DataType regcode)
 {
-	switch (regcode) {
-	case 0:
+	switch (GB::Decode::decodeR8(regcode)) {
+	case GB::Decode::R8::B:
 		return &(GetPairRegister("BC")->hi);
-	case 1:
+	case GB::Decode::R8::C:
 		return &(GetPairRegister("BC")->lo);
-	case 2:
+	case GB::Decode::R8::D:
 		return &(GetPairRegister("DE")->hi);
-	case 3:
+	case GB::Decode::R8::E:
 		return &(GetPairRegister("DE")->lo);
-	case 4:
+	case GB::Decode::R8::H:
 		return &(GetPairRegister("HL")->hi);
-	case 5:
+	case GB::Decode::R8::L:
 		return &(GetPairRegister("HL")->lo);
-	case 6:
+	case GB::Decode::R8::HLIndirect:
 		{
 			auto HL = GetPairRegister("HL");
 			return readTempByte(HL->value);
 		}
-	case 7:
+	case GB::Decode::R8::A:
 		return &(GetPairRegister("AF")->hi);
-	default:
-		throw std::invalid_argument("error in decoding register. invalid argument");
 	}
+
+	throw std::invalid_argument("error in decoding register. invalid argument");
 }
 
 std::pair<DataType*, DataType*> LR3592_Interpreter_Decode::ld_r8_r8_GetOperands(DataType opcode)
@@ -319,20 +325,18 @@ void LR3592_Interpreter_Decode::ret_cc(DataType opcode)
 
 AddressType* LR3592_Interpreter_Decode::push_pop_GetRegister(DataType opcode)
 {
-	DataType regCode =	(opcode	& 0x10)	>> 4;
-
-	switch (regCode) {
-	case 0:
+	switch (GB::Decode::decodeR16Stack(opcode)) {
+	case GB::Decode::R16Stack::BC:
 		return &(GetPairRegister("BC")->value);
-	case 1:
+	case GB::Decode::R16Stack::DE:
 		return &(GetPairRegister("DE")->value);
-	case 2:
+	case GB::Decode::R16Stack::HL:
 		return &(GetPairRegister("HL")->value);
-	case 3:
+	case GB::Decode::R16Stack::AF:
 		return &(GetPairRegister("AF")->value);
-	default:
-		throw std::invalid_argument("error in decoding register. invalid argument");
 	}
+
+	throw std::invalid_argument("error in decoding register. invalid argument");
 }
 
 void LR3592_Interpreter_Decode::pop(DataType opcode)
