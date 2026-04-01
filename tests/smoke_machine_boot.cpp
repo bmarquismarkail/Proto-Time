@@ -151,7 +151,7 @@ int main() {
     assert(host.runtimeContext().readRegister16(BMMQ::RegisterId::PC) == 0x0042);
     host.runtimeContext().commitVisibleState();
     assert(host.runtimeContext().getLastFeedback().pcBefore == 0x0100);
-    assert(host.runtimeContext().getLastFeedback().pcAfter == 0x0103);
+    assert(host.runtimeContext().getLastFeedback().pcAfter == 0x0102);
     host.attachExecutorPolicy(experimentalPolicy);
     assert(host.guarantee() == BMMQ::ExecutionGuarantee::Experimental);
     assert(host.runtimeContext().attachedPolicyMetadata()->id == "bmmq.executor.policy.experimental");

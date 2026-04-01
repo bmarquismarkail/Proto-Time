@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
 #include "cores/gameboy/gameboy.hpp"
@@ -79,7 +80,11 @@ int main()
 
     GameBoyMachine machine;
     BMMQ::Machine& host = machine;
-    host.loadRom({0x3E, 0x12, 0x00});
+    std::vector<uint8_t> cartridgeRom(0x8000, 0x00);
+    cartridgeRom[0x0100] = 0x3E;
+    cartridgeRom[0x0101] = 0x12;
+    cartridgeRom[0x0102] = 0x00;
+    host.loadRom(cartridgeRom);
 
     BMMQ::Executor<AddressType, DataType> recorder(splitOnControl);
     static_assert(!std::is_invocable_v<decltype(&BMMQ::Executor<AddressType, DataType>::step),
@@ -88,10 +93,10 @@ int main()
     const auto stepResultRecord = recorder.step(host.runtimeContext());
     assert(stepResultRecord.executed);
     assert(stepResultRecord.guarantee == BMMQ::ExecutionGuarantee::BaselineFaithful);
-    assert(stepResultRecord.feedback.isControlFlow);
-    assert(stepResultRecord.feedback.segmentBoundaryHint);
+    assert(!stepResultRecord.feedback.isControlFlow);
+    assert(!stepResultRecord.feedback.segmentBoundaryHint);
     assert(recorder.recordedBlocks().size() == 1);
-    assert(host.readRegisterPair(BMMQ::RegisterId::AF) == static_cast<uint16_t>(0x1200));
+    assert(host.readRegisterPair(BMMQ::RegisterId::AF) == static_cast<uint16_t>(0x12B0));
 
     namespace fs = std::filesystem;
     const fs::path scriptPath = fs::temp_directory_path() / "time_executor_smoke.blocks";

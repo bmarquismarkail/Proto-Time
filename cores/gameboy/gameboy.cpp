@@ -470,8 +470,17 @@ BMMQ::fetchBlock<AddressType, DataType> LR3592_DMG::fetch()
 
     f.setbaseAddress(pc);
 
-    std::vector<DataType> stream(3, 0);
+    std::vector<DataType> stream(1, 0);
     mem.read(std::span<DataType>(stream.data(), stream.size()), pc);
+
+    const auto opcodeByte = stream[0];
+    if (const auto& entry = opcodeTable[opcodeByte]; entry.has_value()) {
+        const auto opcodeLength = entry->length();
+        if (opcodeLength > stream.size()) {
+            stream.resize(opcodeLength, 0);
+            mem.read(std::span<DataType>(stream.data(), stream.size()), pc);
+        }
+    }
 
     BMMQ::fetchBlockData<AddressType, DataType> data {
         0, std::move(stream)

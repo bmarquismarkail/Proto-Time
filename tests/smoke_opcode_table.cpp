@@ -83,7 +83,7 @@ int main()
         cpu.loadProgram({0x00, 0x00, 0x00});
         step(cpu);
         assert(pair(cpu, BMMQ::RegisterId::AF)->hi == 0x00);
-        assert(scalar(cpu, BMMQ::RegisterId::PC) == 3);
+        assert(scalar(cpu, BMMQ::RegisterId::PC) == 1);
     }
 
     {
@@ -99,7 +99,7 @@ int main()
         loadAndSetPc(cpu, 0x0000, {0x3E, 0x12, 0x00});
         step(cpu);
         assert(pair(cpu, BMMQ::RegisterId::AF)->hi == 0x12);
-        assert(scalar(cpu, BMMQ::RegisterId::PC) == 3);
+        assert(scalar(cpu, BMMQ::RegisterId::PC) == 2);
 
         loadAndSetPc(cpu, 0x0004, {0x06, 0x00, 0x00});
         step(cpu);

@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
 #include "inst_cycle/executor/PluginContract.hpp"
@@ -91,7 +92,11 @@ int main()
 
     GameBoyMachine machine;
     BMMQ::Machine& host = machine;
-    host.loadRom({0x3E, 0x12, 0x00});
+    std::vector<uint8_t> cartridgeRom(0x8000, 0x00);
+    cartridgeRom[0x0100] = 0x3E;
+    cartridgeRom[0x0101] = 0x12;
+    cartridgeRom[0x0102] = 0x00;
+    host.loadRom(cartridgeRom);
     ExperimentalMachinePolicy machinePolicy;
     host.attachExecutorPolicy(machinePolicy);
 
@@ -100,19 +105,18 @@ int main()
     const auto result = executor.step(host.runtimeContext());
     assert(result.executed);
     assert(result.guarantee == BMMQ::ExecutionGuarantee::Experimental);
-    assert(result.feedback.isControlFlow);
-    assert(result.feedback.segmentBoundaryHint);
+    assert(!result.feedback.isControlFlow);
+    assert(!result.feedback.segmentBoundaryHint);
     assert(host.runtimeContext().attachedPolicyMetadata() != nullptr);
     assert(host.runtimeContext().attachedPolicyMetadata()->id == "bmmq.executor.policy.machine-experimental");
 
     const auto& blocks = executor.recordedBlocks();
     assert(blocks.size() == 1);
     const auto& recordedSegments = executor.recordedSegments();
-    assert(recordedSegments.size() == 2);
+    assert(recordedSegments.size() == 1);
     assert(recordedSegments[0].blocks.size() == 1);
-    assert(recordedSegments[1].blocks.empty());
 
-    assert(host.readRegisterPair(BMMQ::RegisterId::AF) == static_cast<uint16_t>(0x1200));
+    assert(host.readRegisterPair(BMMQ::RegisterId::AF) == static_cast<uint16_t>(0x12B0));
 
     namespace fs = std::filesystem;
     const fs::path scriptPath = fs::temp_directory_path() / "time_plugin_executor_smoke.blocks";
