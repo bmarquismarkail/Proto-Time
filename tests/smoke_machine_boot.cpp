@@ -152,6 +152,19 @@ int main() {
     host.runtimeContext().commitVisibleState();
     assert(host.runtimeContext().getLastFeedback().pcBefore == 0x0100);
     assert(host.runtimeContext().getLastFeedback().pcAfter == 0x0102);
+
+    std::vector<uint8_t> mbc1Rom(0x10000, 0x00);
+    mbc1Rom[0x0147] = 0x01;
+    mbc1Rom[0x0148] = 0x01;
+    mbc1Rom[0x0000] = 0x11;
+    mbc1Rom[0x4000] = 0x22;
+    mbc1Rom[0x8000] = 0x33;
+    host.loadRom(mbc1Rom);
+    assert(host.runtimeContext().read8(0x0000) == 0x11);
+    assert(host.runtimeContext().read8(0x4000) == 0x22);
+    host.runtimeContext().write8(0x2000, 0x02);
+    assert(host.runtimeContext().read8(0x4000) == 0x33);
+
     host.attachExecutorPolicy(experimentalPolicy);
     assert(host.guarantee() == BMMQ::ExecutionGuarantee::Experimental);
     assert(host.runtimeContext().attachedPolicyMetadata()->id == "bmmq.executor.policy.experimental");

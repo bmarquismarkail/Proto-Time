@@ -2,6 +2,7 @@
 #define GAMEBOY_MACHINE_HPP
 
 #include <cstdint>
+#include <cstddef>
 #include <string_view>
 #include <stdexcept>
 #include <vector>
@@ -130,13 +131,11 @@ public:
         if (bytes.empty()) {
             throw std::invalid_argument("ROM must not be empty");
         }
-        if (bytes.size() > 0x8000) {
-            throw std::invalid_argument("ROM exceeds first-milestone Game Boy ROM window");
-        }
 
         rom_.load(bytes);
+        configureCartridge(bytes);
         configureMemoryMap();
-        memoryMap_.installRom(bytes, 0x0000);
+        installVisibleRomBanks();
         initializeDmgStartupRegisters();
         romLoaded_ = true;
     }
@@ -172,6 +171,190 @@ public:
     }
 
 private:
+    enum class CartridgeController {
+        None,
+        MBC1,
+        MBC2,
+        MBC3,
+        MBC5,
+    };
+
+    void configureCartridge(const std::vector<uint8_t>& bytes) {
+        const auto type = bytes.size() > 0x147 ? bytes[0x147] : 0x00;
+        switch (type) {
+        case 0x00:
+            controller_ = CartridgeController::None;
+            break;
+        case 0x01:
+        case 0x02:
+        case 0x03:
+            controller_ = CartridgeController::MBC1;
+            break;
+        case 0x05:
+        case 0x06:
+            controller_ = CartridgeController::MBC2;
+            break;
+        case 0x0F:
+        case 0x10:
+        case 0x11:
+        case 0x12:
+        case 0x13:
+            controller_ = CartridgeController::MBC3;
+            break;
+        case 0x19:
+        case 0x1A:
+        case 0x1B:
+        case 0x1C:
+        case 0x1D:
+        case 0x1E:
+            controller_ = CartridgeController::MBC5;
+            break;
+        default:
+            controller_ = CartridgeController::None;
+            if (bytes.size() > 0x8000) {
+                throw std::invalid_argument("ROM exceeds first-milestone Game Boy ROM window");
+            }
+            break;
+        }
+
+        if (controller_ == CartridgeController::None && bytes.size() > 0x8000) {
+            throw std::invalid_argument("ROM exceeds first-milestone Game Boy ROM window");
+        }
+
+        romBankCount_ = (bytes.size() + 0x3FFFu) / 0x4000u;
+        currentRomBank_ = romBankCount_ > 1 ? 1 : 0;
+        mbc1LowBankBits_ = 1;
+        mbc1UpperBankBits_ = 0;
+        mbc1BankingModeSelect_ = false;
+        mbc5HighBankBit_ = 0;
+    }
+
+    void installVisibleRomBanks() {
+        installRomBankWindow(0x0000, fixedBankIndex());
+        installRomBankWindow(0x4000, switchableBankIndex());
+    }
+
+    void installRomBankWindow(uint16_t base, std::size_t bankIndex) {
+        std::vector<uint8_t> window(0x4000, 0xFF);
+        const auto romBytes = rom_.bytes();
+        const auto offset = bankIndex * 0x4000u;
+        if (offset < romBytes.size()) {
+            const auto count = std::min<std::size_t>(window.size(), romBytes.size() - offset);
+            std::copy_n(romBytes.begin() + static_cast<std::ptrdiff_t>(offset), count, window.begin());
+        }
+        memoryMap_.installRom(window, base);
+    }
+
+    [[nodiscard]] std::size_t fixedBankIndex() const {
+        if (controller_ == CartridgeController::MBC1 && mbc1BankingModeSelect_) {
+            return ((static_cast<std::size_t>(mbc1UpperBankBits_) << 5) % romBankCount_);
+        }
+        return 0;
+    }
+
+    [[nodiscard]] std::size_t switchableBankIndex() const {
+        if (romBankCount_ <= 1) {
+            return 0;
+        }
+
+        switch (controller_) {
+        case CartridgeController::None:
+            return romBankCount_ > 1 ? 1 : 0;
+        case CartridgeController::MBC1: {
+            std::size_t bank = (static_cast<std::size_t>(mbc1UpperBankBits_) << 5) |
+                               static_cast<std::size_t>(mbc1LowBankBits_ & 0x1Fu);
+            bank &= 0x7Fu;
+            bank %= romBankCount_;
+            if ((bank & 0x1Fu) == 0) {
+                bank = (bank + 1) % romBankCount_;
+            }
+            return bank == 0 ? 1 % romBankCount_ : bank;
+        }
+        case CartridgeController::MBC2:
+        case CartridgeController::MBC3:
+            return currentRomBank_ % romBankCount_ == 0 ? 1 % romBankCount_ : currentRomBank_ % romBankCount_;
+        case CartridgeController::MBC5:
+            return currentRomBank_ % romBankCount_;
+        }
+
+        return 0;
+    }
+
+    bool handleCartridgeWrite(uint16_t address, std::span<const uint8_t> value) {
+        if (value.size() != 1 || address >= 0x8000 || controller_ == CartridgeController::None) {
+            return false;
+        }
+
+        const auto data = value[0];
+        switch (controller_) {
+        case CartridgeController::MBC1:
+            if (address < 0x2000) {
+                return true;
+            }
+            if (address < 0x4000) {
+                mbc1LowBankBits_ = data & 0x1Fu;
+                if (mbc1LowBankBits_ == 0) {
+                    mbc1LowBankBits_ = 1;
+                }
+                installVisibleRomBanks();
+                return true;
+            }
+            if (address < 0x6000) {
+                mbc1UpperBankBits_ = data & 0x03u;
+                installVisibleRomBanks();
+                return true;
+            }
+            mbc1BankingModeSelect_ = (data & 0x01u) != 0;
+            installVisibleRomBanks();
+            return true;
+        case CartridgeController::MBC2:
+            if (address < 0x4000) {
+                if ((address & 0x0100u) != 0) {
+                    currentRomBank_ = data & 0x0Fu;
+                    if (currentRomBank_ == 0) {
+                        currentRomBank_ = 1;
+                    }
+                    installVisibleRomBanks();
+                }
+                return true;
+            }
+            return true;
+        case CartridgeController::MBC3:
+            if (address < 0x2000) {
+                return true;
+            }
+            if (address < 0x4000) {
+                currentRomBank_ = data & 0x7Fu;
+                if (currentRomBank_ == 0) {
+                    currentRomBank_ = 1;
+                }
+                installVisibleRomBanks();
+                return true;
+            }
+            return true;
+        case CartridgeController::MBC5:
+            if (address < 0x2000) {
+                return true;
+            }
+            if (address < 0x3000) {
+                currentRomBank_ = (currentRomBank_ & 0x100u) | data;
+                installVisibleRomBanks();
+                return true;
+            }
+            if (address < 0x4000) {
+                mbc5HighBankBit_ = data & 0x01u;
+                currentRomBank_ = (static_cast<std::size_t>(mbc5HighBankBit_) << 8) | (currentRomBank_ & 0xFFu);
+                installVisibleRomBanks();
+                return true;
+            }
+            return true;
+        case CartridgeController::None:
+            return false;
+        }
+
+        return false;
+    }
+
     void initializeDmgStartupRegisters() {
         context_.writeRegister16(BMMQ::RegisterId::AF, 0x01B0);
         context_.writeRegister16(BMMQ::RegisterId::BC, 0x0013);
@@ -195,11 +378,21 @@ private:
         memoryMap_.mapRange(0xff4c, 0x0034, BMMQ::memAccess::Unmapped);
         memoryMap_.mapRange(0xff80, 0x007f, BMMQ::memAccess::ReadWrite);
         memoryMap_.mapRange(0xffff, 0x0001, BMMQ::memAccess::ReadWrite);
+        memoryMap_.storage().setWriteInterceptor([this](uint16_t address, std::span<const uint8_t> value) {
+            return handleCartridgeWrite(address, value);
+        });
     }
 
     BMMQ::RomImage rom_;
     BMMQ::MemoryMap memoryMap_;
     bool romLoaded_ = false;
+    CartridgeController controller_ = CartridgeController::None;
+    std::size_t romBankCount_ = 0;
+    std::size_t currentRomBank_ = 1;
+    uint8_t mbc1LowBankBits_ = 1;
+    uint8_t mbc1UpperBankBits_ = 0;
+    bool mbc1BankingModeSelect_ = false;
+    uint8_t mbc5HighBankBit_ = 0;
     LR3592_PluginRuntime cpu_;
     BMMQ::Plugin::DefaultStepPolicy defaultPolicy_;
     BMMQ::Plugin::IExecutorPolicyPlugin* activePolicy_;

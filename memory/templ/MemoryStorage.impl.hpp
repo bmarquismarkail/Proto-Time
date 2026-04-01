@@ -108,6 +108,9 @@ template<typename AddressType, typename DataType>
 void MemoryStorage<AddressType, DataType>::write(std::span<const DataType> value, AddressType address)
 {
     if (value.empty()) return;
+    if (writeInterceptor_ && writeInterceptor_(address, value)) {
+        return;
+    }
 
     std::size_t mapOffset = 0;
     std::size_t valueOffset = 0;
