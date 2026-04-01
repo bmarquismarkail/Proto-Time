@@ -196,6 +196,7 @@ int main()
         assert(readByte(cpu, 0xFF10) == 0x42);
 
         loadAndSetPc(cpu, 0x0004, {0xF0, 0x10, 0x00});
+        pair(cpu, BMMQ::RegisterId::AF)->hi = 0x00; // clear A before loading back
         step(cpu);
         assert(pair(cpu, BMMQ::RegisterId::AF)->hi == 0x42);
     }

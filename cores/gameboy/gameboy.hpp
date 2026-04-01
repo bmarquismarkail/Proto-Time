@@ -34,7 +34,7 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   uint16_t flagset;
   BMMQ::CpuFeedback feedback;
   DataType cip;
-  bool ime = false, stopFlag = false;
+  bool ime = false, stopFlag = false, haltFlag = false;
 
   // Gameboy-specific Decode Helper Functions
   LR3592_Register &GetRegister(BMMQ::RegisterInfo<AddressType> &Reg,
@@ -102,5 +102,7 @@ public:
   BMMQ::MemoryPool<AddressType, DataType, AddressType> &getMemory();
   const BMMQ::MemoryPool<AddressType, DataType, AddressType> &getMemory() const;
   void setStopFlag(bool f);
+  void setHaltFlag(bool f);
+  void clearHaltFlag();
 };
 #endif // DMG_CPU

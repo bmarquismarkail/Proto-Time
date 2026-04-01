@@ -452,6 +452,10 @@ const BMMQ::MemoryPool<AddressType, DataType, AddressType>& LR3592_DMG::getMemor
 
 BMMQ::fetchBlock<AddressType, DataType> LR3592_DMG::fetch()
 {
+    if (stopFlag || haltFlag) {
+        return {};
+    }
+
     BMMQ::fetchBlock<AddressType, DataType> f;
 
     auto* pcEntry = mem.file.findRegister("PC");
@@ -572,6 +576,16 @@ void LR3592_DMG::setStopFlag(bool f)
     stopFlag = f;
 }
 
+void LR3592_DMG::setHaltFlag(bool f)
+{
+    haltFlag = f;
+}
+
+void LR3592_DMG::clearHaltFlag()
+{
+    haltFlag = false;
+}
+
 void LR3592_DMG::populateOpcodes()
 {
     opcodeTable.fill(std::nullopt);
@@ -591,8 +605,9 @@ void LR3592_DMG::populateOpcodes()
         });
     }));
 
-    setOpcode(0x76, emitStep(1, [](auto& block, const auto&, std::size_t, DataType) {
-        block.addStep([](auto&, auto&) {
+    setOpcode(0x76, emitStep(1, [this](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([this](auto&, auto&) {
+            setHaltFlag(true);
         });
     }));
 
@@ -634,7 +649,16 @@ void LR3592_DMG::populateOpcodes()
         setOpcode(opcode, emitStep(1, [](auto& block, const auto&, std::size_t, DataType code) {
             block.addStep([code](auto& snapshot, auto&) {
                 auto& hl = getRegisterPair(snapshot, BMMQ::RegisterId::HL)->value;
-                hl = static_cast<AddressType>(hl + accessR16(snapshot, GB::Decode::decodeR16(code)));
+                const AddressType lhs = hl;
+                const AddressType rhs = accessR16(snapshot, GB::Decode::decodeR16(code));
+                const AddressType result = static_cast<AddressType>(lhs + rhs);
+
+                const bool h = ((lhs & 0x0FFFu) + (rhs & 0x0FFFu)) > 0x0FFFu;
+                const bool c = static_cast<uint32_t>(lhs) + static_cast<uint32_t>(rhs) > 0xFFFFu;
+                const bool z = (flags(snapshot) & kFlagZ) != 0;
+                setFlags(snapshot, z, false, h, c);
+
+                hl = result;
             });
         }));
     }
@@ -643,7 +667,14 @@ void LR3592_DMG::populateOpcodes()
         setOpcode(opcode, emitStep(1, [](auto& block, const auto&, std::size_t, DataType code) {
             block.addStep([code](auto& snapshot, auto&) {
                 const auto reg = GB::Decode::decodeR8Dest(code);
-                writeR8(snapshot, reg, static_cast<DataType>(readR8(snapshot, reg) + 1));
+                const DataType oldValue = readR8(snapshot, reg);
+                const DataType newValue = static_cast<DataType>(oldValue + 1);
+                writeR8(snapshot, reg, newValue);
+
+                const bool h = ((oldValue & 0x0Fu) + 1u) > 0x0Fu;
+                const bool z = newValue == 0;
+                const bool c = (flags(snapshot) & kFlagC) != 0;
+                setFlags(snapshot, z, false, h, c);
             });
         }));
     }
@@ -652,7 +683,14 @@ void LR3592_DMG::populateOpcodes()
         setOpcode(opcode, emitStep(1, [](auto& block, const auto&, std::size_t, DataType code) {
             block.addStep([code](auto& snapshot, auto&) {
                 const auto reg = GB::Decode::decodeR8Dest(code);
-                writeR8(snapshot, reg, static_cast<DataType>(readR8(snapshot, reg) - 1));
+                const DataType oldValue = readR8(snapshot, reg);
+                const DataType newValue = static_cast<DataType>(oldValue - 1);
+                writeR8(snapshot, reg, newValue);
+
+                const bool h = (oldValue & 0x0Fu) == 0;
+                const bool z = newValue == 0;
+                const bool c = (flags(snapshot) & kFlagC) != 0;
+                setFlags(snapshot, z, true, h, c);
             });
         }));
     }
@@ -697,7 +735,39 @@ void LR3592_DMG::populateOpcodes()
 
     setOpcode(0x27, emitStep(1, [](auto& block, const auto&, std::size_t, DataType) {
         block.addStep([](auto& snapshot, auto&) {
-            BMMQ::CML::daa(&accumulator(snapshot));
+            auto& a = accumulator(snapshot);
+            const DataType flagReg = flags(snapshot);
+            const bool n = (flagReg & kFlagN) != 0;
+            const bool h = (flagReg & kFlagH) != 0;
+            const bool c = (flagReg & kFlagC) != 0;
+
+            DataType adjust = 0;
+            bool carry = c;
+
+            if (!n) {
+                if (h || (a & 0x0Fu) > 0x09u) {
+                    adjust |= 0x06u;
+                }
+                if (c || a > 0x99u) {
+                    adjust |= 0x60u;
+                    carry = true;
+                }
+                a = static_cast<DataType>(a + adjust);
+            } else {
+                if (h) {
+                    adjust |= 0x06u;
+                }
+                if (c) {
+                    adjust |= 0x60u;
+                }
+                a = static_cast<DataType>(a - adjust);
+            }
+
+            const bool z = (a == 0);
+            flags(snapshot) = static_cast<DataType>(
+                (z ? kFlagZ : 0) |
+                (n ? kFlagN : 0) |
+                (carry ? kFlagC : 0));
         });
     }));
 
@@ -800,36 +870,79 @@ void LR3592_DMG::populateOpcodes()
                 auto& a = accumulator(snapshot);
                 const DataType rhs = operand(snapshot);
                 const DataType lhs = a;
-                const bool carry = (flags(snapshot) & kFlagC) != 0;
+                const bool carryIn = (flags(snapshot) & kFlagC) != 0;
+
+                DataType result = lhs;
+                bool z = false;
+                bool n = false;
+                bool h = false;
+                bool c = false;
 
                 switch ((code >> 3) & 0x07u) {
-                case 0:
-                    a = static_cast<DataType>(lhs + rhs);
+                case 0: { // ADD A,r8
+                    result = static_cast<DataType>(lhs + rhs);
+                    h = static_cast<uint16_t>((lhs & 0x0Fu) + (rhs & 0x0Fu)) > 0x0Fu;
+                    c = static_cast<uint16_t>(lhs) + static_cast<uint16_t>(rhs) > 0xFFu;
+                    n = false;
                     break;
-                case 1:
-                    a = static_cast<DataType>(lhs + rhs + (carry ? 1 : 0));
+                }
+                case 1: { // ADC A,r8
+                    const uint16_t sum = static_cast<uint16_t>(lhs) + static_cast<uint16_t>(rhs) + (carryIn ? 1u : 0u);
+                    result = static_cast<DataType>(sum);
+                    h = static_cast<uint16_t>((lhs & 0x0Fu) + (rhs & 0x0Fu) + (carryIn ? 1u : 0u)) > 0x0Fu;
+                    c = sum > 0xFFu;
+                    n = false;
                     break;
-                case 2:
-                    a = static_cast<DataType>(lhs - rhs);
+                }
+                case 2: { // SUB A,r8
+                    result = static_cast<DataType>(lhs - rhs);
+                    h = (lhs & 0x0Fu) < (rhs & 0x0Fu);
+                    c = lhs < rhs;
+                    n = true;
                     break;
-                case 3:
-                    a = static_cast<DataType>(lhs - rhs - (carry ? 1 : 0));
+                }
+                case 3: { // SBC A,r8
+                    const uint16_t subtrahend = static_cast<uint16_t>(rhs) + (carryIn ? 1u : 0u);
+                    result = static_cast<DataType>(lhs - subtrahend);
+                    h = (lhs & 0x0Fu) < ((rhs & 0x0Fu) + (carryIn ? 1u : 0u));
+                    c = static_cast<uint16_t>(lhs) < subtrahend;
+                    n = true;
                     break;
-                case 4:
-                    a = static_cast<DataType>(lhs & rhs);
+                }
+                case 4: { // AND
+                    result = static_cast<DataType>(lhs & rhs);
+                    n = false;
+                    h = true;
+                    c = false;
                     break;
-                case 5:
-                    a = static_cast<DataType>(lhs ^ rhs);
+                }
+                case 5: { // XOR
+                    result = static_cast<DataType>(lhs ^ rhs);
+                    n = false;
+                    h = false;
+                    c = false;
                     break;
-                case 6:
-                    a = static_cast<DataType>(lhs | rhs);
+                }
+                case 6: { // OR
+                    result = static_cast<DataType>(lhs | rhs);
+                    n = false;
+                    h = false;
+                    c = false;
                     break;
-                case 7:
-                    setFlags(snapshot, lhs == rhs, true, false, lhs < rhs);
+                }
+                case 7: { // CP
+                    h = (lhs & 0x0Fu) < (rhs & 0x0Fu);
+                    c = lhs < rhs;
+                    z = lhs == rhs;
+                    n = true;
+                    setFlags(snapshot, z, n, h, c);
                     return;
                 }
+                }
 
-                setFlags(snapshot, a == 0, false, false, false);
+                a = result;
+                z = (a == 0);
+                setFlags(snapshot, z, n, h, c);
             });
         }));
     };
@@ -877,7 +990,12 @@ void LR3592_DMG::populateOpcodes()
     for (DataType opcode : {0xC1, 0xD1, 0xE1, 0xF1}) {
         setOpcode(opcode, emitStep(1, [](auto& block, const auto&, std::size_t, DataType code) {
             block.addStep([code](auto& snapshot, auto&) {
-                accessStackR16(snapshot, GB::Decode::decodeR16Stack(code)) = pop16(snapshot);
+                const auto target = GB::Decode::decodeR16Stack(code);
+                AddressType value = pop16(snapshot);
+                if (target == GB::Decode::R16Stack::AF) {
+                    value = static_cast<AddressType>(value & 0xFFF0u);
+                }
+                accessStackR16(snapshot, target) = value;
             });
         }));
     }
@@ -984,7 +1102,14 @@ void LR3592_DMG::populateOpcodes()
         const int8_t offset = static_cast<int8_t>(fetchImm8(fetchData, opcodeIndex));
         block.addStep([offset](auto& snapshot, auto&) {
             auto* sp = getRegister(snapshot, BMMQ::RegisterId::SP);
-            sp->value = static_cast<AddressType>(static_cast<int32_t>(sp->value) + offset);
+            const AddressType original = sp->value;
+            const AddressType result = static_cast<AddressType>(static_cast<int32_t>(original) + offset);
+            const uint8_t low = static_cast<uint8_t>(original & 0xFFu);
+            const uint8_t imm = static_cast<uint8_t>(offset);
+            const bool h = ((low & 0x0Fu) + (imm & 0x0Fu)) > 0x0Fu;
+            const bool c = static_cast<uint16_t>(low) + static_cast<uint16_t>(imm) > 0xFFu;
+            setFlags(snapshot, false, false, h, c);
+            sp->value = result;
         });
     }));
 
@@ -992,8 +1117,13 @@ void LR3592_DMG::populateOpcodes()
         const int8_t offset = static_cast<int8_t>(fetchImm8(fetchData, opcodeIndex));
         block.addStep([offset](auto& snapshot, auto&) {
             const AddressType sp = static_cast<AddressType>(getRegister(snapshot, BMMQ::RegisterId::SP)->value);
-            getRegisterPair(snapshot, BMMQ::RegisterId::HL)->value =
-                static_cast<AddressType>(static_cast<int32_t>(sp) + offset);
+            const AddressType result = static_cast<AddressType>(static_cast<int32_t>(sp) + offset);
+            const uint8_t low = static_cast<uint8_t>(sp & 0xFFu);
+            const uint8_t imm = static_cast<uint8_t>(offset);
+            const bool h = ((low & 0x0Fu) + (imm & 0x0Fu)) > 0x0Fu;
+            const bool c = static_cast<uint16_t>(low) + static_cast<uint16_t>(imm) > 0xFFu;
+            setFlags(snapshot, false, false, h, c);
+            getRegisterPair(snapshot, BMMQ::RegisterId::HL)->value = result;
         });
     }));
 

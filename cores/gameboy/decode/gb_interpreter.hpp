@@ -15,6 +15,7 @@
 		void setSnapshot(BMMQ::MemorySnapshot<AddressType, DataType, AddressType> *s);
 		LR3592_Register* GetRegister(std::string_view id);
 			LR3592_RegisterPair* GetPairRegister(std::string_view id);
+		DataType* GetR8Register(GB::Decode::R8 reg);
 		//Gameboy-Specific Decoding Functions
 		bool checkJumpCond(DataType opcode);
 		AddressType* ld_R16_I16_GetRegister(DataType opcode);
