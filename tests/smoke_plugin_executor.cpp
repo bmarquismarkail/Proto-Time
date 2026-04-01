@@ -12,9 +12,28 @@
 int main()
 {
     struct CountingRuntimeContext final : BMMQ::RuntimeContext {
+        struct CountingPolicy final : BMMQ::Plugin::IExecutorPolicyPlugin {
+            bool segment = false;
+            const BMMQ::Plugin::PluginMetadata& metadata() const override {
+                static const BMMQ::Plugin::PluginMetadata meta{
+                    sizeof(BMMQ::Plugin::PluginMetadata),
+                    "bmmq.executor.policy.counting",
+                    "Counting Policy",
+                    BMMQ::Plugin::PluginKind::ExecutorPolicy,
+                    BMMQ::Plugin::kHostAbiVersion
+                };
+                return meta;
+            }
+            BMMQ::ExecutionGuarantee guarantee() const override {
+                return BMMQ::ExecutionGuarantee::BaselineFaithful;
+            }
+            bool shouldRecord(const BMMQ::Plugin::FetchBlock&, const BMMQ::CpuFeedback&) const override { return true; }
+            bool shouldSegment(const BMMQ::Plugin::FetchBlock&, const BMMQ::CpuFeedback&) const override { return segment; }
+        };
+
         int fetchCalls = 0;
         BMMQ::CpuFeedback feedback{};
-        BMMQ::RuntimeCapabilityProfile profile{};
+        CountingPolicy policy{};
 
         FetchBlock fetch() override {
             FetchBlock block;
@@ -30,14 +49,14 @@ int main()
         }
         uint8_t read8(AddressType) const override { return 0; }
         void write8(AddressType, DataType) override {}
-        uint16_t readRegisterPair(BMMQ::RegisterId) const override { return 0; }
-        void writeRegisterPair(BMMQ::RegisterId, uint16_t) override {}
+        uint16_t readRegister16(BMMQ::RegisterId) const override { return 0; }
+        void writeRegister16(BMMQ::RegisterId, uint16_t) override {}
         const BMMQ::CpuFeedback& getLastFeedback() const override { return feedback; }
         BMMQ::ExecutionGuarantee guarantee() const override {
             return BMMQ::ExecutionGuarantee::BaselineFaithful;
         }
-        const BMMQ::Plugin::PluginMetadata* attachedPolicyMetadata() const override { return nullptr; }
-        BMMQ::RuntimeCapabilityProfile capabilityProfile() const override { return profile; }
+        const BMMQ::Plugin::PluginMetadata* attachedPolicyMetadata() const override { return &policy.metadata(); }
+        const BMMQ::Plugin::IExecutorPolicyPlugin& attachedExecutorPolicy() const override { return policy; }
     };
 
     struct ExperimentalMachinePolicy final : BMMQ::Plugin::IExecutorPolicyPlugin {
@@ -57,12 +76,13 @@ int main()
             return BMMQ::ExecutionGuarantee::Experimental;
         }
         bool shouldRecord(const PluginFetchBlock&, const BMMQ::CpuFeedback&) const override { return true; }
-        bool shouldSegment(const PluginFetchBlock&, const BMMQ::CpuFeedback&) const override { return false; }
+        bool shouldSegment(const PluginFetchBlock&, const BMMQ::CpuFeedback& feedback) const override {
+            return feedback.segmentBoundaryHint;
+        }
     };
 
-    BMMQ::Plugin::DefaultStepPolicy singleFetchPolicy;
-    BMMQ::Plugin::PluginExecutor singleFetchExecutor(singleFetchPolicy);
     CountingRuntimeContext countingContext;
+    BMMQ::Plugin::PluginExecutor singleFetchExecutor;
     const auto countedResult = singleFetchExecutor.step(countingContext);
     assert(countedResult.executed);
     assert(countingContext.fetchCalls == 1);
@@ -75,8 +95,7 @@ int main()
     ExperimentalMachinePolicy machinePolicy;
     host.attachExecutorPolicy(machinePolicy);
 
-    BMMQ::Plugin::DefaultStepPolicy policy;
-    BMMQ::Plugin::PluginExecutor executor(policy);
+    BMMQ::Plugin::PluginExecutor executor;
 
     const auto result = executor.step(host.runtimeContext());
     assert(result.executed);
@@ -100,7 +119,7 @@ int main()
     executor.saveScript(scriptPath.string());
 
     CountingRuntimeContext playbackContext;
-    BMMQ::Plugin::PluginExecutor player(policy);
+    BMMQ::Plugin::PluginExecutor player;
     player.loadScript(scriptPath.string());
 
     const auto playbackResult = player.step(playbackContext);

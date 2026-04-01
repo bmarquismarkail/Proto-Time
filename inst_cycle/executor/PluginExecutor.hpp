@@ -24,9 +24,6 @@ public:
         BMMQ::CpuFeedback feedback {};
     };
 
-    explicit PluginExecutor(IExecutorPolicyPlugin& policy)
-        : policy_(policy) {}
-
     void saveScript(const std::string& path) const {
         BMMQ::ExecutorIO::saveBlockScript<FetchBlock, Segment>(
             path,
@@ -53,6 +50,7 @@ public:
     StepResult step(BMMQ::RuntimeContext& context) {
         FetchBlock fetchBlock;
         StepResult result{};
+        const auto& policy = context.attachedExecutorPolicy();
 
         if (playbackIndex_ < playbackBlocks_.size()) {
             fetchBlock = playbackBlocks_[playbackIndex_++];
@@ -62,7 +60,7 @@ public:
         }
 
         const auto feedback = context.step(fetchBlock);
-        recordIfNeeded(fetchBlock, feedback, result.usedScript);
+        recordIfNeeded(policy, fetchBlock, feedback, result.usedScript);
         result.executed = true;
         result.guarantee = context.guarantee();
         result.feedback = feedback;
@@ -74,8 +72,12 @@ public:
     const std::vector<Segment>& segments() const { return segments_; }
 
 private:
-    void recordIfNeeded(const FetchBlock& block, const BMMQ::CpuFeedback& feedback, bool usedScript) {
-        if (usedScript || !policy_.shouldRecord(block, feedback)) return;
+    void recordIfNeeded(
+        const IExecutorPolicyPlugin& policy,
+        const FetchBlock& block,
+        const BMMQ::CpuFeedback& feedback,
+        bool usedScript) {
+        if (usedScript || !policy.shouldRecord(block, feedback)) return;
 
         if (segments_.empty()) {
             segments_.push_back(Segment{0, {}});
@@ -84,12 +86,11 @@ private:
         recordedBlocks_.push_back(block);
         segments_.back().blocks.push_back(block);
 
-        if (policy_.shouldSegment(block, feedback)) {
+        if (policy.shouldSegment(block, feedback)) {
             segments_.push_back(Segment{segments_.size(), {}});
         }
     }
 
-    IExecutorPolicyPlugin& policy_;
     std::vector<FetchBlock> recordedBlocks_;
     std::vector<Segment> segments_;
     std::vector<FetchBlock> playbackBlocks_;

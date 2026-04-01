@@ -45,28 +45,26 @@ public:
         memoryMap_.write8(address, value);
     }
 
+    uint16_t readRegister16(BMMQ::RegisterId id) const override {
+        auto* entry = requireRegisterEntry(id);
+        return entry->reg->value;
+    }
+
+    void writeRegister16(BMMQ::RegisterId id, uint16_t value) override {
+        auto* entry = requireRegisterEntry(id);
+        entry->reg->value = value;
+    }
+
     uint16_t readRegisterPair(BMMQ::RegisterId id) const override {
-        auto* entry = runtime_.cpu().getMemory().file.findRegister(id);
-        if (entry == nullptr || entry->reg == nullptr) {
-            throw std::invalid_argument("register not found");
-        }
-        auto* reg = dynamic_cast<BMMQ::CPU_RegisterPair<uint16_t>*>(entry->reg.get());
-        if (reg == nullptr) {
-            throw std::invalid_argument("register is not a pair");
-        }
-        return reg->value;
+        auto* entry = requireRegisterEntry(id);
+        ensurePairRegister(entry);
+        return entry->reg->value;
     }
 
     void writeRegisterPair(BMMQ::RegisterId id, uint16_t value) override {
-        auto* entry = runtime_.cpu().getMemory().file.findRegister(id);
-        if (entry == nullptr || entry->reg == nullptr) {
-            throw std::invalid_argument("register not found");
-        }
-        auto* reg = dynamic_cast<BMMQ::CPU_RegisterPair<uint16_t>*>(entry->reg.get());
-        if (reg == nullptr) {
-            throw std::invalid_argument("register is not a pair");
-        }
-        reg->value = value;
+        auto* entry = requireRegisterEntry(id);
+        ensurePairRegister(entry);
+        entry->reg->value = value;
     }
 
     const BMMQ::CpuFeedback& getLastFeedback() const override {
@@ -81,11 +79,36 @@ public:
         return &activePolicy_->metadata();
     }
 
-    BMMQ::RuntimeCapabilityProfile capabilityProfile() const override {
-        return activePolicy_->capabilityProfile();
+    const BMMQ::Plugin::IExecutorPolicyPlugin& attachedExecutorPolicy() const override {
+        return *activePolicy_;
     }
 
 private:
+    using RegisterEntry = decltype(std::declval<BMMQ::RegisterFile<uint16_t>&>().findRegister(BMMQ::RegisterId::AF));
+
+    RegisterEntry requireRegisterEntry(BMMQ::RegisterId id) const {
+        if (id != BMMQ::RegisterId::AF &&
+            id != BMMQ::RegisterId::BC &&
+            id != BMMQ::RegisterId::DE &&
+            id != BMMQ::RegisterId::HL &&
+            id != BMMQ::RegisterId::SP &&
+            id != BMMQ::RegisterId::PC) {
+            throw std::invalid_argument("register is not part of visible 16-bit machine state");
+        }
+        auto* entry = runtime_.cpu().getMemory().file.findRegister(id);
+        if (entry == nullptr || entry->reg == nullptr) {
+            throw std::invalid_argument("register not found");
+        }
+        return entry;
+    }
+
+    void ensurePairRegister(RegisterEntry entry) const {
+        auto* reg = dynamic_cast<BMMQ::CPU_RegisterPair<uint16_t>*>(entry->reg.get());
+        if (reg == nullptr) {
+            throw std::invalid_argument("register is not a pair");
+        }
+    }
+
     LR3592_PluginRuntime& runtime_;
     BMMQ::MemoryMap& memoryMap_;
     const bool& romLoaded_;

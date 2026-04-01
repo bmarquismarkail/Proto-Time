@@ -13,6 +13,7 @@ namespace BMMQ {
 
 namespace Plugin {
 struct PluginMetadata;
+class IExecutorPolicyPlugin;
 }
 
 enum class ExecutionGuarantee {
@@ -76,17 +77,35 @@ public:
         write8(address, static_cast<DataType>(value & 0x00FFu));
         write8(static_cast<AddressType>(address + 1), static_cast<DataType>((value >> 8) & 0x00FFu));
     }
-    virtual uint16_t readRegisterPair(RegisterId id) const = 0;
-    virtual void writeRegisterPair(RegisterId id, uint16_t value) = 0;
+    virtual uint16_t readRegister16(RegisterId id) const = 0;
+    virtual void writeRegister16(RegisterId id, uint16_t value) = 0;
+    virtual uint16_t readRegisterPair(RegisterId id) const {
+        return readRegister16(id);
+    }
+    virtual void writeRegisterPair(RegisterId id, uint16_t value) {
+        writeRegister16(id, value);
+    }
     virtual void commitVisibleState() {}
     virtual const CpuFeedback& getLastFeedback() const = 0;
     virtual ExecutionGuarantee guarantee() const = 0;
     virtual const Plugin::PluginMetadata* attachedPolicyMetadata() const = 0;
-    virtual RuntimeCapabilityProfile capabilityProfile() const = 0;
+    virtual const Plugin::IExecutorPolicyPlugin& attachedExecutorPolicy() const = 0;
+    virtual RuntimeCapabilityProfile capabilityProfile() const {
+        return RuntimeCapabilityProfile{
+            interceptionCapability() != nullptr,
+            translationCapability() != nullptr,
+            invalidationCapability() != nullptr,
+            optimizationMetadataCapability() != nullptr,
+        };
+    }
     virtual IInterceptionCapability* interceptionCapability() { return nullptr; }
     virtual ITranslationCapability* translationCapability() { return nullptr; }
     virtual IInvalidationCapability* invalidationCapability() { return nullptr; }
     virtual IOptimizationMetadataCapability* optimizationMetadataCapability() { return nullptr; }
+    virtual const IInterceptionCapability* interceptionCapability() const { return nullptr; }
+    virtual const ITranslationCapability* translationCapability() const { return nullptr; }
+    virtual const IInvalidationCapability* invalidationCapability() const { return nullptr; }
+    virtual const IOptimizationMetadataCapability* optimizationMetadataCapability() const { return nullptr; }
 };
 
 } // namespace BMMQ

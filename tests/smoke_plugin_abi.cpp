@@ -91,12 +91,6 @@ int main()
     assert(descriptor.structSize == sizeof(BMMQ::Plugin::PluginDescriptorV1));
     assert(BMMQ::Plugin::isAbiCompatible(descriptor.abiVersion));
 
-    const auto profile = policy.capabilityProfile();
-    assert(!profile.interception);
-    assert(!profile.translation);
-    assert(!profile.invalidation);
-    assert(!profile.optimizationMetadata);
-
     InvalidRuntime invalidRuntime;
     bool invalidRuntimeThrew = false;
     try {

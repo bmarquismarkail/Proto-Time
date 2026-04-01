@@ -27,25 +27,43 @@ struct HasHasMemoryMap<T, std::void_t<decltype(&T::hasMemoryMap)>> : std::true_t
 
 int main() {
     struct FakeRuntimeContext final : BMMQ::RuntimeContext {
+        struct FakePolicy final : BMMQ::Plugin::IExecutorPolicyPlugin {
+            const BMMQ::Plugin::PluginMetadata& metadata() const override {
+                static const BMMQ::Plugin::PluginMetadata meta{
+                    sizeof(BMMQ::Plugin::PluginMetadata),
+                    "bmmq.executor.policy.fake",
+                    "Fake Policy",
+                    BMMQ::Plugin::PluginKind::ExecutorPolicy,
+                    BMMQ::Plugin::kHostAbiVersion
+                };
+                return meta;
+            }
+            BMMQ::ExecutionGuarantee guarantee() const override {
+                return BMMQ::ExecutionGuarantee::BaselineFaithful;
+            }
+            bool shouldRecord(const BMMQ::Plugin::FetchBlock&, const BMMQ::CpuFeedback&) const override { return true; }
+            bool shouldSegment(const BMMQ::Plugin::FetchBlock&, const BMMQ::CpuFeedback&) const override { return false; }
+        };
+
         bool executed = false;
         BMMQ::CpuFeedback feedback{};
-        uint8_t memory[2] {0x34, 0x12};
-        uint16_t afValue = 0;
-        BMMQ::RuntimeCapabilityProfile profile{};
+        uint8_t memory[4] {0x34, 0x12, 0x00, 0x00};
+        uint16_t regValue = 0;
+        FakePolicy policy;
 
         FetchBlock fetch() override { return {}; }
         ExecutionBlock decode(FetchBlock&) override { return {}; }
         void execute(const ExecutionBlock&, FetchBlock&) override { executed = true; }
-        uint8_t read8(AddressType address) const override { return memory[address % 2]; }
-        void write8(AddressType address, DataType value) override { memory[address % 2] = value; }
-        uint16_t readRegisterPair(BMMQ::RegisterId) const override { return afValue; }
-        void writeRegisterPair(BMMQ::RegisterId, uint16_t value) override { afValue = value; }
+        uint8_t read8(AddressType address) const override { return memory[address % 4]; }
+        void write8(AddressType address, DataType value) override { memory[address % 4] = value; }
+        uint16_t readRegister16(BMMQ::RegisterId) const override { return regValue; }
+        void writeRegister16(BMMQ::RegisterId, uint16_t value) override { regValue = value; }
         const BMMQ::CpuFeedback& getLastFeedback() const override { return feedback; }
         BMMQ::ExecutionGuarantee guarantee() const override {
             return BMMQ::ExecutionGuarantee::BaselineFaithful;
         }
-        const BMMQ::Plugin::PluginMetadata* attachedPolicyMetadata() const override { return nullptr; }
-        BMMQ::RuntimeCapabilityProfile capabilityProfile() const override { return profile; }
+        const BMMQ::Plugin::PluginMetadata* attachedPolicyMetadata() const override { return &policy.metadata(); }
+        const BMMQ::Plugin::IExecutorPolicyPlugin& attachedExecutorPolicy() const override { return policy; }
     };
 
     struct ExperimentalPolicy final : BMMQ::Plugin::IExecutorPolicyPlugin {
@@ -113,18 +131,23 @@ int main() {
     assert(host.runtimeContext().read16(0xC100) == 0x3456);
     host.step();
     assert(host.readRegisterPair(BMMQ::RegisterId::AF) == static_cast<uint16_t>(0x1200));
-    assert(host.runtimeContext().readRegisterPair(BMMQ::RegisterId::AF) == static_cast<uint16_t>(0x1200));
-    host.runtimeContext().writeRegisterPair(BMMQ::RegisterId::BC, 0xBEEF);
-    assert(host.runtimeContext().readRegisterPair(BMMQ::RegisterId::BC) == 0xBEEF);
+    assert(host.runtimeContext().readRegister16(BMMQ::RegisterId::AF) == static_cast<uint16_t>(0x1200));
+    host.runtimeContext().writeRegister16(BMMQ::RegisterId::BC, 0xBEEF);
+    assert(host.runtimeContext().readRegister16(BMMQ::RegisterId::BC) == 0xBEEF);
+    host.runtimeContext().writeRegister16(BMMQ::RegisterId::SP, 0xC123);
+    assert(host.runtimeContext().readRegister16(BMMQ::RegisterId::SP) == 0xC123);
+    host.runtimeContext().writeRegister16(BMMQ::RegisterId::PC, 0x0042);
+    assert(host.runtimeContext().readRegister16(BMMQ::RegisterId::PC) == 0x0042);
     host.runtimeContext().commitVisibleState();
     assert(host.runtimeContext().getLastFeedback().pcBefore == 0);
     assert(host.runtimeContext().getLastFeedback().pcAfter == 3);
     host.attachExecutorPolicy(experimentalPolicy);
     assert(host.guarantee() == BMMQ::ExecutionGuarantee::Experimental);
     assert(host.runtimeContext().attachedPolicyMetadata()->id == "bmmq.executor.policy.experimental");
+    assert(host.runtimeContext().attachedExecutorPolicy().metadata().id == "bmmq.executor.policy.experimental");
     bool threw = false;
     try {
-        (void)host.readRegisterPair(BMMQ::RegisterId::MDR);
+        (void)host.runtimeContext().readRegister16(BMMQ::RegisterId::MDR);
     } catch (const std::exception&) {
         threw = true;
     }
