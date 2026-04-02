@@ -37,6 +37,10 @@ public:
     void read(std::span<DataType> stream, AddressType address) const;
     void write(std::span<const DataType> value, AddressType address);
     void load(std::span<const DataType> value, AddressType address);
+    void setReadInterceptor(std::function<bool(AddressType, std::span<DataType>)> interceptor)
+    {
+        readInterceptor_ = std::move(interceptor);
+    }
     void setWriteInterceptor(std::function<bool(AddressType, std::span<const DataType>)> interceptor)
     {
         writeInterceptor_ = std::move(interceptor);
@@ -66,6 +70,7 @@ public:
 private:
     std::vector<std::tuple<starting_address_t, ending_address_t, memAccess>> map;
     std::vector<DataType> mem;
+    std::function<bool(AddressType, std::span<DataType>)> readInterceptor_;
     std::function<bool(AddressType, std::span<const DataType>)> writeInterceptor_;
     std::function<AddressType(AddressType)> addressTranslator_;
 };

@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <algorithm>
 #include <string_view>
 #include <stdexcept>
 #include <vector>
@@ -362,6 +363,21 @@ private:
         return false;
     }
 
+    bool handleSpecialRead(uint16_t address, std::span<uint8_t> value) const {
+        if (address >= 0xFEA0 && address <= 0xFEFF) {
+            std::fill(value.begin(), value.end(), static_cast<uint8_t>(0xFF));
+            return true;
+        }
+        return false;
+    }
+
+    bool handleSpecialWrite(uint16_t address, std::span<const uint8_t> value) {
+        if (address >= 0xFEA0 && static_cast<std::size_t>(address - 0xFEA0u) + value.size() <= 0x60u) {
+            return true;
+        }
+        return handleCartridgeWrite(address, value);
+    }
+
     void initializeDmgStartupRegisters() {
         context_.writeRegister16(BMMQ::RegisterId::AF, 0x01B0);
         context_.writeRegister16(BMMQ::RegisterId::BC, 0x0013);
@@ -393,8 +409,11 @@ private:
             }
             return address;
         });
+        memoryMap_.storage().setReadInterceptor([this](uint16_t address, std::span<uint8_t> value) {
+            return handleSpecialRead(address, value);
+        });
         memoryMap_.storage().setWriteInterceptor([this](uint16_t address, std::span<const uint8_t> value) {
-            return handleCartridgeWrite(address, value);
+            return handleSpecialWrite(address, value);
         });
     }
 

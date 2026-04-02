@@ -103,6 +103,9 @@ void MemoryStorage<AddressType, DataType>::read(std::span<DataType> stream, Addr
     if (addressTranslator_) {
         address = addressTranslator_(address);
     }
+    if (readInterceptor_ && readInterceptor_(address, stream)) {
+        return;
+    }
     const auto src = readableSpan(address, stream.size());
     std::copy(src.begin(), src.end(), stream.begin());
 }

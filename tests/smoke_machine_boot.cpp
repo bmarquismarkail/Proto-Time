@@ -178,6 +178,24 @@ int main() {
     host.step();
     assert(host.runtimeContext().read8(0xFF4F) == 0x91);
 
+    std::vector<uint8_t> inaccessibleTailRom(0x8000, 0x00);
+    inaccessibleTailRom[0x0100] = 0x3E;
+    inaccessibleTailRom[0x0101] = 0x42;
+    inaccessibleTailRom[0x0102] = 0xEA;
+    inaccessibleTailRom[0x0103] = 0xA0;
+    inaccessibleTailRom[0x0104] = 0xFE;
+    inaccessibleTailRom[0x0105] = 0xFA;
+    inaccessibleTailRom[0x0106] = 0xA0;
+    inaccessibleTailRom[0x0107] = 0xFE;
+    inaccessibleTailRom[0x0108] = 0x00;
+    host.loadRom(inaccessibleTailRom);
+    assert(host.runtimeContext().read8(0xFEA0) == 0xFF);
+    host.step();
+    host.step();
+    assert(host.runtimeContext().read8(0xFEA0) == 0xFF);
+    host.step();
+    assert(host.readRegisterPair(BMMQ::RegisterId::AF) == static_cast<uint16_t>(0xFFB0));
+
     std::vector<uint8_t> mbc1Rom(0x10000, 0x00);
     mbc1Rom[0x0147] = 0x01;
     mbc1Rom[0x0148] = 0x01;
