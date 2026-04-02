@@ -39,11 +39,11 @@ public:
     }
 
     DataType read8(AddressType address) const override {
-        return memoryMap_.read8(address);
+        return memoryMap_.read8(resolveEchoAddress(address));
     }
 
     void write8(AddressType address, DataType value) override {
-        memoryMap_.write8(address, value);
+        memoryMap_.write8(resolveEchoAddress(address), value);
     }
 
     uint16_t readRegister16(BMMQ::RegisterId id) const override {
@@ -85,6 +85,13 @@ public:
     }
 
 private:
+    static AddressType resolveEchoAddress(AddressType address) {
+        if (address >= 0xE000 && address <= 0xFDFF) {
+            return static_cast<AddressType>(address - 0x2000);
+        }
+        return address;
+    }
+
     using RegisterEntry = decltype(std::declval<BMMQ::RegisterFile<uint16_t>&>().findRegister(BMMQ::RegisterId::AF));
 
     RegisterEntry requireRegisterEntry(BMMQ::RegisterId id) const {
@@ -375,9 +382,17 @@ private:
         memoryMap_.mapRange(0xfe00, 0x00a0, BMMQ::memAccess::ReadWrite);
         memoryMap_.mapRange(0xfea0, 0x0060, BMMQ::memAccess::Unmapped);
         memoryMap_.mapRange(0xff00, 0x004c, BMMQ::memAccess::ReadWrite);
-        memoryMap_.mapRange(0xff4c, 0x0034, BMMQ::memAccess::Unmapped);
+        memoryMap_.mapRange(0xff4c, 0x0001, BMMQ::memAccess::Unmapped);
+        memoryMap_.mapRange(0xff4d, 0x001f, BMMQ::memAccess::ReadWrite);
+        memoryMap_.mapRange(0xff6c, 0x0014, BMMQ::memAccess::Unmapped);
         memoryMap_.mapRange(0xff80, 0x007f, BMMQ::memAccess::ReadWrite);
         memoryMap_.mapRange(0xffff, 0x0001, BMMQ::memAccess::ReadWrite);
+        memoryMap_.storage().setAddressTranslator([](uint16_t address) {
+            if (address >= 0xE000 && address <= 0xFDFF) {
+                return static_cast<uint16_t>(address - 0x2000);
+            }
+            return address;
+        });
         memoryMap_.storage().setWriteInterceptor([this](uint16_t address, std::span<const uint8_t> value) {
             return handleCartridgeWrite(address, value);
         });

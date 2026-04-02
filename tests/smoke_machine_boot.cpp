@@ -138,8 +138,14 @@ int main() {
     assert(host.runtimeContext().readRegister16(BMMQ::RegisterId::HL) == 0x014D);
     host.runtimeContext().write8(0xC000, 0xAA);
     assert(host.runtimeContext().read8(0xC000) == 0xAA);
+    assert(host.runtimeContext().read8(0xE000) == 0xAA);
+    host.runtimeContext().write8(0xE000, 0xBB);
+    assert(host.runtimeContext().read8(0xC000) == 0xBB);
     host.runtimeContext().write16(0xC100, 0x3456);
     assert(host.runtimeContext().read16(0xC100) == 0x3456);
+    assert(host.runtimeContext().read16(0xE100) == 0x3456);
+    host.runtimeContext().write8(0xFF68, 0x91);
+    assert(host.runtimeContext().read8(0xFF68) == 0x91);
     host.step();
     assert(host.readRegisterPair(BMMQ::RegisterId::AF) == static_cast<uint16_t>(0x12B0));
     assert(host.runtimeContext().readRegister16(BMMQ::RegisterId::AF) == static_cast<uint16_t>(0x12B0));
@@ -152,6 +158,25 @@ int main() {
     host.runtimeContext().commitVisibleState();
     assert(host.runtimeContext().getLastFeedback().pcBefore == 0x0100);
     assert(host.runtimeContext().getLastFeedback().pcAfter == 0x0102);
+
+    std::vector<uint8_t> mappedIoRom(0x8000, 0x00);
+    mappedIoRom[0x0100] = 0x3E;
+    mappedIoRom[0x0101] = 0x77;
+    mappedIoRom[0x0102] = 0xEA;
+    mappedIoRom[0x0103] = 0x00;
+    mappedIoRom[0x0104] = 0xE0;
+    mappedIoRom[0x0105] = 0x3E;
+    mappedIoRom[0x0106] = 0x91;
+    mappedIoRom[0x0107] = 0xE0;
+    mappedIoRom[0x0108] = 0x4F;
+    mappedIoRom[0x0109] = 0x00;
+    host.loadRom(mappedIoRom);
+    host.step();
+    host.step();
+    assert(host.runtimeContext().read8(0xC000) == 0x77);
+    host.step();
+    host.step();
+    assert(host.runtimeContext().read8(0xFF4F) == 0x91);
 
     std::vector<uint8_t> mbc1Rom(0x10000, 0x00);
     mbc1Rom[0x0147] = 0x01;

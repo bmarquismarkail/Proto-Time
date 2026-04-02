@@ -100,6 +100,9 @@ template<typename AddressType, typename DataType>
 void MemoryStorage<AddressType, DataType>::read(std::span<DataType> stream, AddressType address) const
 {
     if (stream.empty()) return;
+    if (addressTranslator_) {
+        address = addressTranslator_(address);
+    }
     const auto src = readableSpan(address, stream.size());
     std::copy(src.begin(), src.end(), stream.begin());
 }
@@ -108,6 +111,9 @@ template<typename AddressType, typename DataType>
 void MemoryStorage<AddressType, DataType>::write(std::span<const DataType> value, AddressType address)
 {
     if (value.empty()) return;
+    if (addressTranslator_) {
+        address = addressTranslator_(address);
+    }
     if (writeInterceptor_ && writeInterceptor_(address, value)) {
         return;
     }

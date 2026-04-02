@@ -41,6 +41,10 @@ public:
     {
         writeInterceptor_ = std::move(interceptor);
     }
+    void setAddressTranslator(std::function<AddressType(AddressType)> translator)
+    {
+        addressTranslator_ = std::move(translator);
+    }
     void read(DataType* stream, AddressType address, AddressType count) const
     {
         if constexpr (std::is_signed_v<AddressType>) {
@@ -63,6 +67,7 @@ private:
     std::vector<std::tuple<starting_address_t, ending_address_t, memAccess>> map;
     std::vector<DataType> mem;
     std::function<bool(AddressType, std::span<const DataType>)> writeInterceptor_;
+    std::function<AddressType(AddressType)> addressTranslator_;
 };
 //////////////////////////////////////////////////////////
 }
