@@ -3,6 +3,8 @@
 
 #include <deque>
 #include <memory>
+#include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -41,7 +43,8 @@ struct CPU_RegisterPair : public CPU_Register<T> {
 
 template<typename T>
 struct RegisterEntry {
-    RegisterId id = RegisterId::AF;
+    std::string name;
+    RegisterDescriptor descriptor;
     std::unique_ptr<CPU_Register<T>> reg;
 };
 
@@ -56,38 +59,43 @@ public:
     ~RegisterFile() = default;
 
     const std::deque<RegisterEntry<T>>& entries() const noexcept;
-    bool hasRegister(RegisterId id) const;
     bool hasRegister(std::string_view id) const;
-    RegisterEntry<T>* findRegister(RegisterId id);
-    const RegisterEntry<T>* findRegister(RegisterId id) const;
     RegisterEntry<T>* findRegister(std::string_view id);
     const RegisterEntry<T>* findRegister(std::string_view id) const;
-    RegisterEntry<T>& addRegister(RegisterId id, bool isPair = false);
+    bool hasDescriptor(std::string_view id) const;
+    RegisterDescriptor* findDescriptor(std::string_view id);
+    const RegisterDescriptor* findDescriptor(std::string_view id) const;
+    RegisterDescriptor& registerDescriptor(RegisterDescriptor descriptor);
+    RegisterEntry<T>& addRegister(const RegisterDescriptor& descriptor);
     RegisterEntry<T>& addRegister(std::string_view id, bool isPair = false);
-    RegisterEntry<T>& findOrInsert(RegisterId id, bool isPair = false);
+    RegisterEntry<T>& findOrInsert(const RegisterDescriptor& descriptor);
     RegisterEntry<T>& findOrInsert(std::string_view id, bool isPair = false);
 
 private:
     std::deque<RegisterEntry<T>> file;
+    std::deque<RegisterDescriptor> descriptors_;
 };
 
 template<typename T>
 class RegisterInfo {
 public:
+    explicit RegisterInfo(std::string_view id) noexcept
+        : name_(id) {}
+
     explicit RegisterInfo(RegisterId id) noexcept
-        : id_(id) {}
+        : name_(id.value) {}
 
-    RegisterInfo(RegisterFile<T>& file, RegisterId id);
     RegisterInfo(RegisterFile<T>& file, std::string_view id);
+    RegisterInfo(RegisterFile<T>& file, RegisterId id);
 
-    void registration(RegisterFile<T>& file, RegisterId id);
     void registration(RegisterFile<T>& file, std::string_view id);
+    void registration(RegisterFile<T>& file, RegisterId id);
     CPU_Register<T>* operator()() const;
     CPU_Register<T>* operator->() const;
-    RegisterId getRegisterID() const noexcept;
+    std::string_view getRegisterName() const noexcept;
 
 private:
-    RegisterId id_;
+    std::string name_;
     CPU_Register<T>* reg_ = nullptr;
 };
 

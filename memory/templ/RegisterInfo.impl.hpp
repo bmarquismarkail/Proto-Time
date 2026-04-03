@@ -3,22 +3,22 @@
 namespace BMMQ {
 
 template<typename T>
-RegisterInfo<T>::RegisterInfo(RegisterFile<T>& file, RegisterId id)
-    : id_(id)
+RegisterInfo<T>::RegisterInfo(RegisterFile<T>& file, std::string_view id)
+    : name_(id)
 {
     registration(file, id);
 }
 
 template<typename T>
-RegisterInfo<T>::RegisterInfo(RegisterFile<T>& file, std::string_view id)
-    : RegisterInfo(file, registerIdFromString(id))
+RegisterInfo<T>::RegisterInfo(RegisterFile<T>& file, RegisterId id)
+    : RegisterInfo(file, id.value)
 {
 }
 
 template<typename T>
-void RegisterInfo<T>::registration(RegisterFile<T>& file, RegisterId id)
+void RegisterInfo<T>::registration(RegisterFile<T>& file, std::string_view id)
 {
-    id_ = id;
+    name_ = std::string(id);
     auto* entry = file.findRegister(id);
     if (entry == nullptr || entry->reg == nullptr) {
         throw std::invalid_argument("register not found");
@@ -27,9 +27,9 @@ void RegisterInfo<T>::registration(RegisterFile<T>& file, RegisterId id)
 }
 
 template<typename T>
-void RegisterInfo<T>::registration(RegisterFile<T>& file, std::string_view id)
+void RegisterInfo<T>::registration(RegisterFile<T>& file, RegisterId id)
 {
-    registration(file, registerIdFromString(id));
+    registration(file, id.value);
 }
 
 template<typename T>
@@ -48,9 +48,9 @@ CPU_Register<T>* RegisterInfo<T>::operator->() const
 }
 
 template<typename T>
-RegisterId RegisterInfo<T>::getRegisterID() const noexcept
+std::string_view RegisterInfo<T>::getRegisterName() const noexcept
 {
-    return id_;
+    return name_;
 }
 
 } // namespace BMMQ

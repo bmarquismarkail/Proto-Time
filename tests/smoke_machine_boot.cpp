@@ -56,8 +56,10 @@ int main() {
         void execute(const ExecutionBlock&, FetchBlock&) override { executed = true; }
         uint8_t read8(AddressType address) const override { return memory[address % 4]; }
         void write8(AddressType address, DataType value) override { memory[address % 4] = value; }
-        uint16_t readRegister16(BMMQ::RegisterId) const override { return regValue; }
-        void writeRegister16(BMMQ::RegisterId, uint16_t value) override { regValue = value; }
+        uint8_t readRegister8(std::string_view) const override { return static_cast<uint8_t>(regValue & 0x00FFu); }
+        void writeRegister8(std::string_view, uint8_t value) override { regValue = value; }
+        uint16_t readRegister16(std::string_view) const override { return regValue; }
+        void writeRegister16(std::string_view, uint16_t value) override { regValue = value; }
         const BMMQ::CpuFeedback& getLastFeedback() const override { return feedback; }
         BMMQ::ExecutionGuarantee guarantee() const override {
             return BMMQ::ExecutionGuarantee::BaselineFaithful;
@@ -93,7 +95,7 @@ int main() {
         void loadRom(const std::vector<uint8_t>&) override {}
         BMMQ::RuntimeContext& runtimeContext() override { return context; }
         const BMMQ::RuntimeContext& runtimeContext() const override { return context; }
-        uint16_t readRegisterPair(BMMQ::RegisterId) const override { return 0; }
+        uint16_t readRegisterPair(std::string_view) const override { return 0; }
         void attachExecutorPolicy(BMMQ::Plugin::IExecutorPolicyPlugin&) override {}
         const BMMQ::Plugin::IExecutorPolicyPlugin& attachedExecutorPolicy() const override { return policy; }
     };
@@ -215,13 +217,7 @@ int main() {
 
     LR3592_DMG core;
     assert(core.getMemory().file.findRegister("mdr") == nullptr);
-    bool missingMarThrew = false;
-    try {
-        (void)core.getMemory().file.findRegister("mar");
-    } catch (const std::invalid_argument&) {
-        missingMarThrew = true;
-    }
-    assert(missingMarThrew);
+    assert(core.getMemory().file.findRegister("mar") == nullptr);
 
     static_assert(!HasStepBaseline<GameBoyMachine>::value);
     static_assert(!HasHasCpu<GameBoyMachine>::value);

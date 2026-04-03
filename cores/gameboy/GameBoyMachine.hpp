@@ -47,25 +47,83 @@ public:
         memoryMap_.write8(resolveEchoAddress(address), value);
     }
 
-    uint16_t readRegister16(BMMQ::RegisterId id) const override {
+    uint8_t readRegister8(std::string_view id) const override {
+        const auto& descriptor = requireDescriptor(id);
+        if (descriptor.width != BMMQ::RegisterWidth::Byte8) {
+            throw std::invalid_argument("register width mismatch");
+        }
+        if (descriptor.storage == BMMQ::RegisterStorage::AddressMapped) {
+            if (!descriptor.mappedAddress.has_value()) {
+                throw std::invalid_argument("address-backed register missing address");
+            }
+            return read8(*descriptor.mappedAddress);
+        }
         auto* entry = requireRegisterEntry(id);
-        return entry->reg->value;
+        return static_cast<uint8_t>(entry->reg->value & 0x00FFu);
     }
 
-    void writeRegister16(BMMQ::RegisterId id, uint16_t value) override {
+    void writeRegister8(std::string_view id, uint8_t value) override {
+        const auto& descriptor = requireDescriptor(id);
+        if (descriptor.width != BMMQ::RegisterWidth::Byte8) {
+            throw std::invalid_argument("register width mismatch");
+        }
+        if (descriptor.storage == BMMQ::RegisterStorage::AddressMapped) {
+            if (!descriptor.mappedAddress.has_value()) {
+                throw std::invalid_argument("address-backed register missing address");
+            }
+            write8(*descriptor.mappedAddress, value);
+            return;
+        }
         auto* entry = requireRegisterEntry(id);
         entry->reg->value = value;
     }
 
-    uint16_t readRegisterPair(BMMQ::RegisterId id) const override {
+    uint16_t readRegister16(std::string_view id) const override {
+        const auto& descriptor = requireDescriptor(id);
+        if (descriptor.width != BMMQ::RegisterWidth::Word16) {
+            throw std::invalid_argument("register width mismatch");
+        }
+        if (descriptor.storage == BMMQ::RegisterStorage::AddressMapped) {
+            if (!descriptor.mappedAddress.has_value()) {
+                throw std::invalid_argument("address-backed register missing address");
+            }
+            return read16(*descriptor.mappedAddress);
+        }
         auto* entry = requireRegisterEntry(id);
-        ensurePairRegister(entry);
         return entry->reg->value;
     }
 
-    void writeRegisterPair(BMMQ::RegisterId id, uint16_t value) override {
+    void writeRegister16(std::string_view id, uint16_t value) override {
+        const auto& descriptor = requireDescriptor(id);
+        if (descriptor.width != BMMQ::RegisterWidth::Word16) {
+            throw std::invalid_argument("register width mismatch");
+        }
+        if (descriptor.storage == BMMQ::RegisterStorage::AddressMapped) {
+            if (!descriptor.mappedAddress.has_value()) {
+                throw std::invalid_argument("address-backed register missing address");
+            }
+            write16(*descriptor.mappedAddress, value);
+            return;
+        }
         auto* entry = requireRegisterEntry(id);
-        ensurePairRegister(entry);
+        entry->reg->value = value;
+    }
+
+    uint16_t readRegisterPair(std::string_view id) const override {
+        const auto& descriptor = requireDescriptor(id);
+        if (!descriptor.isPair) {
+            throw std::invalid_argument("register is not a pair");
+        }
+        auto* entry = requireRegisterEntry(id);
+        return entry->reg->value;
+    }
+
+    void writeRegisterPair(std::string_view id, uint16_t value) override {
+        const auto& descriptor = requireDescriptor(id);
+        if (!descriptor.isPair) {
+            throw std::invalid_argument("register is not a pair");
+        }
+        auto* entry = requireRegisterEntry(id);
         entry->reg->value = value;
     }
 
@@ -93,29 +151,22 @@ private:
         return address;
     }
 
-    using RegisterEntry = decltype(std::declval<BMMQ::RegisterFile<uint16_t>&>().findRegister(BMMQ::RegisterId::AF));
+    using RegisterEntry = decltype(std::declval<BMMQ::RegisterFile<uint16_t>&>().findRegister("AF"));
 
-    RegisterEntry requireRegisterEntry(BMMQ::RegisterId id) const {
-        if (id != BMMQ::RegisterId::AF &&
-            id != BMMQ::RegisterId::BC &&
-            id != BMMQ::RegisterId::DE &&
-            id != BMMQ::RegisterId::HL &&
-            id != BMMQ::RegisterId::SP &&
-            id != BMMQ::RegisterId::PC) {
-            throw std::invalid_argument("register is not part of visible 16-bit machine state");
+    const BMMQ::RegisterDescriptor& requireDescriptor(std::string_view id) const {
+        const auto* descriptor = runtime_.cpu().getMemory().file.findDescriptor(id);
+        if (descriptor == nullptr) {
+            throw std::invalid_argument("register not found");
         }
+        return *descriptor;
+    }
+
+    RegisterEntry requireRegisterEntry(std::string_view id) const {
         auto* entry = runtime_.cpu().getMemory().file.findRegister(id);
         if (entry == nullptr || entry->reg == nullptr) {
             throw std::invalid_argument("register not found");
         }
         return entry;
-    }
-
-    void ensurePairRegister(RegisterEntry entry) const {
-        auto* reg = dynamic_cast<BMMQ::CPU_RegisterPair<uint16_t>*>(entry->reg.get());
-        if (reg == nullptr) {
-            throw std::invalid_argument("register is not a pair");
-        }
     }
 
     LR3592_PluginRuntime& runtime_;
@@ -148,17 +199,16 @@ public:
         romLoaded_ = true;
     }
 
-    uint16_t readRegisterPair(BMMQ::RegisterId id) const override {
+    uint16_t readRegisterPair(std::string_view id) const override {
+        const auto* descriptor = cpu_.cpu().getMemory().file.findDescriptor(id);
+        if (descriptor == nullptr || !descriptor->isPair) {
+            throw std::invalid_argument("register is not a pair");
+        }
         auto* entry = cpu_.cpu().getMemory().file.findRegister(id);
         if (entry == nullptr || entry->reg == nullptr) {
             throw std::invalid_argument("register not found");
         }
-
-        auto* reg = dynamic_cast<BMMQ::CPU_RegisterPair<uint16_t>*>(entry->reg.get());
-        if (reg == nullptr) {
-            throw std::invalid_argument("register is not a pair");
-        }
-        return reg->value;
+        return entry->reg->value;
     }
 
     BMMQ::RuntimeContext& runtimeContext() override {

@@ -77,12 +77,14 @@ public:
         write8(address, static_cast<DataType>(value & 0x00FFu));
         write8(static_cast<AddressType>(address + 1), static_cast<DataType>((value >> 8) & 0x00FFu));
     }
-    virtual uint16_t readRegister16(RegisterId id) const = 0;
-    virtual void writeRegister16(RegisterId id, uint16_t value) = 0;
-    virtual uint16_t readRegisterPair(RegisterId id) const {
+    virtual uint8_t readRegister8(std::string_view id) const = 0;
+    virtual void writeRegister8(std::string_view id, uint8_t value) = 0;
+    virtual uint16_t readRegister16(std::string_view id) const = 0;
+    virtual void writeRegister16(std::string_view id, uint16_t value) = 0;
+    virtual uint16_t readRegisterPair(std::string_view id) const {
         return readRegister16(id);
     }
-    virtual void writeRegisterPair(RegisterId id, uint16_t value) {
+    virtual void writeRegisterPair(std::string_view id, uint16_t value) {
         writeRegister16(id, value);
     }
     virtual void commitVisibleState() {}

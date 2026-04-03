@@ -1,57 +1,64 @@
 #ifndef BMMQ_REGISTER_ID_HPP
 #define BMMQ_REGISTER_ID_HPP
 
-#include <stdexcept>
+#include <cstdint>
+#include <optional>
+#include <string>
 #include <string_view>
 
 namespace BMMQ {
 
-enum class RegisterId {
-    AF,
-    BC,
-    DE,
-    HL,
-    SP,
-    PC,
-    MDR,
-    IME,
+struct RegisterId {
+    std::string_view value {};
+
+    constexpr RegisterId() noexcept = default;
+    constexpr RegisterId(std::string_view v) noexcept
+        : value(v) {}
+
+    constexpr operator std::string_view() const noexcept
+    {
+        return value;
+    }
+
+    static const RegisterId AF;
+    static const RegisterId BC;
+    static const RegisterId DE;
+    static const RegisterId HL;
+    static const RegisterId SP;
+    static const RegisterId PC;
+    static const RegisterId IME;
 };
 
-constexpr std::string_view toString(RegisterId id) noexcept
+enum class RegisterWidth {
+    Byte8,
+    Word16,
+};
+
+enum class RegisterStorage {
+    RegisterFile,
+    AddressMapped,
+};
+
+struct RegisterDescriptor {
+    std::string name;
+    RegisterWidth width = RegisterWidth::Word16;
+    RegisterStorage storage = RegisterStorage::RegisterFile;
+    std::optional<uint16_t> mappedAddress {};
+    bool isPair = false;
+};
+
+inline constexpr std::string_view registerNameOf(const RegisterDescriptor& descriptor) noexcept
 {
-    switch (id) {
-    case RegisterId::AF:
-        return "AF";
-    case RegisterId::BC:
-        return "BC";
-    case RegisterId::DE:
-        return "DE";
-    case RegisterId::HL:
-        return "HL";
-    case RegisterId::SP:
-        return "SP";
-    case RegisterId::PC:
-        return "PC";
-    case RegisterId::MDR:
-        return "MDR";
-    case RegisterId::IME:
-        return "IME";
-    }
-    return "unknown";
+    return descriptor.name;
 }
 
-inline RegisterId registerIdFromString(std::string_view name)
-{
-    if (name == "AF") return RegisterId::AF;
-    if (name == "BC") return RegisterId::BC;
-    if (name == "DE") return RegisterId::DE;
-    if (name == "HL") return RegisterId::HL;
-    if (name == "SP") return RegisterId::SP;
-    if (name == "PC") return RegisterId::PC;
-    if (name == "mdr" || name == "MDR") return RegisterId::MDR;
-    if (name == "ime" || name == "IME") return RegisterId::IME;
-    throw std::invalid_argument("unknown register id");
-}
+inline constexpr RegisterId RegisterId::AF{"AF"};
+inline constexpr RegisterId RegisterId::BC{"BC"};
+inline constexpr RegisterId RegisterId::DE{"DE"};
+inline constexpr RegisterId RegisterId::HL{"HL"};
+inline constexpr RegisterId RegisterId::SP{"SP"};
+inline constexpr RegisterId RegisterId::PC{"PC"};
+inline constexpr RegisterId RegisterId::IME{"IME"};
 
 } // namespace BMMQ
 

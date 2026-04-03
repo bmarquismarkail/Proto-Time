@@ -32,7 +32,7 @@ public:
     virtual void step() {
         runtimeContext().step();
     }
-    virtual uint16_t readRegisterPair(RegisterId id) const = 0;
+    virtual uint16_t readRegisterPair(std::string_view id) const = 0;
 };
 
 } // namespace BMMQ

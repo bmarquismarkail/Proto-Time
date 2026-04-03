@@ -16,7 +16,6 @@ namespace BMMQ {
 		MemorySnapshot(MemoryStorage<AddressType, DataType>& m);
 		void read(std::span<DataType> stream, AddressType address) override;
 		void write(std::span<const DataType> stream, AddressType address) override;
-		void copyRegisterFromMainFile(RegisterId regId, RegisterFile<RegType>& from);
 		void copyRegisterFromMainFile(std::string_view regId, RegisterFile<RegType>& from);
 		CPU_Register<RegType>* findOrCreateNewRegister(const std::string& regId, bool isPair= false);
 		RegisterFile<RegType> file;

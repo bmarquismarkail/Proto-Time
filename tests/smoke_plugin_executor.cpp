@@ -50,8 +50,10 @@ int main()
         }
         uint8_t read8(AddressType) const override { return 0; }
         void write8(AddressType, DataType) override {}
-        uint16_t readRegister16(BMMQ::RegisterId) const override { return 0; }
-        void writeRegister16(BMMQ::RegisterId, uint16_t) override {}
+        uint8_t readRegister8(std::string_view) const override { return 0; }
+        void writeRegister8(std::string_view, uint8_t) override {}
+        uint16_t readRegister16(std::string_view) const override { return 0; }
+        void writeRegister16(std::string_view, uint16_t) override {}
         const BMMQ::CpuFeedback& getLastFeedback() const override { return feedback; }
         BMMQ::ExecutionGuarantee guarantee() const override {
             return BMMQ::ExecutionGuarantee::BaselineFaithful;
