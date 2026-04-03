@@ -118,7 +118,7 @@ int main()
     assert(recordedSegments.size() == 1);
     assert(recordedSegments[0].blocks.size() == 1);
 
-    assert(host.readRegisterPair(BMMQ::RegisterId::AF) == static_cast<uint16_t>(0x12B0));
+    assert(host.readRegisterPair(GB::RegisterId::AF) == static_cast<uint16_t>(0x12B0));
 
     namespace fs = std::filesystem;
     const fs::path scriptPath = fs::temp_directory_path() / "time_plugin_executor_smoke.blocks";

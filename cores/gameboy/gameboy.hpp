@@ -16,6 +16,7 @@
 #include "../../memory/MemoryPool.hpp"
 #include "../../memory/MemorySnapshot/MemorySnapshot.hpp"
 #include "../../memory/templ/reg_uint16.impl.hpp"
+#include "register_id.hpp"
 
 using AddressType = uint16_t;
 using DataType = uint8_t;
@@ -73,12 +74,12 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   void populateOpcodes();
 
 public:
-  BMMQ::RegisterInfo<AddressType> AF{BMMQ::RegisterId::AF};
-  BMMQ::RegisterInfo<AddressType> BC{BMMQ::RegisterId::BC};
-  BMMQ::RegisterInfo<AddressType> DE{BMMQ::RegisterId::DE};
-  BMMQ::RegisterInfo<AddressType> HL{BMMQ::RegisterId::HL};
-  BMMQ::RegisterInfo<AddressType> SP{BMMQ::RegisterId::SP};
-  BMMQ::RegisterInfo<AddressType> PC{BMMQ::RegisterId::PC};
+  BMMQ::RegisterInfo<AddressType> AF{GB::RegisterId::AF};
+  BMMQ::RegisterInfo<AddressType> BC{GB::RegisterId::BC};
+  BMMQ::RegisterInfo<AddressType> DE{GB::RegisterId::DE};
+  BMMQ::RegisterInfo<AddressType> HL{GB::RegisterId::HL};
+  BMMQ::RegisterInfo<AddressType> SP{GB::RegisterId::SP};
+  BMMQ::RegisterInfo<AddressType> PC{GB::RegisterId::PC};
 
   // CTOR
 

@@ -71,7 +71,7 @@ void requireDecodeFailure(const std::vector<uint8_t>& program)
 void loadAndSetPc(LR3592_DMG& cpu, uint16_t address, const std::vector<uint8_t>& program)
 {
     cpu.loadProgram(program, address);
-    scalar(cpu, BMMQ::RegisterId::PC, address);
+    scalar(cpu, GB::RegisterId::PC, address);
 }
 
 }
@@ -82,39 +82,39 @@ int main()
         LR3592_DMG cpu;
         cpu.loadProgram({0x00, 0x00, 0x00});
         step(cpu);
-        assert(pair(cpu, BMMQ::RegisterId::AF)->hi == 0x00);
-        assert(scalar(cpu, BMMQ::RegisterId::PC) == 1);
+        assert(pair(cpu, GB::RegisterId::AF)->hi == 0x00);
+        assert(scalar(cpu, GB::RegisterId::PC) == 1);
     }
 
     {
         LR3592_DMG cpu;
         cpu.loadProgram({0x01, 0x34, 0x12});
         step(cpu);
-        assert(pair(cpu, BMMQ::RegisterId::BC)->value == 0x1234);
-        assert(scalar(cpu, BMMQ::RegisterId::PC) == 3);
+        assert(pair(cpu, GB::RegisterId::BC)->value == 0x1234);
+        assert(scalar(cpu, GB::RegisterId::PC) == 3);
     }
 
     {
         LR3592_DMG cpu;
         loadAndSetPc(cpu, 0x0000, {0x3E, 0x12, 0x00});
         step(cpu);
-        assert(pair(cpu, BMMQ::RegisterId::AF)->hi == 0x12);
-        assert(scalar(cpu, BMMQ::RegisterId::PC) == 2);
+        assert(pair(cpu, GB::RegisterId::AF)->hi == 0x12);
+        assert(scalar(cpu, GB::RegisterId::PC) == 2);
 
         loadAndSetPc(cpu, 0x0004, {0x06, 0x00, 0x00});
         step(cpu);
-        assert(pair(cpu, BMMQ::RegisterId::BC)->hi == 0x00);
+        assert(pair(cpu, GB::RegisterId::BC)->hi == 0x00);
     }
 
     {
         LR3592_DMG cpu;
         loadAndSetPc(cpu, 0x0000, {0x06, 0x34, 0x00});
         step(cpu);
-        assert(pair(cpu, BMMQ::RegisterId::BC)->hi == 0x34);
+        assert(pair(cpu, GB::RegisterId::BC)->hi == 0x34);
 
         loadAndSetPc(cpu, 0x0004, {0x78, 0x00, 0x00});
         step(cpu);
-        assert(pair(cpu, BMMQ::RegisterId::AF)->hi == 0x34);
+        assert(pair(cpu, GB::RegisterId::AF)->hi == 0x34);
     }
 
     {
@@ -123,7 +123,7 @@ int main()
         step(cpu);
         loadAndSetPc(cpu, 0x0004, {0xC6, 0x05, 0x00});
         step(cpu);
-        assert(pair(cpu, BMMQ::RegisterId::AF)->hi == 0x15);
+        assert(pair(cpu, GB::RegisterId::AF)->hi == 0x15);
     }
 
     {
@@ -133,114 +133,114 @@ int main()
         loadAndSetPc(cpu, 0x0004, {0x06, 0x05, 0x00});
         step(cpu);
         cpu.loadProgram({0x80, 0x00, 0x00}, 4);
-        scalar(cpu, BMMQ::RegisterId::PC, 4);
+        scalar(cpu, GB::RegisterId::PC, 4);
         step(cpu);
-        assert(pair(cpu, BMMQ::RegisterId::AF)->hi == 0x15);
+        assert(pair(cpu, GB::RegisterId::AF)->hi == 0x15);
     }
 
     {
         LR3592_DMG cpu;
         cpu.loadProgram({0x18, 0x02, 0x00}, 0);
         step(cpu);
-        assert(scalar(cpu, BMMQ::RegisterId::PC) == 4);
+        assert(scalar(cpu, GB::RegisterId::PC) == 4);
     }
 
     {
         LR3592_DMG cpu;
-        pair(cpu, BMMQ::RegisterId::AF)->lo = 0x80;
+        pair(cpu, GB::RegisterId::AF)->lo = 0x80;
         cpu.loadProgram({0x28, 0x02, 0x00}, 0);
         step(cpu);
-        assert(scalar(cpu, BMMQ::RegisterId::PC) == 4);
+        assert(scalar(cpu, GB::RegisterId::PC) == 4);
     }
 
     {
         LR3592_DMG cpu;
         cpu.loadProgram({0xC3, 0x34, 0x12}, 0);
         step(cpu);
-        assert(scalar(cpu, BMMQ::RegisterId::PC) == 0x1234);
+        assert(scalar(cpu, GB::RegisterId::PC) == 0x1234);
     }
 
     {
         LR3592_DMG cpu;
-        scalar(cpu, BMMQ::RegisterId::SP, 0xC100);
+        scalar(cpu, GB::RegisterId::SP, 0xC100);
         cpu.loadProgram({0xCD, 0x06, 0x00}, 0);
         cpu.loadProgram({0xC9, 0x00, 0x00}, 6);
         step(cpu);
-        assert(scalar(cpu, BMMQ::RegisterId::PC) == 0x0006);
-        assert(scalar(cpu, BMMQ::RegisterId::SP) == 0xC0FE);
+        assert(scalar(cpu, GB::RegisterId::PC) == 0x0006);
+        assert(scalar(cpu, GB::RegisterId::SP) == 0xC0FE);
 
         step(cpu);
-        assert(scalar(cpu, BMMQ::RegisterId::PC) == 0x0003);
-        assert(scalar(cpu, BMMQ::RegisterId::SP) == 0xC100);
+        assert(scalar(cpu, GB::RegisterId::PC) == 0x0003);
+        assert(scalar(cpu, GB::RegisterId::SP) == 0xC100);
     }
 
     {
         LR3592_DMG cpu;
-        pair(cpu, BMMQ::RegisterId::BC)->value = 0x1234;
-        scalar(cpu, BMMQ::RegisterId::SP, 0xC100);
+        pair(cpu, GB::RegisterId::BC)->value = 0x1234;
+        scalar(cpu, GB::RegisterId::SP, 0xC100);
         loadAndSetPc(cpu, 0x0000, {0xC5, 0x00, 0x00});
         step(cpu);
-        assert(scalar(cpu, BMMQ::RegisterId::SP) == 0xC0FE);
+        assert(scalar(cpu, GB::RegisterId::SP) == 0xC0FE);
 
         loadAndSetPc(cpu, 0x0004, {0xD1, 0x00, 0x00});
         step(cpu);
-        assert(pair(cpu, BMMQ::RegisterId::DE)->value == 0x1234);
-        assert(scalar(cpu, BMMQ::RegisterId::SP) == 0xC100);
+        assert(pair(cpu, GB::RegisterId::DE)->value == 0x1234);
+        assert(scalar(cpu, GB::RegisterId::SP) == 0xC100);
     }
 
     {
         LR3592_DMG cpu;
-        pair(cpu, BMMQ::RegisterId::AF)->hi = 0x42;
+        pair(cpu, GB::RegisterId::AF)->hi = 0x42;
         loadAndSetPc(cpu, 0x0000, {0xE0, 0x10, 0x00});
         step(cpu);
         assert(readByte(cpu, 0xFF10) == 0x42);
 
         loadAndSetPc(cpu, 0x0004, {0xF0, 0x10, 0x00});
-        pair(cpu, BMMQ::RegisterId::AF)->hi = 0x00; // clear A before loading back
+        pair(cpu, GB::RegisterId::AF)->hi = 0x00; // clear A before loading back
         step(cpu);
-        assert(pair(cpu, BMMQ::RegisterId::AF)->hi == 0x42);
+        assert(pair(cpu, GB::RegisterId::AF)->hi == 0x42);
     }
 
     {
         LR3592_DMG cpu;
-        pair(cpu, BMMQ::RegisterId::AF)->hi = 0x77;
+        pair(cpu, GB::RegisterId::AF)->hi = 0x77;
         cpu.loadProgram({0xEA, 0x00, 0xC0}, 0);
         step(cpu);
         assert(readByte(cpu, 0xC000) == 0x77);
 
         cpu.loadProgram({0xFA, 0x00, 0xC0}, 4);
-        pair(cpu, BMMQ::RegisterId::AF)->hi = 0x00;
-        scalar(cpu, BMMQ::RegisterId::PC, 4);
+        pair(cpu, GB::RegisterId::AF)->hi = 0x00;
+        scalar(cpu, GB::RegisterId::PC, 4);
         step(cpu);
-        assert(pair(cpu, BMMQ::RegisterId::AF)->hi == 0x77);
+        assert(pair(cpu, GB::RegisterId::AF)->hi == 0x77);
     }
 
     {
         LR3592_DMG cpu;
-        pair(cpu, BMMQ::RegisterId::HL)->value = 0xC000;
+        pair(cpu, GB::RegisterId::HL)->value = 0xC000;
         loadAndSetPc(cpu, 0x0000, {0x22, 0x00, 0x00});
-        pair(cpu, BMMQ::RegisterId::AF)->hi = 0x10;
+        pair(cpu, GB::RegisterId::AF)->hi = 0x10;
         step(cpu);
         assert(readByte(cpu, 0xC000) == 0x10);
-        assert(pair(cpu, BMMQ::RegisterId::HL)->value == 0xC001);
+        assert(pair(cpu, GB::RegisterId::HL)->value == 0xC001);
 
-        pair(cpu, BMMQ::RegisterId::AF)->hi = 0x00;
+        pair(cpu, GB::RegisterId::AF)->hi = 0x00;
         cpu.getMemory().store.load(std::span<const uint8_t>({0x33}), static_cast<uint16_t>(0xC001));
         loadAndSetPc(cpu, 0x0004, {0x2A, 0x00, 0x00});
         step(cpu);
-        assert(pair(cpu, BMMQ::RegisterId::AF)->hi == 0x33);
-        assert(pair(cpu, BMMQ::RegisterId::HL)->value == 0xC002);
+        assert(pair(cpu, GB::RegisterId::AF)->hi == 0x33);
+        assert(pair(cpu, GB::RegisterId::HL)->value == 0xC002);
 
-        pair(cpu, BMMQ::RegisterId::AF)->hi = 0x55;
+        pair(cpu, GB::RegisterId::AF)->hi = 0x55;
         loadAndSetPc(cpu, 0x0008, {0x32, 0x00, 0x00});
         step(cpu);
         assert(readByte(cpu, 0xC002) == 0x55);
-        assert(pair(cpu, BMMQ::RegisterId::HL)->value == 0xC001);
+        assert(pair(cpu, GB::RegisterId::HL)->value == 0xC001);
     }
 
     {
         LR3592_DMG cpu;
-        pair(cpu, BMMQ::RegisterId::HL)->value = 0xC010;
+        pair(cpu, GB::RegisterId::HL)->value = 0xC010;
         cpu.getMemory().store.load(std::span<const uint8_t>({0x05}), static_cast<uint16_t>(0xC010));
         loadAndSetPc(cpu, 0x0000, {0x34, 0x00, 0x00});
         step(cpu);
@@ -252,37 +252,37 @@ int main()
 
     {
         LR3592_DMG cpu;
-        scalar(cpu, BMMQ::RegisterId::SP, 0xFFF0);
+        scalar(cpu, GB::RegisterId::SP, 0xFFF0);
         loadAndSetPc(cpu, 0x0000, {0xE8, 0x04, 0x00});
         step(cpu);
-        assert(scalar(cpu, BMMQ::RegisterId::SP) == 0xFFF4);
+        assert(scalar(cpu, GB::RegisterId::SP) == 0xFFF4);
 
         loadAndSetPc(cpu, 0x0004, {0xF8, 0x00, 0x00});
         step(cpu);
-        assert(pair(cpu, BMMQ::RegisterId::HL)->value == 0xFFF4);
+        assert(pair(cpu, GB::RegisterId::HL)->value == 0xFFF4);
 
-        pair(cpu, BMMQ::RegisterId::HL)->value = 0xC222;
+        pair(cpu, GB::RegisterId::HL)->value = 0xC222;
         loadAndSetPc(cpu, 0x0008, {0xF9, 0x00, 0x00});
         step(cpu);
-        assert(scalar(cpu, BMMQ::RegisterId::SP) == 0xC222);
+        assert(scalar(cpu, GB::RegisterId::SP) == 0xC222);
     }
 
     {
         LR3592_DMG cpu;
-        pair(cpu, BMMQ::RegisterId::BC)->hi = 0x00;
+        pair(cpu, GB::RegisterId::BC)->hi = 0x00;
         cpu.loadProgram({0xCB, 0xC0, 0x00}, 0);
         step(cpu);
-        assert(pair(cpu, BMMQ::RegisterId::BC)->hi == 0x01);
+        assert(pair(cpu, GB::RegisterId::BC)->hi == 0x01);
     }
 
     {
         LR3592_DMG cpu;
-        scalar(cpu, BMMQ::RegisterId::SP, 0xC100);
+        scalar(cpu, GB::RegisterId::SP, 0xC100);
         cpu.getMemory().store.load(std::span<const uint8_t>({0x03, 0x00}), static_cast<uint16_t>(0xC0FE));
-        scalar(cpu, BMMQ::RegisterId::SP, 0xC0FE);
+        scalar(cpu, GB::RegisterId::SP, 0xC0FE);
         cpu.loadProgram({0xD9, 0x00, 0x00}, 0);
         step(cpu);
-        assert(scalar(cpu, BMMQ::RegisterId::PC) == 0x0003);
+        assert(scalar(cpu, GB::RegisterId::PC) == 0x0003);
         auto* imeEntry = cpu.getMemory().file.findRegister("ime");
         assert(imeEntry != nullptr);
         assert(imeEntry->reg != nullptr);

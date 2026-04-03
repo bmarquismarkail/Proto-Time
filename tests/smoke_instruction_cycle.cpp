@@ -10,7 +10,7 @@ int main()
     LR3592_DMG cpu;
 
     cpu.loadProgram({0x00, 0xC3, 0x34, 0x12}, 0x0000);
-    auto* pcEntry = cpu.getMemory().file.findRegister(BMMQ::RegisterId::PC);
+    auto* pcEntry = cpu.getMemory().file.findRegister(GB::RegisterId::PC);
     assert(pcEntry != nullptr);
     assert(pcEntry->reg != nullptr);
     pcEntry->reg->value = 0x0000;
@@ -24,7 +24,7 @@ int main()
     cpu.execute(execBlock, fetchBlock);
 
     auto& mem = cpu.getMemory();
-    auto* afEntry = mem.file.findRegister(BMMQ::RegisterId::AF);
+    auto* afEntry = mem.file.findRegister(GB::RegisterId::AF);
     assert(afEntry != nullptr);
     assert(afEntry->reg != nullptr);
 

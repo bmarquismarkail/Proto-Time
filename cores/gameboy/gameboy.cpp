@@ -123,55 +123,55 @@ AddressType& accessR16(MemoryView& snapshot, GB::Decode::R16 reg)
 {
     switch (reg) {
     case GB::Decode::R16::BC:
-        return getRegisterPair(snapshot, BMMQ::RegisterId::BC)->value;
+        return getRegisterPair(snapshot, GB::RegisterId::BC)->value;
     case GB::Decode::R16::DE:
-        return getRegisterPair(snapshot, BMMQ::RegisterId::DE)->value;
+        return getRegisterPair(snapshot, GB::RegisterId::DE)->value;
     case GB::Decode::R16::HL:
-        return getRegisterPair(snapshot, BMMQ::RegisterId::HL)->value;
+        return getRegisterPair(snapshot, GB::RegisterId::HL)->value;
     case GB::Decode::R16::SP:
-        return getRegister(snapshot, BMMQ::RegisterId::SP)->value;
+        return getRegister(snapshot, GB::RegisterId::SP)->value;
     }
 
     assert(false && "Invalid r16");
-    return getRegister(snapshot, BMMQ::RegisterId::SP)->value;
+    return getRegister(snapshot, GB::RegisterId::SP)->value;
 }
 
 AddressType& accessStackR16(MemoryView& snapshot, GB::Decode::R16Stack reg)
 {
     switch (reg) {
     case GB::Decode::R16Stack::BC:
-        return getRegisterPair(snapshot, BMMQ::RegisterId::BC)->value;
+        return getRegisterPair(snapshot, GB::RegisterId::BC)->value;
     case GB::Decode::R16Stack::DE:
-        return getRegisterPair(snapshot, BMMQ::RegisterId::DE)->value;
+        return getRegisterPair(snapshot, GB::RegisterId::DE)->value;
     case GB::Decode::R16Stack::HL:
-        return getRegisterPair(snapshot, BMMQ::RegisterId::HL)->value;
+        return getRegisterPair(snapshot, GB::RegisterId::HL)->value;
     case GB::Decode::R16Stack::AF:
-        return getRegisterPair(snapshot, BMMQ::RegisterId::AF)->value;
+        return getRegisterPair(snapshot, GB::RegisterId::AF)->value;
     }
 
     assert(false && "Invalid stack r16");
-    return getRegisterPair(snapshot, BMMQ::RegisterId::AF)->value;
+    return getRegisterPair(snapshot, GB::RegisterId::AF)->value;
 }
 
 DataType readR8(MemoryView& snapshot, GB::Decode::R8 reg)
 {
     switch (reg) {
     case GB::Decode::R8::B:
-        return getRegisterPair(snapshot, BMMQ::RegisterId::BC)->hi;
+        return getRegisterPair(snapshot, GB::RegisterId::BC)->hi;
     case GB::Decode::R8::C:
-        return getRegisterPair(snapshot, BMMQ::RegisterId::BC)->lo;
+        return getRegisterPair(snapshot, GB::RegisterId::BC)->lo;
     case GB::Decode::R8::D:
-        return getRegisterPair(snapshot, BMMQ::RegisterId::DE)->hi;
+        return getRegisterPair(snapshot, GB::RegisterId::DE)->hi;
     case GB::Decode::R8::E:
-        return getRegisterPair(snapshot, BMMQ::RegisterId::DE)->lo;
+        return getRegisterPair(snapshot, GB::RegisterId::DE)->lo;
     case GB::Decode::R8::H:
-        return getRegisterPair(snapshot, BMMQ::RegisterId::HL)->hi;
+        return getRegisterPair(snapshot, GB::RegisterId::HL)->hi;
     case GB::Decode::R8::L:
-        return getRegisterPair(snapshot, BMMQ::RegisterId::HL)->lo;
+        return getRegisterPair(snapshot, GB::RegisterId::HL)->lo;
     case GB::Decode::R8::HLIndirect:
-        return read8(snapshot, getRegisterPair(snapshot, BMMQ::RegisterId::HL)->value);
+        return read8(snapshot, getRegisterPair(snapshot, GB::RegisterId::HL)->value);
     case GB::Decode::R8::A:
-        return getRegisterPair(snapshot, BMMQ::RegisterId::AF)->hi;
+        return getRegisterPair(snapshot, GB::RegisterId::AF)->hi;
     }
 
     assert(false && "Invalid r8");
@@ -182,28 +182,28 @@ void writeR8(MemoryView& snapshot, GB::Decode::R8 reg, DataType value)
 {
     switch (reg) {
     case GB::Decode::R8::B:
-        getRegisterPair(snapshot, BMMQ::RegisterId::BC)->hi = value;
+        getRegisterPair(snapshot, GB::RegisterId::BC)->hi = value;
         return;
     case GB::Decode::R8::C:
-        getRegisterPair(snapshot, BMMQ::RegisterId::BC)->lo = value;
+        getRegisterPair(snapshot, GB::RegisterId::BC)->lo = value;
         return;
     case GB::Decode::R8::D:
-        getRegisterPair(snapshot, BMMQ::RegisterId::DE)->hi = value;
+        getRegisterPair(snapshot, GB::RegisterId::DE)->hi = value;
         return;
     case GB::Decode::R8::E:
-        getRegisterPair(snapshot, BMMQ::RegisterId::DE)->lo = value;
+        getRegisterPair(snapshot, GB::RegisterId::DE)->lo = value;
         return;
     case GB::Decode::R8::H:
-        getRegisterPair(snapshot, BMMQ::RegisterId::HL)->hi = value;
+        getRegisterPair(snapshot, GB::RegisterId::HL)->hi = value;
         return;
     case GB::Decode::R8::L:
-        getRegisterPair(snapshot, BMMQ::RegisterId::HL)->lo = value;
+        getRegisterPair(snapshot, GB::RegisterId::HL)->lo = value;
         return;
     case GB::Decode::R8::HLIndirect:
-        write8(snapshot, getRegisterPair(snapshot, BMMQ::RegisterId::HL)->value, value);
+        write8(snapshot, getRegisterPair(snapshot, GB::RegisterId::HL)->value, value);
         return;
     case GB::Decode::R8::A:
-        getRegisterPair(snapshot, BMMQ::RegisterId::AF)->hi = value;
+        getRegisterPair(snapshot, GB::RegisterId::AF)->hi = value;
         return;
     }
 
@@ -212,12 +212,12 @@ void writeR8(MemoryView& snapshot, GB::Decode::R8 reg, DataType value)
 
 BMMQ::RegisterByteRef& flags(MemoryView& snapshot)
 {
-    return getRegisterPair(snapshot, BMMQ::RegisterId::AF)->lo;
+    return getRegisterPair(snapshot, GB::RegisterId::AF)->lo;
 }
 
 BMMQ::RegisterByteRef& accumulator(MemoryView& snapshot)
 {
-    return getRegisterPair(snapshot, BMMQ::RegisterId::AF)->hi;
+    return getRegisterPair(snapshot, GB::RegisterId::AF)->hi;
 }
 
 bool conditionHolds(MemoryView& snapshot, GB::Decode::Condition condition)
@@ -249,13 +249,13 @@ void setFlags(MemoryView& snapshot, bool z, bool n, bool h, bool c)
 
 void updateControlFlowPc(MemoryView& snapshot, AddressType target, DataType instructionLength)
 {
-    auto* pc = getRegister(snapshot, BMMQ::RegisterId::PC);
+    auto* pc = getRegister(snapshot, GB::RegisterId::PC);
     pc->value = static_cast<AddressType>(target - instructionLength);
 }
 
 AddressType pop16(MemoryView& snapshot)
 {
-    auto* sp = getRegister(snapshot, BMMQ::RegisterId::SP);
+    auto* sp = getRegister(snapshot, GB::RegisterId::SP);
     const AddressType value = read16(snapshot, static_cast<AddressType>(sp->value));
     sp->value = static_cast<AddressType>(sp->value + 2);
     return value;
@@ -263,7 +263,7 @@ AddressType pop16(MemoryView& snapshot)
 
 void push16(MemoryView& snapshot, AddressType value)
 {
-    auto* sp = getRegister(snapshot, BMMQ::RegisterId::SP);
+    auto* sp = getRegister(snapshot, GB::RegisterId::SP);
     sp->value = static_cast<AddressType>(sp->value - 2);
     write16(snapshot, static_cast<AddressType>(sp->value), value);
 }
@@ -654,14 +654,14 @@ void LR3592_DMG::populateOpcodes()
     setOpcode(0x08, emitStep(3, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
         const AddressType address = fetchImm16(fetchData, opcodeIndex);
         block.addStep([address](auto& snapshot, auto&) {
-            write16(snapshot, address, static_cast<AddressType>(getRegister(snapshot, BMMQ::RegisterId::SP)->value));
+            write16(snapshot, address, static_cast<AddressType>(getRegister(snapshot, GB::RegisterId::SP)->value));
         });
     }));
 
     for (DataType opcode : {0x09, 0x19, 0x29, 0x39}) {
         setOpcode(opcode, emitStep(1, [](auto& block, const auto&, std::size_t, DataType code) {
             block.addStep([code](auto& snapshot, auto&) {
-                auto& hl = getRegisterPair(snapshot, BMMQ::RegisterId::HL)->value;
+                auto& hl = getRegisterPair(snapshot, GB::RegisterId::HL)->value;
                 const AddressType lhs = hl;
                 const AddressType rhs = accessR16(snapshot, GB::Decode::decodeR16(code));
                 const AddressType result = static_cast<AddressType>(lhs + rhs);
@@ -809,7 +809,7 @@ void LR3592_DMG::populateOpcodes()
     setOpcode(0x18, emitStep(2, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
         const int8_t offset = static_cast<int8_t>(fetchImm8(fetchData, opcodeIndex));
         block.addStep([offset](auto& snapshot, auto&) {
-            const AddressType pc = static_cast<AddressType>(getRegister(snapshot, BMMQ::RegisterId::PC)->value);
+            const AddressType pc = static_cast<AddressType>(getRegister(snapshot, GB::RegisterId::PC)->value);
             const auto target = static_cast<AddressType>(static_cast<int32_t>(pc) + 2 + offset);
             updateControlFlowPc(snapshot, target, 2);
         });
@@ -820,7 +820,7 @@ void LR3592_DMG::populateOpcodes()
             const int8_t offset = static_cast<int8_t>(fetchImm8(fetchData, opcodeIndex));
             block.addStep([code, offset](auto& snapshot, auto&) {
                 if (!conditionHolds(snapshot, GB::Decode::decodeCondition(code))) return;
-                const AddressType pc = static_cast<AddressType>(getRegister(snapshot, BMMQ::RegisterId::PC)->value);
+                const AddressType pc = static_cast<AddressType>(getRegister(snapshot, GB::RegisterId::PC)->value);
                 const auto target = static_cast<AddressType>(static_cast<int32_t>(pc) + 2 + offset);
                 updateControlFlowPc(snapshot, target, 2);
             });
@@ -841,17 +841,17 @@ void LR3592_DMG::populateOpcodes()
     for (DataType opcode : {0x02, 0x12, 0x22, 0x32, 0x0A, 0x1A, 0x2A, 0x3A}) {
         setOpcode(opcode, emitStep(1, [](auto& block, const auto&, std::size_t, DataType code) {
             block.addStep([code](auto& snapshot, auto&) {
-                auto* hl = getRegisterPair(snapshot, BMMQ::RegisterId::HL);
+                auto* hl = getRegisterPair(snapshot, GB::RegisterId::HL);
                 AddressType address = 0;
 
                 switch (code) {
                 case 0x02:
                 case 0x0A:
-                    address = getRegisterPair(snapshot, BMMQ::RegisterId::BC)->value;
+                    address = getRegisterPair(snapshot, GB::RegisterId::BC)->value;
                     break;
                 case 0x12:
                 case 0x1A:
-                    address = getRegisterPair(snapshot, BMMQ::RegisterId::DE)->value;
+                    address = getRegisterPair(snapshot, GB::RegisterId::DE)->value;
                     break;
                 case 0x22:
                 case 0x2A:
@@ -1040,7 +1040,7 @@ void LR3592_DMG::populateOpcodes()
 
     setOpcode(0xE9, emitStep(1, [](auto& block, const auto&, std::size_t, DataType) {
         block.addStep([](auto& snapshot, auto&) {
-            updateControlFlowPc(snapshot, getRegisterPair(snapshot, BMMQ::RegisterId::HL)->value, 1);
+            updateControlFlowPc(snapshot, getRegisterPair(snapshot, GB::RegisterId::HL)->value, 1);
         });
     }));
 
@@ -1049,7 +1049,7 @@ void LR3592_DMG::populateOpcodes()
             const AddressType target = fetchImm16(fetchData, opcodeIndex);
             block.addStep([code, target](auto& snapshot, auto&) {
                 if (!conditionHolds(snapshot, GB::Decode::decodeCondition(code))) return;
-                const AddressType pc = static_cast<AddressType>(getRegister(snapshot, BMMQ::RegisterId::PC)->value);
+                const AddressType pc = static_cast<AddressType>(getRegister(snapshot, GB::RegisterId::PC)->value);
                 push16(snapshot, static_cast<AddressType>(pc + 3));
                 updateControlFlowPc(snapshot, target, 3);
             });
@@ -1059,7 +1059,7 @@ void LR3592_DMG::populateOpcodes()
     setOpcode(0xCD, emitStep(3, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
         const AddressType target = fetchImm16(fetchData, opcodeIndex);
         block.addStep([target](auto& snapshot, auto&) {
-            const AddressType pc = static_cast<AddressType>(getRegister(snapshot, BMMQ::RegisterId::PC)->value);
+            const AddressType pc = static_cast<AddressType>(getRegister(snapshot, GB::RegisterId::PC)->value);
             push16(snapshot, static_cast<AddressType>(pc + 3));
             updateControlFlowPc(snapshot, target, 3);
         });
@@ -1069,7 +1069,7 @@ void LR3592_DMG::populateOpcodes()
         setOpcode(opcode, emitStep(1, [](auto& block, const auto&, std::size_t, DataType code) {
             const AddressType target = static_cast<AddressType>(code & 0x38u);
             block.addStep([target](auto& snapshot, auto&) {
-                const AddressType pc = static_cast<AddressType>(getRegister(snapshot, BMMQ::RegisterId::PC)->value);
+                const AddressType pc = static_cast<AddressType>(getRegister(snapshot, GB::RegisterId::PC)->value);
                 push16(snapshot, static_cast<AddressType>(pc + 1));
                 updateControlFlowPc(snapshot, target, 1);
             });
@@ -1099,14 +1099,14 @@ void LR3592_DMG::populateOpcodes()
 
     setOpcode(0xE2, emitStep(1, [](auto& block, const auto&, std::size_t, DataType) {
         block.addStep([](auto& snapshot, auto&) {
-            const AddressType address = static_cast<AddressType>(0xFF00u + getRegisterPair(snapshot, BMMQ::RegisterId::BC)->lo);
+            const AddressType address = static_cast<AddressType>(0xFF00u + getRegisterPair(snapshot, GB::RegisterId::BC)->lo);
             write8(snapshot, address, accumulator(snapshot));
         });
     }));
 
     setOpcode(0xF2, emitStep(1, [](auto& block, const auto&, std::size_t, DataType) {
         block.addStep([](auto& snapshot, auto&) {
-            const AddressType address = static_cast<AddressType>(0xFF00u + getRegisterPair(snapshot, BMMQ::RegisterId::BC)->lo);
+            const AddressType address = static_cast<AddressType>(0xFF00u + getRegisterPair(snapshot, GB::RegisterId::BC)->lo);
             accumulator(snapshot) = read8(snapshot, address);
         });
     }));
@@ -1114,7 +1114,7 @@ void LR3592_DMG::populateOpcodes()
     setOpcode(0xE8, emitStep(2, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
         const int8_t offset = static_cast<int8_t>(fetchImm8(fetchData, opcodeIndex));
         block.addStep([offset](auto& snapshot, auto&) {
-            auto* sp = getRegister(snapshot, BMMQ::RegisterId::SP);
+            auto* sp = getRegister(snapshot, GB::RegisterId::SP);
             const AddressType original = sp->value;
             const AddressType result = static_cast<AddressType>(static_cast<int32_t>(original) + offset);
             const uint8_t low = static_cast<uint8_t>(original & 0xFFu);
@@ -1129,21 +1129,21 @@ void LR3592_DMG::populateOpcodes()
     setOpcode(0xF8, emitStep(2, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
         const int8_t offset = static_cast<int8_t>(fetchImm8(fetchData, opcodeIndex));
         block.addStep([offset](auto& snapshot, auto&) {
-            const AddressType sp = static_cast<AddressType>(getRegister(snapshot, BMMQ::RegisterId::SP)->value);
+            const AddressType sp = static_cast<AddressType>(getRegister(snapshot, GB::RegisterId::SP)->value);
             const AddressType result = static_cast<AddressType>(static_cast<int32_t>(sp) + offset);
             const uint8_t low = static_cast<uint8_t>(sp & 0xFFu);
             const uint8_t imm = static_cast<uint8_t>(offset);
             const bool h = ((low & 0x0Fu) + (imm & 0x0Fu)) > 0x0Fu;
             const bool c = static_cast<uint16_t>(low) + static_cast<uint16_t>(imm) > 0xFFu;
             setFlags(snapshot, false, false, h, c);
-            getRegisterPair(snapshot, BMMQ::RegisterId::HL)->value = result;
+            getRegisterPair(snapshot, GB::RegisterId::HL)->value = result;
         });
     }));
 
     setOpcode(0xF9, emitStep(1, [](auto& block, const auto&, std::size_t, DataType) {
         block.addStep([](auto& snapshot, auto&) {
-            getRegister(snapshot, BMMQ::RegisterId::SP)->value =
-                getRegisterPair(snapshot, BMMQ::RegisterId::HL)->value;
+            getRegister(snapshot, GB::RegisterId::SP)->value =
+                getRegisterPair(snapshot, GB::RegisterId::HL)->value;
         });
     }));
 

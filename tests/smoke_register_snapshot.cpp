@@ -3,6 +3,7 @@
 
 #include "MemoryStorage.hpp"
 #include "MemorySnapshot/MemorySnapshot.hpp"
+#include "cores/gameboy/register_id.hpp"
 #include "machine/RegisterId.hpp"
 #include "templ/reg_uint16.impl.hpp"
 
@@ -19,18 +20,18 @@ int main()
         BMMQ::memAccess::ReadWrite));
 
     BMMQ::RegisterFile<RegType> mainFile;
-    auto& afEntry = mainFile.addRegister(BMMQ::RegisterId::AF, true);
-    auto& pcEntry = mainFile.addRegister(BMMQ::RegisterId::PC, false);
+    auto& afEntry = mainFile.addRegister(GB::RegisterId::AF, true);
+    auto& pcEntry = mainFile.addRegister(GB::RegisterId::PC, false);
 
     afEntry.reg->value = static_cast<RegType>(0x12F0);
     pcEntry.reg->value = static_cast<RegType>(0x3456);
 
     BMMQ::MemorySnapshot<AddressType, DataType, RegType> snapshot(store);
-    snapshot.copyRegisterFromMainFile(BMMQ::RegisterId::AF, mainFile);
-    snapshot.copyRegisterFromMainFile(BMMQ::RegisterId::PC, mainFile);
+    snapshot.copyRegisterFromMainFile(GB::RegisterId::AF, mainFile);
+    snapshot.copyRegisterFromMainFile(GB::RegisterId::PC, mainFile);
 
-    auto* afSnapEntry = snapshot.file.findRegister(BMMQ::RegisterId::AF);
-    auto* pcSnapEntry = snapshot.file.findRegister(BMMQ::RegisterId::PC);
+    auto* afSnapEntry = snapshot.file.findRegister(GB::RegisterId::AF);
+    auto* pcSnapEntry = snapshot.file.findRegister(GB::RegisterId::PC);
     assert(afSnapEntry != nullptr);
     assert(pcSnapEntry != nullptr);
 

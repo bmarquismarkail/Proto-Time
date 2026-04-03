@@ -19,14 +19,6 @@ struct RegisterId {
     {
         return value;
     }
-
-    static const RegisterId AF;
-    static const RegisterId BC;
-    static const RegisterId DE;
-    static const RegisterId HL;
-    static const RegisterId SP;
-    static const RegisterId PC;
-    static const RegisterId IME;
 };
 
 enum class RegisterWidth {
@@ -51,14 +43,6 @@ inline constexpr std::string_view registerNameOf(const RegisterDescriptor& descr
 {
     return descriptor.name;
 }
-
-inline constexpr RegisterId RegisterId::AF{"AF"};
-inline constexpr RegisterId RegisterId::BC{"BC"};
-inline constexpr RegisterId RegisterId::DE{"DE"};
-inline constexpr RegisterId RegisterId::HL{"HL"};
-inline constexpr RegisterId RegisterId::SP{"SP"};
-inline constexpr RegisterId RegisterId::PC{"PC"};
-inline constexpr RegisterId RegisterId::IME{"IME"};
 
 } // namespace BMMQ
 

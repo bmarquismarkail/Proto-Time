@@ -13,6 +13,7 @@
 #include "../../machine/RegisterId.hpp"
 #include "../../machine/RomImage.hpp"
 #include "../../machine/RuntimeContext.hpp"
+#include "register_id.hpp"
 #include "gameboy_plugin_runtime.hpp"
 
 class GameBoyRuntimeContext final : public BMMQ::RuntimeContext {
@@ -429,12 +430,12 @@ private:
     }
 
     void initializeDmgStartupRegisters() {
-        context_.writeRegister16(BMMQ::RegisterId::AF, 0x01B0);
-        context_.writeRegister16(BMMQ::RegisterId::BC, 0x0013);
-        context_.writeRegister16(BMMQ::RegisterId::DE, 0x00D8);
-        context_.writeRegister16(BMMQ::RegisterId::HL, 0x014D);
-        context_.writeRegister16(BMMQ::RegisterId::SP, 0xFFFE);
-        context_.writeRegister16(BMMQ::RegisterId::PC, 0x0100);
+        context_.writeRegister16(GB::RegisterId::AF, 0x01B0);
+        context_.writeRegister16(GB::RegisterId::BC, 0x0013);
+        context_.writeRegister16(GB::RegisterId::DE, 0x00D8);
+        context_.writeRegister16(GB::RegisterId::HL, 0x014D);
+        context_.writeRegister16(GB::RegisterId::SP, 0xFFFE);
+        context_.writeRegister16(GB::RegisterId::PC, 0x0100);
     }
 
     void configureMemoryMap() {
