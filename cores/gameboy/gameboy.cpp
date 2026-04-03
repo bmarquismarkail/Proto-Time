@@ -439,7 +439,6 @@ BMMQ::RegisterFile<AddressType> LR3592_DMG::buildRegisterfile()
     regfile.addRegister("HL", true);
     regfile.addRegister("SP", false);
     regfile.addRegister("PC", false);
-    regfile.addRegister("mdr", false);
     regfile.addRegister("ime", false);
 
     return regfile;

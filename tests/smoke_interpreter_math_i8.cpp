@@ -10,18 +10,23 @@ int main()
 
     auto& mem = cpu.getMemory();
     auto* afEntry = mem.file.findRegister("AF");
-    auto* mdrEntry = mem.file.findRegister("mdr");
     assert(afEntry != nullptr);
     assert(afEntry->reg != nullptr);
-    assert(mdrEntry != nullptr);
-    assert(mdrEntry->reg != nullptr);
 
     auto* af = dynamic_cast<BMMQ::CPU_RegisterPair<uint16_t>*>(afEntry->reg.get());
     assert(af != nullptr);
 
+    auto* pcEntry = mem.file.findRegister("PC");
+    auto* spEntry = mem.file.findRegister("SP");
+    assert(pcEntry != nullptr);
+    assert(pcEntry->reg != nullptr);
+    assert(spEntry != nullptr);
+    assert(spEntry->reg != nullptr);
+
     af->hi = 0x10;
     af->lo = 0x00;
-    mdrEntry->reg->value = 0x05;
+    pcEntry->reg->value = 0x0000;
+    mem.store.load(std::span<const uint8_t>({0xC6, 0x05}), static_cast<uint16_t>(0x0000));
 
     BMMQ::MemorySnapshot<uint16_t, uint8_t, uint16_t> snapshot(mem.store);
     decoder.setSnapshot(&snapshot);
@@ -35,13 +40,6 @@ int main()
     auto* afSnap = dynamic_cast<BMMQ::CPU_RegisterPair<uint16_t>*>(afSnapEntry->reg.get());
     assert(afSnap != nullptr);
     assert(static_cast<uint8_t>(afSnap->hi) == 0x15);
-
-    auto* pcEntry = mem.file.findRegister("PC");
-    auto* spEntry = mem.file.findRegister("SP");
-    assert(pcEntry != nullptr);
-    assert(pcEntry->reg != nullptr);
-    assert(spEntry != nullptr);
-    assert(spEntry->reg != nullptr);
 
     spEntry->reg->value = 0xC100;
     pcEntry->reg->value = 0x0000;

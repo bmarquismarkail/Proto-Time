@@ -29,8 +29,6 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
 
   BMMQ::MemoryPool<AddressType, DataType, AddressType> mem;
   OpcodeTable opcodeTable;
-  LR3592_Register mar;
-  LR3592_RegisterPair mdr;
   uint16_t flagset;
   BMMQ::CpuFeedback feedback;
   DataType cip;

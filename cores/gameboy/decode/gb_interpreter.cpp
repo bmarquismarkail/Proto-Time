@@ -9,6 +9,22 @@ DataType* LR3592_Interpreter_Decode::readTempByte(AddressType address)
 	return target;
 }
 
+DataType LR3592_Interpreter_Decode::readImmediate8()
+{
+	const auto* pc = GetRegister("PC");
+	DataType value = 0;
+	snap->mem.read(&value, static_cast<AddressType>(pc->value + 1), 1);
+	return value;
+}
+
+AddressType LR3592_Interpreter_Decode::readImmediate16()
+{
+	AddressType value = 0;
+	const auto* pc = GetRegister("PC");
+	snap->mem.read(reinterpret_cast<DataType*>(&value), static_cast<AddressType>(pc->value + 1), 2);
+	return value;
+}
+
 void LR3592_Interpreter_Decode::setSnapshot(BMMQ::MemorySnapshot<AddressType, DataType, AddressType> *s)
 {
 	snap = s;
@@ -255,7 +271,7 @@ void LR3592_Interpreter_Decode::math_r8(DataType opcode)
 
 void LR3592_Interpreter_Decode::math_i8(DataType opcode)
 {
-	const DataType mdr = static_cast<DataType>(GetRegister("mdr")->value);
+	const DataType immediate = readImmediate8();
 	DataType mathFunc = (opcode & 0x38) >> 3;
 
 	auto A = GetPairRegister("AF");
@@ -263,28 +279,28 @@ void LR3592_Interpreter_Decode::math_i8(DataType opcode)
 
 	switch (mathFunc) {
 	case 0:
-		BMMQ::CML::add(&A->hi, mdr);
+		BMMQ::CML::add(&A->hi, immediate);
 		break;
 	case 1:
-		BMMQ::CML::adc(&A->hi, mdr, carryFlag);
+		BMMQ::CML::adc(&A->hi, immediate, carryFlag);
 		break;
 	case 2:
-		BMMQ::CML::sub(&A->hi, mdr);
+		BMMQ::CML::sub(&A->hi, immediate);
 		break;
 	case 3:
-		BMMQ::CML::sbc(&A->hi, mdr, carryFlag);
+		BMMQ::CML::sbc(&A->hi, immediate, carryFlag);
 		break;
 	case 4:
-		BMMQ::CML::iand(&A->hi, mdr);
+		BMMQ::CML::iand(&A->hi, immediate);
 		break;
 	case 5:
-		BMMQ::CML::ixor(&A->hi, mdr);
+		BMMQ::CML::ixor(&A->hi, immediate);
 		break;
 	case 6:
-		BMMQ::CML::ior(&A->hi, mdr);
+		BMMQ::CML::ior(&A->hi, immediate);
 		break;
 	case 7:
-		BMMQ::CML::cmp(&A->hi, mdr);
+		BMMQ::CML::cmp(&A->hi, immediate);
 		break;
 	}
 }
@@ -343,9 +359,8 @@ void LR3592_Interpreter_Decode::call()
 {
 	auto SP = GetRegister("SP");
 	auto PC = GetRegister("PC");
-	auto mdr = GetRegister("mdr");
 	snap->mem.write((DataType*)PC, SP->value, 2);
-	BMMQ::CML::jr(	&PC->value, mdr->value, true);
+	PC->value = readImmediate16();
 	SP->value -=2;
 }
 
@@ -375,19 +390,19 @@ void LR3592_Interpreter_Decode::ldh(DataType opcode)
 	auto srcSet = !( (opcode & 0x10) >> 4);
 
 	auto A = GetPairRegister("AF");
-	auto mdr = GetRegister("mdr");
+	const AddressType immediate = readImmediate8();
 	if (srcSet) {
 		src = &A->hi;
 		DataType temp = 0;
 		dest = &temp;
 		BMMQ::CML::loadtmp(dest, *src);
-		snap->mem.write(dest, mdr->value + 0xFF00, 1);
+		snap->mem.write(dest, static_cast<AddressType>(immediate + 0xFF00), 1);
 	}
 	else {
 		dest = &A->hi;
 		DataType temp = 0;
 		src = &temp;
-		snap->mem.read(src, mdr->value + 0xFF00, 1);
+		snap->mem.read(src, static_cast<AddressType>(immediate + 0xFF00), 1);
 		BMMQ::CML::loadtmp(dest, *src);
 	}
 }
@@ -402,20 +417,20 @@ void LR3592_Interpreter_Decode::ld_ir16_r8(DataType opcode)
 
 	auto A = GetPairRegister("AF");
 	auto C = GetPairRegister("BC");
-	auto mdr = GetRegister("mdr");
+	const AddressType immediate = readImmediate16();
 	switch	(srcSet) {
 	case 0: {
 		src = &A->hi;
 		DataType temp = 0;
 		dest = &temp;
 		BMMQ::CML::loadtmp(dest, src);
-		snap->mem.write(dest, regSet ? ( C->lo + 0xFF00 ) : mdr->value, 1);
+		snap->mem.write(dest, regSet ? static_cast<AddressType>(C->lo + 0xFF00) : immediate, 1);
 		break;
 	}
 	case 1: {
 		DataType temp = 0;
 		src = &temp;
-		snap->mem.read(src, regSet ? ( C->lo + 0xFF00 ) : mdr->value, 1);
+		snap->mem.read(src, regSet ? static_cast<AddressType>(C->lo + 0xFF00) : immediate, 1);
 		dest = &A->hi;
 		BMMQ::CML::loadtmp(dest, src);
 		break;
@@ -435,13 +450,13 @@ void LR3592_Interpreter_Decode::ld_hl_sp(DataType opcode)
 	AddressType *src;
 
 	DataType srcSet = (opcode & 1);
-	auto mdr = GetRegister("mdr");
+	const int8_t immediate = static_cast<int8_t>(readImmediate8());
 
 	switch	(srcSet) {
 	case 0:
 		dest = &(GetPairRegister("HL")->value);
 		src = &(GetRegister("SP")->value);
-		*src += static_cast<DataType>(mdr->value & 0x00ff);
+		*src = static_cast<AddressType>(*src + immediate);
 		break;
 	case 1:
 		dest = &(GetRegister("SP")->value);
@@ -516,7 +531,7 @@ void LR3592_Interpreter_Decode::calculateflags(uint16_t calculationFlags)
 
 	auto &A = GetPairRegister("AF")->hi;
 	auto &F = GetPairRegister("AF")->lo;
-	auto mdr = GetRegister("mdr");
+	const DataType immediate = readImmediate8();
 	// Zero flag
 	switch(calculationFlags & 0xc0) {
 	case 0xC0:
@@ -552,7 +567,7 @@ void LR3592_Interpreter_Decode::calculateflags(uint16_t calculationFlags)
 		newflags[2] =	0;
 		break;
 	case 0x4:
-		newflags[2] = ( ( (mdr->value & 0xF) + (A & 0xF) ) & 0x10 ) == 0x10;
+		newflags[2] = ( ( (immediate & 0xF) + (A & 0xF) ) & 0x10 ) == 0x10;
 		break;
 	}
 
@@ -565,7 +580,7 @@ void LR3592_Interpreter_Decode::calculateflags(uint16_t calculationFlags)
 		newflags[3] = 0;
 		break;
 	case 1:
-		newflags[3] = (A - mdr->value) > (A - 255);
+		newflags[3] = (A - immediate) > (A - 255);
 		break;
 	}
 

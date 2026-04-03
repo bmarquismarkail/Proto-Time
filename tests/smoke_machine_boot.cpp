@@ -212,13 +212,17 @@ int main() {
     assert(host.guarantee() == BMMQ::ExecutionGuarantee::Experimental);
     assert(host.runtimeContext().attachedPolicyMetadata()->id == "bmmq.executor.policy.experimental");
     assert(host.runtimeContext().attachedExecutorPolicy().metadata().id == "bmmq.executor.policy.experimental");
-    bool threw = false;
+
+    LR3592_DMG core;
+    assert(core.getMemory().file.findRegister("mdr") == nullptr);
+    bool missingMarThrew = false;
     try {
-        (void)host.runtimeContext().readRegister16(BMMQ::RegisterId::MDR);
-    } catch (const std::exception&) {
-        threw = true;
+        (void)core.getMemory().file.findRegister("mar");
+    } catch (const std::invalid_argument&) {
+        missingMarThrew = true;
     }
-    assert(threw);
+    assert(missingMarThrew);
+
     static_assert(!HasStepBaseline<GameBoyMachine>::value);
     static_assert(!HasHasCpu<GameBoyMachine>::value);
     static_assert(!HasHasMemoryMap<GameBoyMachine>::value);

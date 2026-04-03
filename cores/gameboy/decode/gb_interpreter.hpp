@@ -10,6 +10,8 @@
 			DataType scratchReadB = 0;
 			bool scratchToggle = false;
 			DataType* readTempByte(AddressType address);
+			DataType readImmediate8();
+			AddressType readImmediate16();
 		public:
 		explicit LR3592_Interpreter_Decode(LR3592_DMG* c) : LR3592_Decode(c) {}
 		//Class Helper Functions
