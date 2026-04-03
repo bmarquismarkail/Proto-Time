@@ -1,6 +1,7 @@
 #include "gameboy.hpp"
 
 #include "decode/gb_opcode_decode.hpp"
+#include "hardware_registers.hpp"
 
 #include <array>
 #include <cassert>
@@ -439,7 +440,7 @@ BMMQ::RegisterFile<AddressType> LR3592_DMG::buildRegisterfile()
     regfile.addRegister("HL", true);
     regfile.addRegister("SP", false);
     regfile.addRegister("PC", false);
-    regfile.addRegister("ime", false);
+    GB::HardwareRegisters::registerIn(regfile);
 
     return regfile;
 }
