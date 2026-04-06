@@ -50,6 +50,8 @@ struct SdlFrontendStats {
     std::size_t backendInitAttempts = 0;
     std::size_t buttonTransitions = 0;
     std::size_t quitRequests = 0;
+    std::size_t hostEventsHandled = 0;
+    std::size_t keyEventsHandled = 0;
 };
 
 enum class SdlFrontendButton : uint8_t {
@@ -61,6 +63,31 @@ enum class SdlFrontendButton : uint8_t {
     B = 0x20u,
     Select = 0x40u,
     Start = 0x80u,
+};
+
+enum class SdlFrontendHostEventType : uint8_t {
+    None = 0,
+    KeyDown = 1,
+    KeyUp = 2,
+    Quit = 3,
+};
+
+enum class SdlFrontendHostKey : uint8_t {
+    Unknown = 0,
+    Right,
+    Left,
+    Up,
+    Down,
+    Z,
+    X,
+    Backspace,
+    Return,
+};
+
+struct SdlFrontendHostEvent {
+    SdlFrontendHostEventType type = SdlFrontendHostEventType::None;
+    SdlFrontendHostKey key = SdlFrontendHostKey::Unknown;
+    bool repeat = false;
 };
 
 struct SdlFrameBuffer {
@@ -199,6 +226,48 @@ public:
     [[nodiscard]] bool quitRequested() const noexcept
     {
         return quitRequested_;
+    }
+
+    [[nodiscard]] std::string_view lastHostEventSummary() const noexcept
+    {
+        return lastHostEventSummary_;
+    }
+
+    bool handleHostEvent(const SdlFrontendHostEvent& event)
+    {
+        ++stats_.hostEventsHandled;
+        switch (event.type) {
+        case SdlFrontendHostEventType::Quit:
+            lastHostEventSummary_ = "Quit requested";
+            requestQuit();
+            return true;
+        case SdlFrontendHostEventType::KeyDown:
+        case SdlFrontendHostEventType::KeyUp: {
+            if (event.repeat && event.type == SdlFrontendHostEventType::KeyDown) {
+                lastHostEventSummary_ = "Ignored repeated keydown";
+                appendLog("sdl: repeated host key ignored");
+                return false;
+            }
+
+            const auto mapped = mapHostKey(event.key);
+            if (!mapped.has_value()) {
+                lastHostEventSummary_ = "Unmapped host key";
+                appendLog("sdl: unmapped host key ignored");
+                return false;
+            }
+
+            ++stats_.keyEventsHandled;
+            const bool pressed = event.type == SdlFrontendHostEventType::KeyDown;
+            setButtonState(*mapped, pressed);
+            lastHostEventSummary_ = std::string(buttonName(*mapped)) + (pressed ? " pressed from host" : " released from host");
+            return true;
+        }
+        case SdlFrontendHostEventType::None:
+            break;
+        }
+
+        lastHostEventSummary_ = "No host event";
+        return false;
     }
 
     [[nodiscard]] static constexpr bool compiledWithSdl() noexcept
@@ -348,6 +417,31 @@ private:
         return "Unknown";
     }
 
+    [[nodiscard]] static constexpr std::optional<SdlFrontendButton> mapHostKey(SdlFrontendHostKey key) noexcept
+    {
+        switch (key) {
+        case SdlFrontendHostKey::Right:
+            return SdlFrontendButton::Right;
+        case SdlFrontendHostKey::Left:
+            return SdlFrontendButton::Left;
+        case SdlFrontendHostKey::Up:
+            return SdlFrontendButton::Up;
+        case SdlFrontendHostKey::Down:
+            return SdlFrontendButton::Down;
+        case SdlFrontendHostKey::Z:
+            return SdlFrontendButton::A;
+        case SdlFrontendHostKey::X:
+            return SdlFrontendButton::B;
+        case SdlFrontendHostKey::Backspace:
+            return SdlFrontendButton::Select;
+        case SdlFrontendHostKey::Return:
+            return SdlFrontendButton::Start;
+        case SdlFrontendHostKey::Unknown:
+            break;
+        }
+        return std::nullopt;
+    }
+
     static uint32_t paletteColor(uint8_t shade) noexcept
     {
         switch (shade & 0x03u) {
@@ -392,6 +486,7 @@ private:
     std::optional<SdlFrameBuffer> lastFrame_;
     std::optional<uint32_t> queuedDigitalInputMask_;
     bool quitRequested_ = false;
+    std::string lastHostEventSummary_;
 };
 
 } // namespace BMMQ

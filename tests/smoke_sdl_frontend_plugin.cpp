@@ -63,7 +63,17 @@ int main()
     assert(frontend->queuedDigitalInputMask().has_value());
     assert(*frontend->queuedDigitalInputMask() == 0x11u);
 
-    frontend->requestQuit();
+    assert(frontend->handleHostEvent({BMMQ::SdlFrontendHostEventType::KeyDown, BMMQ::SdlFrontendHostKey::Return, false}));
+    assert(frontend->isButtonPressed(BMMQ::SdlFrontendButton::Start));
+    assert(frontend->handleHostEvent({BMMQ::SdlFrontendHostEventType::KeyDown, BMMQ::SdlFrontendHostKey::X, false}));
+    assert(frontend->isButtonPressed(BMMQ::SdlFrontendButton::B));
+    assert(frontend->handleHostEvent({BMMQ::SdlFrontendHostEventType::KeyUp, BMMQ::SdlFrontendHostKey::X, false}));
+    assert(!frontend->isButtonPressed(BMMQ::SdlFrontendButton::B));
+    assert(frontend->stats().hostEventsHandled >= 3);
+    assert(frontend->stats().keyEventsHandled >= 3);
+    assert(!frontend->lastHostEventSummary().empty());
+
+    assert(frontend->handleHostEvent({BMMQ::SdlFrontendHostEventType::Quit, BMMQ::SdlFrontendHostKey::Unknown, false}));
     assert(frontend->quitRequested());
     frontend->clearQuitRequest();
     assert(!frontend->quitRequested());
