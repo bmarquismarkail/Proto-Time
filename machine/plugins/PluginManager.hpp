@@ -6,6 +6,8 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -13,6 +15,15 @@
 #include "IoPlugin.hpp"
 
 namespace BMMQ {
+
+struct PluginStatus {
+    std::string id;
+    std::string displayName;
+    bool attached = false;
+    bool disabled = false;
+    std::size_t failureCount = 0;
+    std::string lastError;
+};
 
 class PluginManager {
 public:
@@ -24,7 +35,9 @@ public:
             throw std::invalid_argument("plugin must not be null");
         }
         PluginT& ref = *plugin;
-        plugins_.push_back(Entry{std::move(plugin), false});
+        Entry entry;
+        entry.plugin = std::move(plugin);
+        plugins_.push_back(std::move(entry));
         return ref;
     }
 
@@ -49,6 +62,31 @@ public:
         return initialized_;
     }
 
+    [[nodiscard]] bool hasDisabledPlugins() const noexcept
+    {
+        return disabledCount() != 0;
+    }
+
+    [[nodiscard]] std::vector<PluginStatus> statuses() const
+    {
+        std::vector<PluginStatus> result;
+        result.reserve(plugins_.size());
+        for (const auto& entry : plugins_) {
+            result.push_back(buildStatus(entry));
+        }
+        return result;
+    }
+
+    [[nodiscard]] std::optional<PluginStatus> statusFor(std::string_view id) const
+    {
+        for (const auto& entry : plugins_) {
+            if (entry.plugin != nullptr && entry.plugin->id() == id) {
+                return buildStatus(entry);
+            }
+        }
+        return std::nullopt;
+    }
+
     void initialize(const MachineView& view)
     {
         for (auto& entry : plugins_) {
@@ -59,9 +97,8 @@ public:
                 entry.plugin->onAttach(view);
                 entry.attached = true;
             } catch (...) {
-                entry.disabled = true;
                 entry.attached = false;
-                entry.failure = std::current_exception();
+                markFailure(entry);
             }
         }
         initialized_ = true;
@@ -76,8 +113,7 @@ public:
             try {
                 it->plugin->onDetach(view);
             } catch (...) {
-                it->disabled = true;
-                it->failure = std::current_exception();
+                markFailure(*it);
             }
             it->attached = false;
         }
@@ -95,8 +131,7 @@ public:
                 entry.plugin->onMachineEvent(event, view);
                 dispatchTyped(*entry.plugin, event, view);
             } catch (...) {
-                entry.disabled = true;
-                entry.failure = std::current_exception();
+                markFailure(entry);
             }
         }
     }
@@ -117,8 +152,7 @@ public:
                     return sample;
                 }
             } catch (...) {
-                entry.disabled = true;
-                entry.failure = std::current_exception();
+                markFailure(entry);
             }
         }
         return std::nullopt;
@@ -140,8 +174,7 @@ public:
                     return sample;
                 }
             } catch (...) {
-                entry.disabled = true;
-                entry.failure = std::current_exception();
+                markFailure(entry);
             }
         }
         return std::nullopt;
@@ -152,8 +185,40 @@ private:
         std::unique_ptr<IPlugin> plugin;
         bool attached = false;
         bool disabled = false;
+        std::size_t failureCount = 0;
+        std::string lastError;
         std::exception_ptr failure{};
     };
+
+    static PluginStatus buildStatus(const Entry& entry)
+    {
+        PluginStatus status;
+        if (entry.plugin != nullptr) {
+            status.id = std::string(entry.plugin->id());
+            status.displayName = std::string(entry.plugin->displayName());
+        }
+        status.attached = entry.attached;
+        status.disabled = entry.disabled;
+        status.failureCount = entry.failureCount;
+        status.lastError = entry.lastError;
+        return status;
+    }
+
+    static void markFailure(Entry& entry)
+    {
+        entry.disabled = true;
+        entry.failure = std::current_exception();
+        ++entry.failureCount;
+        try {
+            if (entry.failure != nullptr) {
+                std::rethrow_exception(entry.failure);
+            }
+        } catch (const std::exception& ex) {
+            entry.lastError = ex.what();
+        } catch (...) {
+            entry.lastError = "unknown plugin failure";
+        }
+    }
 
     static void dispatchTyped(IPlugin& plugin, const MachineEvent& event, const MachineView& view)
     {

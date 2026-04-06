@@ -277,9 +277,16 @@ int main()
 
     machine.step();
     assert(machine.pluginManager().disabledCount() >= 1);
+    assert(machine.pluginManager().hasDisabledPlugins());
     assert(throwing->machineEventCount == 1);
     assert(firstInput->sampleCalls == 2);
     assert(video->lastMachineEvent.type == BMMQ::MachineEventType::StepCompleted);
+
+    const auto status = machine.pluginManager().statusFor("test.plugin.throwing");
+    assert(status.has_value());
+    assert(status->disabled);
+    assert(status->failureCount >= 1);
+    assert(!status->lastError.empty());
 
     machine.step();
     assert(machine.pluginManager().disabledCount() >= 1);
