@@ -1,3 +1,4 @@
+#include <array>
 #include <cassert>
 #include <cstdint>
 #include <stdexcept>
@@ -91,10 +92,17 @@ int main() {
     struct FakeMachine final : BMMQ::Machine {
         FakeRuntimeContext context;
         ExperimentalPolicy policy;
+        BMMQ::PluginManager manager;
+        std::array<BMMQ::IoRegionDescriptor, 1> regions{{
+            {BMMQ::PluginCategory::System, 0x0000u, 0x0000u, "fake", true, false}
+        }};
 
         void loadRom(const std::vector<uint8_t>&) override {}
         BMMQ::RuntimeContext& runtimeContext() override { return context; }
         const BMMQ::RuntimeContext& runtimeContext() const override { return context; }
+        BMMQ::PluginManager& pluginManager() override { return manager; }
+        const BMMQ::PluginManager& pluginManager() const override { return manager; }
+        std::span<const BMMQ::IoRegionDescriptor> describeIoRegions() const override { return regions; }
         uint16_t readRegisterPair(std::string_view) const override { return 0; }
         void attachExecutorPolicy(BMMQ::Plugin::IExecutorPolicyPlugin&) override {}
         const BMMQ::Plugin::IExecutorPolicyPlugin& attachedExecutorPolicy() const override { return policy; }

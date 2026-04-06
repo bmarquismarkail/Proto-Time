@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <algorithm>
+#include <optional>
 #include <string_view>
 #include <stdexcept>
 #include <vector>
@@ -14,6 +15,7 @@
 #include "../../machine/RegisterId.hpp"
 #include "../../machine/RomImage.hpp"
 #include "../../machine/RuntimeContext.hpp"
+#include "../../machine/plugins/PluginManager.hpp"
 #include "register_id.hpp"
 #include "gameboy_plugin_runtime.hpp"
 
@@ -188,6 +190,24 @@ public:
         cpu_.attachMemory(memoryMap_.storage());
     }
 
+    ~GameBoyMachine() override {
+        if (pluginManager_.initialized()) {
+            pluginManager_.shutdown(view());
+        }
+    }
+
+    BMMQ::PluginManager& pluginManager() override {
+        return pluginManager_;
+    }
+
+    const BMMQ::PluginManager& pluginManager() const override {
+        return pluginManager_;
+    }
+
+    std::span<const BMMQ::IoRegionDescriptor> describeIoRegions() const override {
+        return kIoRegionDescriptors;
+    }
+
     void loadRom(const std::vector<uint8_t>& bytes) override {
         if (bytes.empty()) {
             throw std::invalid_argument("ROM must not be empty");
@@ -200,6 +220,18 @@ public:
         installVisibleRomBanks();
         initializeDmgStartupRegisters();
         romLoaded_ = true;
+        lastDigitalInputMask_.reset();
+        lastPolledDigitalInput_.reset();
+        lastLy_ = context_.read8(0xFF44);
+        emitMachineEvent(BMMQ::MachineEvent{
+            BMMQ::MachineEventType::RomLoaded,
+            BMMQ::PluginCategory::System,
+            stepCounter_,
+            0,
+            0,
+            nullptr,
+            "ROM loaded"
+        });
     }
 
     void loadBootRom(const std::vector<uint8_t>& bytes) {
@@ -216,16 +248,53 @@ public:
     }
 
     void setJoypadState(uint8_t pressedMask) {
+        lastDigitalInputMask_ = pressedMask;
+        lastPolledDigitalInput_ = pressedMask;
         cpu_.cpu().setJoypadState(pressedMask);
+        emitMachineEvent(BMMQ::MachineEvent{
+            BMMQ::MachineEventType::DigitalInputChanged,
+            BMMQ::PluginCategory::DigitalInput,
+            stepCounter_,
+            0xFF00,
+            pressedMask,
+            nullptr,
+            "joypad state updated"
+        });
     }
 
     void step() override {
+        pollInputPlugins();
         if (bootEntryPending_) {
             context_.writeRegister16(GB::RegisterId::PC, 0x0100);
             bootEntryPending_ = false;
             return;
         }
         context_.step();
+        ++stepCounter_;
+        const auto& feedback = context_.getLastFeedback();
+        emitMachineEvent(BMMQ::MachineEvent{
+            BMMQ::MachineEventType::StepCompleted,
+            BMMQ::PluginCategory::System,
+            stepCounter_,
+            0,
+            0,
+            &feedback,
+            "instruction step completed"
+        });
+
+        const auto ly = context_.read8(0xFF44);
+        if (lastLy_ < 144u && ly >= 144u) {
+            emitMachineEvent(BMMQ::MachineEvent{
+                BMMQ::MachineEventType::VBlank,
+                BMMQ::PluginCategory::Video,
+                stepCounter_,
+                0xFF44,
+                ly,
+                &feedback,
+                "entered VBlank"
+            });
+        }
+        lastLy_ = ly;
     }
 
     uint16_t readRegisterPair(std::string_view id) const override {
@@ -248,6 +317,13 @@ public:
         return context_;
     }
 
+    std::optional<uint32_t> currentDigitalInputMask() const override {
+        if (!lastDigitalInputMask_.has_value()) {
+            return std::nullopt;
+        }
+        return static_cast<uint32_t>(*lastDigitalInputMask_);
+    }
+
     void attachExecutorPolicy(BMMQ::Plugin::IExecutorPolicyPlugin& policy) override {
         BMMQ::Plugin::validateExecutorPolicyStartup(policy);
         activePolicy_ = &policy;
@@ -258,6 +334,74 @@ public:
     }
 
 private:
+    void pollInputPlugins() {
+        if (pluginManager_.size() == 0) {
+            return;
+        }
+
+        if (const auto sampledInput = pluginManager_.sampleDigitalInput(view()); sampledInput.has_value()) {
+            const auto pressedMask = static_cast<uint8_t>(*sampledInput & 0x00FFu);
+            if (!lastPolledDigitalInput_.has_value() || *lastPolledDigitalInput_ != pressedMask) {
+                setJoypadState(pressedMask);
+                lastPolledDigitalInput_ = pressedMask;
+            }
+        }
+    }
+
+    void emitMachineEvent(BMMQ::MachineEvent event) {
+        if (pluginManager_.size() == 0) {
+            return;
+        }
+        pluginManager_.emit(view(), event);
+    }
+
+    void emitIoWriteEvent(uint16_t address, std::span<const uint8_t> value,
+                          std::string_view detail = "memory-mapped I/O write") {
+        if (value.size() != 1) {
+            return;
+        }
+        const auto category = classifyIoAddress(address);
+        if (!category.has_value()) {
+            return;
+        }
+        emitMachineEvent(BMMQ::MachineEvent{
+            BMMQ::MachineEventType::MemoryWriteObserved,
+            *category,
+            stepCounter_,
+            address,
+            value[0],
+            nullptr,
+            detail,
+        });
+    }
+
+    [[nodiscard]] static std::optional<BMMQ::PluginCategory> classifyIoAddress(uint16_t address) {
+        if ((address >= 0x8000u && address < 0xA000u) ||
+            (address >= 0xFE00u && address < 0xFEA0u) ||
+            (address >= 0xFF40u && address <= 0xFF4Bu)) {
+            return BMMQ::PluginCategory::Video;
+        }
+        if (address >= 0xFF10u && address <= 0xFF26u) {
+            return BMMQ::PluginCategory::Audio;
+        }
+        if (address == 0xFF00u) {
+            return BMMQ::PluginCategory::DigitalInput;
+        }
+        if (address == 0xFF01u || address == 0xFF02u) {
+            return BMMQ::PluginCategory::Serial;
+        }
+        return std::nullopt;
+    }
+
+    static constexpr std::array<BMMQ::IoRegionDescriptor, 6> kIoRegionDescriptors{{
+        {BMMQ::PluginCategory::Video, 0x8000u, 0x2000u, "VRAM", true, true},
+        {BMMQ::PluginCategory::Video, 0xFE00u, 0x00A0u, "OAM", true, true},
+        {BMMQ::PluginCategory::Video, 0xFF40u, 0x000Cu, "LCD Registers", true, true},
+        {BMMQ::PluginCategory::Audio, 0xFF10u, 0x0017u, "APU Registers", true, true},
+        {BMMQ::PluginCategory::DigitalInput, 0xFF00u, 0x0001u, "Joypad", true, true},
+        {BMMQ::PluginCategory::Serial, 0xFF01u, 0x0002u, "Serial Registers", true, true},
+    }};
+
     static constexpr std::array<uint8_t, 0x100> kDefaultBootRom = [] {
         std::array<uint8_t, 0x100> rom{};
         rom.fill(0x00);
@@ -479,6 +623,7 @@ private:
 
     bool handleSpecialWrite(uint16_t address, std::span<const uint8_t> value) {
         if (cpu_.cpu().handleMemoryWrite(address, value)) {
+            emitIoWriteEvent(address, value);
             return true;
         }
         if (value.size() == 1 && address == 0xFF50) {
@@ -490,9 +635,28 @@ private:
             }
             const uint8_t bootControl = bootRomMapped_ ? 0x00u : 0x01u;
             memoryMap_.storage().load(std::span<const uint8_t>(&bootControl, 1), 0xFF50);
+            emitMachineEvent(BMMQ::MachineEvent{
+                BMMQ::MachineEventType::BootRomVisibilityChanged,
+                BMMQ::PluginCategory::System,
+                stepCounter_,
+                address,
+                bootControl,
+                nullptr,
+                bootRomMapped_ ? "boot ROM mapped" : "boot ROM unmapped"
+            });
             return true;
         }
-        return handleCartridgeWrite(address, value);
+        if (handleCartridgeWrite(address, value)) {
+            emitIoWriteEvent(address, value, "cartridge or mapped I/O write");
+            return true;
+        }
+        if (classifyIoAddress(address).has_value()) {
+            auto destination = memoryMap_.storage().writableSpan(address, value.size());
+            std::copy(value.begin(), value.end(), destination.begin());
+            emitIoWriteEvent(address, value);
+            return true;
+        }
+        return false;
     }
 
     void initializeDmgStartupRegisters() {
@@ -549,7 +713,12 @@ private:
     uint8_t mbc1UpperBankBits_ = 0;
     bool mbc1BankingModeSelect_ = false;
     uint8_t mbc5HighBankBit_ = 0;
+    uint64_t stepCounter_ = 0;
+    uint8_t lastLy_ = 0;
+    std::optional<uint8_t> lastDigitalInputMask_;
+    std::optional<uint8_t> lastPolledDigitalInput_;
     LR3592_PluginRuntime cpu_;
+    BMMQ::PluginManager pluginManager_;
     BMMQ::Plugin::DefaultStepPolicy defaultPolicy_;
     BMMQ::Plugin::IExecutorPolicyPlugin* activePolicy_;
     GameBoyRuntimeContext context_;

@@ -502,6 +502,11 @@ void LR3592_DMG::writeIoRegister(std::string_view name, DataType value)
         return;
     }
     entry->reg->value = value;
+
+    const auto* descriptor = mem.file.findDescriptor(name);
+    if (descriptor != nullptr && descriptor->mappedAddress.has_value()) {
+        mem.backingStore().load(std::span<const DataType>(&value, 1), *descriptor->mappedAddress);
+    }
 }
 
 DataType LR3592_DMG::joypadLowNibble() const
