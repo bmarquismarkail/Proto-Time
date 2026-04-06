@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+#include "machine/plugins/LoggingPlugins.hpp"
 #include "machine/plugins/PluginManager.hpp"
 
 namespace {
@@ -161,12 +162,18 @@ int main()
 
     auto videoPlugin = std::make_unique<RecordingVideoPlugin>();
     auto* video = videoPlugin.get();
+    auto loggingVideoPlugin = std::make_unique<BMMQ::LoggingVideoPlugin>();
+    auto* loggingVideo = loggingVideoPlugin.get();
     auto audioPlugin = std::make_unique<RecordingAudioPlugin>();
     auto* audio = audioPlugin.get();
+    auto loggingAudioPlugin = std::make_unique<BMMQ::LoggingAudioPlugin>();
+    auto* loggingAudio = loggingAudioPlugin.get();
     auto serialPlugin = std::make_unique<RecordingSerialPlugin>();
     auto* serial = serialPlugin.get();
     auto digitalInputPlugin = std::make_unique<RecordingDigitalInputPlugin>();
     auto* inputRecorder = digitalInputPlugin.get();
+    auto loggingInputPlugin = std::make_unique<BMMQ::LoggingDigitalInputPlugin>();
+    auto* loggingInput = loggingInputPlugin.get();
     auto networkPlugin = std::make_unique<RecordingNetworkPlugin>();
     auto* network = networkPlugin.get();
     auto parallelPlugin = std::make_unique<RecordingParallelPlugin>();
@@ -179,16 +186,19 @@ int main()
     auto* secondInput = secondInputPlugin.get();
 
     machine.pluginManager().add(std::move(videoPlugin));
+    machine.pluginManager().add(std::move(loggingVideoPlugin));
     machine.pluginManager().add(std::move(audioPlugin));
+    machine.pluginManager().add(std::move(loggingAudioPlugin));
     machine.pluginManager().add(std::move(serialPlugin));
     machine.pluginManager().add(std::move(digitalInputPlugin));
+    machine.pluginManager().add(std::move(loggingInputPlugin));
     machine.pluginManager().add(std::move(networkPlugin));
     machine.pluginManager().add(std::move(parallelPlugin));
     machine.pluginManager().add(std::move(throwingPlugin));
     machine.pluginManager().add(std::move(firstInputPlugin));
     machine.pluginManager().add(std::move(secondInputPlugin));
 
-    assert(machine.pluginManager().size() == 9);
+    assert(machine.pluginManager().size() == 12);
     assert(!machine.describeIoRegions().empty());
 
     machine.pluginManager().initialize(machine.view());
@@ -208,6 +218,7 @@ int main()
     assert(inputRecorder->lastInputState->pressedMask == 0x03u);
     assert(inputRecorder->lastInputState->joypRegister == machine.runtimeContext().read8(0xFF00));
     assert(inputRecorder->lastInputState->directionPressed());
+    assert(loggingInput->entryCount() >= 1);
 
     machine.runtimeContext().write8(0x8000, 0x42u);
     machine.runtimeContext().write8(0xFF40, 0x91u);
@@ -221,6 +232,7 @@ int main()
     assert(video->lastVideoState->vram.size() == 0x2000u);
     assert(video->lastVideoState->oam.size() == 0x00A0u);
     assert(video->lastVideoState->vram[0] == 0x42u);
+    assert(loggingVideo->entryCount() >= 2);
 
     machine.runtimeContext().write8(0xFF12, 0xF3u);
     assert(audio->audioEventCount >= 1);
@@ -228,6 +240,7 @@ int main()
     assert(audio->lastAudioState->nr12 == 0xF3u);
     assert(audio->lastAudioState->registers.size() == 0x17u);
     assert(audio->lastAudioState->registers[0x02] == 0xF3u);
+    assert(loggingAudio->entryCount() >= 1);
 
     machine.runtimeContext().write8(0xFF01, 0xABu);
     machine.runtimeContext().write8(0xFF02, 0x81u);
