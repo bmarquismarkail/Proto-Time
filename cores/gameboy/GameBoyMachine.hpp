@@ -415,19 +415,11 @@ private:
     }
 
     bool handleSpecialRead(uint16_t address, std::span<uint8_t> value) const {
-        if (address >= 0xFEA0 && address <= 0xFEFF) {
-            std::fill(value.begin(), value.end(), static_cast<uint8_t>(0xFF));
-            return true;
-        }
-        return false;
+        return cpu_.cpu().handleMemoryRead(address, value);
     }
 
     bool handleSpecialWrite(uint16_t address, std::span<const uint8_t> value) {
-        if (value.size() == 1 && address == 0xFF04) {
-            cpu_.cpu().resetDivider();
-            return true;
-        }
-        if (address >= 0xFEA0 && static_cast<std::size_t>(address - 0xFEA0u) + value.size() <= 0x60u) {
+        if (cpu_.cpu().handleMemoryWrite(address, value)) {
             return true;
         }
         return handleCartridgeWrite(address, value);

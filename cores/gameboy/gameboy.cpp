@@ -442,6 +442,15 @@ BMMQ::MemoryStorage<AddressType, DataType> LR3592_DMG::buildMemoryStore()
     store.addMemBlock(std::make_tuple(0xff4c, 0x0034, BMMQ::memAccess::Unmapped));
     store.addMemBlock(std::make_tuple(0xff80, 0x007f, BMMQ::memAccess::ReadWrite));
     store.addMemBlock(std::make_tuple(0xffff, 0x0001, BMMQ::memAccess::ReadWrite));
+    store.setAddressTranslator([](AddressType address) {
+        return LR3592_DMG::normalizeAccessAddress(address);
+    });
+    store.setReadInterceptor([this](AddressType address, std::span<DataType> value) {
+        return handleMemoryRead(address, value);
+    });
+    store.setWriteInterceptor([this](AddressType address, std::span<const DataType> value) {
+        return handleMemoryWrite(address, value);
+    });
     return store;
 }
 
@@ -808,6 +817,87 @@ void LR3592_DMG::resetDivider()
 {
     dividerCounter = 0;
     writeIoRegister("DIV", 0);
+}
+
+AddressType LR3592_DMG::normalizeAccessAddress(AddressType address)
+{
+    if (address >= 0xE000 && address <= 0xFDFF) {
+        return static_cast<AddressType>(address - 0x2000);
+    }
+    return address;
+}
+
+bool LR3592_DMG::lcdEnabled() const
+{
+    return (readIoRegister("LCDC") & 0x80u) != 0;
+}
+
+DataType LR3592_DMG::currentPpuMode() const
+{
+    if (!lcdEnabled()) {
+        return 0;
+    }
+
+    const auto ly = readIoRegister("LY");
+    if (ly >= 144u) {
+        return 1;
+    }
+
+    const auto lineDot = static_cast<uint16_t>(ppuDotCounter % 456u);
+    if (lineDot < 80u) {
+        return 2;
+    }
+    if (lineDot < 252u) {
+        return 3;
+    }
+    return 0;
+}
+
+bool LR3592_DMG::handleMemoryRead(AddressType address, std::span<DataType> value) const
+{
+    address = normalizeAccessAddress(address);
+    if (address >= 0xFEA0 && address <= 0xFEFF) {
+        std::fill(value.begin(), value.end(), static_cast<DataType>(0xFF));
+        return true;
+    }
+
+    if (lcdEnabled()) {
+        const auto mode = currentPpuMode();
+        if (address >= 0x8000 && address <= 0x9FFF && mode == 3) {
+            std::fill(value.begin(), value.end(), static_cast<DataType>(0xFF));
+            return true;
+        }
+        if (address >= 0xFE00 && address <= 0xFE9F && (mode == 2 || mode == 3)) {
+            std::fill(value.begin(), value.end(), static_cast<DataType>(0xFF));
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool LR3592_DMG::handleMemoryWrite(AddressType address, std::span<const DataType> value)
+{
+    address = normalizeAccessAddress(address);
+    if (value.size() == 1 && address == 0xFF04) {
+        resetDivider();
+        return true;
+    }
+    if (address >= 0xFEA0 && static_cast<std::size_t>(address - 0xFEA0u) + value.size() <= 0x60u) {
+        return true;
+    }
+
+    if (lcdEnabled()) {
+        const auto mode = currentPpuMode();
+        if (address >= 0x8000 && address <= 0x9FFF && mode == 3) {
+            return true;
+        }
+        if (address >= 0xFE00 && address <= 0xFE9F && (mode == 2 || mode == 3)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 void LR3592_DMG::setStopFlag(bool f)

@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string_view>
 #include <vector>
@@ -85,6 +86,9 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   DataType readIoRegister(std::string_view name) const;
   void writeIoRegister(std::string_view name, DataType value);
   void retireInstruction(std::size_t executedByteCount);
+  [[nodiscard]] bool lcdEnabled() const;
+  [[nodiscard]] DataType currentPpuMode() const;
+  static AddressType normalizeAccessAddress(AddressType address);
 
 public:
   BMMQ::RegisterInfo<AddressType> AF{GB::RegisterId::AF};
@@ -117,6 +121,8 @@ public:
   void setIme(bool enabled);
   void scheduleImeEnable();
   void resetDivider();
+  bool handleMemoryRead(AddressType address, std::span<DataType> value) const;
+  bool handleMemoryWrite(AddressType address, std::span<const DataType> value);
   void setStopFlag(bool f);
   void setHaltFlag(bool f);
   void clearHaltFlag();

@@ -352,6 +352,75 @@ int main()
         assert((static_cast<uint8_t>(ifEntry->reg->value) & 0x01u) != 0);
     }
 
+    {
+        LR3592_DMG cpu;
+        scalar(cpu, GB::RegisterId::SP, 0xC100);
+        auto* lcdcEntry = cpu.getMemory().file.findRegister("LCDC");
+        auto* statEntry = cpu.getMemory().file.findRegister("STAT");
+        auto* ieEntry = cpu.getMemory().file.findRegister(GB::RegisterId::IE);
+        auto* ifEntry = cpu.getMemory().file.findRegister("IF");
+        assert(lcdcEntry != nullptr && lcdcEntry->reg != nullptr);
+        assert(statEntry != nullptr && statEntry->reg != nullptr);
+        assert(ieEntry != nullptr && ieEntry->reg != nullptr);
+        assert(ifEntry != nullptr && ifEntry->reg != nullptr);
+
+        lcdcEntry->reg->value = 0x80;
+        statEntry->reg->value = 0x20;
+        ieEntry->reg->value = 0x02;
+        ifEntry->reg->value = 0x00;
+        cpu.loadProgram({0xFB, 0x00, 0x00, 0x00}, 0);
+
+        step(cpu);
+        step(cpu);
+        step(cpu);
+
+        assert(scalar(cpu, GB::RegisterId::PC) == 0x0048);
+        assert(scalar(cpu, GB::RegisterId::SP) == 0xC0FE);
+        assert((static_cast<uint8_t>(ifEntry->reg->value) & 0x02u) == 0);
+    }
+
+    {
+        LR3592_DMG cpu;
+        auto* lcdcEntry = cpu.getMemory().file.findRegister("LCDC");
+        assert(lcdcEntry != nullptr && lcdcEntry->reg != nullptr);
+
+        lcdcEntry->reg->value = 0x80;
+        cpu.loadProgram(std::vector<uint8_t>(512, 0x00), 0);
+        step(cpu);
+
+        cpu.getMemory().write(std::span<const uint8_t>({0x12}), static_cast<uint16_t>(0xFE00));
+        assert(readByte(cpu, 0xFE00) == 0xFF);
+
+        for (int i = 0; i < 70; ++i) {
+            step(cpu);
+        }
+
+        cpu.getMemory().write(std::span<const uint8_t>({0x34}), static_cast<uint16_t>(0xFE00));
+        assert(readByte(cpu, 0xFE00) == 0x34);
+    }
+
+    {
+        LR3592_DMG cpu;
+        auto* lcdcEntry = cpu.getMemory().file.findRegister("LCDC");
+        assert(lcdcEntry != nullptr && lcdcEntry->reg != nullptr);
+
+        lcdcEntry->reg->value = 0x80;
+        cpu.loadProgram(std::vector<uint8_t>(512, 0x00), 0);
+        for (int i = 0; i < 20; ++i) {
+            step(cpu);
+        }
+
+        cpu.getMemory().write(std::span<const uint8_t>({0x56}), static_cast<uint16_t>(0x8000));
+        assert(readByte(cpu, 0x8000) == 0xFF);
+
+        for (int i = 0; i < 50; ++i) {
+            step(cpu);
+        }
+
+        cpu.getMemory().write(std::span<const uint8_t>({0x78}), static_cast<uint16_t>(0x8000));
+        assert(readByte(cpu, 0x8000) == 0x78);
+    }
+
     requireDecodeFailure({0xD3, 0x00, 0x00});
 
     return 0;
