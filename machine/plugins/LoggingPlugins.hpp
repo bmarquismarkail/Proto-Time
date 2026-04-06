@@ -2,6 +2,8 @@
 #define BMMQ_LOGGING_PLUGINS_HPP
 
 #include <cstddef>
+#include <fstream>
+#include <functional>
 #include <iomanip>
 #include <sstream>
 #include <string>
@@ -68,6 +70,8 @@ inline std::string hexWord(uint16_t value)
 
 class LoggingPluginSupport {
 public:
+    using LogSink = std::function<void(std::string_view)>;
+
     [[nodiscard]] std::size_t entryCount() const noexcept
     {
         return entries_.size();
@@ -83,14 +87,48 @@ public:
         return entries_.empty() ? std::string_view{} : std::string_view(entries_.back());
     }
 
+    void setSink(LogSink sink)
+    {
+        sink_ = std::move(sink);
+    }
+
+    void clearSink()
+    {
+        sink_ = {};
+    }
+
+    void setLogFile(std::string path)
+    {
+        logFilePath_ = std::move(path);
+    }
+
+    void clearLogFile()
+    {
+        logFilePath_.clear();
+    }
+
+    [[nodiscard]] std::string_view logFilePath() const noexcept
+    {
+        return logFilePath_;
+    }
+
 protected:
     void appendLog(std::string entry)
     {
-        entries_.push_back(std::move(entry));
+        entries_.push_back(entry);
+        if (sink_) {
+            sink_(entry);
+        }
+        if (!logFilePath_.empty()) {
+            std::ofstream file(logFilePath_, std::ios::app);
+            file << entry << '\n';
+        }
     }
 
 private:
     std::vector<std::string> entries_;
+    LogSink sink_;
+    std::string logFilePath_;
 };
 
 class LoggingVideoPlugin final : public IVideoPlugin, public LoggingPluginSupport {

@@ -1,8 +1,11 @@
 #include <cassert>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
@@ -164,10 +167,20 @@ int main()
     auto* video = videoPlugin.get();
     auto loggingVideoPlugin = std::make_unique<BMMQ::LoggingVideoPlugin>();
     auto* loggingVideo = loggingVideoPlugin.get();
+    std::vector<std::string> sinkEntries;
+    loggingVideo->setSink([&sinkEntries](std::string_view entry) {
+        sinkEntries.emplace_back(entry);
+    });
+
+    namespace fs = std::filesystem;
+    const fs::path logPath = fs::temp_directory_path() / "time_logging_plugin_smoke.log";
+    fs::remove(logPath);
+
     auto audioPlugin = std::make_unique<RecordingAudioPlugin>();
     auto* audio = audioPlugin.get();
     auto loggingAudioPlugin = std::make_unique<BMMQ::LoggingAudioPlugin>();
     auto* loggingAudio = loggingAudioPlugin.get();
+    loggingAudio->setLogFile(logPath.string());
     auto serialPlugin = std::make_unique<RecordingSerialPlugin>();
     auto* serial = serialPlugin.get();
     auto digitalInputPlugin = std::make_unique<RecordingDigitalInputPlugin>();
@@ -233,6 +246,7 @@ int main()
     assert(video->lastVideoState->oam.size() == 0x00A0u);
     assert(video->lastVideoState->vram[0] == 0x42u);
     assert(loggingVideo->entryCount() >= 2);
+    assert(!sinkEntries.empty());
 
     machine.runtimeContext().write8(0xFF12, 0xF3u);
     assert(audio->audioEventCount >= 1);
@@ -241,6 +255,11 @@ int main()
     assert(audio->lastAudioState->registers.size() == 0x17u);
     assert(audio->lastAudioState->registers[0x02] == 0xF3u);
     assert(loggingAudio->entryCount() >= 1);
+
+    std::ifstream logFile(logPath);
+    std::string logContents((std::istreambuf_iterator<char>(logFile)), std::istreambuf_iterator<char>());
+    assert(!logContents.empty());
+    assert(logContents.find("audio:") != std::string::npos);
 
     machine.runtimeContext().write8(0xFF01, 0xABu);
     machine.runtimeContext().write8(0xFF02, 0x81u);
@@ -296,5 +315,6 @@ int main()
     machine.pluginManager().shutdown(machine.view());
     assert(video->detachCount == 1);
 
+    fs::remove(logPath);
     return 0;
 }
