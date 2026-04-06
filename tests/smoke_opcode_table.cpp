@@ -477,14 +477,28 @@ int main()
     {
         LR3592_DMG cpu;
         auto* joypEntry = cpu.getMemory().file.findRegister("JOYP");
+        auto* ifEntry = cpu.getMemory().file.findRegister("IF");
         assert(joypEntry != nullptr && joypEntry->reg != nullptr);
+        assert(ifEntry != nullptr && ifEntry->reg != nullptr);
 
+        cpu.setJoypadState(0);
         cpu.getMemory().write(std::span<const uint8_t>({0x20}), static_cast<uint16_t>(0xFF00));
         assert((readByte(cpu, 0xFF00) & 0x30u) == 0x20u);
+        assert((readByte(cpu, 0xFF00) & 0x0Fu) == 0x0Fu);
+
+        cpu.setJoypadState(GB::Joypad::Right | GB::Joypad::Start);
+        assert((readByte(cpu, 0xFF00) & 0x0Fu) == 0x0Eu);
 
         cpu.getMemory().write(std::span<const uint8_t>({0x10}), static_cast<uint16_t>(0xFF00));
         assert((readByte(cpu, 0xFF00) & 0x30u) == 0x10u);
-        assert((readByte(cpu, 0xFF00) & 0x0Fu) == 0x0Fu);
+        assert((readByte(cpu, 0xFF00) & 0x0Fu) == 0x07u);
+
+        ifEntry->reg->value = 0x00;
+        cpu.setJoypadState(GB::Joypad::Right | GB::Joypad::Start);
+        assert((static_cast<uint8_t>(ifEntry->reg->value) & 0x10u) == 0);
+
+        cpu.setJoypadState(static_cast<uint8_t>(GB::Joypad::Right | GB::Joypad::B | GB::Joypad::Start));
+        assert((static_cast<uint8_t>(ifEntry->reg->value) & 0x10u) != 0);
     }
 
     {

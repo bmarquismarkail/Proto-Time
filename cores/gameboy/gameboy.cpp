@@ -425,6 +425,7 @@ LR3592_DMG::LR3592_DMG()
     loadProgram({0x3E, 0x12, 0x00});
     populateOpcodes();
     resetDivider();
+    writeIoRegister("JOYP", 0xFF);
 }
 
 void LR3592_DMG::attachMemory(BMMQ::MemoryStorage<AddressType, DataType>& store)
@@ -501,6 +502,30 @@ void LR3592_DMG::writeIoRegister(std::string_view name, DataType value)
         return;
     }
     entry->reg->value = value;
+}
+
+DataType LR3592_DMG::joypadLowNibble() const
+{
+    DataType low = 0x0Fu;
+    if ((joypSelect & 0x10u) == 0) {
+        low = static_cast<DataType>(low & ~(joypadPressedMask & 0x0Fu));
+    }
+    if ((joypSelect & 0x20u) == 0) {
+        low = static_cast<DataType>(low & ~((joypadPressedMask >> 4) & 0x0Fu));
+    }
+    return static_cast<DataType>(low & 0x0Fu);
+}
+
+void LR3592_DMG::setJoypadState(DataType pressedMask)
+{
+    const DataType oldLow = joypadLowNibble();
+    joypadPressedMask = pressedMask;
+    const DataType newLow = joypadLowNibble();
+    writeIoRegister("JOYP", static_cast<DataType>(0xC0u | joypSelect | newLow));
+
+    if ((oldLow & static_cast<DataType>(~newLow)) != 0) {
+        requestInterrupt(kInterruptJoypad);
+    }
 }
 
 void LR3592_DMG::requestInterrupt(DataType mask)
@@ -891,7 +916,7 @@ bool LR3592_DMG::handleMemoryRead(AddressType address, std::span<DataType> value
 {
     address = normalizeAccessAddress(address);
     if (address == 0xFF00 && !value.empty()) {
-        value[0] = static_cast<DataType>(0xC0u | joypSelect | 0x0Fu);
+        value[0] = static_cast<DataType>(0xC0u | joypSelect | joypadLowNibble());
         return true;
     }
     if (address >= 0xFEA0 && address <= 0xFEFF) {
@@ -923,8 +948,13 @@ bool LR3592_DMG::handleMemoryWrite(AddressType address, std::span<const DataType
 {
     address = normalizeAccessAddress(address);
     if (value.size() == 1 && address == 0xFF00) {
+        const DataType oldLow = joypadLowNibble();
         joypSelect = static_cast<DataType>(value[0] & 0x30u);
-        writeIoRegister("JOYP", static_cast<DataType>(0xC0u | joypSelect | 0x0Fu));
+        const DataType newLow = joypadLowNibble();
+        writeIoRegister("JOYP", static_cast<DataType>(0xC0u | joypSelect | newLow));
+        if ((oldLow & static_cast<DataType>(~newLow)) != 0) {
+            requestInterrupt(kInterruptJoypad);
+        }
         return true;
     }
     if (value.size() == 1 && address == 0xFF02) {

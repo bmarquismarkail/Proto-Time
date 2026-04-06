@@ -200,6 +200,10 @@ public:
         romLoaded_ = true;
     }
 
+    void setJoypadState(uint8_t pressedMask) {
+        cpu_.cpu().setJoypadState(pressedMask);
+    }
+
     uint16_t readRegisterPair(std::string_view id) const override {
         const auto* descriptor = cpu_.cpu().getMemory().file.findDescriptor(id);
         if (descriptor == nullptr || !descriptor->isPair) {

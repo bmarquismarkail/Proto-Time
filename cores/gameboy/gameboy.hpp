@@ -44,6 +44,7 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   AddressType dmaSourceBase = 0;
   uint16_t dmaCycleProgress = 0;
   DataType joypSelect = 0x30;
+  DataType joypadPressedMask = 0;
   uint32_t ppuDotCounter = 0;
   bool lcdEnabledLastTick = false;
   bool statInterruptLatched = false;
@@ -92,6 +93,7 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   void retireInstruction(std::size_t executedByteCount);
   [[nodiscard]] bool lcdEnabled() const;
   [[nodiscard]] DataType currentPpuMode() const;
+  [[nodiscard]] DataType joypadLowNibble() const;
   static AddressType normalizeAccessAddress(AddressType address);
 
 public:
@@ -125,6 +127,7 @@ public:
   void setIme(bool enabled);
   void scheduleImeEnable();
   void resetDivider();
+  void setJoypadState(DataType pressedMask);
   bool handleMemoryRead(AddressType address, std::span<DataType> value) const;
   bool handleMemoryWrite(AddressType address, std::span<const DataType> value);
   void setStopFlag(bool f);
