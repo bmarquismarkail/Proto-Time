@@ -87,6 +87,30 @@ public:
         return std::nullopt;
     }
 
+    bool reenable(std::string_view id)
+    {
+        for (auto& entry : plugins_) {
+            if (entry.plugin == nullptr || entry.plugin->id() != id) {
+                continue;
+            }
+            entry.disabled = false;
+            entry.lastError.clear();
+            entry.failure = nullptr;
+            return true;
+        }
+        return false;
+    }
+
+    void resetFailures()
+    {
+        for (auto& entry : plugins_) {
+            entry.disabled = false;
+            entry.failureCount = 0;
+            entry.lastError.clear();
+            entry.failure = nullptr;
+        }
+    }
+
     void initialize(const MachineView& view)
     {
         for (auto& entry : plugins_) {

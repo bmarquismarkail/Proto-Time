@@ -123,6 +123,7 @@ struct RecordingParallelPlugin final : BMMQ::IParallelPlugin {
 struct ThrowingPlugin final : BMMQ::IPlugin {
     int attachCount = 0;
     int machineEventCount = 0;
+    bool shouldThrow = true;
 
     std::string_view id() const override {
         return "test.plugin.throwing";
@@ -134,7 +135,9 @@ struct ThrowingPlugin final : BMMQ::IPlugin {
 
     void onMachineEvent(const BMMQ::MachineEvent&, const BMMQ::MachineView&) override {
         ++machineEventCount;
-        throw std::runtime_error("simulated plugin failure");
+        if (shouldThrow) {
+            throw std::runtime_error("simulated plugin failure");
+        }
     }
 };
 
@@ -311,6 +314,18 @@ int main()
     assert(machine.pluginManager().disabledCount() >= 1);
     assert(throwing->machineEventCount == 1);
     assert(video->machineEventCount >= 2);
+
+    throwing->shouldThrow = false;
+    const bool reenabled = machine.pluginManager().reenable("test.plugin.throwing");
+    assert(reenabled);
+    assert(!machine.pluginManager().statusFor("test.plugin.throwing")->disabled);
+
+    machine.step();
+    assert(throwing->machineEventCount == 2);
+
+    machine.pluginManager().resetFailures();
+    assert(machine.pluginManager().disabledCount() == 0);
+    assert(!machine.pluginManager().hasDisabledPlugins());
 
     machine.pluginManager().shutdown(machine.view());
     assert(video->detachCount == 1);
