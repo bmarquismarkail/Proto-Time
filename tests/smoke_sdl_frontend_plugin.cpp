@@ -10,6 +10,8 @@ int main()
     BMMQ::SdlFrontendConfig config;
     config.windowTitle = "Proto-Time SDL Smoke";
     config.windowScale = 3;
+    config.frameWidth = 32;
+    config.frameHeight = 24;
     config.autoInitializeBackend = false;
 
     GameBoyMachine machine;
@@ -27,7 +29,7 @@ int main()
     assert(!frontend->backendReady());
     assert(!frontend->backendName().empty());
 
-    machine.setJoypadState(0x03u);
+    frontend->setQueuedDigitalInputMask(0x05u);
     machine.runtimeContext().write8(0x8000, 0x42u);
     machine.runtimeContext().write8(0xFF40, 0x91u);
     machine.runtimeContext().write8(0xFF12, 0xF3u);
@@ -38,9 +40,20 @@ int main()
     assert(stats.audioEvents >= 1);
     assert(stats.inputEvents >= 1);
     assert(stats.inputPolls >= 1);
+    assert(stats.inputSamplesProvided >= 1);
+    assert(stats.framesPrepared >= 1);
     assert(!frontend->diagnostics().empty());
     assert(frontend->lastVideoState().has_value());
     assert(frontend->lastVideoState()->lcdc == 0x91u);
+    assert(frontend->lastInputState().has_value());
+    assert(frontend->lastInputState()->pressedMask == 0x05u);
+    assert(frontend->lastFrame().has_value());
+    assert(frontend->lastFrame()->width == 32);
+    assert(frontend->lastFrame()->height == 24);
+    assert(frontend->lastFrame()->pixelCount() == 32u * 24u);
+
+    frontend->clearQueuedDigitalInputMask();
+    assert(!frontend->queuedDigitalInputMask().has_value());
 
     machine.pluginManager().shutdown(machine.view());
     assert(frontend->stats().detachCount == 1);

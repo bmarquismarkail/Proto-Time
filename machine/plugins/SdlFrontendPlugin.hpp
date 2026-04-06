@@ -1,6 +1,8 @@
 #ifndef BMMQ_SDL_FRONTEND_PLUGIN_HPP
 #define BMMQ_SDL_FRONTEND_PLUGIN_HPP
 
+#include <algorithm>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -28,6 +30,8 @@ namespace BMMQ {
 struct SdlFrontendConfig {
     std::string windowTitle = "T.I.M.E. SDL Frontend";
     int windowScale = 2;
+    int frameWidth = 160;
+    int frameHeight = 144;
     bool enableVideo = true;
     bool enableAudio = true;
     bool enableInput = true;
@@ -41,6 +45,25 @@ struct SdlFrontendStats {
     std::size_t audioEvents = 0;
     std::size_t inputEvents = 0;
     std::size_t inputPolls = 0;
+    std::size_t inputSamplesProvided = 0;
+    std::size_t framesPrepared = 0;
+    std::size_t backendInitAttempts = 0;
+};
+
+struct SdlFrameBuffer {
+    int width = 160;
+    int height = 144;
+    std::vector<uint32_t> pixels;
+
+    [[nodiscard]] bool empty() const noexcept
+    {
+        return pixels.empty();
+    }
+
+    [[nodiscard]] std::size_t pixelCount() const noexcept
+    {
+        return pixels.size();
+    }
 };
 
 class SdlFrontendPlugin final : public IVideoPlugin,
@@ -91,6 +114,28 @@ public:
         return lastInputState_;
     }
 
+    [[nodiscard]] const std::optional<SdlFrameBuffer>& lastFrame() const noexcept
+    {
+        return lastFrame_;
+    }
+
+    void setQueuedDigitalInputMask(uint32_t pressedMask)
+    {
+        queuedDigitalInputMask_ = pressedMask & 0x00FFu;
+        appendLog("sdl: queued input mask=" + detail::hexByte(static_cast<uint8_t>(*queuedDigitalInputMask_)));
+    }
+
+    void clearQueuedDigitalInputMask()
+    {
+        queuedDigitalInputMask_.reset();
+        appendLog("sdl: cleared queued input mask");
+    }
+
+    [[nodiscard]] std::optional<uint32_t> queuedDigitalInputMask() const noexcept
+    {
+        return queuedDigitalInputMask_;
+    }
+
     [[nodiscard]] static constexpr bool compiledWithSdl() noexcept
     {
 #if BMMQ_SDL_FRONTEND_HAS_SDL2
@@ -116,6 +161,7 @@ public:
 
     bool tryInitializeBackend()
     {
+        ++stats_.backendInitAttempts;
 #if BMMQ_SDL_FRONTEND_HAS_SDL2
         appendLog("sdl: SDL2 detected; backend initialization is not implemented in this skeleton yet");
 #else
@@ -148,10 +194,19 @@ public:
         }
         ++stats_.videoEvents;
         lastVideoState_ = view.videoState();
+        if (lastVideoState_.has_value()) {
+            lastFrame_ = buildDebugFrame(*lastVideoState_);
+            ++stats_.framesPrepared;
+        } else {
+            lastFrame_.reset();
+        }
 
         std::string message = std::string("sdl: video event=") + detail::machineEventTypeName(event.type);
         if (lastVideoState_.has_value()) {
             message += " lcdc=" + detail::hexByte(lastVideoState_->lcdc);
+        }
+        if (lastFrame_.has_value()) {
+            message += " frame=" + std::to_string(lastFrame_->width) + "x" + std::to_string(lastFrame_->height);
         }
         appendLog(std::move(message));
     }
@@ -177,6 +232,10 @@ public:
             return std::nullopt;
         }
         ++stats_.inputPolls;
+        if (queuedDigitalInputMask_.has_value()) {
+            ++stats_.inputSamplesProvided;
+            return queuedDigitalInputMask_;
+        }
         return std::nullopt;
     }
 
@@ -196,12 +255,49 @@ public:
     }
 
 private:
+    static uint32_t paletteColor(uint8_t shade) noexcept
+    {
+        switch (shade & 0x03u) {
+        case 0:
+            return 0xFFE0F8D0u;
+        case 1:
+            return 0xFF88C070u;
+        case 2:
+            return 0xFF346856u;
+        default:
+            return 0xFF081820u;
+        }
+    }
+
+    [[nodiscard]] SdlFrameBuffer buildDebugFrame(const VideoStateView& state) const
+    {
+        SdlFrameBuffer frame;
+        frame.width = std::max(config_.frameWidth, 1);
+        frame.height = std::max(config_.frameHeight, 1);
+
+        const auto pixelCount = static_cast<std::size_t>(frame.width) * static_cast<std::size_t>(frame.height);
+        frame.pixels.resize(pixelCount, paletteColor(0));
+        if (state.vram.empty()) {
+            return frame;
+        }
+
+        for (std::size_t i = 0; i < pixelCount; ++i) {
+            const uint8_t source = state.vram[i % state.vram.size()];
+            const uint8_t shift = static_cast<uint8_t>((i & 0x03u) * 2u);
+            const uint8_t shade = static_cast<uint8_t>((source >> shift) & 0x03u);
+            frame.pixels[i] = paletteColor(shade);
+        }
+        return frame;
+    }
+
     SdlFrontendConfig config_;
     SdlFrontendStats stats_;
     bool backendReady_ = false;
     std::optional<VideoStateView> lastVideoState_;
     std::optional<AudioStateView> lastAudioState_;
     std::optional<DigitalInputStateView> lastInputState_;
+    std::optional<SdlFrameBuffer> lastFrame_;
+    std::optional<uint32_t> queuedDigitalInputMask_;
 };
 
 } // namespace BMMQ
