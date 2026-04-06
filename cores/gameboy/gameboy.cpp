@@ -44,6 +44,11 @@ uint16_t timerBitMaskForTac(DataType tac)
     return 1u << 9;
 }
 
+bool isHramAddress(AddressType address)
+{
+    return address >= 0xFF80u && address <= 0xFFFEu;
+}
+
 using MemoryView = BMMQ::IMemory<AddressType, DataType, AddressType>;
 using MemoryPool = BMMQ::MemoryPool<AddressType, DataType, AddressType>;
 
@@ -562,6 +567,28 @@ void LR3592_DMG::retireInstruction(std::size_t executedByteCount)
 {
     const auto cycles = static_cast<uint32_t>(executedByteCount * 4u);
     for (uint32_t i = 0; i < cycles; ++i) {
+        if (dmaActive) {
+            if ((dmaCycleProgress % 4u) == 0u) {
+                const auto byteIndex = static_cast<std::size_t>(dmaCycleProgress / 4u);
+                if (byteIndex < 0xA0u) {
+                    AddressType sourceAddress = static_cast<AddressType>(dmaSourceBase + byteIndex);
+                    sourceAddress = normalizeAccessAddress(sourceAddress);
+
+                    DataType byte = 0xFF;
+                    if (!(sourceAddress >= 0xFEA0u && sourceAddress <= 0xFEFFu)) {
+                        byte = mem.backingStore().readableSpan(sourceAddress, 1)[0];
+                    }
+                    mem.backingStore().load(std::span<const DataType>(&byte, 1), static_cast<AddressType>(0xFE00u + byteIndex));
+                }
+            }
+
+            ++dmaCycleProgress;
+            if (dmaCycleProgress >= 0xA0u * 4u) {
+                dmaActive = false;
+                dmaCycleProgress = 0;
+            }
+        }
+
         const DataType tac = readIoRegister("TAC");
         const bool timerEnabled = (tac & 0x04u) != 0;
         const uint16_t timerBitMask = timerBitMaskForTac(tac);
@@ -665,6 +692,15 @@ BMMQ::fetchBlock<AddressType, DataType> LR3592_DMG::fetch()
         return {};
     }
 
+    auto* pcEntry = mem.file.findRegister("PC");
+    const auto pc = (pcEntry != nullptr && pcEntry->reg != nullptr)
+        ? static_cast<AddressType>(pcEntry->reg->value)
+        : static_cast<AddressType>(0);
+
+    if (dmaActive && !isHramAddress(pc)) {
+        return {};
+    }
+
     const DataType pending = static_cast<DataType>((readIoRegister("IF") & readIoRegister(GB::RegisterId::IE)) & kInterruptMask);
     if (haltFlag && pending == 0) {
         return {};
@@ -675,11 +711,6 @@ BMMQ::fetchBlock<AddressType, DataType> LR3592_DMG::fetch()
     }
 
     BMMQ::fetchBlock<AddressType, DataType> f;
-
-    auto* pcEntry = mem.file.findRegister("PC");
-    const auto pc = (pcEntry != nullptr && pcEntry->reg != nullptr)
-        ? static_cast<AddressType>(pcEntry->reg->value)
-        : static_cast<AddressType>(0);
 
     f.setbaseAddress(pc);
 
@@ -792,7 +823,10 @@ void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, Addre
         feedback.pcAfter = feedback.pcBefore;
     }
 
-    retireInstruction(executedByteCount);
+    const auto retiredBytes = (executedByteCount == 0 && (haltFlag || stopFlag || dmaActive))
+        ? static_cast<std::size_t>(1)
+        : executedByteCount;
+    retireInstruction(retiredBytes);
 }
 
 const BMMQ::CpuFeedback& LR3592_DMG::getLastFeedback() const
@@ -856,7 +890,16 @@ DataType LR3592_DMG::currentPpuMode() const
 bool LR3592_DMG::handleMemoryRead(AddressType address, std::span<DataType> value) const
 {
     address = normalizeAccessAddress(address);
+    if (address == 0xFF00 && !value.empty()) {
+        value[0] = static_cast<DataType>(0xC0u | joypSelect | 0x0Fu);
+        return true;
+    }
     if (address >= 0xFEA0 && address <= 0xFEFF) {
+        std::fill(value.begin(), value.end(), static_cast<DataType>(0xFF));
+        return true;
+    }
+
+    if (dmaActive && !isHramAddress(address)) {
         std::fill(value.begin(), value.end(), static_cast<DataType>(0xFF));
         return true;
     }
@@ -879,6 +922,20 @@ bool LR3592_DMG::handleMemoryRead(AddressType address, std::span<DataType> value
 bool LR3592_DMG::handleMemoryWrite(AddressType address, std::span<const DataType> value)
 {
     address = normalizeAccessAddress(address);
+    if (value.size() == 1 && address == 0xFF00) {
+        joypSelect = static_cast<DataType>(value[0] & 0x30u);
+        writeIoRegister("JOYP", static_cast<DataType>(0xC0u | joypSelect | 0x0Fu));
+        return true;
+    }
+    if (value.size() == 1 && address == 0xFF02) {
+        const DataType control = value[0];
+        writeIoRegister("SC", static_cast<DataType>(control & 0x7Fu));
+        if ((control & 0x80u) != 0) {
+            writeIoRegister("SB", 0xFF);
+            requestInterrupt(kInterruptSerial);
+        }
+        return true;
+    }
     if (value.size() == 1 && address == 0xFF04) {
         resetDivider();
         return true;
@@ -886,23 +943,16 @@ bool LR3592_DMG::handleMemoryWrite(AddressType address, std::span<const DataType
     if (value.size() == 1 && address == 0xFF46) {
         const DataType highByte = value[0];
         writeIoRegister("DMA", highByte);
-
-        const AddressType sourceBase = static_cast<AddressType>(highByte << 8);
-        std::array<DataType, 0xA0> dmaBuffer{};
-        for (std::size_t i = 0; i < dmaBuffer.size(); ++i) {
-            AddressType sourceAddress = static_cast<AddressType>(sourceBase + i);
-            sourceAddress = normalizeAccessAddress(sourceAddress);
-            if (sourceAddress >= 0xFEA0 && sourceAddress <= 0xFEFF) {
-                dmaBuffer[i] = 0xFF;
-                continue;
-            }
-            auto span = mem.backingStore().readableSpan(sourceAddress, 1);
-            dmaBuffer[i] = span[0];
-        }
-        mem.backingStore().load(std::span<const DataType>(dmaBuffer.data(), dmaBuffer.size()), static_cast<AddressType>(0xFE00));
+        dmaActive = true;
+        dmaSourceBase = static_cast<AddressType>(highByte << 8);
+        dmaCycleProgress = 0;
         return true;
     }
     if (address >= 0xFEA0 && static_cast<std::size_t>(address - 0xFEA0u) + value.size() <= 0x60u) {
+        return true;
+    }
+
+    if (dmaActive && !isHramAddress(address)) {
         return true;
     }
 

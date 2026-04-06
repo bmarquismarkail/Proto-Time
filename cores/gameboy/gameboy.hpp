@@ -40,6 +40,10 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   DataType imeEnableDelay = 0;
   bool stopFlag = false, haltFlag = false;
   uint16_t dividerCounter = 0;
+  bool dmaActive = false;
+  AddressType dmaSourceBase = 0;
+  uint16_t dmaCycleProgress = 0;
+  DataType joypSelect = 0x30;
   uint32_t ppuDotCounter = 0;
   bool lcdEnabledLastTick = false;
   bool statInterruptLatched = false;

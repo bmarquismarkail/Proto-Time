@@ -428,12 +428,31 @@ int main()
             source[i] = static_cast<uint8_t>(i ^ 0x5A);
         }
         cpu.getMemory().store.load(std::span<const uint8_t>(source.data(), source.size()), static_cast<uint16_t>(0xC000));
+        cpu.getMemory().store.load(std::span<const uint8_t>({0x99}), static_cast<uint16_t>(0xFF80));
+        cpu.loadProgram(std::vector<uint8_t>(512, 0x00), 0);
 
         cpu.getMemory().write(std::span<const uint8_t>({0xC0}), static_cast<uint16_t>(0xFF46));
 
+        assert(readByte(cpu, 0xC000) == 0xFF);
+        assert(readByte(cpu, 0xFE00) == 0xFF);
+        assert(readByte(cpu, 0xFF80) == 0x99);
+
+        const auto stalledPc = scalar(cpu, GB::RegisterId::PC);
+        step(cpu);
+        assert(scalar(cpu, GB::RegisterId::PC) == stalledPc);
+
+        for (int i = 1; i < 160; ++i) {
+            step(cpu);
+        }
+
+        assert(scalar(cpu, GB::RegisterId::PC) == stalledPc);
+        assert(readByte(cpu, 0xC000) == source[0]);
         for (std::size_t i = 0; i < source.size(); ++i) {
             assert(readByte(cpu, static_cast<uint16_t>(0xFE00 + i)) == source[i]);
         }
+
+        step(cpu);
+        assert(scalar(cpu, GB::RegisterId::PC) == static_cast<uint16_t>(stalledPc + 1));
     }
 
     {
@@ -442,13 +461,48 @@ int main()
         assert(dmaEntry != nullptr && dmaEntry->reg != nullptr);
 
         cpu.getMemory().store.load(std::span<const uint8_t>({0xDE, 0xAD, 0xBE, 0xEF}), static_cast<uint16_t>(0x8000));
-        dmaEntry->reg->value = 0x80;
         cpu.getMemory().write(std::span<const uint8_t>({0x80}), static_cast<uint16_t>(0xFF46));
+        assert(static_cast<uint8_t>(dmaEntry->reg->value) == 0x80);
+
+        for (int i = 0; i < 160; ++i) {
+            step(cpu);
+        }
 
         assert(readByte(cpu, 0xFE00) == 0xDE);
         assert(readByte(cpu, 0xFE01) == 0xAD);
         assert(readByte(cpu, 0xFE02) == 0xBE);
         assert(readByte(cpu, 0xFE03) == 0xEF);
+    }
+
+    {
+        LR3592_DMG cpu;
+        auto* joypEntry = cpu.getMemory().file.findRegister("JOYP");
+        assert(joypEntry != nullptr && joypEntry->reg != nullptr);
+
+        cpu.getMemory().write(std::span<const uint8_t>({0x20}), static_cast<uint16_t>(0xFF00));
+        assert((readByte(cpu, 0xFF00) & 0x30u) == 0x20u);
+
+        cpu.getMemory().write(std::span<const uint8_t>({0x10}), static_cast<uint16_t>(0xFF00));
+        assert((readByte(cpu, 0xFF00) & 0x30u) == 0x10u);
+        assert((readByte(cpu, 0xFF00) & 0x0Fu) == 0x0Fu);
+    }
+
+    {
+        LR3592_DMG cpu;
+        auto* sbEntry = cpu.getMemory().file.findRegister("SB");
+        auto* scEntry = cpu.getMemory().file.findRegister("SC");
+        auto* ifEntry = cpu.getMemory().file.findRegister("IF");
+        assert(sbEntry != nullptr && sbEntry->reg != nullptr);
+        assert(scEntry != nullptr && scEntry->reg != nullptr);
+        assert(ifEntry != nullptr && ifEntry->reg != nullptr);
+
+        sbEntry->reg->value = 0xA5;
+        ifEntry->reg->value = 0x00;
+        cpu.getMemory().write(std::span<const uint8_t>({0x81}), static_cast<uint16_t>(0xFF02));
+
+        assert(static_cast<uint8_t>(sbEntry->reg->value) == 0xFF);
+        assert((static_cast<uint8_t>(scEntry->reg->value) & 0x80u) == 0);
+        assert((static_cast<uint8_t>(ifEntry->reg->value) & 0x08u) != 0);
     }
 
     requireDecodeFailure({0xD3, 0x00, 0x00});
