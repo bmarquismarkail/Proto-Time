@@ -28,6 +28,13 @@ int main()
     assert(frontend->stats().attachCount == 1);
     assert(!frontend->backendReady());
     assert(!frontend->backendName().empty());
+    const bool initResult = frontend->tryInitializeBackend();
+    assert(frontend->stats().backendInitAttempts >= 1);
+    assert(!frontend->backendStatusSummary().empty());
+    if (initResult) {
+        assert(frontend->backendReady());
+    }
+    assert(frontend->stats().eventPumpCalls == 0);
 
     frontend->pressButton(BMMQ::SdlFrontendButton::Right);
     frontend->pressButton(BMMQ::SdlFrontendButton::Up);
@@ -39,6 +46,8 @@ int main()
     machine.runtimeContext().write8(0x8000, 0x42u);
     machine.runtimeContext().write8(0xFF40, 0x91u);
     machine.runtimeContext().write8(0xFF12, 0xF3u);
+    const auto pumpedBeforeStep = frontend->pumpBackendEvents();
+    (void)pumpedBeforeStep;
     machine.step();
 
     const auto& stats = frontend->stats();
@@ -49,6 +58,7 @@ int main()
     assert(stats.inputSamplesProvided >= 1);
     assert(stats.framesPrepared >= 1);
     assert(stats.buttonTransitions >= 3);
+    assert(stats.eventPumpCalls >= 2);
     assert(!frontend->diagnostics().empty());
     assert(frontend->lastVideoState().has_value());
     assert(frontend->lastVideoState()->lcdc == 0x91u);

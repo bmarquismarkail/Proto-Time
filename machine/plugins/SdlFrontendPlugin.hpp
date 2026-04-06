@@ -25,6 +25,10 @@
 #  define BMMQ_SDL_FRONTEND_HAS_SDL2 0
 #endif
 
+#ifndef BMMQ_SDL_FRONTEND_LINKED
+#  define BMMQ_SDL_FRONTEND_LINKED 0
+#endif
+
 namespace BMMQ {
 
 struct SdlFrontendConfig {
@@ -36,6 +40,8 @@ struct SdlFrontendConfig {
     bool enableAudio = true;
     bool enableInput = true;
     bool autoInitializeBackend = false;
+    bool createHiddenWindowOnInitialize = false;
+    bool pumpBackendEventsOnInputSample = true;
 };
 
 struct SdlFrontendStats {
@@ -52,6 +58,8 @@ struct SdlFrontendStats {
     std::size_t quitRequests = 0;
     std::size_t hostEventsHandled = 0;
     std::size_t keyEventsHandled = 0;
+    std::size_t eventPumpCalls = 0;
+    std::size_t backendEventsTranslated = 0;
 };
 
 enum class SdlFrontendButton : uint8_t {
@@ -233,6 +241,21 @@ public:
         return lastHostEventSummary_;
     }
 
+    [[nodiscard]] std::string_view lastBackendError() const noexcept
+    {
+        return lastBackendError_;
+    }
+
+    [[nodiscard]] std::string backendStatusSummary() const
+    {
+        std::string summary = std::string(backendName());
+        summary += backendReady_ ? " ready" : " not-ready";
+        if (!lastBackendError_.empty()) {
+            summary += " error=" + lastBackendError_;
+        }
+        return summary;
+    }
+
     bool handleHostEvent(const SdlFrontendHostEvent& event)
     {
         ++stats_.hostEventsHandled;
@@ -296,13 +319,78 @@ public:
     bool tryInitializeBackend()
     {
         ++stats_.backendInitAttempts;
-#if BMMQ_SDL_FRONTEND_HAS_SDL2
-        appendLog("sdl: SDL2 detected; backend initialization is not implemented in this skeleton yet");
+        lastBackendError_.clear();
+
+#if BMMQ_SDL_FRONTEND_HAS_SDL2 && BMMQ_SDL_FRONTEND_LINKED
+        if (backendReady_) {
+            appendLog("sdl: backend already initialized");
+            return true;
+        }
+
+        uint32_t initFlags = SDL_INIT_EVENTS;
+        if (config_.createHiddenWindowOnInitialize && config_.enableVideo) {
+            initFlags |= SDL_INIT_VIDEO;
+        }
+
+        if (SDL_InitSubSystem(initFlags) != 0) {
+            lastBackendError_ = SDL_GetError();
+            appendLog("sdl: backend init failed: " + lastBackendError_);
+            backendReady_ = false;
+            initializedBackendFlags_ = 0;
+            return false;
+        }
+
+        initializedBackendFlags_ = initFlags;
+        if ((initFlags & SDL_INIT_VIDEO) != 0u) {
+            const int width = std::max(config_.frameWidth * std::max(config_.windowScale, 1), 1);
+            const int height = std::max(config_.frameHeight * std::max(config_.windowScale, 1), 1);
+            window_ = SDL_CreateWindow(config_.windowTitle.c_str(),
+                                       SDL_WINDOWPOS_UNDEFINED,
+                                       SDL_WINDOWPOS_UNDEFINED,
+                                       width,
+                                       height,
+                                       SDL_WINDOW_HIDDEN);
+            if (window_ == nullptr) {
+                lastBackendError_ = SDL_GetError();
+                appendLog("sdl: hidden window creation failed: " + lastBackendError_);
+                shutdownBackend();
+                return false;
+            }
+        }
+
+        backendReady_ = true;
+        appendLog("sdl: backend initialized");
+        return true;
 #else
-        appendLog("sdl: SDL2 headers not found; running in skeleton mode");
-#endif
+        appendLog("sdl: SDL2 backend unavailable; running in skeleton mode");
         backendReady_ = false;
-        return backendReady_;
+        initializedBackendFlags_ = 0;
+        return false;
+#endif
+    }
+
+    std::size_t pumpBackendEvents()
+    {
+        ++stats_.eventPumpCalls;
+#if BMMQ_SDL_FRONTEND_HAS_SDL2 && BMMQ_SDL_FRONTEND_LINKED
+        if (!backendReady_) {
+            return 0;
+        }
+
+        std::size_t handled = 0;
+        SDL_Event event;
+        while (SDL_PollEvent(&event) != 0) {
+            if (const auto translated = translateSdlEvent(event); translated.has_value()) {
+                if (handleHostEvent(*translated)) {
+                    ++handled;
+                }
+            }
+        }
+        stats_.backendEventsTranslated += handled;
+        return handled;
+#else
+        return 0;
+#endif
     }
 
     void onAttach(const MachineView&) override
@@ -317,7 +405,7 @@ public:
     void onDetach(const MachineView&) override
     {
         ++stats_.detachCount;
-        backendReady_ = false;
+        shutdownBackend();
         appendLog("sdl: detached");
     }
 
@@ -366,6 +454,9 @@ public:
             return std::nullopt;
         }
         ++stats_.inputPolls;
+        if (config_.pumpBackendEventsOnInputSample) {
+            pumpBackendEvents();
+        }
         if (queuedDigitalInputMask_.has_value()) {
             ++stats_.inputSamplesProvided;
             return queuedDigitalInputMask_;
@@ -442,6 +533,71 @@ private:
         return std::nullopt;
     }
 
+#if BMMQ_SDL_FRONTEND_HAS_SDL2 && BMMQ_SDL_FRONTEND_LINKED
+    [[nodiscard]] static std::optional<SdlFrontendHostKey> mapSdlKeyCode(SDL_Keycode key) noexcept
+    {
+        switch (key) {
+        case SDLK_RIGHT:
+            return SdlFrontendHostKey::Right;
+        case SDLK_LEFT:
+            return SdlFrontendHostKey::Left;
+        case SDLK_UP:
+            return SdlFrontendHostKey::Up;
+        case SDLK_DOWN:
+            return SdlFrontendHostKey::Down;
+        case SDLK_z:
+            return SdlFrontendHostKey::Z;
+        case SDLK_x:
+            return SdlFrontendHostKey::X;
+        case SDLK_BACKSPACE:
+            return SdlFrontendHostKey::Backspace;
+        case SDLK_RETURN:
+            return SdlFrontendHostKey::Return;
+        default:
+            return std::nullopt;
+        }
+    }
+
+    [[nodiscard]] static std::optional<SdlFrontendHostEvent> translateSdlEvent(const SDL_Event& event) noexcept
+    {
+        switch (event.type) {
+        case SDL_QUIT:
+            return SdlFrontendHostEvent{SdlFrontendHostEventType::Quit, SdlFrontendHostKey::Unknown, false};
+        case SDL_KEYDOWN: {
+            const auto key = mapSdlKeyCode(event.key.keysym.sym);
+            if (!key.has_value()) {
+                return std::nullopt;
+            }
+            return SdlFrontendHostEvent{SdlFrontendHostEventType::KeyDown, *key, event.key.repeat != 0};
+        }
+        case SDL_KEYUP: {
+            const auto key = mapSdlKeyCode(event.key.keysym.sym);
+            if (!key.has_value()) {
+                return std::nullopt;
+            }
+            return SdlFrontendHostEvent{SdlFrontendHostEventType::KeyUp, *key, false};
+        }
+        default:
+            return std::nullopt;
+        }
+    }
+#endif
+
+    void shutdownBackend() noexcept
+    {
+#if BMMQ_SDL_FRONTEND_HAS_SDL2 && BMMQ_SDL_FRONTEND_LINKED
+        if (window_ != nullptr) {
+            SDL_DestroyWindow(window_);
+            window_ = nullptr;
+        }
+        if (initializedBackendFlags_ != 0u) {
+            SDL_QuitSubSystem(initializedBackendFlags_);
+            initializedBackendFlags_ = 0u;
+        }
+#endif
+        backendReady_ = false;
+    }
+
     static uint32_t paletteColor(uint8_t shade) noexcept
     {
         switch (shade & 0x03u) {
@@ -487,6 +643,11 @@ private:
     std::optional<uint32_t> queuedDigitalInputMask_;
     bool quitRequested_ = false;
     std::string lastHostEventSummary_;
+    std::string lastBackendError_;
+    uint32_t initializedBackendFlags_ = 0;
+#if BMMQ_SDL_FRONTEND_HAS_SDL2 && BMMQ_SDL_FRONTEND_LINKED
+    SDL_Window* window_ = nullptr;
+#endif
 };
 
 } // namespace BMMQ
