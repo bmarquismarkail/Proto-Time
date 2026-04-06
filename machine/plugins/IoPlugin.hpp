@@ -330,17 +330,17 @@ public:
     virtual void onMachineEvent(const MachineEvent&, const MachineView&) {}
 };
 
-class IVideoPlugin : public IPlugin {
+class IVideoPlugin : public virtual IPlugin {
 public:
     virtual void onVideoEvent(const MachineEvent&, const MachineView&) = 0;
 };
 
-class IAudioPlugin : public IPlugin {
+class IAudioPlugin : public virtual IPlugin {
 public:
     virtual void onAudioEvent(const MachineEvent&, const MachineView&) = 0;
 };
 
-class IDigitalInputPlugin : public IPlugin {
+class IDigitalInputPlugin : public virtual IPlugin {
 public:
     virtual std::optional<uint32_t> sampleDigitalInput(const MachineView&) {
         return std::nullopt;
@@ -348,7 +348,7 @@ public:
     virtual void onDigitalInputEvent(const MachineEvent&, const MachineView&) {}
 };
 
-class IAnalogInputPlugin : public IPlugin {
+class IAnalogInputPlugin : public virtual IPlugin {
 public:
     using AnalogState = std::vector<float>;
 
@@ -358,17 +358,17 @@ public:
     virtual void onAnalogInputEvent(const MachineEvent&, const MachineView&) {}
 };
 
-class INetworkPlugin : public IPlugin {
+class INetworkPlugin : public virtual IPlugin {
 public:
     virtual void onNetworkEvent(const MachineEvent&, const MachineView&) = 0;
 };
 
-class ISerialPlugin : public IPlugin {
+class ISerialPlugin : public virtual IPlugin {
 public:
     virtual void onSerialEvent(const MachineEvent&, const MachineView&) = 0;
 };
 
-class IParallelPlugin : public IPlugin {
+class IParallelPlugin : public virtual IPlugin {
 public:
     virtual void onParallelEvent(const MachineEvent&, const MachineView&) = 0;
 };

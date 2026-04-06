@@ -1,0 +1,49 @@
+#include <cassert>
+#include <memory>
+#include <vector>
+
+#include "cores/gameboy/GameBoyMachine.hpp"
+#include "machine/plugins/SdlFrontendPlugin.hpp"
+
+int main()
+{
+    BMMQ::SdlFrontendConfig config;
+    config.windowTitle = "Proto-Time SDL Smoke";
+    config.windowScale = 3;
+    config.autoInitializeBackend = false;
+
+    GameBoyMachine machine;
+    std::vector<uint8_t> cartridgeRom(0x8000, 0x00);
+    cartridgeRom[0x0100] = 0x00;
+    machine.loadRom(cartridgeRom);
+
+    auto frontendPlugin = std::make_unique<BMMQ::SdlFrontendPlugin>(config);
+    auto* frontend = frontendPlugin.get();
+    machine.pluginManager().add(std::move(frontendPlugin));
+
+    machine.pluginManager().initialize(machine.view());
+    assert(frontend->config().windowTitle == "Proto-Time SDL Smoke");
+    assert(frontend->stats().attachCount == 1);
+    assert(!frontend->backendReady());
+    assert(!frontend->backendName().empty());
+
+    machine.setJoypadState(0x03u);
+    machine.runtimeContext().write8(0x8000, 0x42u);
+    machine.runtimeContext().write8(0xFF40, 0x91u);
+    machine.runtimeContext().write8(0xFF12, 0xF3u);
+    machine.step();
+
+    const auto& stats = frontend->stats();
+    assert(stats.videoEvents >= 1);
+    assert(stats.audioEvents >= 1);
+    assert(stats.inputEvents >= 1);
+    assert(stats.inputPolls >= 1);
+    assert(!frontend->diagnostics().empty());
+    assert(frontend->lastVideoState().has_value());
+    assert(frontend->lastVideoState()->lcdc == 0x91u);
+
+    machine.pluginManager().shutdown(machine.view());
+    assert(frontend->stats().detachCount == 1);
+
+    return 0;
+}
