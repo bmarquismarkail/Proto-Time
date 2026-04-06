@@ -177,7 +177,20 @@ int main() {
     host.loadRom(mappedIoRom);
     assert(host.runtimeContext().read8(0x0000) == 0x31);
     assert(host.runtimeContext().read8(0x0042) == 0x3E);
-    host.runtimeContext().write8(0xFF50, 0x01);
+    assert(host.runtimeContext().read8(0xFF50) == 0x00);
+
+    host.runtimeContext().writeRegister16(GB::RegisterId::PC, 0x0000);
+    host.step();
+    assert(host.runtimeContext().readRegister16(GB::RegisterId::PC) == 0x0003);
+    host.step();
+    assert(host.runtimeContext().readRegister16(GB::RegisterId::PC) == 0x0005);
+    host.step();
+    assert(host.runtimeContext().read8(0xFF50) == 0x01);
+    assert(host.runtimeContext().read8(0x0000) == 0x99);
+    host.step();
+    assert(host.runtimeContext().readRegister16(GB::RegisterId::PC) == 0x0100);
+
+    host.runtimeContext().write8(0xFF50, 0x00);
     assert(host.runtimeContext().read8(0x0000) == 0x99);
     assert(host.runtimeContext().read8(0x0042) == 0x77);
     host.step();
@@ -186,6 +199,26 @@ int main() {
     host.step();
     host.step();
     assert(host.runtimeContext().read8(0xFF4F) == 0x91);
+
+    std::vector<uint8_t> customBootRom(0x100, 0x00);
+    customBootRom[0x0000] = 0xC3;
+    customBootRom[0x0001] = 0x00;
+    customBootRom[0x0002] = 0x01;
+    customBootRom[0x0042] = 0xAB;
+    machine.loadBootRom(customBootRom);
+    assert(host.runtimeContext().read8(0x0000) == 0xC3);
+    assert(host.runtimeContext().read8(0x0042) == 0xAB);
+    assert(host.runtimeContext().read8(0xFF50) == 0x00);
+    host.runtimeContext().write8(0xFF50, 0x01);
+    assert(host.runtimeContext().read8(0x0000) == 0x99);
+
+    bool invalidBootRomThrew = false;
+    try {
+        machine.loadBootRom(std::vector<uint8_t>(0xFF, 0x00));
+    } catch (const std::invalid_argument&) {
+        invalidBootRomThrew = true;
+    }
+    assert(invalidBootRomThrew);
 
     std::vector<uint8_t> inaccessibleTailRom(0x8000, 0x00);
     inaccessibleTailRom[0x0100] = 0x3E;

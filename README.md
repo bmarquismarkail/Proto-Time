@@ -37,6 +37,8 @@ ctest --test-dir build-working --output-on-failure
 
 `GameBoyMachine` is the first reference machine shell. It owns the CPU plugin instance and exposes a `RuntimeContext` that executors run against.
 
+For lab-style experiments, `GameBoyMachine` also provides `loadBootRom(...)`, which accepts a user-supplied Game Boy boot ROM that must be exactly `256` bytes long.
+
 `Machine` is the host-facing contract for:
 
 - `loadRom(...)`

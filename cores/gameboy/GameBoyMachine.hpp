@@ -193,6 +193,7 @@ public:
             throw std::invalid_argument("ROM must not be empty");
         }
 
+        bootEntryPending_ = false;
         rom_.load(bytes);
         configureCartridge(bytes);
         configureMemoryMap();
@@ -201,8 +202,29 @@ public:
         romLoaded_ = true;
     }
 
+    void loadBootRom(const std::vector<uint8_t>& bytes) {
+        if (bytes.size() != bootRom_.size()) {
+            throw std::invalid_argument("Game Boy boot ROM must be exactly 256 bytes");
+        }
+
+        std::copy(bytes.begin(), bytes.end(), bootRom_.begin());
+        bootRomMapped_ = true;
+        bootEntryPending_ = false;
+        const uint8_t bootControl = 0x00u;
+        memoryMap_.storage().load(std::span<const uint8_t>(&bootControl, 1), 0xFF50);
+    }
+
     void setJoypadState(uint8_t pressedMask) {
         cpu_.cpu().setJoypadState(pressedMask);
+    }
+
+    void step() override {
+        if (bootEntryPending_) {
+            context_.writeRegister16(GB::RegisterId::PC, 0x0100);
+            bootEntryPending_ = false;
+            return;
+        }
+        context_.step();
     }
 
     uint16_t readRegisterPair(std::string_view id) const override {
@@ -235,12 +257,19 @@ public:
     }
 
 private:
-    static constexpr std::array<uint8_t, 0x100> kBootRom = [] {
+    static constexpr std::array<uint8_t, 0x100> kDefaultBootRom = [] {
         std::array<uint8_t, 0x100> rom{};
         rom.fill(0x00);
-        rom[0x00] = 0x31;
+        rom[0x00] = 0x31; // ld sp,$fffe
         rom[0x01] = 0xFE;
         rom[0x02] = 0xFF;
+        rom[0x03] = 0x3E; // ld a,$01
+        rom[0x04] = 0x01;
+        rom[0x05] = 0xE0; // ldh [$50],a
+        rom[0x06] = 0x50;
+        rom[0x07] = 0xC3; // jp $0100
+        rom[0x08] = 0x00;
+        rom[0x09] = 0x01;
         rom[0x42] = 0x3E;
         rom[0x43] = 0x91;
         rom[0x44] = 0xE0;
@@ -436,9 +465,9 @@ private:
         if (cpu_.cpu().handleMemoryRead(address, value)) {
             return true;
         }
-        if (bootRomMapped_ && address < kBootRom.size()) {
-            const auto count = std::min<std::size_t>(value.size(), kBootRom.size() - address);
-            std::copy_n(kBootRom.begin() + static_cast<std::ptrdiff_t>(address), count, value.begin());
+        if (bootRomMapped_ && address < bootRom_.size()) {
+            const auto count = std::min<std::size_t>(value.size(), bootRom_.size() - address);
+            std::copy_n(bootRom_.begin() + static_cast<std::ptrdiff_t>(address), count, value.begin());
             return true;
         }
         return false;
@@ -450,9 +479,14 @@ private:
         }
         if (value.size() == 1 && address == 0xFF50) {
             if (value[0] != 0) {
+                if (bootRomMapped_ && context_.readRegister16(GB::RegisterId::PC) < 0x0100) {
+                    bootEntryPending_ = true;
+                }
                 bootRomMapped_ = false;
             }
-            return false;
+            const uint8_t bootControl = bootRomMapped_ ? 0x00u : 0x01u;
+            memoryMap_.storage().load(std::span<const uint8_t>(&bootControl, 1), 0xFF50);
+            return true;
         }
         return handleCartridgeWrite(address, value);
     }
@@ -501,7 +535,9 @@ private:
     BMMQ::RomImage rom_;
     BMMQ::MemoryMap memoryMap_;
     bool romLoaded_ = false;
+    std::array<uint8_t, 0x100> bootRom_ = kDefaultBootRom;
     bool bootRomMapped_ = true;
+    bool bootEntryPending_ = false;
     CartridgeController controller_ = CartridgeController::None;
     std::size_t romBankCount_ = 0;
     std::size_t currentRomBank_ = 1;
