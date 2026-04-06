@@ -152,7 +152,7 @@ public:
 
     std::string_view displayName() const override
     {
-        return "SDL Frontend Plugin (Skeleton)";
+        return "SDL Frontend Plugin";
     }
 
     [[nodiscard]] const SdlFrontendConfig& config() const noexcept
@@ -349,9 +349,11 @@ public:
 
         if (config_.showWindowOnPresent) {
             requestWindowVisibility(true);
+            applyWindowVisibilityRequest();
         }
 
         if (renderer_ == nullptr) {
+            SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
             renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_SOFTWARE);
             if (renderer_ == nullptr) {
                 lastBackendError_ = SDL_GetError();
@@ -359,6 +361,7 @@ public:
                 appendLog("sdl: renderer creation failed: " + lastBackendError_);
                 return false;
             }
+            SDL_RenderSetLogicalSize(renderer_, lastFrame_->width, lastFrame_->height);
         }
 
         if (texture_ == nullptr || textureWidth_ != lastFrame_->width || textureHeight_ != lastFrame_->height) {
@@ -449,9 +452,9 @@ public:
     [[nodiscard]] std::string_view backendName() const noexcept
     {
 #if BMMQ_SDL_FRONTEND_HAS_SDL2
-        return "SDL2 (skeleton)";
+        return "SDL2 frontend";
 #else
-        return "SDL2 unavailable (skeleton mode)";
+        return "SDL2 unavailable";
 #endif
     }
 
@@ -562,10 +565,16 @@ public:
         ++stats_.videoEvents;
         lastVideoState_ = view.videoState();
         if (lastVideoState_.has_value()) {
-            lastFrame_ = buildDebugFrame(*lastVideoState_);
-            ++stats_.framesPrepared;
-            if (config_.autoPresentOnVideoEvent) {
-                presentLatestFrame();
+            const bool shouldRefreshFrame =
+                event.type == MachineEventType::VBlank ||
+                !lastFrame_.has_value() ||
+                !lastVideoState_->lcdEnabled();
+            if (shouldRefreshFrame) {
+                lastFrame_ = buildDebugFrame(*lastVideoState_);
+                ++stats_.framesPrepared;
+                if (config_.autoPresentOnVideoEvent) {
+                    presentLatestFrame();
+                }
             }
         } else {
             lastFrame_.reset();
@@ -793,6 +802,152 @@ private:
         }
     }
 
+    [[nodiscard]] static uint8_t mapPaletteShade(uint8_t palette, uint8_t colorIndex) noexcept
+    {
+        return static_cast<uint8_t>((palette >> (colorIndex * 2u)) & 0x03u);
+    }
+
+    [[nodiscard]] static uint8_t readVramByte(const VideoStateView& state, uint16_t address) noexcept
+    {
+        if (address < 0x8000u || address >= 0xA000u) {
+            return 0xFFu;
+        }
+        const auto index = static_cast<std::size_t>(address - 0x8000u);
+        if (index >= state.vram.size()) {
+            return 0xFFu;
+        }
+        return state.vram[index];
+    }
+
+    [[nodiscard]] static uint8_t readOamByte(const VideoStateView& state, std::size_t index) noexcept
+    {
+        if (index >= state.oam.size()) {
+            return 0xFFu;
+        }
+        return state.oam[index];
+    }
+
+    [[nodiscard]] static uint8_t sampleTileColorIndex(const VideoStateView& state,
+                                                      uint8_t tileIndex,
+                                                      bool unsignedTileData,
+                                                      uint8_t tileX,
+                                                      uint8_t tileY) noexcept
+    {
+        uint16_t tileAddress = 0x8000u;
+        if (unsignedTileData) {
+            tileAddress = static_cast<uint16_t>(0x8000u + static_cast<uint16_t>(tileIndex) * 16u);
+        } else {
+            tileAddress = static_cast<uint16_t>(0x9000 + static_cast<int16_t>(static_cast<int8_t>(tileIndex)) * 16);
+        }
+
+        const auto rowAddress = static_cast<uint16_t>(tileAddress + static_cast<uint16_t>(tileY) * 2u);
+        const auto low = readVramByte(state, rowAddress);
+        const auto high = readVramByte(state, static_cast<uint16_t>(rowAddress + 1u));
+        const auto bit = static_cast<uint8_t>(7u - (tileX & 0x07u));
+        return static_cast<uint8_t>((((high >> bit) & 0x01u) << 1u) | ((low >> bit) & 0x01u));
+    }
+
+    [[nodiscard]] static uint8_t backgroundColorIndex(const VideoStateView& state, int screenX, int screenY) noexcept
+    {
+        const bool windowEnabled = (state.lcdc & 0x20u) != 0u;
+        const int windowLeft = static_cast<int>(state.wx) - 7;
+        const bool useWindow = windowEnabled && screenY >= static_cast<int>(state.wy) && screenX >= windowLeft;
+
+        int mapX = (screenX + static_cast<int>(state.scx)) & 0xFF;
+        int mapY = (screenY + static_cast<int>(state.scy)) & 0xFF;
+        uint16_t mapBase = (state.lcdc & 0x08u) != 0u ? 0x9C00u : 0x9800u;
+
+        if (useWindow) {
+            mapBase = (state.lcdc & 0x40u) != 0u ? 0x9C00u : 0x9800u;
+            mapX = std::max(0, screenX - windowLeft);
+            mapY = std::max(0, screenY - static_cast<int>(state.wy));
+        }
+
+        const auto tileMapAddress = static_cast<uint16_t>(
+            mapBase + static_cast<uint16_t>(((mapY >> 3) & 0x1Fu) * 32 + ((mapX >> 3) & 0x1Fu)));
+        const auto tileIndex = readVramByte(state, tileMapAddress);
+        const bool unsignedTileData = (state.lcdc & 0x10u) != 0u;
+        return sampleTileColorIndex(state,
+                                    tileIndex,
+                                    unsignedTileData,
+                                    static_cast<uint8_t>(mapX & 0x07),
+                                    static_cast<uint8_t>(mapY & 0x07));
+    }
+
+    void compositeSprites(SdlFrameBuffer& frame,
+                          const VideoStateView& state,
+                          std::span<const uint8_t> backgroundColorIndices) const
+    {
+        if ((state.lcdc & 0x02u) == 0u || state.oam.empty()) {
+            return;
+        }
+
+        const bool tallSprites = (state.lcdc & 0x04u) != 0u;
+        const int spriteHeight = tallSprites ? 16 : 8;
+        for (int spriteIndex = 39; spriteIndex >= 0; --spriteIndex) {
+            const auto base = static_cast<std::size_t>(spriteIndex) * 4u;
+            if (base + 3u >= state.oam.size()) {
+                continue;
+            }
+
+            const int spriteY = static_cast<int>(readOamByte(state, base)) - 16;
+            const int spriteX = static_cast<int>(readOamByte(state, base + 1u)) - 8;
+            uint8_t tileIndex = readOamByte(state, base + 2u);
+            const uint8_t attributes = readOamByte(state, base + 3u);
+            if (spriteX <= -8 || spriteX >= frame.width || spriteY <= -spriteHeight || spriteY >= frame.height) {
+                continue;
+            }
+
+            if (tallSprites) {
+                tileIndex = static_cast<uint8_t>(tileIndex & 0xFEu);
+            }
+
+            const bool xFlip = (attributes & 0x20u) != 0u;
+            const bool yFlip = (attributes & 0x40u) != 0u;
+            const bool behindBackground = (attributes & 0x80u) != 0u;
+            const uint8_t palette = (attributes & 0x10u) != 0u ? state.obp1 : state.obp0;
+
+            for (int localY = 0; localY < spriteHeight; ++localY) {
+                const int screenY = spriteY + localY;
+                if (screenY < 0 || screenY >= frame.height) {
+                    continue;
+                }
+
+                int spriteRow = yFlip ? (spriteHeight - 1 - localY) : localY;
+                uint8_t effectiveTile = tileIndex;
+                if (tallSprites && spriteRow >= 8) {
+                    effectiveTile = static_cast<uint8_t>(tileIndex + 1u);
+                    spriteRow -= 8;
+                }
+
+                for (int localX = 0; localX < 8; ++localX) {
+                    const int screenX = spriteX + localX;
+                    if (screenX < 0 || screenX >= frame.width) {
+                        continue;
+                    }
+
+                    const auto pixelIndex = static_cast<std::size_t>(screenY) * static_cast<std::size_t>(frame.width)
+                                          + static_cast<std::size_t>(screenX);
+                    const uint8_t spriteColumn = static_cast<uint8_t>(xFlip ? (7 - localX) : localX);
+                    const uint8_t colorIndex = sampleTileColorIndex(state,
+                                                                    effectiveTile,
+                                                                    true,
+                                                                    spriteColumn,
+                                                                    static_cast<uint8_t>(spriteRow));
+                    if (colorIndex == 0u) {
+                        continue;
+                    }
+                    if (behindBackground && backgroundColorIndices[pixelIndex] != 0u) {
+                        continue;
+                    }
+
+                    const uint8_t shade = mapPaletteShade(palette, colorIndex);
+                    frame.pixels[pixelIndex] = paletteColor(shade);
+                }
+            }
+        }
+    }
+
     [[nodiscard]] SdlFrameBuffer buildDebugFrame(const VideoStateView& state) const
     {
         SdlFrameBuffer frame;
@@ -805,11 +960,30 @@ private:
             return frame;
         }
 
-        for (std::size_t i = 0; i < pixelCount; ++i) {
-            const uint8_t source = state.vram[i % state.vram.size()];
-            const uint8_t shift = static_cast<uint8_t>((i & 0x03u) * 2u);
-            const uint8_t shade = static_cast<uint8_t>((source >> shift) & 0x03u);
-            frame.pixels[i] = paletteColor(shade);
+        const bool lcdEnabled = state.lcdEnabled();
+        const bool backgroundEnabled = (state.lcdc & 0x01u) != 0u;
+        std::vector<uint8_t> backgroundColorIndices(pixelCount, 0u);
+        for (int y = 0; y < frame.height; ++y) {
+            for (int x = 0; x < frame.width; ++x) {
+                const auto pixelIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(frame.width)
+                                      + static_cast<std::size_t>(x);
+                if (!lcdEnabled) {
+                    frame.pixels[pixelIndex] = paletteColor(0);
+                    continue;
+                }
+
+                uint8_t shade = 0;
+                if (backgroundEnabled) {
+                    const auto colorIndex = backgroundColorIndex(state, x, y);
+                    backgroundColorIndices[pixelIndex] = colorIndex;
+                    shade = mapPaletteShade(state.bgp, colorIndex);
+                }
+                frame.pixels[pixelIndex] = paletteColor(shade);
+            }
+        }
+
+        if (lcdEnabled) {
+            compositeSprites(frame, state, std::span<const uint8_t>(backgroundColorIndices.data(), backgroundColorIndices.size()));
         }
         return frame;
     }

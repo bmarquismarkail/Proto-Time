@@ -49,12 +49,36 @@ int main()
     assert(*frontend->queuedDigitalInputMask() == 0x15u);
     assert(frontend->isButtonPressed(BMMQ::SdlFrontendButton::A));
 
-    machine.runtimeContext().write8(0x8000, 0x42u);
-    machine.runtimeContext().write8(0xFF40, 0x91u);
+    machine.runtimeContext().write8(0xFF40, 0x00u);
+    machine.runtimeContext().write8(0x8000, 0xFFu);
+    machine.runtimeContext().write8(0x8001, 0x00u);
+    for (uint16_t row = 1; row < 8; ++row) {
+        machine.runtimeContext().write8(static_cast<uint16_t>(0x8000u + row * 2u), 0xFFu);
+        machine.runtimeContext().write8(static_cast<uint16_t>(0x8001u + row * 2u), 0x00u);
+    }
+    machine.runtimeContext().write8(0x9800, 0x00u);
+    machine.runtimeContext().write8(0x8010, 0xFFu);
+    machine.runtimeContext().write8(0x8011, 0xFFu);
+    for (uint16_t row = 1; row < 8; ++row) {
+        machine.runtimeContext().write8(static_cast<uint16_t>(0x8010u + row * 2u), 0xFFu);
+        machine.runtimeContext().write8(static_cast<uint16_t>(0x8011u + row * 2u), 0xFFu);
+    }
+    machine.runtimeContext().write8(0xFE00, 32u);
+    machine.runtimeContext().write8(0xFE01, 16u);
+    machine.runtimeContext().write8(0xFE02, 0x01u);
+    machine.runtimeContext().write8(0xFE03, 0x00u);
+    machine.runtimeContext().write8(0xFF47, 0xE4u);
+    machine.runtimeContext().write8(0xFF48, 0xE4u);
+    machine.runtimeContext().write8(0xFF40, 0x93u);
     machine.runtimeContext().write8(0xFF12, 0xF3u);
     const auto pumpedBeforeStep = frontend->pumpBackendEvents();
     (void)pumpedBeforeStep;
-    machine.step();
+    for (int i = 0; i < 20000; ++i) {
+        machine.step();
+        if (frontend->lastVideoState().has_value() && frontend->lastVideoState()->inVBlank()) {
+            break;
+        }
+    }
     assert(frontend->serviceFrontend());
 
     const auto& stats = frontend->stats();
@@ -71,7 +95,7 @@ int main()
     assert(stats.serviceCalls >= 1);
     assert(!frontend->diagnostics().empty());
     assert(frontend->lastVideoState().has_value());
-    assert(frontend->lastVideoState()->lcdc == 0x91u);
+    assert(frontend->lastVideoState()->lcdc == 0x93u);
     assert(frontend->lastAudioPreview().has_value());
     assert(frontend->lastAudioPreview()->sampleCount() == 64u);
     assert(frontend->lastInputState().has_value());
@@ -80,6 +104,14 @@ int main()
     assert(frontend->lastFrame()->width == 32);
     assert(frontend->lastFrame()->height == 24);
     assert(frontend->lastFrame()->pixelCount() == 32u * 24u);
+    const auto shade1 = 0xFF88C070u;
+    const auto shade3 = 0xFF081820u;
+    assert(frontend->lastFrame()->pixels[0] == shade1);
+    assert(frontend->lastFrame()->pixels[1] == shade1);
+    assert(frontend->lastFrame()->pixels[7] == shade1);
+    assert(frontend->lastFrame()->pixels[8] == shade1);
+    assert(frontend->lastFrame()->pixels[16 * 32 + 8] == shade3);
+    assert(frontend->lastFrame()->pixels[16 * 32 + 15] == shade3);
     assert(!frontend->lastRenderSummary().empty());
     assert(frontend->windowVisible());
 

@@ -63,6 +63,9 @@ struct VideoStateView {
     uint8_t scx = 0;
     uint8_t ly = 0;
     uint8_t lyc = 0;
+    uint8_t bgp = 0xFCu;
+    uint8_t obp0 = 0xFFu;
+    uint8_t obp1 = 0xFFu;
     uint8_t wy = 0;
     uint8_t wx = 0;
 
@@ -224,6 +227,9 @@ struct MachineView {
         state.scx = read8(0xFF43u);
         state.ly = read8(0xFF44u);
         state.lyc = read8(0xFF45u);
+        state.bgp = read8(0xFF47u);
+        state.obp0 = read8(0xFF48u);
+        state.obp1 = read8(0xFF49u);
         state.wy = read8(0xFF4Au);
         state.wx = read8(0xFF4Bu);
         return state;
