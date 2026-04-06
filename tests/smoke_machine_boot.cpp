@@ -292,6 +292,29 @@ int main() {
     host.runtimeContext().write8(0x2000, 0x02);
     assert(host.runtimeContext().read8(0x4000) == 0x33);
 
+    std::vector<uint8_t> mbc3Rom(0x100000, 0x00);
+    mbc3Rom[0x0147] = 0x13;
+    mbc3Rom[0x0148] = 0x05;
+    mbc3Rom[0x0149] = 0x03;
+    mbc3Rom[0x0000] = 0x44;
+    mbc3Rom[0x4000] = 0x55;
+    mbc3Rom[0x8000] = 0x66;
+    host.loadRom(mbc3Rom);
+    assert(host.runtimeContext().read8(0x4000) == 0x55);
+    host.runtimeContext().write8(0x2000, 0x02);
+    assert(host.runtimeContext().read8(0x4000) == 0x66);
+    host.runtimeContext().write8(0xA000, 0x12);
+    assert(host.runtimeContext().read8(0xA000) == 0xFF);
+    host.runtimeContext().write8(0x0000, 0x0A);
+    host.runtimeContext().write8(0xA000, 0x12);
+    assert(host.runtimeContext().read8(0xA000) == 0x12);
+    host.runtimeContext().write8(0x4000, 0x01);
+    assert(host.runtimeContext().read8(0xA000) == 0x00);
+    host.runtimeContext().write8(0xA000, 0x34);
+    assert(host.runtimeContext().read8(0xA000) == 0x34);
+    host.runtimeContext().write8(0x4000, 0x00);
+    assert(host.runtimeContext().read8(0xA000) == 0x12);
+
     host.attachExecutorPolicy(experimentalPolicy);
     assert(host.guarantee() == BMMQ::ExecutionGuarantee::Experimental);
     assert(host.runtimeContext().attachedPolicyMetadata()->id == "bmmq.executor.policy.experimental");
