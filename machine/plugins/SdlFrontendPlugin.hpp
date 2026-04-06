@@ -36,12 +36,14 @@ struct SdlFrontendConfig {
     int windowScale = 2;
     int frameWidth = 160;
     int frameHeight = 144;
+    int audioPreviewSampleCount = 128;
     bool enableVideo = true;
     bool enableAudio = true;
     bool enableInput = true;
     bool autoInitializeBackend = false;
     bool createHiddenWindowOnInitialize = false;
     bool pumpBackendEventsOnInputSample = true;
+    bool autoPresentOnVideoEvent = true;
 };
 
 struct SdlFrontendStats {
@@ -53,6 +55,9 @@ struct SdlFrontendStats {
     std::size_t inputPolls = 0;
     std::size_t inputSamplesProvided = 0;
     std::size_t framesPrepared = 0;
+    std::size_t framesPresented = 0;
+    std::size_t renderAttempts = 0;
+    std::size_t audioPreviewsBuilt = 0;
     std::size_t backendInitAttempts = 0;
     std::size_t buttonTransitions = 0;
     std::size_t quitRequests = 0;
@@ -114,6 +119,22 @@ struct SdlFrameBuffer {
     }
 };
 
+struct SdlAudioPreviewBuffer {
+    int sampleRate = 48000;
+    int channels = 1;
+    std::vector<int16_t> samples;
+
+    [[nodiscard]] bool empty() const noexcept
+    {
+        return samples.empty();
+    }
+
+    [[nodiscard]] std::size_t sampleCount() const noexcept
+    {
+        return samples.size();
+    }
+};
+
 class SdlFrontendPlugin final : public IVideoPlugin,
                                 public IAudioPlugin,
                                 public IDigitalInputPlugin,
@@ -157,6 +178,11 @@ public:
         return lastAudioState_;
     }
 
+    [[nodiscard]] const std::optional<SdlAudioPreviewBuffer>& lastAudioPreview() const noexcept
+    {
+        return lastAudioPreview_;
+    }
+
     [[nodiscard]] const std::optional<DigitalInputStateView>& lastInputState() const noexcept
     {
         return lastInputState_;
@@ -165,6 +191,11 @@ public:
     [[nodiscard]] const std::optional<SdlFrameBuffer>& lastFrame() const noexcept
     {
         return lastFrame_;
+    }
+
+    [[nodiscard]] std::string_view lastRenderSummary() const noexcept
+    {
+        return lastRenderSummary_;
     }
 
     void setQueuedDigitalInputMask(uint32_t pressedMask)
@@ -253,7 +284,77 @@ public:
         if (!lastBackendError_.empty()) {
             summary += " error=" + lastBackendError_;
         }
+        if (!lastRenderSummary_.empty()) {
+            summary += " render='" + lastRenderSummary_ + "'";
+        }
         return summary;
+    }
+
+    bool presentLatestFrame()
+    {
+        ++stats_.renderAttempts;
+        if (!lastFrame_.has_value()) {
+            lastRenderSummary_ = "No frame available";
+            return false;
+        }
+
+#if BMMQ_SDL_FRONTEND_HAS_SDL2 && BMMQ_SDL_FRONTEND_LINKED
+        if (!backendReady_) {
+            lastRenderSummary_ = "Frame prepared but backend not ready";
+            return false;
+        }
+        if (window_ == nullptr) {
+            lastRenderSummary_ = "Frame prepared without window";
+            return false;
+        }
+
+        if (renderer_ == nullptr) {
+            renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_SOFTWARE);
+            if (renderer_ == nullptr) {
+                lastBackendError_ = SDL_GetError();
+                lastRenderSummary_ = "Renderer creation failed";
+                appendLog("sdl: renderer creation failed: " + lastBackendError_);
+                return false;
+            }
+        }
+
+        if (texture_ == nullptr || textureWidth_ != lastFrame_->width || textureHeight_ != lastFrame_->height) {
+            if (texture_ != nullptr) {
+                SDL_DestroyTexture(texture_);
+                texture_ = nullptr;
+            }
+            texture_ = SDL_CreateTexture(renderer_,
+                                         SDL_PIXELFORMAT_ARGB8888,
+                                         SDL_TEXTUREACCESS_STREAMING,
+                                         lastFrame_->width,
+                                         lastFrame_->height);
+            if (texture_ == nullptr) {
+                lastBackendError_ = SDL_GetError();
+                lastRenderSummary_ = "Texture creation failed";
+                appendLog("sdl: texture creation failed: " + lastBackendError_);
+                return false;
+            }
+            textureWidth_ = lastFrame_->width;
+            textureHeight_ = lastFrame_->height;
+        }
+
+        if (SDL_UpdateTexture(texture_, nullptr, lastFrame_->pixels.data(), lastFrame_->width * static_cast<int>(sizeof(uint32_t))) != 0) {
+            lastBackendError_ = SDL_GetError();
+            lastRenderSummary_ = "Texture update failed";
+            appendLog("sdl: texture update failed: " + lastBackendError_);
+            return false;
+        }
+
+        SDL_RenderClear(renderer_);
+        SDL_RenderCopy(renderer_, texture_, nullptr, nullptr);
+        SDL_RenderPresent(renderer_);
+        ++stats_.framesPresented;
+        lastRenderSummary_ = "Presented frame " + std::to_string(lastFrame_->width) + "x" + std::to_string(lastFrame_->height);
+        return true;
+#else
+        lastRenderSummary_ = "Frame prepared in skeleton mode";
+        return false;
+#endif
     }
 
     bool handleHostEvent(const SdlFrontendHostEvent& event)
@@ -419,6 +520,9 @@ public:
         if (lastVideoState_.has_value()) {
             lastFrame_ = buildDebugFrame(*lastVideoState_);
             ++stats_.framesPrepared;
+            if (config_.autoPresentOnVideoEvent) {
+                presentLatestFrame();
+            }
         } else {
             lastFrame_.reset();
         }
@@ -440,10 +544,19 @@ public:
         }
         ++stats_.audioEvents;
         lastAudioState_ = view.audioState();
+        if (lastAudioState_.has_value()) {
+            lastAudioPreview_ = buildAudioPreview(*lastAudioState_);
+            ++stats_.audioPreviewsBuilt;
+        } else {
+            lastAudioPreview_.reset();
+        }
 
         std::string message = std::string("sdl: audio event=") + detail::machineEventTypeName(event.type);
         if (lastAudioState_.has_value()) {
             message += " nr12=" + detail::hexByte(lastAudioState_->nr12);
+        }
+        if (lastAudioPreview_.has_value()) {
+            message += " samples=" + std::to_string(lastAudioPreview_->sampleCount());
         }
         appendLog(std::move(message));
     }
@@ -586,6 +699,16 @@ private:
     void shutdownBackend() noexcept
     {
 #if BMMQ_SDL_FRONTEND_HAS_SDL2 && BMMQ_SDL_FRONTEND_LINKED
+        if (texture_ != nullptr) {
+            SDL_DestroyTexture(texture_);
+            texture_ = nullptr;
+        }
+        textureWidth_ = 0;
+        textureHeight_ = 0;
+        if (renderer_ != nullptr) {
+            SDL_DestroyRenderer(renderer_);
+            renderer_ = nullptr;
+        }
         if (window_ != nullptr) {
             SDL_DestroyWindow(window_);
             window_ = nullptr;
@@ -633,21 +756,44 @@ private:
         return frame;
     }
 
+    [[nodiscard]] SdlAudioPreviewBuffer buildAudioPreview(const AudioStateView& state) const
+    {
+        SdlAudioPreviewBuffer preview;
+        const auto sampleCount = std::max(config_.audioPreviewSampleCount, 8);
+        preview.samples.reserve(static_cast<std::size_t>(sampleCount));
+
+        const int volumeNibble = std::max(1, static_cast<int>((state.nr12 >> 4) & 0x0Fu));
+        const int amplitude = volumeNibble * 1024;
+        const int periodSeed = 8 + static_cast<int>(state.nr13) + (static_cast<int>(state.nr14 & 0x07u) << 8);
+        for (int i = 0; i < sampleCount; ++i) {
+            const int phase = (i + periodSeed) % 32;
+            const int16_t sample = static_cast<int16_t>(phase < 16 ? amplitude : -amplitude);
+            preview.samples.push_back(sample);
+        }
+        return preview;
+    }
+
     SdlFrontendConfig config_;
     SdlFrontendStats stats_;
     bool backendReady_ = false;
     std::optional<VideoStateView> lastVideoState_;
     std::optional<AudioStateView> lastAudioState_;
+    std::optional<SdlAudioPreviewBuffer> lastAudioPreview_;
     std::optional<DigitalInputStateView> lastInputState_;
     std::optional<SdlFrameBuffer> lastFrame_;
     std::optional<uint32_t> queuedDigitalInputMask_;
     bool quitRequested_ = false;
     std::string lastHostEventSummary_;
+    std::string lastRenderSummary_;
     std::string lastBackendError_;
     uint32_t initializedBackendFlags_ = 0;
 #if BMMQ_SDL_FRONTEND_HAS_SDL2 && BMMQ_SDL_FRONTEND_LINKED
     SDL_Window* window_ = nullptr;
+    SDL_Renderer* renderer_ = nullptr;
+    SDL_Texture* texture_ = nullptr;
 #endif
+    int textureWidth_ = 0;
+    int textureHeight_ = 0;
 };
 
 } // namespace BMMQ

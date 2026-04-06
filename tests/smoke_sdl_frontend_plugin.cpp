@@ -12,6 +12,7 @@ int main()
     config.windowScale = 3;
     config.frameWidth = 32;
     config.frameHeight = 24;
+    config.audioPreviewSampleCount = 64;
     config.autoInitializeBackend = false;
 
     GameBoyMachine machine;
@@ -57,17 +58,22 @@ int main()
     assert(stats.inputPolls >= 1);
     assert(stats.inputSamplesProvided >= 1);
     assert(stats.framesPrepared >= 1);
+    assert(stats.renderAttempts >= 1);
+    assert(stats.audioPreviewsBuilt >= 1);
     assert(stats.buttonTransitions >= 3);
     assert(stats.eventPumpCalls >= 2);
     assert(!frontend->diagnostics().empty());
     assert(frontend->lastVideoState().has_value());
     assert(frontend->lastVideoState()->lcdc == 0x91u);
+    assert(frontend->lastAudioPreview().has_value());
+    assert(frontend->lastAudioPreview()->sampleCount() == 64u);
     assert(frontend->lastInputState().has_value());
     assert(frontend->lastInputState()->pressedMask == 0x15u);
     assert(frontend->lastFrame().has_value());
     assert(frontend->lastFrame()->width == 32);
     assert(frontend->lastFrame()->height == 24);
     assert(frontend->lastFrame()->pixelCount() == 32u * 24u);
+    assert(!frontend->lastRenderSummary().empty());
 
     frontend->releaseButton(BMMQ::SdlFrontendButton::Up);
     assert(frontend->queuedDigitalInputMask().has_value());
