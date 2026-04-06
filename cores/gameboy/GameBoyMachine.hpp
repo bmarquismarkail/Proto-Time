@@ -209,6 +209,7 @@ public:
 
         std::copy(bytes.begin(), bytes.end(), bootRom_.begin());
         bootRomMapped_ = true;
+        context_.writeRegister16(GB::RegisterId::PC, 0x0000);
         bootEntryPending_ = false;
         const uint8_t bootControl = 0x00u;
         memoryMap_.storage().load(std::span<const uint8_t>(&bootControl, 1), 0xFF50);
@@ -270,6 +271,9 @@ private:
         rom[0x07] = 0xC3; // jp $0100
         rom[0x08] = 0x00;
         rom[0x09] = 0x01;
+        // Offsets 0x42-0x45 are intentional non-executed sentinel bytes.
+        // They stay readable through the boot ROM overlay so tests can verify
+        // that the `0x0000-0x00FF` mapping is still active before `FF50` handoff.
         rom[0x42] = 0x3E;
         rom[0x43] = 0x91;
         rom[0x44] = 0xE0;
@@ -536,7 +540,7 @@ private:
     BMMQ::MemoryMap memoryMap_;
     bool romLoaded_ = false;
     std::array<uint8_t, 0x100> bootRom_ = kDefaultBootRom;
-    bool bootRomMapped_ = true;
+    bool bootRomMapped_ = false;
     bool bootEntryPending_ = false;
     CartridgeController controller_ = CartridgeController::None;
     std::size_t romBankCount_ = 0;

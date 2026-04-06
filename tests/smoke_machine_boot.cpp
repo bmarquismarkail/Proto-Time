@@ -175,11 +175,32 @@ int main() {
     mappedIoRom[0x0108] = 0x4F;
     mappedIoRom[0x0109] = 0x00;
     host.loadRom(mappedIoRom);
+    assert(host.runtimeContext().read8(0x0000) == 0x99);
+    assert(host.runtimeContext().read8(0x0042) == 0x77);
+    assert(host.runtimeContext().read8(0xFF50) == 0x01);
+    assert(host.runtimeContext().readRegister16(GB::RegisterId::PC) == 0x0100);
+
+    std::vector<uint8_t> explicitBootRom(0x100, 0x00);
+    explicitBootRom[0x00] = 0x31;
+    explicitBootRom[0x01] = 0xFE;
+    explicitBootRom[0x02] = 0xFF;
+    explicitBootRom[0x03] = 0x3E;
+    explicitBootRom[0x04] = 0x01;
+    explicitBootRom[0x05] = 0xE0;
+    explicitBootRom[0x06] = 0x50;
+    explicitBootRom[0x07] = 0xC3;
+    explicitBootRom[0x08] = 0x00;
+    explicitBootRom[0x09] = 0x01;
+    explicitBootRom[0x42] = 0x3E;
+    explicitBootRom[0x43] = 0x91;
+    explicitBootRom[0x44] = 0xE0;
+    explicitBootRom[0x45] = 0x40;
+    machine.loadBootRom(explicitBootRom);
     assert(host.runtimeContext().read8(0x0000) == 0x31);
     assert(host.runtimeContext().read8(0x0042) == 0x3E);
     assert(host.runtimeContext().read8(0xFF50) == 0x00);
+    assert(host.runtimeContext().readRegister16(GB::RegisterId::PC) == 0x0000);
 
-    host.runtimeContext().writeRegister16(GB::RegisterId::PC, 0x0000);
     host.step();
     assert(host.runtimeContext().readRegister16(GB::RegisterId::PC) == 0x0003);
     host.step();

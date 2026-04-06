@@ -616,7 +616,7 @@ void LR3592_DMG::retireInstruction(std::size_t executedByteCount)
 
         if (serialTransferActive) {
             ++serialCycleProgress;
-            if (serialCycleProgress >= 512u) {
+            if (serialCycleProgress >= 4096u) {
                 serialTransferActive = false;
                 serialCycleProgress = 0;
                 writeIoRegister("SB", 0xFF);

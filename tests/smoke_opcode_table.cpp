@@ -519,7 +519,7 @@ int main()
         assert((static_cast<uint8_t>(scEntry->reg->value) & 0x80u) != 0);
         assert((static_cast<uint8_t>(ifEntry->reg->value) & 0x08u) == 0);
 
-        for (int i = 0; i < 127; ++i) {
+        for (int i = 0; i < 1023; ++i) {
             step(cpu);
         }
         assert(static_cast<uint8_t>(sbEntry->reg->value) == 0xA5);
