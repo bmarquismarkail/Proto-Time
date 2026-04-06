@@ -162,6 +162,8 @@ int main() {
     assert(host.runtimeContext().getLastFeedback().pcAfter == 0x0102);
 
     std::vector<uint8_t> mappedIoRom(0x8000, 0x00);
+    mappedIoRom[0x0000] = 0x99;
+    mappedIoRom[0x0042] = 0x77;
     mappedIoRom[0x0100] = 0x3E;
     mappedIoRom[0x0101] = 0x77;
     mappedIoRom[0x0102] = 0xEA;
@@ -173,6 +175,11 @@ int main() {
     mappedIoRom[0x0108] = 0x4F;
     mappedIoRom[0x0109] = 0x00;
     host.loadRom(mappedIoRom);
+    assert(host.runtimeContext().read8(0x0000) == 0x31);
+    assert(host.runtimeContext().read8(0x0042) == 0x3E);
+    host.runtimeContext().write8(0xFF50, 0x01);
+    assert(host.runtimeContext().read8(0x0000) == 0x99);
+    assert(host.runtimeContext().read8(0x0042) == 0x77);
     host.step();
     host.step();
     assert(host.runtimeContext().read8(0xC000) == 0x77);

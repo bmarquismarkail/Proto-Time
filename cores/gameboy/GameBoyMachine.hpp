@@ -1,6 +1,7 @@
 #ifndef GAMEBOY_MACHINE_HPP
 #define GAMEBOY_MACHINE_HPP
 
+#include <array>
 #include <cstdint>
 #include <cstddef>
 #include <algorithm>
@@ -234,6 +235,19 @@ public:
     }
 
 private:
+    static constexpr std::array<uint8_t, 0x100> kBootRom = [] {
+        std::array<uint8_t, 0x100> rom{};
+        rom.fill(0x00);
+        rom[0x00] = 0x31;
+        rom[0x01] = 0xFE;
+        rom[0x02] = 0xFF;
+        rom[0x42] = 0x3E;
+        rom[0x43] = 0x91;
+        rom[0x44] = 0xE0;
+        rom[0x45] = 0x40;
+        return rom;
+    }();
+
     enum class CartridgeController {
         None,
         MBC1,
@@ -419,12 +433,26 @@ private:
     }
 
     bool handleSpecialRead(uint16_t address, std::span<uint8_t> value) const {
-        return cpu_.cpu().handleMemoryRead(address, value);
+        if (cpu_.cpu().handleMemoryRead(address, value)) {
+            return true;
+        }
+        if (bootRomMapped_ && address < kBootRom.size()) {
+            const auto count = std::min<std::size_t>(value.size(), kBootRom.size() - address);
+            std::copy_n(kBootRom.begin() + static_cast<std::ptrdiff_t>(address), count, value.begin());
+            return true;
+        }
+        return false;
     }
 
     bool handleSpecialWrite(uint16_t address, std::span<const uint8_t> value) {
         if (cpu_.cpu().handleMemoryWrite(address, value)) {
             return true;
+        }
+        if (value.size() == 1 && address == 0xFF50) {
+            if (value[0] != 0) {
+                bootRomMapped_ = false;
+            }
+            return false;
         }
         return handleCartridgeWrite(address, value);
     }
@@ -466,11 +494,14 @@ private:
         memoryMap_.storage().setWriteInterceptor([this](uint16_t address, std::span<const uint8_t> value) {
             return handleSpecialWrite(address, value);
         });
+        const uint8_t bootControl = bootRomMapped_ ? 0x00u : 0x01u;
+        memoryMap_.storage().load(std::span<const uint8_t>(&bootControl, 1), 0xFF50);
     }
 
     BMMQ::RomImage rom_;
     BMMQ::MemoryMap memoryMap_;
     bool romLoaded_ = false;
+    bool bootRomMapped_ = true;
     CartridgeController controller_ = CartridgeController::None;
     std::size_t romBankCount_ = 0;
     std::size_t currentRomBank_ = 1;
