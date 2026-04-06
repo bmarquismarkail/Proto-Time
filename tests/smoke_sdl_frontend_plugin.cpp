@@ -14,6 +14,7 @@ int main()
     config.frameHeight = 24;
     config.audioPreviewSampleCount = 64;
     config.autoInitializeBackend = false;
+    config.autoPresentOnVideoEvent = false;
 
     GameBoyMachine machine;
     std::vector<uint8_t> cartridgeRom(0x8000, 0x00);
@@ -36,6 +37,10 @@ int main()
         assert(frontend->backendReady());
     }
     assert(frontend->stats().eventPumpCalls == 0);
+    assert(!frontend->windowVisible());
+    assert(!frontend->windowVisibilityRequested());
+    frontend->requestWindowVisibility(true);
+    assert(frontend->windowVisibilityRequested());
 
     frontend->pressButton(BMMQ::SdlFrontendButton::Right);
     frontend->pressButton(BMMQ::SdlFrontendButton::Up);
@@ -50,6 +55,7 @@ int main()
     const auto pumpedBeforeStep = frontend->pumpBackendEvents();
     (void)pumpedBeforeStep;
     machine.step();
+    assert(frontend->serviceFrontend());
 
     const auto& stats = frontend->stats();
     assert(stats.videoEvents >= 1);
@@ -62,6 +68,7 @@ int main()
     assert(stats.audioPreviewsBuilt >= 1);
     assert(stats.buttonTransitions >= 3);
     assert(stats.eventPumpCalls >= 2);
+    assert(stats.serviceCalls >= 1);
     assert(!frontend->diagnostics().empty());
     assert(frontend->lastVideoState().has_value());
     assert(frontend->lastVideoState()->lcdc == 0x91u);
@@ -74,6 +81,7 @@ int main()
     assert(frontend->lastFrame()->height == 24);
     assert(frontend->lastFrame()->pixelCount() == 32u * 24u);
     assert(!frontend->lastRenderSummary().empty());
+    assert(frontend->windowVisible());
 
     frontend->releaseButton(BMMQ::SdlFrontendButton::Up);
     assert(frontend->queuedDigitalInputMask().has_value());

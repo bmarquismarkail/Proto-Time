@@ -44,6 +44,7 @@ struct SdlFrontendConfig {
     bool createHiddenWindowOnInitialize = false;
     bool pumpBackendEventsOnInputSample = true;
     bool autoPresentOnVideoEvent = true;
+    bool showWindowOnPresent = false;
 };
 
 struct SdlFrontendStats {
@@ -65,6 +66,7 @@ struct SdlFrontendStats {
     std::size_t keyEventsHandled = 0;
     std::size_t eventPumpCalls = 0;
     std::size_t backendEventsTranslated = 0;
+    std::size_t serviceCalls = 0;
 };
 
 enum class SdlFrontendButton : uint8_t {
@@ -198,6 +200,43 @@ public:
         return lastRenderSummary_;
     }
 
+    [[nodiscard]] bool windowVisible() const noexcept
+    {
+        return windowVisible_;
+    }
+
+    [[nodiscard]] bool windowVisibilityRequested() const noexcept
+    {
+        return windowVisibilityRequested_;
+    }
+
+    void requestWindowVisibility(bool visible)
+    {
+        windowVisibilityRequested_ = visible;
+        appendLog(std::string("sdl: window visibility requested=") + (visible ? "visible" : "hidden"));
+    }
+
+    bool serviceFrontend()
+    {
+        ++stats_.serviceCalls;
+        std::size_t handledEvents = 0;
+        if (!config_.pumpBackendEventsOnInputSample) {
+            handledEvents = pumpBackendEvents();
+        }
+
+        const bool hadFrame = config_.enableVideo && lastFrame_.has_value();
+        const bool hadAudioPreview = config_.enableAudio && lastAudioPreview_.has_value();
+        const bool visibilityChanged = windowVisible_ != windowVisibilityRequested_;
+
+        bool presented = false;
+        if (hadFrame) {
+            presented = presentLatestFrame();
+        }
+
+        applyWindowVisibilityRequest();
+        return handledEvents != 0 || hadFrame || hadAudioPreview || visibilityChanged || presented || quitRequested_;
+    }
+
     void setQueuedDigitalInputMask(uint32_t pressedMask)
     {
         queuedDigitalInputMask_ = pressedMask & 0x00FFu;
@@ -306,6 +345,10 @@ public:
         if (window_ == nullptr) {
             lastRenderSummary_ = "Frame prepared without window";
             return false;
+        }
+
+        if (config_.showWindowOnPresent) {
+            requestWindowVisibility(true);
         }
 
         if (renderer_ == nullptr) {
@@ -507,6 +550,7 @@ public:
     {
         ++stats_.detachCount;
         shutdownBackend();
+        windowVisible_ = false;
         appendLog("sdl: detached");
     }
 
@@ -696,6 +740,20 @@ private:
     }
 #endif
 
+    void applyWindowVisibilityRequest() noexcept
+    {
+#if BMMQ_SDL_FRONTEND_HAS_SDL2 && BMMQ_SDL_FRONTEND_LINKED
+        if (window_ != nullptr) {
+            if (windowVisibilityRequested_) {
+                SDL_ShowWindow(window_);
+            } else {
+                SDL_HideWindow(window_);
+            }
+        }
+#endif
+        windowVisible_ = windowVisibilityRequested_;
+    }
+
     void shutdownBackend() noexcept
     {
 #if BMMQ_SDL_FRONTEND_HAS_SDL2 && BMMQ_SDL_FRONTEND_LINKED
@@ -783,6 +841,8 @@ private:
     std::optional<SdlFrameBuffer> lastFrame_;
     std::optional<uint32_t> queuedDigitalInputMask_;
     bool quitRequested_ = false;
+    bool windowVisible_ = false;
+    bool windowVisibilityRequested_ = false;
     std::string lastHostEventSummary_;
     std::string lastRenderSummary_;
     std::string lastBackendError_;
