@@ -423,6 +423,10 @@ private:
     }
 
     bool handleSpecialWrite(uint16_t address, std::span<const uint8_t> value) {
+        if (value.size() == 1 && address == 0xFF04) {
+            cpu_.cpu().resetDivider();
+            return true;
+        }
         if (address >= 0xFEA0 && static_cast<std::size_t>(address - 0xFEA0u) + value.size() <= 0x60u) {
             return true;
         }

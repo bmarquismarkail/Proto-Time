@@ -21,6 +21,29 @@ constexpr DataType kFlagN = 0x40;
 constexpr DataType kFlagH = 0x20;
 constexpr DataType kFlagC = 0x10;
 
+constexpr DataType kInterruptVBlank = 0x01;
+constexpr DataType kInterruptLcdStat = 0x02;
+constexpr DataType kInterruptTimer = 0x04;
+constexpr DataType kInterruptSerial = 0x08;
+constexpr DataType kInterruptJoypad = 0x10;
+constexpr DataType kInterruptMask = 0x1F;
+
+uint16_t timerBitMaskForTac(DataType tac)
+{
+    switch (tac & 0x03u) {
+    case 0x00:
+        return 1u << 9;
+    case 0x01:
+        return 1u << 3;
+    case 0x02:
+        return 1u << 5;
+    case 0x03:
+        return 1u << 7;
+    }
+
+    return 1u << 9;
+}
+
 using MemoryView = BMMQ::IMemory<AddressType, DataType, AddressType>;
 using MemoryPool = BMMQ::MemoryPool<AddressType, DataType, AddressType>;
 
@@ -404,6 +427,7 @@ LR3592_DMG::LR3592_DMG()
     mem.store = buildMemoryStore();
     loadProgram({0x3E, 0x12, 0x00});
     populateOpcodes();
+    resetDivider();
 }
 
 void LR3592_DMG::attachMemory(BMMQ::MemoryStorage<AddressType, DataType>& store)
@@ -455,9 +479,130 @@ const BMMQ::MemoryPool<AddressType, DataType, AddressType>& LR3592_DMG::getMemor
     return mem;
 }
 
+DataType LR3592_DMG::readIoRegister(std::string_view name) const
+{
+    auto* entry = mem.file.findRegister(name);
+    if (entry == nullptr || entry->reg == nullptr) {
+        return 0;
+    }
+    return static_cast<DataType>(entry->reg->value & 0x00FFu);
+}
+
+void LR3592_DMG::writeIoRegister(std::string_view name, DataType value)
+{
+    auto* entry = mem.file.findRegister(name);
+    if (entry == nullptr || entry->reg == nullptr) {
+        return;
+    }
+    entry->reg->value = value;
+}
+
+void LR3592_DMG::requestInterrupt(DataType mask)
+{
+    const auto current = readIoRegister("IF");
+    writeIoRegister("IF", static_cast<DataType>((current | mask) & kInterruptMask));
+}
+
+bool LR3592_DMG::serviceInterruptIfPending()
+{
+    const DataType enabled = readIoRegister(GB::RegisterId::IE);
+    const DataType requested = readIoRegister("IF");
+    const DataType pending = static_cast<DataType>((enabled & requested) & kInterruptMask);
+    if (pending == 0) {
+        return false;
+    }
+
+    haltFlag = false;
+    if (!ime) {
+        return false;
+    }
+
+    DataType servicedMask = 0;
+    AddressType vector = 0x0040;
+    if ((pending & kInterruptVBlank) != 0) {
+        servicedMask = kInterruptVBlank;
+        vector = 0x0040;
+    } else if ((pending & kInterruptLcdStat) != 0) {
+        servicedMask = kInterruptLcdStat;
+        vector = 0x0048;
+    } else if ((pending & kInterruptTimer) != 0) {
+        servicedMask = kInterruptTimer;
+        vector = 0x0050;
+    } else if ((pending & kInterruptSerial) != 0) {
+        servicedMask = kInterruptSerial;
+        vector = 0x0058;
+    } else {
+        servicedMask = kInterruptJoypad;
+        vector = 0x0060;
+    }
+
+    writeIoRegister("IF", static_cast<DataType>(requested & ~servicedMask));
+    ime = false;
+    imeEnablePending = false;
+    imeEnableDelay = 0;
+
+    auto* pcEntry = mem.file.findRegister(GB::RegisterId::PC);
+    auto* spEntry = mem.file.findRegister(GB::RegisterId::SP);
+    if (pcEntry != nullptr && pcEntry->reg != nullptr && spEntry != nullptr && spEntry->reg != nullptr) {
+        const AddressType currentPc = static_cast<AddressType>(pcEntry->reg->value);
+        spEntry->reg->value = static_cast<AddressType>(spEntry->reg->value - 2);
+        std::array<DataType, 2> bytes {
+            static_cast<DataType>(currentPc & 0x00FFu),
+            static_cast<DataType>((currentPc >> 8) & 0x00FFu)
+        };
+        mem.write(std::span<const DataType>(bytes.data(), bytes.size()), static_cast<AddressType>(spEntry->reg->value));
+        pcEntry->reg->value = vector;
+    }
+
+    return true;
+}
+
+void LR3592_DMG::retireInstruction(std::size_t executedByteCount)
+{
+    const auto cycles = static_cast<uint32_t>(executedByteCount * 4u);
+    for (uint32_t i = 0; i < cycles; ++i) {
+        const DataType tac = readIoRegister("TAC");
+        const bool timerEnabled = (tac & 0x04u) != 0;
+        const uint16_t timerBitMask = timerBitMaskForTac(tac);
+        const bool oldSignal = timerEnabled && ((dividerCounter & timerBitMask) != 0);
+
+        dividerCounter = static_cast<uint16_t>(dividerCounter + 1u);
+        writeIoRegister("DIV", static_cast<DataType>((dividerCounter >> 8) & 0x00FFu));
+
+        const bool newSignal = timerEnabled && ((dividerCounter & timerBitMask) != 0);
+        if (oldSignal && !newSignal) {
+            const DataType tima = readIoRegister("TIMA");
+            if (tima == 0xFFu) {
+                writeIoRegister("TIMA", readIoRegister("TMA"));
+                requestInterrupt(kInterruptTimer);
+            } else {
+                writeIoRegister("TIMA", static_cast<DataType>(tima + 1u));
+            }
+        }
+    }
+
+    if (imeEnablePending) {
+        if (imeEnableDelay > 0) {
+            --imeEnableDelay;
+        } else {
+            ime = true;
+            imeEnablePending = false;
+        }
+    }
+}
+
 BMMQ::fetchBlock<AddressType, DataType> LR3592_DMG::fetch()
 {
-    if (stopFlag || haltFlag) {
+    if (stopFlag) {
+        return {};
+    }
+
+    const DataType pending = static_cast<DataType>((readIoRegister("IF") & readIoRegister(GB::RegisterId::IE)) & kInterruptMask);
+    if (haltFlag && pending == 0) {
+        return {};
+    }
+
+    if (serviceInterruptIfPending()) {
         return {};
     }
 
@@ -578,11 +723,32 @@ void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, Addre
     } else {
         feedback.pcAfter = feedback.pcBefore;
     }
+
+    retireInstruction(executedByteCount);
 }
 
 const BMMQ::CpuFeedback& LR3592_DMG::getLastFeedback() const
 {
     return feedback;
+}
+
+void LR3592_DMG::setIme(bool enabled)
+{
+    ime = enabled;
+    imeEnablePending = false;
+    imeEnableDelay = 0;
+}
+
+void LR3592_DMG::scheduleImeEnable()
+{
+    imeEnablePending = true;
+    imeEnableDelay = 1;
+}
+
+void LR3592_DMG::resetDivider()
+{
+    dividerCounter = 0;
+    writeIoRegister("DIV", 0);
 }
 
 void LR3592_DMG::setStopFlag(bool f)
@@ -994,10 +1160,10 @@ void LR3592_DMG::populateOpcodes()
         });
     }));
 
-    setOpcode(0xD9, emitStep(1, [](auto& block, const auto&, std::size_t, DataType) {
-        block.addStep([](auto& snapshot, auto&) {
+    setOpcode(0xD9, emitStep(1, [this](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([this](auto& snapshot, auto&) {
             updateControlFlowPc(snapshot, pop16(snapshot), 1);
-            getRegister(snapshot, GB::RegisterId::IE)->value = 1;
+            setIme(true);
         });
     }));
 
@@ -1162,15 +1328,15 @@ void LR3592_DMG::populateOpcodes()
         });
     }));
 
-    setOpcode(0xF3, emitStep(1, [](auto& block, const auto&, std::size_t, DataType) {
-        block.addStep([](auto& snapshot, auto&) {
-            getRegister(snapshot, GB::RegisterId::IE)->value = 0;
+    setOpcode(0xF3, emitStep(1, [this](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([this](auto&, auto&) {
+            setIme(false);
         });
     }));
 
-    setOpcode(0xFB, emitStep(1, [](auto& block, const auto&, std::size_t, DataType) {
-        block.addStep([](auto& snapshot, auto&) {
-            getRegister(snapshot, GB::RegisterId::IE)->value = 1;
+    setOpcode(0xFB, emitStep(1, [this](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([this](auto&, auto&) {
+            scheduleImeEnable();
         });
     }));
 

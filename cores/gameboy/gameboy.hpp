@@ -1,10 +1,11 @@
 #ifndef DMG_CPU
 #define DMG_CPU
 
-#include <cstdio>
-#include <stdexcept>
 #include <array>
+#include <cstddef>
+#include <cstdio>
 #include <optional>
+#include <stdexcept>
 #include <string_view>
 #include <vector>
 
@@ -33,7 +34,11 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   uint16_t flagset;
   BMMQ::CpuFeedback feedback;
   DataType cip;
-  bool ime = false, stopFlag = false, haltFlag = false;
+  bool ime = false;
+  bool imeEnablePending = false;
+  DataType imeEnableDelay = 0;
+  bool stopFlag = false, haltFlag = false;
+  uint16_t dividerCounter = 0;
 
   // Gameboy-specific Decode Helper Functions
   LR3592_Register &GetRegister(BMMQ::RegisterInfo<AddressType> &Reg,
@@ -72,6 +77,11 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   void nop();
   void stop();
   void populateOpcodes();
+  void requestInterrupt(DataType mask);
+  bool serviceInterruptIfPending();
+  DataType readIoRegister(std::string_view name) const;
+  void writeIoRegister(std::string_view name, DataType value);
+  void retireInstruction(std::size_t executedByteCount);
 
 public:
   BMMQ::RegisterInfo<AddressType> AF{GB::RegisterId::AF};
@@ -101,6 +111,9 @@ public:
 
   BMMQ::MemoryPool<AddressType, DataType, AddressType> &getMemory();
   const BMMQ::MemoryPool<AddressType, DataType, AddressType> &getMemory() const;
+  void setIme(bool enabled);
+  void scheduleImeEnable();
+  void resetDivider();
   void setStopFlag(bool f);
   void setHaltFlag(bool f);
   void clearHaltFlag();

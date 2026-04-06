@@ -277,16 +277,54 @@ int main()
 
     {
         LR3592_DMG cpu;
+        auto* timaEntry = cpu.getMemory().file.findRegister("TIMA");
+        auto* tmaEntry = cpu.getMemory().file.findRegister("TMA");
+        auto* tacEntry = cpu.getMemory().file.findRegister("TAC");
+        auto* ifEntry = cpu.getMemory().file.findRegister("IF");
+        assert(timaEntry != nullptr && timaEntry->reg != nullptr);
+        assert(tmaEntry != nullptr && tmaEntry->reg != nullptr);
+        assert(tacEntry != nullptr && tacEntry->reg != nullptr);
+        assert(ifEntry != nullptr && ifEntry->reg != nullptr);
+
+        timaEntry->reg->value = 0xFF;
+        tmaEntry->reg->value = 0xAB;
+        tacEntry->reg->value = 0x05;
+        ifEntry->reg->value = 0x00;
+
+        cpu.loadProgram({0x00, 0x00, 0x00, 0x00, 0x00}, 0);
+        for (int i = 0; i < 4; ++i) {
+            step(cpu);
+        }
+
+        assert(static_cast<uint8_t>(timaEntry->reg->value) == 0xAB);
+        assert((static_cast<uint8_t>(ifEntry->reg->value) & 0x04u) != 0);
+    }
+
+    {
+        LR3592_DMG cpu;
         scalar(cpu, GB::RegisterId::SP, 0xC100);
-        cpu.getMemory().store.load(std::span<const uint8_t>({0x03, 0x00}), static_cast<uint16_t>(0xC0FE));
-        scalar(cpu, GB::RegisterId::SP, 0xC0FE);
-        cpu.loadProgram({0xD9, 0x00, 0x00}, 0);
-        step(cpu);
-        assert(scalar(cpu, GB::RegisterId::PC) == 0x0003);
         auto* ieEntry = cpu.getMemory().file.findRegister(GB::RegisterId::IE);
-        assert(ieEntry != nullptr);
-        assert(ieEntry->reg != nullptr);
-        assert(ieEntry->reg->value == 1);
+        auto* ifEntry = cpu.getMemory().file.findRegister("IF");
+        assert(ieEntry != nullptr && ieEntry->reg != nullptr);
+        assert(ifEntry != nullptr && ifEntry->reg != nullptr);
+
+        ieEntry->reg->value = 0x04;
+        ifEntry->reg->value = 0x04;
+        cpu.loadProgram({0xFB, 0x00, 0x00}, 0);
+
+        step(cpu);
+        assert(scalar(cpu, GB::RegisterId::PC) == 0x0001);
+        assert(scalar(cpu, GB::RegisterId::SP) == 0xC100);
+
+        step(cpu);
+        assert(scalar(cpu, GB::RegisterId::PC) == 0x0002);
+
+        step(cpu);
+        assert(scalar(cpu, GB::RegisterId::PC) == 0x0050);
+        assert(scalar(cpu, GB::RegisterId::SP) == 0xC0FE);
+        assert(readByte(cpu, 0xC0FE) == 0x02);
+        assert(readByte(cpu, 0xC0FF) == 0x00);
+        assert((static_cast<uint8_t>(ifEntry->reg->value) & 0x04u) == 0);
     }
 
     requireDecodeFailure({0xD3, 0x00, 0x00});
