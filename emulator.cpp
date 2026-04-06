@@ -226,9 +226,21 @@ int main(int argc, char** argv)
         }
 
         const auto pc = machine.runtimeContext().readRegister16(GB::RegisterId::PC);
+        const auto ly = machine.runtimeContext().read8(0xFF44);
+        const auto lcdc = machine.runtimeContext().read8(0xFF40);
+        const auto stat = machine.runtimeContext().read8(0xFF41);
+        const auto interruptFlags = machine.runtimeContext().read8(0xFF0F);
+        const auto interruptEnable = machine.runtimeContext().read8(0xFFFF);
+
         std::cout << "Stopped after " << steps
                   << " instruction steps at PC=0x"
                   << std::hex << std::uppercase << pc << std::dec << '\n';
+        std::cout << "I/O state: LY=0x" << std::hex << std::uppercase << static_cast<int>(ly)
+                  << " LCDC=0x" << static_cast<int>(lcdc)
+                  << " STAT=0x" << static_cast<int>(stat)
+                  << " IF=0x" << static_cast<int>(interruptFlags)
+                  << " IE=0x" << static_cast<int>(interruptEnable)
+                  << std::dec << '\n';
         return EXIT_SUCCESS;
     } catch (const std::invalid_argument& ex) {
         std::cerr << "error: " << ex.what() << '\n';

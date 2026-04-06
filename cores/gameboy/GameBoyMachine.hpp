@@ -17,6 +17,7 @@
 #include "../../machine/RuntimeContext.hpp"
 #include "../../machine/plugins/PluginManager.hpp"
 #include "register_id.hpp"
+#include "hardware_registers.hpp"
 #include "gameboy_plugin_runtime.hpp"
 
 class GameBoyRuntimeContext final : public BMMQ::RuntimeContext {
@@ -653,19 +654,104 @@ private:
         if (classifyIoAddress(address).has_value()) {
             auto destination = memoryMap_.storage().writableSpan(address, value.size());
             std::copy(value.begin(), value.end(), destination.begin());
+            syncHardwareRegisterMirror(address, value);
             emitIoWriteEvent(address, value);
             return true;
         }
+        syncHardwareRegisterMirror(address, value);
         return false;
     }
 
+    void syncHardwareRegisterMirror(uint16_t address, std::span<const uint8_t> value) {
+        if (value.empty()) {
+            return;
+        }
+
+        auto& registerFile = cpu_.cpu().getMemory().file;
+        for (std::size_t i = 0; i < value.size(); ++i) {
+            const auto currentAddress = static_cast<uint16_t>(address + i);
+            for (const auto& spec : GB::HardwareRegisters::kSpecs) {
+                if (spec.address != currentAddress) {
+                    continue;
+                }
+                if (auto* entry = registerFile.findRegister(spec.name); entry != nullptr && entry->reg != nullptr) {
+                    entry->reg->value = value[i];
+                }
+                break;
+            }
+        }
+    }
+
     void initializeDmgStartupRegisters() {
+        auto& core = cpu_.cpu();
+        core.setIme(false);
+        core.setStopFlag(false);
+        core.clearHaltFlag();
+        core.resetDivider();
+        core.setJoypadState(0x00u);
+
+        const auto seedIoRegister = [this](std::string_view name, uint8_t value) {
+            auto& registerFile = cpu_.cpu().getMemory().file;
+            if (auto* entry = registerFile.findRegister(name); entry != nullptr && entry->reg != nullptr) {
+                entry->reg->value = value;
+            }
+            if (const auto* descriptor = registerFile.findDescriptor(name);
+                descriptor != nullptr && descriptor->mappedAddress.has_value()) {
+                memoryMap_.storage().load(std::span<const uint8_t>(&value, 1), *descriptor->mappedAddress);
+            }
+        };
+
         context_.writeRegister16(GB::RegisterId::AF, 0x01B0);
         context_.writeRegister16(GB::RegisterId::BC, 0x0013);
         context_.writeRegister16(GB::RegisterId::DE, 0x00D8);
         context_.writeRegister16(GB::RegisterId::HL, 0x014D);
         context_.writeRegister16(GB::RegisterId::SP, 0xFFFE);
         context_.writeRegister16(GB::RegisterId::PC, 0x0100);
+
+        context_.write8(0xFF00, 0xCF);
+
+        static constexpr std::array<std::pair<std::string_view, uint8_t>, 37> kPostBootIoDefaults{{
+            {"SB", 0x00},
+            {"SC", 0x7E},
+            {"TIMA", 0x00},
+            {"TMA", 0x00},
+            {"TAC", 0xF8},
+            {"IF", 0xE1},
+            {"NR10", 0x80},
+            {"NR11", 0xBF},
+            {"NR12", 0xF3},
+            {"NR14", 0xBF},
+            {"NR21", 0x3F},
+            {"NR22", 0x00},
+            {"NR24", 0xBF},
+            {"NR30", 0x7F},
+            {"NR31", 0xFF},
+            {"NR32", 0x9F},
+            {"NR34", 0xBF},
+            {"NR41", 0xFF},
+            {"NR42", 0x00},
+            {"NR43", 0x00},
+            {"NR44", 0xBF},
+            {"NR50", 0x77},
+            {"NR51", 0xF3},
+            {"NR52", 0xF1},
+            {"LCDC", 0x91},
+            {"STAT", 0x85},
+            {"SCY", 0x00},
+            {"SCX", 0x00},
+            {"LY", 0x00},
+            {"LYC", 0x00},
+            {"DMA", 0xFF},
+            {"BGP", 0xFC},
+            {"OBP0", 0xFF},
+            {"OBP1", 0xFF},
+            {"WY", 0x00},
+            {"WX", 0x00},
+            {"IE", 0x00},
+        }};
+        for (const auto& [name, value] : kPostBootIoDefaults) {
+            seedIoRegister(name, value);
+        }
     }
 
     void configureMemoryMap() {

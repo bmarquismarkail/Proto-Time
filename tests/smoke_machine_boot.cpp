@@ -146,6 +146,9 @@ int main() {
     assert(host.runtimeContext().readRegister16(GB::RegisterId::BC) == 0x0013);
     assert(host.runtimeContext().readRegister16(GB::RegisterId::DE) == 0x00D8);
     assert(host.runtimeContext().readRegister16(GB::RegisterId::HL) == 0x014D);
+    assert(host.runtimeContext().read8(0xFF00) == 0xCF);
+    assert(host.runtimeContext().read8(0xFF40) == 0x91);
+    assert(host.runtimeContext().read8(0xFF47) == 0xFC);
     host.runtimeContext().write8(0xC000, 0xAA);
     assert(host.runtimeContext().read8(0xC000) == 0xAA);
     assert(host.runtimeContext().read8(0xE000) == 0xAA);
@@ -168,6 +171,16 @@ int main() {
     host.runtimeContext().commitVisibleState();
     assert(host.runtimeContext().getLastFeedback().pcBefore == 0x0100);
     assert(host.runtimeContext().getLastFeedback().pcAfter == 0x0102);
+
+    host.loadRom(cartridgeRom);
+    for (int i = 0; i < 256; ++i) {
+        host.step();
+    }
+    assert(host.runtimeContext().read8(0xFF44) != 0x00);
+    host.runtimeContext().write8(0xFF40, 0x00);
+    host.step();
+    assert(host.runtimeContext().read8(0xFF40) == 0x00);
+    assert(host.runtimeContext().read8(0xFF44) == 0x00);
 
     std::vector<uint8_t> mappedIoRom(0x8000, 0x00);
     mappedIoRom[0x0000] = 0x99;
