@@ -421,6 +421,36 @@ int main()
         assert(readByte(cpu, 0x8000) == 0x78);
     }
 
+    {
+        LR3592_DMG cpu;
+        std::vector<uint8_t> source(0xA0, 0x00);
+        for (std::size_t i = 0; i < source.size(); ++i) {
+            source[i] = static_cast<uint8_t>(i ^ 0x5A);
+        }
+        cpu.getMemory().store.load(std::span<const uint8_t>(source.data(), source.size()), static_cast<uint16_t>(0xC000));
+
+        cpu.getMemory().write(std::span<const uint8_t>({0xC0}), static_cast<uint16_t>(0xFF46));
+
+        for (std::size_t i = 0; i < source.size(); ++i) {
+            assert(readByte(cpu, static_cast<uint16_t>(0xFE00 + i)) == source[i]);
+        }
+    }
+
+    {
+        LR3592_DMG cpu;
+        auto* dmaEntry = cpu.getMemory().file.findRegister("DMA");
+        assert(dmaEntry != nullptr && dmaEntry->reg != nullptr);
+
+        cpu.getMemory().store.load(std::span<const uint8_t>({0xDE, 0xAD, 0xBE, 0xEF}), static_cast<uint16_t>(0x8000));
+        dmaEntry->reg->value = 0x80;
+        cpu.getMemory().write(std::span<const uint8_t>({0x80}), static_cast<uint16_t>(0xFF46));
+
+        assert(readByte(cpu, 0xFE00) == 0xDE);
+        assert(readByte(cpu, 0xFE01) == 0xAD);
+        assert(readByte(cpu, 0xFE02) == 0xBE);
+        assert(readByte(cpu, 0xFE03) == 0xEF);
+    }
+
     requireDecodeFailure({0xD3, 0x00, 0x00});
 
     return 0;

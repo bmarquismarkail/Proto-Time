@@ -883,6 +883,25 @@ bool LR3592_DMG::handleMemoryWrite(AddressType address, std::span<const DataType
         resetDivider();
         return true;
     }
+    if (value.size() == 1 && address == 0xFF46) {
+        const DataType highByte = value[0];
+        writeIoRegister("DMA", highByte);
+
+        const AddressType sourceBase = static_cast<AddressType>(highByte << 8);
+        std::array<DataType, 0xA0> dmaBuffer{};
+        for (std::size_t i = 0; i < dmaBuffer.size(); ++i) {
+            AddressType sourceAddress = static_cast<AddressType>(sourceBase + i);
+            sourceAddress = normalizeAccessAddress(sourceAddress);
+            if (sourceAddress >= 0xFEA0 && sourceAddress <= 0xFEFF) {
+                dmaBuffer[i] = 0xFF;
+                continue;
+            }
+            auto span = mem.backingStore().readableSpan(sourceAddress, 1);
+            dmaBuffer[i] = span[0];
+        }
+        mem.backingStore().load(std::span<const DataType>(dmaBuffer.data(), dmaBuffer.size()), static_cast<AddressType>(0xFE00));
+        return true;
+    }
     if (address >= 0xFEA0 && static_cast<std::size_t>(address - 0xFEA0u) + value.size() <= 0x60u) {
         return true;
     }
