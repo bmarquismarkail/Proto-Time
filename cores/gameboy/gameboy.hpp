@@ -43,6 +43,8 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   bool dmaActive = false;
   AddressType dmaSourceBase = 0;
   uint16_t dmaCycleProgress = 0;
+  bool serialTransferActive = false;
+  uint16_t serialCycleProgress = 0;
   DataType joypSelect = 0x30;
   DataType joypadPressedMask = 0;
   uint32_t ppuDotCounter = 0;

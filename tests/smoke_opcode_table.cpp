@@ -512,8 +512,21 @@ int main()
 
         sbEntry->reg->value = 0xA5;
         ifEntry->reg->value = 0x00;
+        cpu.loadProgram(std::vector<uint8_t>(300, 0x00), 0);
         cpu.getMemory().write(std::span<const uint8_t>({0x81}), static_cast<uint16_t>(0xFF02));
 
+        assert(static_cast<uint8_t>(sbEntry->reg->value) == 0xA5);
+        assert((static_cast<uint8_t>(scEntry->reg->value) & 0x80u) != 0);
+        assert((static_cast<uint8_t>(ifEntry->reg->value) & 0x08u) == 0);
+
+        for (int i = 0; i < 127; ++i) {
+            step(cpu);
+        }
+        assert(static_cast<uint8_t>(sbEntry->reg->value) == 0xA5);
+        assert((static_cast<uint8_t>(scEntry->reg->value) & 0x80u) != 0);
+        assert((static_cast<uint8_t>(ifEntry->reg->value) & 0x08u) == 0);
+
+        step(cpu);
         assert(static_cast<uint8_t>(sbEntry->reg->value) == 0xFF);
         assert((static_cast<uint8_t>(scEntry->reg->value) & 0x80u) == 0);
         assert((static_cast<uint8_t>(ifEntry->reg->value) & 0x08u) != 0);

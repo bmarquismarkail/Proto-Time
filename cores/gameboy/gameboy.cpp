@@ -614,6 +614,17 @@ void LR3592_DMG::retireInstruction(std::size_t executedByteCount)
             }
         }
 
+        if (serialTransferActive) {
+            ++serialCycleProgress;
+            if (serialCycleProgress >= 512u) {
+                serialTransferActive = false;
+                serialCycleProgress = 0;
+                writeIoRegister("SB", 0xFF);
+                writeIoRegister("SC", static_cast<DataType>(readIoRegister("SC") & 0x7Fu));
+                requestInterrupt(kInterruptSerial);
+            }
+        }
+
         const DataType tac = readIoRegister("TAC");
         const bool timerEnabled = (tac & 0x04u) != 0;
         const uint16_t timerBitMask = timerBitMaskForTac(tac);
@@ -959,10 +970,13 @@ bool LR3592_DMG::handleMemoryWrite(AddressType address, std::span<const DataType
     }
     if (value.size() == 1 && address == 0xFF02) {
         const DataType control = value[0];
-        writeIoRegister("SC", static_cast<DataType>(control & 0x7Fu));
+        writeIoRegister("SC", control);
         if ((control & 0x80u) != 0) {
-            writeIoRegister("SB", 0xFF);
-            requestInterrupt(kInterruptSerial);
+            serialTransferActive = true;
+            serialCycleProgress = 0;
+        } else {
+            serialTransferActive = false;
+            serialCycleProgress = 0;
         }
         return true;
     }
