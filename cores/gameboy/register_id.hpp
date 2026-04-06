@@ -12,7 +12,7 @@ inline constexpr BMMQ::RegisterId DE{"DE"};
 inline constexpr BMMQ::RegisterId HL{"HL"};
 inline constexpr BMMQ::RegisterId SP{"SP"};
 inline constexpr BMMQ::RegisterId PC{"PC"};
-inline constexpr BMMQ::RegisterId IME{"IME"};
+inline constexpr BMMQ::RegisterId IE{"IE"};
 
 } // namespace RegisterId
 } // namespace GB

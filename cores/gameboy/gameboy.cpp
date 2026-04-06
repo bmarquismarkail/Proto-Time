@@ -997,7 +997,7 @@ void LR3592_DMG::populateOpcodes()
     setOpcode(0xD9, emitStep(1, [](auto& block, const auto&, std::size_t, DataType) {
         block.addStep([](auto& snapshot, auto&) {
             updateControlFlowPc(snapshot, pop16(snapshot), 1);
-            getRegister(snapshot, "ime")->value = 1;
+            getRegister(snapshot, GB::RegisterId::IE)->value = 1;
         });
     }));
 
@@ -1164,13 +1164,13 @@ void LR3592_DMG::populateOpcodes()
 
     setOpcode(0xF3, emitStep(1, [](auto& block, const auto&, std::size_t, DataType) {
         block.addStep([](auto& snapshot, auto&) {
-            getRegister(snapshot, "ime")->value = 0;
+            getRegister(snapshot, GB::RegisterId::IE)->value = 0;
         });
     }));
 
     setOpcode(0xFB, emitStep(1, [](auto& block, const auto&, std::size_t, DataType) {
         block.addStep([](auto& snapshot, auto&) {
-            getRegister(snapshot, "ime")->value = 1;
+            getRegister(snapshot, GB::RegisterId::IE)->value = 1;
         });
     }));
 

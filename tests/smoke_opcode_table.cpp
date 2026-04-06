@@ -283,10 +283,10 @@ int main()
         cpu.loadProgram({0xD9, 0x00, 0x00}, 0);
         step(cpu);
         assert(scalar(cpu, GB::RegisterId::PC) == 0x0003);
-        auto* imeEntry = cpu.getMemory().file.findRegister("ime");
-        assert(imeEntry != nullptr);
-        assert(imeEntry->reg != nullptr);
-        assert(imeEntry->reg->value == 1);
+        auto* ieEntry = cpu.getMemory().file.findRegister(GB::RegisterId::IE);
+        assert(ieEntry != nullptr);
+        assert(ieEntry->reg != nullptr);
+        assert(ieEntry->reg->value == 1);
     }
 
     requireDecodeFailure({0xD3, 0x00, 0x00});

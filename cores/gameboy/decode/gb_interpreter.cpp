@@ -440,8 +440,8 @@ void LR3592_Interpreter_Decode::ld_ir16_r8(DataType opcode)
 
 void LR3592_Interpreter_Decode::ei_di(DataType	opcode)
 {
-	auto ime = GetRegister("ime");
-	ime->value = (opcode & 8 ) >> 3;
+	auto ieRegister = GetRegister("IE");
+	ieRegister->value = (opcode & 8 ) >> 3;
 }
 
 void LR3592_Interpreter_Decode::ld_hl_sp(DataType opcode)
