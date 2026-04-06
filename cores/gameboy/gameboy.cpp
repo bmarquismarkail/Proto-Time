@@ -62,14 +62,6 @@ LR3592_Register* getRegister(MemoryView& snapshot, BMMQ::RegisterId id)
     return entry != nullptr ? entry->reg.get() : nullptr;
 }
 
-LR3592_Register* getRegister(MemoryView& snapshot, const char* name)
-{
-    auto* pool = getMemoryPool(snapshot);
-    auto* entry = pool->file.findRegister(name);
-    assert(entry != nullptr && entry->reg != nullptr && "Register missing in snapshot");
-    return entry != nullptr ? entry->reg.get() : nullptr;
-}
-
 template <typename Snapshot>
 LR3592_RegisterPair* getRegisterPair(Snapshot& snapshot, BMMQ::RegisterId id)
 {
@@ -578,6 +570,73 @@ void LR3592_DMG::retireInstruction(std::size_t executedByteCount)
             } else {
                 writeIoRegister("TIMA", static_cast<DataType>(tima + 1u));
             }
+        }
+
+        const bool lcdEnabled = (readIoRegister("LCDC") & 0x80u) != 0;
+        if (!lcdEnabled) {
+            ppuDotCounter = 0;
+            lcdEnabledLastTick = false;
+            statInterruptLatched = false;
+            writeIoRegister("LY", 0);
+            DataType stat = readIoRegister("STAT");
+            stat = static_cast<DataType>(stat & 0xF8u);
+            if (readIoRegister("LYC") == 0) {
+                stat = static_cast<DataType>(stat | 0x04u);
+            } else {
+                stat = static_cast<DataType>(stat & ~0x04u);
+            }
+            writeIoRegister("STAT", stat);
+            continue;
+        }
+
+        if (!lcdEnabledLastTick) {
+            ppuDotCounter = 0;
+            writeIoRegister("LY", 0);
+            lcdEnabledLastTick = true;
+            statInterruptLatched = false;
+        }
+
+        const auto previousLy = static_cast<DataType>(ppuDotCounter / 456u);
+        ppuDotCounter = (ppuDotCounter + 1u) % (154u * 456u);
+
+        const auto ly = static_cast<DataType>(ppuDotCounter / 456u);
+        const auto lineDot = static_cast<uint16_t>(ppuDotCounter % 456u);
+        const auto lyc = readIoRegister("LYC");
+        writeIoRegister("LY", ly);
+
+        DataType mode = 0;
+        if (ly >= 144u) {
+            mode = 1;
+        } else if (lineDot < 80u) {
+            mode = 2;
+        } else if (lineDot < 252u) {
+            mode = 3;
+        } else {
+            mode = 0;
+        }
+
+        DataType stat = readIoRegister("STAT");
+        stat = static_cast<DataType>((stat & 0xF8u) | mode);
+        const bool coincidence = ly == lyc;
+        if (coincidence) {
+            stat = static_cast<DataType>(stat | 0x04u);
+        } else {
+            stat = static_cast<DataType>(stat & ~0x04u);
+        }
+        writeIoRegister("STAT", stat);
+
+        const bool statInterruptRequested =
+            (coincidence && (stat & 0x40u) != 0) ||
+            (mode == 0 && (stat & 0x08u) != 0) ||
+            (mode == 1 && (stat & 0x10u) != 0) ||
+            (mode == 2 && (stat & 0x20u) != 0);
+        if (statInterruptRequested && !statInterruptLatched) {
+            requestInterrupt(kInterruptLcdStat);
+        }
+        statInterruptLatched = statInterruptRequested;
+
+        if (previousLy != 144u && ly == 144u) {
+            requestInterrupt(kInterruptVBlank);
         }
     }
 

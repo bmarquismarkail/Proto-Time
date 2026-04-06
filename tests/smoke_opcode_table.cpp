@@ -327,6 +327,31 @@ int main()
         assert((static_cast<uint8_t>(ifEntry->reg->value) & 0x04u) == 0);
     }
 
+    {
+        LR3592_DMG cpu;
+        auto* lcdcEntry = cpu.getMemory().file.findRegister("LCDC");
+        auto* lyEntry = cpu.getMemory().file.findRegister("LY");
+        auto* ifEntry = cpu.getMemory().file.findRegister("IF");
+        assert(lcdcEntry != nullptr && lcdcEntry->reg != nullptr);
+        assert(lyEntry != nullptr && lyEntry->reg != nullptr);
+        assert(ifEntry != nullptr && ifEntry->reg != nullptr);
+
+        lcdcEntry->reg->value = 0x80;
+        ifEntry->reg->value = 0x00;
+        cpu.loadProgram(std::vector<uint8_t>(16416, 0x00), 0);
+
+        for (int i = 0; i < 114; ++i) {
+            step(cpu);
+        }
+        assert(static_cast<uint8_t>(lyEntry->reg->value) == 1);
+
+        for (int i = 0; i < 143 * 114; ++i) {
+            step(cpu);
+        }
+        assert(static_cast<uint8_t>(lyEntry->reg->value) == 144);
+        assert((static_cast<uint8_t>(ifEntry->reg->value) & 0x01u) != 0);
+    }
+
     requireDecodeFailure({0xD3, 0x00, 0x00});
 
     return 0;

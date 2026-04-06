@@ -39,6 +39,9 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   DataType imeEnableDelay = 0;
   bool stopFlag = false, haltFlag = false;
   uint16_t dividerCounter = 0;
+  uint32_t ppuDotCounter = 0;
+  bool lcdEnabledLastTick = false;
+  bool statInterruptLatched = false;
 
   // Gameboy-specific Decode Helper Functions
   LR3592_Register &GetRegister(BMMQ::RegisterInfo<AddressType> &Reg,
