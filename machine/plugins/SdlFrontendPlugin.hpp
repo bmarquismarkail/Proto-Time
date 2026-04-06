@@ -48,6 +48,19 @@ struct SdlFrontendStats {
     std::size_t inputSamplesProvided = 0;
     std::size_t framesPrepared = 0;
     std::size_t backendInitAttempts = 0;
+    std::size_t buttonTransitions = 0;
+    std::size_t quitRequests = 0;
+};
+
+enum class SdlFrontendButton : uint8_t {
+    Right = 0x01u,
+    Left = 0x02u,
+    Up = 0x04u,
+    Down = 0x08u,
+    A = 0x10u,
+    B = 0x20u,
+    Select = 0x40u,
+    Start = 0x80u,
 };
 
 struct SdlFrameBuffer {
@@ -134,6 +147,58 @@ public:
     [[nodiscard]] std::optional<uint32_t> queuedDigitalInputMask() const noexcept
     {
         return queuedDigitalInputMask_;
+    }
+
+    void pressButton(SdlFrontendButton button)
+    {
+        setButtonState(button, true);
+    }
+
+    void releaseButton(SdlFrontendButton button)
+    {
+        setButtonState(button, false);
+    }
+
+    void setButtonState(SdlFrontendButton button, bool pressed)
+    {
+        auto mask = static_cast<uint8_t>(queuedDigitalInputMask_.value_or(0u) & 0x00FFu);
+        const auto bit = buttonMask(button);
+        const auto oldMask = mask;
+        if (pressed) {
+            mask = static_cast<uint8_t>(mask | bit);
+        } else {
+            mask = static_cast<uint8_t>(mask & static_cast<uint8_t>(~bit));
+        }
+        queuedDigitalInputMask_ = mask;
+        if (mask != oldMask) {
+            ++stats_.buttonTransitions;
+            appendLog(std::string("sdl: button ") + std::string(buttonName(button)) + (pressed ? " pressed" : " released"));
+        }
+    }
+
+    [[nodiscard]] bool isButtonPressed(SdlFrontendButton button) const noexcept
+    {
+        if (!queuedDigitalInputMask_.has_value()) {
+            return false;
+        }
+        return ((*queuedDigitalInputMask_) & buttonMask(button)) != 0;
+    }
+
+    void requestQuit()
+    {
+        quitRequested_ = true;
+        ++stats_.quitRequests;
+        appendLog("sdl: quit requested");
+    }
+
+    void clearQuitRequest() noexcept
+    {
+        quitRequested_ = false;
+    }
+
+    [[nodiscard]] bool quitRequested() const noexcept
+    {
+        return quitRequested_;
     }
 
     [[nodiscard]] static constexpr bool compiledWithSdl() noexcept
@@ -255,6 +320,34 @@ public:
     }
 
 private:
+    [[nodiscard]] static constexpr uint8_t buttonMask(SdlFrontendButton button) noexcept
+    {
+        return static_cast<uint8_t>(button);
+    }
+
+    [[nodiscard]] static constexpr std::string_view buttonName(SdlFrontendButton button) noexcept
+    {
+        switch (button) {
+        case SdlFrontendButton::Right:
+            return "Right";
+        case SdlFrontendButton::Left:
+            return "Left";
+        case SdlFrontendButton::Up:
+            return "Up";
+        case SdlFrontendButton::Down:
+            return "Down";
+        case SdlFrontendButton::A:
+            return "A";
+        case SdlFrontendButton::B:
+            return "B";
+        case SdlFrontendButton::Select:
+            return "Select";
+        case SdlFrontendButton::Start:
+            return "Start";
+        }
+        return "Unknown";
+    }
+
     static uint32_t paletteColor(uint8_t shade) noexcept
     {
         switch (shade & 0x03u) {
@@ -298,6 +391,7 @@ private:
     std::optional<DigitalInputStateView> lastInputState_;
     std::optional<SdlFrameBuffer> lastFrame_;
     std::optional<uint32_t> queuedDigitalInputMask_;
+    bool quitRequested_ = false;
 };
 
 } // namespace BMMQ
