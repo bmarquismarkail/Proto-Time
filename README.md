@@ -68,10 +68,11 @@ Relevant files:
 - `isControlFlow`
 - `pcBefore`
 - `pcAfter`
+- `executionPath` (`CanonicalFetchDecodeExecute` vs `CpuOptimizedFastPath`)
 
 Relevant file:
 
-- `CPU.hpp`
+- `machine/CPU.hpp`
 
 ### 3. Instruction Data Structures
 
@@ -120,6 +121,13 @@ Defines:
 - compatibility helpers (`isAbiCompatible`, `validateMetadata`)
 - `PluginDescriptorV1` C-entrypoint descriptor for future dynamic loading
 - `DefaultStepPolicy`
+- `VisibleStatePreservingStepPolicy`
+
+Execution guarantees are now explicit:
+
+- `BaselineFaithful` — canonical `fetch -> decode -> execute` only
+- `VisibleStatePreserving` — may use CPU fast paths but must preserve final visible machine state
+- `Experimental` — intentionally looser behavior for advanced policies
 
 Plugin runtime executor:
 
@@ -162,6 +170,8 @@ These verify:
 - Executor recording/script replay through `RuntimeContext`
 - Plugin executor orchestration and feedback-driven policy behavior
 - Plugin ABI compatibility, metadata validation, and guarantee labeling
+- Baseline-vs-optimized visible-state equivalence for the Game Boy core (`smoke_trace_executor`)
+- Game Boy hardware-sensitive behavior such as `STOP` wake-on-input and `LY` / `STAT` write semantics
 
 ## Short-Term Direction
 
