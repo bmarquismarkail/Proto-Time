@@ -813,9 +813,11 @@ private:
             return true;
         }
         if (classifyIoAddress(address).has_value()) {
-            auto destination = memoryMap_.storage().writableSpan(address, value.size());
-            std::copy(value.begin(), value.end(), destination.begin());
-            syncHardwareRegisterMirror(address, value);
+            for (std::size_t i = 0; i < value.size(); ++i) {
+                const auto currentAddress = static_cast<uint16_t>(address + i);
+                memoryMap_.storage().load(std::span<const uint8_t>(&value[i], 1), currentAddress);
+                syncHardwareRegisterMirror(currentAddress, std::span<const uint8_t>(&value[i], 1));
+            }
             emitIoWriteEvent(address, value);
             return true;
         }

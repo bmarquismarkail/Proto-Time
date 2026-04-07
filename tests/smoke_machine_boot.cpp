@@ -315,6 +315,34 @@ int main() {
     host.runtimeContext().write8(0x4000, 0x00);
     assert(host.runtimeContext().read8(0xA000) == 0x12);
 
+    std::vector<uint8_t> dmaWaitRom(0x8000, 0x00);
+    dmaWaitRom[0x0100] = 0xCD;
+    dmaWaitRom[0x0101] = 0x80;
+    dmaWaitRom[0x0102] = 0xFF;
+    dmaWaitRom[0x0103] = 0x00;
+    host.loadRom(dmaWaitRom);
+    static constexpr std::array<uint8_t, 10> kDmaWaitRoutine{{
+        0x3E, 0xC3,
+        0xE0, 0x46,
+        0x3E, 0x28,
+        0x3D,
+        0x20, 0xFD,
+        0xC9,
+    }};
+    for (std::size_t i = 0; i < kDmaWaitRoutine.size(); ++i) {
+        host.runtimeContext().write8(static_cast<uint16_t>(0xFF80u + i), kDmaWaitRoutine[i]);
+    }
+    host.runtimeContext().writeRegister16(GB::RegisterId::SP, 0xDFF0);
+    bool returnedFromDmaRoutine = false;
+    for (int i = 0; i < 200; ++i) {
+        host.step();
+        if (host.runtimeContext().readRegister16(GB::RegisterId::PC) == 0x0103) {
+            returnedFromDmaRoutine = true;
+            break;
+        }
+    }
+    assert(returnedFromDmaRoutine);
+
     host.attachExecutorPolicy(experimentalPolicy);
     assert(host.guarantee() == BMMQ::ExecutionGuarantee::Experimental);
     assert(host.runtimeContext().attachedPolicyMetadata()->id == "bmmq.executor.policy.experimental");

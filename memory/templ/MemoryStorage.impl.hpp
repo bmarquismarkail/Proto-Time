@@ -1,6 +1,7 @@
 #include "../MemoryStorage.hpp"
 
 #include <algorithm>
+#include <sstream>
 #include <stdexcept>
 
 namespace BMMQ {
@@ -54,7 +55,11 @@ std::span<const DataType> MemoryStorage<AddressType, DataType>::readableSpan(
             const auto localOffset = static_cast<std::size_t>(address - base);
             const auto available = static_cast<std::size_t>(length) - localOffset;
             if (count > available) {
-                throw std::out_of_range("read extends past mapped range");
+                std::ostringstream oss;
+                oss << "read extends past mapped range at 0x" << std::hex
+                    << static_cast<unsigned long long>(address)
+                    << " count=0x" << count;
+                throw std::out_of_range(oss.str());
             }
 
             return std::span<const DataType>(mem).subspan(offset + localOffset, count);
@@ -85,7 +90,11 @@ std::span<DataType> MemoryStorage<AddressType, DataType>::writableSpan(
             const auto localOffset = static_cast<std::size_t>(address - base);
             const auto available = static_cast<std::size_t>(length) - localOffset;
             if (count > available) {
-                throw std::out_of_range("write extends past mapped range");
+                std::ostringstream oss;
+                oss << "write extends past mapped range at 0x" << std::hex
+                    << static_cast<unsigned long long>(address)
+                    << " count=0x" << count;
+                throw std::out_of_range(oss.str());
             }
 
             return std::span<DataType>(mem).subspan(offset + localOffset, count);
@@ -156,7 +165,15 @@ void MemoryStorage<AddressType, DataType>::write(std::span<const DataType> value
         mapOffset += static_cast<std::size_t>(length);
     }
 
-    throw std::out_of_range(foundStart ? "write extends past mapped range" : "address is not mapped");
+    std::ostringstream oss;
+    if (foundStart) {
+        oss << "write extends past mapped range at 0x" << std::hex << static_cast<unsigned long long>(address)
+            << " count=0x" << value.size();
+    } else {
+        oss << "address is not mapped for write at 0x" << std::hex << static_cast<unsigned long long>(address)
+            << " count=0x" << value.size();
+    }
+    throw std::out_of_range(oss.str());
 }
 
 template<typename AddressType, typename DataType>

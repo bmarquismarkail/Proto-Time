@@ -274,6 +274,191 @@ void updateControlFlowPc(MemoryView& snapshot, AddressType target, DataType inst
     pc->value = static_cast<AddressType>(target - instructionLength);
 }
 
+std::size_t instructionCyclesFor(const BMMQ::fetchBlock<AddressType, DataType>& fetchBlock,
+                                 AddressType pcBefore,
+                                 AddressType pcAfter)
+{
+    const auto& blockData = fetchBlock.getblockData();
+    if (blockData.empty() || blockData.front().data.empty()) {
+        return 0;
+    }
+
+    const auto& data = blockData.front().data;
+    const DataType opcode = data.front();
+    const auto sequentialPc = static_cast<AddressType>(pcBefore + data.size());
+    const bool tookBranch = pcAfter != sequentialPc;
+
+    if (opcode >= 0x40u && opcode <= 0x7Fu && opcode != 0x76u) {
+        const auto src = GB::Decode::decodeR8Src(opcode);
+        const auto dest = GB::Decode::decodeR8Dest(opcode);
+        return (src == GB::Decode::R8::HLIndirect || dest == GB::Decode::R8::HLIndirect) ? 8u : 4u;
+    }
+
+    if (opcode >= 0x80u && opcode <= 0xBFu) {
+        return GB::Decode::decodeR8Src(opcode) == GB::Decode::R8::HLIndirect ? 8u : 4u;
+    }
+
+    switch (opcode) {
+    case 0x00:
+    case 0x07:
+    case 0x0F:
+    case 0x17:
+    case 0x1F:
+    case 0x27:
+    case 0x2F:
+    case 0x37:
+    case 0x3F:
+    case 0x76:
+    case 0xE9:
+    case 0xF3:
+    case 0xFB:
+        return 4u;
+
+    case 0x01:
+    case 0x11:
+    case 0x21:
+    case 0x31:
+    case 0xC2:
+    case 0xCA:
+    case 0xD2:
+    case 0xDA:
+        return tookBranch ? 16u : 12u;
+
+    case 0x03:
+    case 0x13:
+    case 0x23:
+    case 0x33:
+    case 0x0B:
+    case 0x1B:
+    case 0x2B:
+    case 0x3B:
+    case 0x09:
+    case 0x19:
+    case 0x29:
+    case 0x39:
+    case 0xE2:
+    case 0xF2:
+    case 0xF9:
+        return 8u;
+
+    case 0x04:
+    case 0x0C:
+    case 0x14:
+    case 0x1C:
+    case 0x24:
+    case 0x2C:
+    case 0x34:
+    case 0x3C:
+    case 0x05:
+    case 0x0D:
+    case 0x15:
+    case 0x1D:
+    case 0x25:
+    case 0x2D:
+    case 0x35:
+    case 0x3D:
+        return GB::Decode::decodeR8Dest(opcode) == GB::Decode::R8::HLIndirect ? 12u : 4u;
+
+    case 0x06:
+    case 0x0E:
+    case 0x16:
+    case 0x1E:
+    case 0x26:
+    case 0x2E:
+    case 0x36:
+    case 0x3E:
+        return GB::Decode::decodeR8Dest(opcode) == GB::Decode::R8::HLIndirect ? 12u : 8u;
+
+    case 0x08:
+        return 20u;
+
+    case 0x02:
+    case 0x12:
+    case 0x22:
+    case 0x32:
+    case 0x0A:
+    case 0x1A:
+    case 0x2A:
+    case 0x3A:
+    case 0x18:
+    case 0xC6:
+    case 0xCE:
+    case 0xD6:
+    case 0xDE:
+    case 0xE6:
+    case 0xEE:
+    case 0xF6:
+    case 0xFE:
+        return 8u;
+
+    case 0x20:
+    case 0x28:
+    case 0x30:
+    case 0x38:
+        return tookBranch ? 12u : 8u;
+
+    case 0xC0:
+    case 0xC8:
+    case 0xD0:
+    case 0xD8:
+        return tookBranch ? 20u : 8u;
+
+    case 0xC1:
+    case 0xD1:
+    case 0xE1:
+    case 0xF1:
+        return 12u;
+
+    case 0xC3:
+    case 0xEA:
+    case 0xFA:
+        return 16u;
+
+    case 0xC4:
+    case 0xCC:
+    case 0xD4:
+    case 0xDC:
+        return tookBranch ? 24u : 12u;
+
+    case 0xC5:
+    case 0xD5:
+    case 0xE5:
+    case 0xF5:
+        return 16u;
+
+    case 0xC7:
+    case 0xCF:
+    case 0xD7:
+    case 0xDF:
+    case 0xE7:
+    case 0xEF:
+    case 0xF7:
+    case 0xFF:
+        return 16u;
+
+    case 0xC9:
+    case 0xD9:
+    case 0xE8:
+        return 16u;
+
+    case 0xCD:
+        return 24u;
+
+    case 0xCB:
+        if (data.size() > 1 && GB::Decode::decodeR8(data[1]) == GB::Decode::R8::HLIndirect) {
+            return 16u;
+        }
+        return 8u;
+
+    case 0xE0:
+    case 0xF0:
+    case 0xF8:
+        return 12u;
+    }
+
+    return static_cast<std::size_t>(data.size()) * 4u;
+}
+
 AddressType pop16(MemoryView& snapshot)
 {
     auto* sp = getRegister(snapshot, GB::RegisterId::SP);
@@ -590,12 +775,13 @@ bool LR3592_DMG::serviceInterruptIfPending()
         pcEntry->reg->value = vector;
     }
 
+    pendingCycleCharge_ = 20u;
     return true;
 }
 
-void LR3592_DMG::retireInstruction(std::size_t executedByteCount)
+void LR3592_DMG::retireInstruction(std::size_t executedCycles)
 {
-    const auto cycles = static_cast<uint32_t>(executedByteCount * 4u);
+    const auto cycles = static_cast<uint32_t>(executedCycles);
     for (uint32_t i = 0; i < cycles; ++i) {
         if (dmaActive) {
             if ((dmaCycleProgress % 4u) == 0u) {
@@ -864,10 +1050,19 @@ void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, Addre
         feedback.pcAfter = feedback.pcBefore;
     }
 
-    const auto retiredBytes = (executedByteCount == 0 && (haltFlag || stopFlag || dmaActive))
-        ? static_cast<std::size_t>(1)
-        : executedByteCount;
-    retireInstruction(retiredBytes);
+    std::size_t retiredCycles = pendingCycleCharge_;
+    pendingCycleCharge_ = 0;
+    if (retiredCycles == 0) {
+        if (executedByteCount == 0 && (haltFlag || stopFlag || dmaActive)) {
+            retiredCycles = 4u;
+        } else {
+            retiredCycles = instructionCyclesFor(
+                fb,
+                static_cast<AddressType>(feedback.pcBefore),
+                static_cast<AddressType>(feedback.pcAfter));
+        }
+    }
+    retireInstruction(retiredCycles);
 }
 
 const BMMQ::CpuFeedback& LR3592_DMG::getLastFeedback() const
