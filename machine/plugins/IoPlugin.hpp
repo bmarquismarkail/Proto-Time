@@ -169,11 +169,11 @@ struct MachineView {
     std::span<const IoRegionDescriptor> ioRegions;
 
     [[nodiscard]] uint8_t read8(uint16_t address) const {
-        return runtime.read8(address);
+        return runtime.peek8(address);
     }
 
     [[nodiscard]] uint16_t read16(uint16_t address) const {
-        return runtime.read16(address);
+        return runtime.peek16(address);
     }
 
     [[nodiscard]] uint8_t readRegister8(std::string_view id) const {
@@ -188,7 +188,7 @@ struct MachineView {
         std::vector<uint8_t> bytes;
         bytes.reserve(size);
         for (uint32_t offset = 0; offset < size; ++offset) {
-            bytes.push_back(runtime.read8(static_cast<uint16_t>(start + offset)));
+            bytes.push_back(read8(static_cast<uint16_t>(start + offset)));
         }
         return bytes;
     }

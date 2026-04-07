@@ -48,6 +48,14 @@ public:
         return memoryMap_.read8(resolveEchoAddress(address));
     }
 
+    DataType peek8(AddressType address) const override {
+        address = resolveEchoAddress(address);
+        if (address < 0x8000u || (address >= 0xA000u && address < 0xC000u)) {
+            return read8(address);
+        }
+        return memoryMap_.storage().readableSpan(address, 1)[0];
+    }
+
     void write8(AddressType address, DataType value) override {
         memoryMap_.write8(resolveEchoAddress(address), value);
     }

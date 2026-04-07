@@ -67,10 +67,18 @@ public:
         return step(fetchBlock);
     }
     virtual DataType read8(AddressType address) const = 0;
+    virtual DataType peek8(AddressType address) const {
+        return read8(address);
+    }
     virtual void write8(AddressType address, DataType value) = 0;
     virtual uint16_t read16(AddressType address) const {
         const auto lo = static_cast<uint16_t>(read8(address));
         const auto hi = static_cast<uint16_t>(read8(static_cast<AddressType>(address + 1)));
+        return static_cast<uint16_t>(lo | (hi << 8));
+    }
+    virtual uint16_t peek16(AddressType address) const {
+        const auto lo = static_cast<uint16_t>(peek8(address));
+        const auto hi = static_cast<uint16_t>(peek8(static_cast<AddressType>(address + 1)));
         return static_cast<uint16_t>(lo | (hi << 8));
     }
     virtual void write16(AddressType address, uint16_t value) {

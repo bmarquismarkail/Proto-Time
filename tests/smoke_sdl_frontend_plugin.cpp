@@ -49,6 +49,19 @@ int main()
     assert(*frontend->queuedDigitalInputMask() == 0x15u);
     assert(frontend->isButtonPressed(BMMQ::SdlFrontendButton::A));
 
+    GameBoyMachine dmaVisibilityMachine;
+    dmaVisibilityMachine.loadRom(cartridgeRom);
+    dmaVisibilityMachine.runtimeContext().write8(0xFF40, 0x91u);
+    dmaVisibilityMachine.runtimeContext().write8(0x8002, 0x12u);
+    dmaVisibilityMachine.runtimeContext().write8(0x9801, 0x34u);
+    dmaVisibilityMachine.runtimeContext().write8(0xFF46, 0xC0u);
+    assert(dmaVisibilityMachine.runtimeContext().read8(0x8002) == 0xFFu);
+    const auto dmaVisibleState = dmaVisibilityMachine.view().videoState();
+    assert(dmaVisibleState.has_value());
+    assert(dmaVisibleState->lcdc == 0x91u);
+    assert(dmaVisibleState->vram[2] == 0x12u);
+    assert(dmaVisibleState->vram[0x1801] == 0x34u);
+
     machine.runtimeContext().write8(0xFF40, 0x00u);
     machine.runtimeContext().write8(0x8000, 0xFFu);
     machine.runtimeContext().write8(0x8001, 0x00u);
