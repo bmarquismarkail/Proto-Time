@@ -1,4 +1,5 @@
 #include <cassert>
+#include <cstdlib>
 #include <memory>
 #include <vector>
 
@@ -7,6 +8,11 @@
 
 int main()
 {
+#if defined(__unix__) || defined(__APPLE__)
+    ::setenv("SDL_AUDIODRIVER", "dummy", 1);
+    ::setenv("SDL_VIDEODRIVER", "dummy", 1);
+#endif
+
     BMMQ::SdlFrontendConfig config;
     config.windowTitle = "Proto-Time SDL Smoke";
     config.windowScale = 3;
@@ -111,6 +117,15 @@ int main()
     assert(frontend->lastVideoState()->lcdc == 0x93u);
     assert(frontend->lastAudioPreview().has_value());
     assert(frontend->lastAudioPreview()->sampleCount() == 64u);
+    if (initResult && frontend->audioOutputReady()) {
+        assert(stats.audioQueueWrites >= 1);
+        assert(stats.audioSamplesQueued >= frontend->lastAudioPreview()->sampleCount());
+        const auto queueWritesBefore = stats.audioQueueWrites;
+        const auto samplesQueuedBefore = stats.audioSamplesQueued;
+        assert(frontend->serviceFrontend());
+        assert(stats.audioQueueWrites == queueWritesBefore);
+        assert(stats.audioSamplesQueued == samplesQueuedBefore);
+    }
     assert(frontend->lastInputState().has_value());
     assert(frontend->lastInputState()->pressedMask == 0x15u);
     assert(frontend->lastFrame().has_value());

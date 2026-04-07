@@ -14,6 +14,9 @@ namespace BMMQ {
 class Machine;
 struct CpuFeedback;
 std::optional<uint32_t> queryDigitalInputMask(const Machine& machine);
+std::vector<int16_t> queryRecentAudioSamples(const Machine& machine);
+uint32_t queryAudioSampleRate(const Machine& machine);
+uint64_t queryAudioFrameCounter(const Machine& machine);
 
 enum class PluginCategory : uint8_t {
     System = 0,
@@ -81,6 +84,10 @@ struct VideoStateView {
 struct AudioStateView {
     IoRegionDescriptor registerRegion{};
     std::vector<uint8_t> registers;
+    std::vector<uint8_t> waveRam;
+    std::vector<int16_t> pcmSamples;
+    uint32_t sampleRate = 48000;
+    uint64_t frameCounter = 0;
     uint8_t nr10 = 0;
     uint8_t nr11 = 0;
     uint8_t nr12 = 0;
@@ -105,6 +112,10 @@ struct AudioStateView {
 
     [[nodiscard]] bool soundEnabled() const {
         return (nr52 & 0x80u) != 0;
+    }
+
+    [[nodiscard]] bool hasPcmSamples() const {
+        return !pcmSamples.empty();
     }
 };
 
@@ -244,6 +255,10 @@ struct MachineView {
         AudioStateView state;
         state.registerRegion = *registerRegion;
         state.registers = readRegion(registerRegion->start, registerRegion->size);
+        state.waveRam = readRegion(0xFF30u, 0x0010u);
+        state.pcmSamples = queryRecentAudioSamples(machine);
+        state.sampleRate = queryAudioSampleRate(machine);
+        state.frameCounter = queryAudioFrameCounter(machine);
         state.nr10 = read8(0xFF10u);
         state.nr11 = read8(0xFF11u);
         state.nr12 = read8(0xFF12u);

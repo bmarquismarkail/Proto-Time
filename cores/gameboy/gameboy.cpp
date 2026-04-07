@@ -3,6 +3,7 @@
 #include "decode/gb_opcode_decode.hpp"
 #include "hardware_registers.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <cstdint>
@@ -612,6 +613,7 @@ LR3592_DMG::LR3592_DMG()
     populateOpcodes();
     resetDivider();
     writeIoRegister("JOYP", 0xFF);
+    initializeApu();
 }
 
 void LR3592_DMG::attachMemory(BMMQ::MemoryStorage<AddressType, DataType>& store)
@@ -814,6 +816,566 @@ void LR3592_DMG::writeIoRegister(std::string_view name, DataType value)
     }
 }
 
+void LR3592_DMG::initializeApu()
+{
+    apu_ = {};
+    apu_.masterEnabled = (readIoRegister("NR52") & 0x80u) != 0u;
+    apu_.pulse1.hasSweep = true;
+    updateApuStatusRegister();
+}
+
+std::vector<int16_t> LR3592_DMG::copyRecentAudioSamples() const
+{
+    std::vector<int16_t> samples;
+    samples.reserve(apu_.recentSampleCount);
+    if (apu_.recentSampleCount == 0u) {
+        return samples;
+    }
+
+    const auto start = (apu_.recentWriteCursor + kApuHistorySamples - apu_.recentSampleCount) % kApuHistorySamples;
+    for (std::size_t i = 0; i < apu_.recentSampleCount; ++i) {
+        samples.push_back(apu_.recentSamples[(start + i) % kApuHistorySamples]);
+    }
+    return samples;
+}
+
+uint16_t LR3592_DMG::pulseTimerPeriod(uint16_t frequency) const
+{
+    const auto sanitized = static_cast<uint16_t>(frequency & 0x07FFu);
+    return static_cast<uint16_t>(std::max<uint32_t>(4u, (2048u - sanitized) * 4u));
+}
+
+uint16_t LR3592_DMG::waveTimerPeriod(uint16_t frequency) const
+{
+    const auto sanitized = static_cast<uint16_t>(frequency & 0x07FFu);
+    return static_cast<uint16_t>(std::max<uint32_t>(2u, (2048u - sanitized) * 2u));
+}
+
+uint16_t LR3592_DMG::noiseTimerPeriod() const
+{
+    static constexpr std::array<uint16_t, 8> kDivisors{{8u, 16u, 32u, 48u, 64u, 80u, 96u, 112u}};
+    const auto divisor = kDivisors[apu_.noise.divisorCode & 0x07u];
+    const auto period = static_cast<uint32_t>(divisor) << apu_.noise.clockShift;
+    return static_cast<uint16_t>(std::min<uint32_t>(std::max<uint32_t>(period, 8u), 0xFFFFu));
+}
+
+void LR3592_DMG::tickApuEnvelope(ApuPulseChannel& channel)
+{
+    if (!channel.enabled || channel.envelopePeriod == 0u) {
+        return;
+    }
+    if (channel.envelopeTimer > 0u) {
+        --channel.envelopeTimer;
+    }
+    if (channel.envelopeTimer != 0u) {
+        return;
+    }
+    channel.envelopeTimer = channel.envelopePeriod;
+    if (channel.envelopeIncrease) {
+        if (channel.volume < 15u) {
+            ++channel.volume;
+        }
+    } else if (channel.volume > 0u) {
+        --channel.volume;
+    }
+}
+
+void LR3592_DMG::tickApuEnvelope(ApuNoiseChannel& channel)
+{
+    if (!channel.enabled || channel.envelopePeriod == 0u) {
+        return;
+    }
+    if (channel.envelopeTimer > 0u) {
+        --channel.envelopeTimer;
+    }
+    if (channel.envelopeTimer != 0u) {
+        return;
+    }
+    channel.envelopeTimer = channel.envelopePeriod;
+    if (channel.envelopeIncrease) {
+        if (channel.volume < 15u) {
+            ++channel.volume;
+        }
+    } else if (channel.volume > 0u) {
+        --channel.volume;
+    }
+}
+
+void LR3592_DMG::tickApuLengthCounters()
+{
+    bool changed = false;
+    const auto tickPulseLength = [&changed](ApuPulseChannel& channel) {
+        if (channel.enabled && channel.lengthEnabled && channel.lengthCounter > 0u) {
+            --channel.lengthCounter;
+            if (channel.lengthCounter == 0u) {
+                channel.enabled = false;
+                changed = true;
+            }
+        }
+    };
+
+    tickPulseLength(apu_.pulse1);
+    tickPulseLength(apu_.pulse2);
+    if (apu_.wave.enabled && apu_.wave.lengthEnabled && apu_.wave.lengthCounter > 0u) {
+        --apu_.wave.lengthCounter;
+        if (apu_.wave.lengthCounter == 0u) {
+            apu_.wave.enabled = false;
+            changed = true;
+        }
+    }
+    if (apu_.noise.enabled && apu_.noise.lengthEnabled && apu_.noise.lengthCounter > 0u) {
+        --apu_.noise.lengthCounter;
+        if (apu_.noise.lengthCounter == 0u) {
+            apu_.noise.enabled = false;
+            changed = true;
+        }
+    }
+
+    if (changed) {
+        updateApuStatusRegister();
+    }
+}
+
+void LR3592_DMG::tickApuSweep()
+{
+    auto& channel = apu_.pulse1;
+    if (!channel.hasSweep || !channel.enabled || !channel.sweepEnabled) {
+        return;
+    }
+    if (channel.sweepTimer > 0u) {
+        --channel.sweepTimer;
+    }
+    if (channel.sweepTimer != 0u) {
+        return;
+    }
+
+    channel.sweepTimer = channel.sweepPeriod == 0u ? 8u : channel.sweepPeriod;
+    if (channel.sweepPeriod == 0u) {
+        return;
+    }
+
+    const uint16_t delta = static_cast<uint16_t>(channel.shadowFrequency >> channel.sweepShift);
+    const int nextFrequency = channel.sweepNegate
+        ? static_cast<int>(channel.shadowFrequency) - static_cast<int>(delta)
+        : static_cast<int>(channel.shadowFrequency) + static_cast<int>(delta);
+    if (nextFrequency < 0 || nextFrequency > 2047) {
+        channel.enabled = false;
+        updateApuStatusRegister();
+        return;
+    }
+
+    if (channel.sweepShift != 0u) {
+        channel.shadowFrequency = static_cast<uint16_t>(nextFrequency);
+        channel.frequency = channel.shadowFrequency;
+        channel.timer = pulseTimerPeriod(channel.frequency);
+        if (!channel.sweepNegate) {
+            const uint16_t overflowCheck = static_cast<uint16_t>(channel.shadowFrequency + (channel.shadowFrequency >> channel.sweepShift));
+            if (overflowCheck > 2047u) {
+                channel.enabled = false;
+            }
+        }
+        updateApuStatusRegister();
+    }
+}
+
+void LR3592_DMG::stepApuFrameSequencer()
+{
+    const auto step = apu_.frameSequencerStep;
+    if ((step & 0x01u) == 0u) {
+        tickApuLengthCounters();
+    }
+    if (step == 2u || step == 6u) {
+        tickApuSweep();
+    }
+    if (step == 7u) {
+        tickApuEnvelope(apu_.pulse1);
+        tickApuEnvelope(apu_.pulse2);
+        tickApuEnvelope(apu_.noise);
+    }
+    apu_.frameSequencerStep = static_cast<uint8_t>((apu_.frameSequencerStep + 1u) & 0x07u);
+}
+
+void LR3592_DMG::triggerApuPulse(ApuPulseChannel& channel, DataType control, DataType envelope, bool withSweep)
+{
+    channel.duty = static_cast<uint8_t>((control >> 6) & 0x03u);
+    if (channel.lengthCounter == 0u) {
+        channel.lengthCounter = 64u;
+    }
+    channel.initialVolume = static_cast<uint8_t>((envelope >> 4) & 0x0Fu);
+    channel.volume = channel.initialVolume;
+    channel.envelopeIncrease = (envelope & 0x08u) != 0u;
+    channel.envelopePeriod = static_cast<uint8_t>(envelope & 0x07u);
+    channel.envelopeTimer = channel.envelopePeriod == 0u ? 8u : channel.envelopePeriod;
+    channel.dacEnabled = (envelope & 0xF8u) != 0u;
+    channel.enabled = apu_.masterEnabled && channel.dacEnabled;
+    channel.timer = pulseTimerPeriod(channel.frequency);
+    channel.dutyStep = 0u;
+
+    if (withSweep) {
+        const auto sweep = readIoRegister("NR10");
+        channel.sweepPeriod = static_cast<uint8_t>((sweep >> 4) & 0x07u);
+        channel.sweepNegate = (sweep & 0x08u) != 0u;
+        channel.sweepShift = static_cast<uint8_t>(sweep & 0x07u);
+        channel.shadowFrequency = channel.frequency;
+        channel.sweepTimer = channel.sweepPeriod == 0u ? 8u : channel.sweepPeriod;
+        channel.sweepEnabled = channel.sweepPeriod != 0u || channel.sweepShift != 0u;
+        if (channel.sweepShift != 0u) {
+            const uint16_t delta = static_cast<uint16_t>(channel.shadowFrequency >> channel.sweepShift);
+            const int previewFrequency = channel.sweepNegate
+                ? static_cast<int>(channel.shadowFrequency) - static_cast<int>(delta)
+                : static_cast<int>(channel.shadowFrequency) + static_cast<int>(delta);
+            if (previewFrequency < 0 || previewFrequency > 2047) {
+                channel.enabled = false;
+            }
+        }
+    }
+
+    updateApuStatusRegister();
+}
+
+void LR3592_DMG::triggerApuWave()
+{
+    auto& channel = apu_.wave;
+    if (channel.lengthCounter == 0u) {
+        channel.lengthCounter = 256u;
+    }
+    channel.dacEnabled = (readIoRegister("NR30") & 0x80u) != 0u;
+    channel.enabled = apu_.masterEnabled && channel.dacEnabled;
+    channel.timer = waveTimerPeriod(channel.frequency);
+    channel.sampleIndex = 0u;
+    updateApuStatusRegister();
+}
+
+void LR3592_DMG::triggerApuNoise()
+{
+    auto& channel = apu_.noise;
+    if (channel.lengthCounter == 0u) {
+        channel.lengthCounter = 64u;
+    }
+    channel.initialVolume = static_cast<uint8_t>((readIoRegister("NR42") >> 4) & 0x0Fu);
+    channel.volume = channel.initialVolume;
+    channel.envelopeIncrease = (readIoRegister("NR42") & 0x08u) != 0u;
+    channel.envelopePeriod = static_cast<uint8_t>(readIoRegister("NR42") & 0x07u);
+    channel.envelopeTimer = channel.envelopePeriod == 0u ? 8u : channel.envelopePeriod;
+    channel.clockShift = static_cast<uint8_t>((readIoRegister("NR43") >> 4) & 0x0Fu);
+    channel.widthMode7 = (readIoRegister("NR43") & 0x08u) != 0u;
+    channel.divisorCode = static_cast<uint8_t>(readIoRegister("NR43") & 0x07u);
+    channel.dacEnabled = (readIoRegister("NR42") & 0xF8u) != 0u;
+    channel.enabled = apu_.masterEnabled && channel.dacEnabled;
+    channel.lfsr = 0x7FFFu;
+    channel.timer = noiseTimerPeriod();
+    updateApuStatusRegister();
+}
+
+int LR3592_DMG::currentPulseSample(const ApuPulseChannel& channel) const
+{
+    if (!apu_.masterEnabled || !channel.enabled || !channel.dacEnabled || channel.volume == 0u) {
+        return 0;
+    }
+
+    static constexpr std::array<std::array<uint8_t, 8>, 4> kDutyPatterns{{
+        {{0, 0, 0, 0, 0, 0, 0, 1}},
+        {{1, 0, 0, 0, 0, 0, 0, 1}},
+        {{1, 0, 0, 0, 0, 1, 1, 1}},
+        {{0, 1, 1, 1, 1, 1, 1, 0}},
+    }};
+    const auto polarity = kDutyPatterns[channel.duty & 0x03u][channel.dutyStep & 0x07u] != 0u ? 1 : -1;
+    return polarity * static_cast<int>(channel.volume);
+}
+
+int LR3592_DMG::currentWaveSample() const
+{
+    if (!apu_.masterEnabled || !apu_.wave.enabled || !apu_.wave.dacEnabled) {
+        return 0;
+    }
+
+    const auto outputLevel = static_cast<uint8_t>((readIoRegister("NR32") >> 5) & 0x03u);
+    if (outputLevel == 0u) {
+        return 0;
+    }
+
+    const auto sampleIndex = static_cast<uint8_t>(apu_.wave.sampleIndex & 0x1Fu);
+    const auto address = static_cast<AddressType>(0xFF30u + (sampleIndex / 2u));
+    const auto packed = mem.backingStore().readableSpan(address, 1)[0];
+    uint8_t sample = (sampleIndex & 0x01u) == 0u ? static_cast<uint8_t>((packed >> 4) & 0x0Fu)
+                                                 : static_cast<uint8_t>(packed & 0x0Fu);
+    if (outputLevel == 2u) {
+        sample >>= 1u;
+    } else if (outputLevel == 3u) {
+        sample >>= 2u;
+    }
+    return (static_cast<int>(sample) - 8) * 2;
+}
+
+int LR3592_DMG::currentNoiseSample() const
+{
+    if (!apu_.masterEnabled || !apu_.noise.enabled || !apu_.noise.dacEnabled || apu_.noise.volume == 0u) {
+        return 0;
+    }
+    const auto polarity = (apu_.noise.lfsr & 0x01u) == 0u ? 1 : -1;
+    return polarity * static_cast<int>(apu_.noise.volume);
+}
+
+void LR3592_DMG::pushApuSample()
+{
+    const int ch1 = currentPulseSample(apu_.pulse1);
+    const int ch2 = currentPulseSample(apu_.pulse2);
+    const int ch3 = currentWaveSample();
+    const int ch4 = currentNoiseSample();
+
+    const auto nr50 = readIoRegister("NR50");
+    const auto nr51 = readIoRegister("NR51");
+    const int leftVolume = static_cast<int>((nr50 >> 4) & 0x07u) + 1;
+    const int rightVolume = static_cast<int>(nr50 & 0x07u) + 1;
+
+    int left = 0;
+    int right = 0;
+    if ((nr51 & 0x10u) != 0u) left += ch1;
+    if ((nr51 & 0x20u) != 0u) left += ch2;
+    if ((nr51 & 0x40u) != 0u) left += ch3;
+    if ((nr51 & 0x80u) != 0u) left += ch4;
+    if ((nr51 & 0x01u) != 0u) right += ch1;
+    if ((nr51 & 0x02u) != 0u) right += ch2;
+    if ((nr51 & 0x04u) != 0u) right += ch3;
+    if ((nr51 & 0x08u) != 0u) right += ch4;
+
+    left *= leftVolume;
+    right *= rightVolume;
+    const int mixed = std::clamp((left + right) * 32, -32768, 32767);
+    apu_.recentSamples[apu_.recentWriteCursor] = static_cast<int16_t>(mixed);
+    apu_.recentWriteCursor = (apu_.recentWriteCursor + 1u) % kApuHistorySamples;
+    apu_.recentSampleCount = std::min<std::size_t>(apu_.recentSampleCount + 1u, kApuHistorySamples);
+    ++apu_.sampleCounter;
+    if ((apu_.sampleCounter % kApuFrameChunkSamples) == 0u) {
+        ++apu_.frameCounter;
+    }
+}
+
+void LR3592_DMG::stepApuOneCycle()
+{
+    if (apu_.masterEnabled) {
+        ++apu_.frameSequencerCounter;
+        if (apu_.frameSequencerCounter >= 8192u) {
+            apu_.frameSequencerCounter = 0u;
+            stepApuFrameSequencer();
+        }
+
+        const auto tickPulseTimer = [this](ApuPulseChannel& channel) {
+            if (channel.timer > 0u) {
+                --channel.timer;
+            }
+            if (channel.timer == 0u) {
+                channel.timer = pulseTimerPeriod(channel.frequency);
+                channel.dutyStep = static_cast<uint8_t>((channel.dutyStep + 1u) & 0x07u);
+            }
+        };
+
+        tickPulseTimer(apu_.pulse1);
+        tickPulseTimer(apu_.pulse2);
+
+        if (apu_.wave.timer > 0u) {
+            --apu_.wave.timer;
+        }
+        if (apu_.wave.timer == 0u) {
+            apu_.wave.timer = waveTimerPeriod(apu_.wave.frequency);
+            apu_.wave.sampleIndex = static_cast<uint8_t>((apu_.wave.sampleIndex + 1u) & 0x1Fu);
+        }
+
+        if (apu_.noise.timer > 0u) {
+            --apu_.noise.timer;
+        }
+        if (apu_.noise.timer == 0u) {
+            apu_.noise.timer = noiseTimerPeriod();
+            const auto xorBit = static_cast<uint16_t>((apu_.noise.lfsr ^ (apu_.noise.lfsr >> 1u)) & 0x01u);
+            apu_.noise.lfsr = static_cast<uint16_t>((apu_.noise.lfsr >> 1u) | (xorBit << 14u));
+            if (apu_.noise.widthMode7) {
+                apu_.noise.lfsr = static_cast<uint16_t>((apu_.noise.lfsr & ~(1u << 6u)) | (xorBit << 6u));
+            }
+        }
+    }
+
+    apu_.sampleAccumulator += kApuSampleRate;
+    while (apu_.sampleAccumulator >= kCpuClockHz) {
+        apu_.sampleAccumulator -= kCpuClockHz;
+        pushApuSample();
+    }
+}
+
+void LR3592_DMG::updateApuStatusRegister()
+{
+    const auto channelBits = static_cast<DataType>((apu_.pulse1.enabled ? 0x01u : 0u)
+                           | (apu_.pulse2.enabled ? 0x02u : 0u)
+                           | (apu_.wave.enabled ? 0x04u : 0u)
+                           | (apu_.noise.enabled ? 0x08u : 0u));
+    const auto value = static_cast<DataType>((apu_.masterEnabled ? 0x80u : 0x00u) | 0x70u | channelBits);
+    writeIoRegister("NR52", value);
+}
+
+void LR3592_DMG::handleApuRegisterWrite(AddressType address, DataType value)
+{
+    const auto storeAt = [this](AddressType regAddress, DataType regValue) {
+        for (const auto& spec : GB::HardwareRegisters::kSpecs) {
+            if (spec.address == regAddress) {
+                writeIoRegister(spec.name, regValue);
+                return;
+            }
+        }
+        mem.backingStore().load(std::span<const DataType>(&regValue, 1), regAddress);
+    };
+
+    if (address >= 0xFF30u && address <= 0xFF3Fu) {
+        storeAt(address, value);
+        return;
+    }
+
+    switch (address) {
+    case 0xFF10u:
+        storeAt(address, value);
+        apu_.pulse1.hasSweep = true;
+        apu_.pulse1.sweepPeriod = static_cast<uint8_t>((value >> 4) & 0x07u);
+        apu_.pulse1.sweepNegate = (value & 0x08u) != 0u;
+        apu_.pulse1.sweepShift = static_cast<uint8_t>(value & 0x07u);
+        break;
+    case 0xFF11u:
+        storeAt(address, value);
+        apu_.pulse1.duty = static_cast<uint8_t>((value >> 6) & 0x03u);
+        apu_.pulse1.lengthCounter = static_cast<uint8_t>(64u - (value & 0x3Fu));
+        break;
+    case 0xFF12u:
+        storeAt(address, value);
+        apu_.pulse1.initialVolume = static_cast<uint8_t>((value >> 4) & 0x0Fu);
+        apu_.pulse1.envelopeIncrease = (value & 0x08u) != 0u;
+        apu_.pulse1.envelopePeriod = static_cast<uint8_t>(value & 0x07u);
+        apu_.pulse1.dacEnabled = (value & 0xF8u) != 0u;
+        if (!apu_.pulse1.dacEnabled) {
+            apu_.pulse1.enabled = false;
+        }
+        break;
+    case 0xFF13u:
+        storeAt(address, value);
+        apu_.pulse1.frequency = static_cast<uint16_t>((apu_.pulse1.frequency & 0x0700u) | value);
+        break;
+    case 0xFF14u:
+        storeAt(address, value);
+        apu_.pulse1.lengthEnabled = (value & 0x40u) != 0u;
+        apu_.pulse1.frequency = static_cast<uint16_t>((apu_.pulse1.frequency & 0x00FFu) | ((value & 0x07u) << 8u));
+        if ((value & 0x80u) != 0u) {
+            triggerApuPulse(apu_.pulse1, readIoRegister("NR11"), readIoRegister("NR12"), true);
+        }
+        break;
+    case 0xFF16u:
+        storeAt(address, value);
+        apu_.pulse2.duty = static_cast<uint8_t>((value >> 6) & 0x03u);
+        apu_.pulse2.lengthCounter = static_cast<uint8_t>(64u - (value & 0x3Fu));
+        break;
+    case 0xFF17u:
+        storeAt(address, value);
+        apu_.pulse2.initialVolume = static_cast<uint8_t>((value >> 4) & 0x0Fu);
+        apu_.pulse2.envelopeIncrease = (value & 0x08u) != 0u;
+        apu_.pulse2.envelopePeriod = static_cast<uint8_t>(value & 0x07u);
+        apu_.pulse2.dacEnabled = (value & 0xF8u) != 0u;
+        if (!apu_.pulse2.dacEnabled) {
+            apu_.pulse2.enabled = false;
+        }
+        break;
+    case 0xFF18u:
+        storeAt(address, value);
+        apu_.pulse2.frequency = static_cast<uint16_t>((apu_.pulse2.frequency & 0x0700u) | value);
+        break;
+    case 0xFF19u:
+        storeAt(address, value);
+        apu_.pulse2.lengthEnabled = (value & 0x40u) != 0u;
+        apu_.pulse2.frequency = static_cast<uint16_t>((apu_.pulse2.frequency & 0x00FFu) | ((value & 0x07u) << 8u));
+        if ((value & 0x80u) != 0u) {
+            triggerApuPulse(apu_.pulse2, readIoRegister("NR21"), readIoRegister("NR22"), false);
+        }
+        break;
+    case 0xFF1Au:
+        storeAt(address, value);
+        apu_.wave.dacEnabled = (value & 0x80u) != 0u;
+        if (!apu_.wave.dacEnabled) {
+            apu_.wave.enabled = false;
+        }
+        break;
+    case 0xFF1Bu:
+        storeAt(address, value);
+        apu_.wave.lengthCounter = static_cast<uint16_t>(256u - value);
+        break;
+    case 0xFF1Cu:
+        storeAt(address, value);
+        break;
+    case 0xFF1Du:
+        storeAt(address, value);
+        apu_.wave.frequency = static_cast<uint16_t>((apu_.wave.frequency & 0x0700u) | value);
+        break;
+    case 0xFF1Eu:
+        storeAt(address, value);
+        apu_.wave.lengthEnabled = (value & 0x40u) != 0u;
+        apu_.wave.frequency = static_cast<uint16_t>((apu_.wave.frequency & 0x00FFu) | ((value & 0x07u) << 8u));
+        if ((value & 0x80u) != 0u) {
+            triggerApuWave();
+        }
+        break;
+    case 0xFF20u:
+        storeAt(address, value);
+        apu_.noise.lengthCounter = static_cast<uint8_t>(64u - (value & 0x3Fu));
+        break;
+    case 0xFF21u:
+        storeAt(address, value);
+        apu_.noise.initialVolume = static_cast<uint8_t>((value >> 4) & 0x0Fu);
+        apu_.noise.envelopeIncrease = (value & 0x08u) != 0u;
+        apu_.noise.envelopePeriod = static_cast<uint8_t>(value & 0x07u);
+        apu_.noise.dacEnabled = (value & 0xF8u) != 0u;
+        if (!apu_.noise.dacEnabled) {
+            apu_.noise.enabled = false;
+        }
+        break;
+    case 0xFF22u:
+        storeAt(address, value);
+        apu_.noise.clockShift = static_cast<uint8_t>((value >> 4) & 0x0Fu);
+        apu_.noise.widthMode7 = (value & 0x08u) != 0u;
+        apu_.noise.divisorCode = static_cast<uint8_t>(value & 0x07u);
+        break;
+    case 0xFF23u:
+        storeAt(address, value);
+        apu_.noise.lengthEnabled = (value & 0x40u) != 0u;
+        if ((value & 0x80u) != 0u) {
+            triggerApuNoise();
+        }
+        break;
+    case 0xFF24u:
+    case 0xFF25u:
+        storeAt(address, value);
+        break;
+    case 0xFF26u: {
+        if ((value & 0x80u) == 0u) {
+            apu_ = {};
+            apu_.pulse1.hasSweep = true;
+            apu_.masterEnabled = false;
+            for (AddressType reg = 0xFF10u; reg <= 0xFF25u; ++reg) {
+                if (reg == 0xFF15u || reg == 0xFF1Fu) {
+                    continue;
+                }
+                storeAt(reg, 0x00u);
+            }
+            updateApuStatusRegister();
+            return;
+        }
+        if (!apu_.masterEnabled) {
+            apu_.masterEnabled = true;
+            apu_.frameSequencerCounter = 0u;
+            apu_.frameSequencerStep = 0u;
+        }
+        break;
+    }
+    default:
+        storeAt(address, value);
+        break;
+    }
+
+    updateApuStatusRegister();
+}
+
 DataType LR3592_DMG::joypadLowNibble() const
 {
     DataType low = 0x0Fu;
@@ -980,6 +1542,8 @@ void LR3592_DMG::retireInstruction(std::size_t executedCycles)
             }
             timerDirty = true;
         }
+
+        stepApuOneCycle();
 
         if (!lcdEnabled) {
             ppuDotCounter = 0;
@@ -1856,6 +2420,10 @@ bool LR3592_DMG::handleMemoryWrite(AddressType address, std::span<const DataType
         dmaActive = true;
         dmaSourceBase = static_cast<AddressType>(highByte << 8);
         dmaCycleProgress = 0;
+        return true;
+    }
+    if (value.size() == 1 && ((address >= 0xFF10u && address <= 0xFF26u) || (address >= 0xFF30u && address <= 0xFF3Fu))) {
+        handleApuRegisterWrite(address, value[0]);
         return true;
     }
     if (address >= 0xFEA0 && static_cast<std::size_t>(address - 0xFEA0u) + value.size() <= 0x60u) {

@@ -332,6 +332,21 @@ public:
                 "entered VBlank"
             });
         }
+
+        const auto audioFrameCounter = cpu_.cpu().audioFrameCounter();
+        if (audioFrameCounter != lastAudioFrameCounter_) {
+            lastAudioFrameCounter_ = audioFrameCounter;
+            emitMachineEvent(BMMQ::MachineEvent{
+                BMMQ::MachineEventType::AudioFrameReady,
+                BMMQ::PluginCategory::Audio,
+                stepCounter_,
+                0xFF26u,
+                context_.read8(0xFF26u),
+                &feedback,
+                "apu frame mixed"
+            });
+        }
+
         lastLy_ = ly;
     }
 
@@ -360,6 +375,18 @@ public:
             return std::nullopt;
         }
         return static_cast<uint32_t>(*lastDigitalInputMask_);
+    }
+
+    std::vector<int16_t> recentAudioSamples() const override {
+        return cpu_.cpu().copyRecentAudioSamples();
+    }
+
+    uint32_t audioSampleRate() const override {
+        return cpu_.cpu().audioSampleRate();
+    }
+
+    uint64_t audioFrameCounter() const override {
+        return cpu_.cpu().audioFrameCounter();
     }
 
     void attachExecutorPolicy(BMMQ::Plugin::IExecutorPolicyPlugin& policy) override {
@@ -420,7 +447,8 @@ private:
             (address >= 0xFF40u && address <= 0xFF4Bu)) {
             return BMMQ::PluginCategory::Video;
         }
-        if (address >= 0xFF10u && address <= 0xFF26u) {
+        if ((address >= 0xFF10u && address <= 0xFF26u) ||
+            (address >= 0xFF30u && address <= 0xFF3Fu)) {
             return BMMQ::PluginCategory::Audio;
         }
         if (address == 0xFF00u) {
@@ -432,11 +460,12 @@ private:
         return std::nullopt;
     }
 
-    static constexpr std::array<BMMQ::IoRegionDescriptor, 6> kIoRegionDescriptors{{
+    static constexpr std::array<BMMQ::IoRegionDescriptor, 7> kIoRegionDescriptors{{
         {BMMQ::PluginCategory::Video, 0x8000u, 0x2000u, "VRAM", true, true},
         {BMMQ::PluginCategory::Video, 0xFE00u, 0x00A0u, "OAM", true, true},
         {BMMQ::PluginCategory::Video, 0xFF40u, 0x000Cu, "LCD Registers", true, true},
         {BMMQ::PluginCategory::Audio, 0xFF10u, 0x0017u, "APU Registers", true, true},
+        {BMMQ::PluginCategory::Audio, 0xFF30u, 0x0010u, "Wave RAM", true, true},
         {BMMQ::PluginCategory::DigitalInput, 0xFF00u, 0x0001u, "Joypad", true, true},
         {BMMQ::PluginCategory::Serial, 0xFF01u, 0x0002u, "Serial Registers", true, true},
     }};
@@ -953,6 +982,8 @@ private:
         for (const auto& [name, value] : kPostBootIoDefaults) {
             seedIoRegister(name, value);
         }
+        cpu_.cpu().resetApu();
+        lastAudioFrameCounter_ = cpu_.cpu().audioFrameCounter();
     }
 
     void configureMemoryMap() {
@@ -1009,6 +1040,7 @@ private:
     uint8_t mbc5HighBankBit_ = 0;
     uint64_t stepCounter_ = 0;
     uint8_t lastLy_ = 0;
+    uint64_t lastAudioFrameCounter_ = 0;
     std::optional<uint8_t> lastDigitalInputMask_;
     std::optional<uint8_t> lastPolledDigitalInput_;
     LR3592_PluginRuntime cpu_;

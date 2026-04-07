@@ -39,6 +39,15 @@ public:
     virtual std::optional<uint32_t> currentDigitalInputMask() const {
         return std::nullopt;
     }
+    virtual std::vector<int16_t> recentAudioSamples() const {
+        return {};
+    }
+    virtual uint32_t audioSampleRate() const {
+        return 48000u;
+    }
+    virtual uint64_t audioFrameCounter() const {
+        return 0u;
+    }
     virtual ExecutionGuarantee guarantee() const noexcept {
         return runtimeContext().guarantee();
     }
@@ -50,6 +59,18 @@ public:
 
 inline std::optional<uint32_t> queryDigitalInputMask(const Machine& machine) {
     return machine.currentDigitalInputMask();
+}
+
+inline std::vector<int16_t> queryRecentAudioSamples(const Machine& machine) {
+    return machine.recentAudioSamples();
+}
+
+inline uint32_t queryAudioSampleRate(const Machine& machine) {
+    return machine.audioSampleRate();
+}
+
+inline uint64_t queryAudioFrameCounter(const Machine& machine) {
+    return machine.audioFrameCounter();
 }
 
 } // namespace BMMQ

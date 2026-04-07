@@ -59,6 +59,8 @@ struct SdlFrontendStats {
     std::size_t framesPresented = 0;
     std::size_t renderAttempts = 0;
     std::size_t audioPreviewsBuilt = 0;
+    std::size_t audioQueueWrites = 0;
+    std::size_t audioSamplesQueued = 0;
     std::size_t backendInitAttempts = 0;
     std::size_t buttonTransitions = 0;
     std::size_t quitRequests = 0;
@@ -233,8 +235,9 @@ public:
             presented = presentLatestFrame();
         }
 
+        const bool queuedAudio = hadAudioPreview && refillAudioQueue();
         applyWindowVisibilityRequest();
-        return handledEvents != 0 || hadFrame || hadAudioPreview || visibilityChanged || presented || quitRequested_;
+        return handledEvents != 0 || hadFrame || hadAudioPreview || visibilityChanged || presented || queuedAudio || quitRequested_;
     }
 
     void setQueuedDigitalInputMask(uint32_t pressedMask)
@@ -320,6 +323,13 @@ public:
     {
         std::string summary = std::string(backendName());
         summary += backendReady_ ? " ready" : " not-ready";
+        if (config_.enableAudio) {
+            summary += audioOutputReady() ? " audio=ready" : " audio=not-ready";
+            const auto queuedBytes = queuedAudioBytes();
+            if (queuedBytes != 0u) {
+                summary += " queued-audio=" + std::to_string(queuedBytes) + "B";
+            }
+        }
         if (!lastBackendError_.empty()) {
             summary += " error=" + lastBackendError_;
         }
@@ -464,6 +474,27 @@ public:
         return backendReady_;
     }
 
+    [[nodiscard]] bool audioOutputReady() const noexcept
+    {
+#if BMMQ_SDL_FRONTEND_HAS_SDL2 && BMMQ_SDL_FRONTEND_LINKED
+        return audioDevice_ != 0;
+#else
+        return false;
+#endif
+    }
+
+    [[nodiscard]] uint32_t queuedAudioBytes() const noexcept
+    {
+#if BMMQ_SDL_FRONTEND_HAS_SDL2 && BMMQ_SDL_FRONTEND_LINKED
+        if (audioDevice_ == 0) {
+            return 0;
+        }
+        return SDL_GetQueuedAudioSize(audioDevice_);
+#else
+        return 0;
+#endif
+    }
+
     bool tryInitializeBackend()
     {
         ++stats_.backendInitAttempts;
@@ -476,6 +507,9 @@ public:
         }
 
         uint32_t initFlags = SDL_INIT_EVENTS;
+        if (config_.enableAudio) {
+            initFlags |= SDL_INIT_AUDIO;
+        }
         if (config_.createHiddenWindowOnInitialize && config_.enableVideo) {
             initFlags |= SDL_INIT_VIDEO;
         }
@@ -504,6 +538,10 @@ public:
                 shutdownBackend();
                 return false;
             }
+        }
+
+        if (config_.enableAudio && !ensureAudioDevice()) {
+            appendLog("sdl: continuing without live audio output");
         }
 
         backendReady_ = true;
@@ -611,9 +649,11 @@ public:
         }
         ++stats_.audioEvents;
         lastAudioState_ = view.audioState();
+        bool queuedAudio = false;
         if (lastAudioState_.has_value()) {
             lastAudioPreview_ = buildAudioPreview(*lastAudioState_);
             ++stats_.audioPreviewsBuilt;
+            queuedAudio = refillAudioQueue();
         } else {
             lastAudioPreview_.reset();
         }
@@ -621,9 +661,13 @@ public:
         std::string message = std::string("sdl: audio event=") + detail::machineEventTypeName(event.type);
         if (lastAudioState_.has_value()) {
             message += " nr12=" + detail::hexByte(lastAudioState_->nr12);
+            message += " nr52=" + detail::hexByte(lastAudioState_->nr52);
         }
         if (lastAudioPreview_.has_value()) {
             message += " samples=" + std::to_string(lastAudioPreview_->sampleCount());
+        }
+        if (queuedAudio) {
+            message += " queued=" + std::to_string(queuedAudioBytes()) + "B";
         }
         appendLog(std::move(message));
     }
@@ -780,6 +824,12 @@ private:
     void shutdownBackend() noexcept
     {
 #if BMMQ_SDL_FRONTEND_HAS_SDL2 && BMMQ_SDL_FRONTEND_LINKED
+        if (audioDevice_ != 0) {
+            SDL_ClearQueuedAudio(audioDevice_);
+            SDL_CloseAudioDevice(audioDevice_);
+            audioDevice_ = 0;
+        }
+        lastQueuedAudioFrameCounter_ = 0;
         if (texture_ != nullptr) {
             SDL_DestroyTexture(texture_);
             texture_ = nullptr;
@@ -1002,20 +1052,197 @@ private:
         return frame;
     }
 
-    [[nodiscard]] SdlAudioPreviewBuffer buildAudioPreview(const AudioStateView& state) const
+    [[nodiscard]] bool hasAudibleChannelOneState(const AudioStateView& state) const noexcept
+    {
+        if (!state.soundEnabled()) {
+            return false;
+        }
+        if (state.hasPcmSamples()) {
+            return std::any_of(state.pcmSamples.begin(), state.pcmSamples.end(), [](int16_t sample) {
+                return sample != 0;
+            });
+        }
+        if ((state.nr52 & 0x01u) == 0u && (state.nr14 & 0x80u) == 0u) {
+            return false;
+        }
+        if ((state.nr50 & 0x77u) == 0u) {
+            return false;
+        }
+        if ((state.nr51 & 0x11u) == 0u) {
+            return false;
+        }
+        return ((state.nr12 >> 4) & 0x0Fu) != 0u;
+    }
+
+    bool ensureAudioDevice()
+    {
+#if BMMQ_SDL_FRONTEND_HAS_SDL2 && BMMQ_SDL_FRONTEND_LINKED
+        if (!config_.enableAudio || audioDevice_ != 0) {
+            return true;
+        }
+
+        SDL_AudioSpec desired{};
+        desired.freq = audioSampleRate_;
+        desired.format = AUDIO_S16SYS;
+        desired.channels = 1;
+        desired.samples = 1024;
+        desired.callback = nullptr;
+
+        SDL_AudioSpec obtained{};
+        audioDevice_ = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
+        if (audioDevice_ == 0) {
+            lastBackendError_ = SDL_GetError();
+            appendLog("sdl: audio device open failed: " + lastBackendError_);
+            return false;
+        }
+
+        if (obtained.freq > 0) {
+            audioSampleRate_ = obtained.freq;
+        }
+        lastQueuedAudioFrameCounter_ = 0;
+        SDL_PauseAudioDevice(audioDevice_, 0);
+        appendLog("sdl: audio device opened at " + std::to_string(audioSampleRate_) + " Hz");
+        return true;
+#else
+        return false;
+#endif
+    }
+
+    bool refillAudioQueue()
+    {
+#if BMMQ_SDL_FRONTEND_HAS_SDL2 && BMMQ_SDL_FRONTEND_LINKED
+        if (!config_.enableAudio || audioDevice_ == 0 || !lastAudioState_.has_value()) {
+            return false;
+        }
+
+        const auto& state = *lastAudioState_;
+        if (!hasAudibleChannelOneState(state)) {
+            SDL_ClearQueuedAudio(audioDevice_);
+            lastQueuedAudioFrameCounter_ = state.frameCounter;
+            return false;
+        }
+        if (state.frameCounter < lastQueuedAudioFrameCounter_) {
+            lastQueuedAudioFrameCounter_ = 0;
+        }
+
+        constexpr uint32_t kHardQueueMs = 120u;
+        const auto hardQueueBytes = static_cast<uint32_t>((static_cast<uint64_t>(audioSampleRate_) * sizeof(int16_t) * kHardQueueMs) / 1000u);
+        if (SDL_GetQueuedAudioSize(audioDevice_) > hardQueueBytes) {
+            SDL_ClearQueuedAudio(audioDevice_);
+        }
+
+        if (state.hasPcmSamples()) {
+            constexpr std::size_t kApuFrameSamples = 256u;
+            if (state.frameCounter <= lastQueuedAudioFrameCounter_) {
+                return false;
+            }
+
+            const auto frameDelta = state.frameCounter - lastQueuedAudioFrameCounter_;
+            lastQueuedAudioFrameCounter_ = state.frameCounter;
+
+            const auto desiredSampleCount = static_cast<std::size_t>(std::min<uint64_t>(
+                static_cast<uint64_t>(state.pcmSamples.size()),
+                frameDelta * static_cast<uint64_t>(kApuFrameSamples)));
+            if (desiredSampleCount == 0u) {
+                return false;
+            }
+
+            const auto startIndex = state.pcmSamples.size() - desiredSampleCount;
+            const auto* chunkData = state.pcmSamples.data() + static_cast<std::ptrdiff_t>(startIndex);
+            const auto chunkBytes = static_cast<uint32_t>(desiredSampleCount * sizeof(int16_t));
+            if (SDL_QueueAudio(audioDevice_, chunkData, chunkBytes) != 0) {
+                lastBackendError_ = SDL_GetError();
+                appendLog("sdl: audio queue failed: " + lastBackendError_);
+                return false;
+            }
+
+            ++stats_.audioQueueWrites;
+            stats_.audioSamplesQueued += desiredSampleCount;
+            return true;
+        }
+
+        if (!lastAudioPreview_.has_value() || lastAudioPreview_->empty()) {
+            return false;
+        }
+
+        const auto previewBytes = static_cast<uint32_t>(lastAudioPreview_->samples.size() * sizeof(int16_t));
+        if (previewBytes == 0u) {
+            return false;
+        }
+
+        if (SDL_QueueAudio(audioDevice_, lastAudioPreview_->samples.data(), previewBytes) != 0) {
+            lastBackendError_ = SDL_GetError();
+            appendLog("sdl: audio queue failed: " + lastBackendError_);
+            return false;
+        }
+
+        ++stats_.audioQueueWrites;
+        stats_.audioSamplesQueued += lastAudioPreview_->samples.size();
+        return true;
+#else
+        return false;
+#endif
+    }
+
+    [[nodiscard]] SdlAudioPreviewBuffer buildAudioPreview(const AudioStateView& state)
     {
         SdlAudioPreviewBuffer preview;
+        preview.sampleRate = state.sampleRate != 0u ? static_cast<int>(state.sampleRate) : audioSampleRate_;
         const auto sampleCount = std::max(config_.audioPreviewSampleCount, 8);
-        preview.samples.reserve(static_cast<std::size_t>(sampleCount));
+        preview.samples.resize(static_cast<std::size_t>(sampleCount), 0);
 
-        const int volumeNibble = std::max(1, static_cast<int>((state.nr12 >> 4) & 0x0Fu));
-        const int amplitude = volumeNibble * 1024;
-        const int periodSeed = 8 + static_cast<int>(state.nr13) + (static_cast<int>(state.nr14 & 0x07u) << 8);
-        for (int i = 0; i < sampleCount; ++i) {
-            const int phase = (i + periodSeed) % 32;
-            const int16_t sample = static_cast<int16_t>(phase < 16 ? amplitude : -amplitude);
-            preview.samples.push_back(sample);
+        if (state.hasPcmSamples()) {
+            const auto copyCount = std::min<std::size_t>(preview.samples.size(), state.pcmSamples.size());
+            const auto start = state.pcmSamples.size() - copyCount;
+            std::copy_n(state.pcmSamples.begin() + static_cast<std::ptrdiff_t>(start),
+                        copyCount,
+                        preview.samples.begin());
+            return preview;
         }
+
+        if (!hasAudibleChannelOneState(state)) {
+            return preview;
+        }
+
+        const int initialVolume = static_cast<int>((state.nr12 >> 4) & 0x0Fu);
+        const int leftVolume = static_cast<int>((state.nr50 >> 4) & 0x07u) + 1;
+        const int rightVolume = static_cast<int>(state.nr50 & 0x07u) + 1;
+        const int mixedVolume = std::max(1, (leftVolume + rightVolume) / 2);
+        const int amplitude = std::clamp(initialVolume * mixedVolume * 192, 0, 28000);
+
+        const uint16_t frequencyBits = static_cast<uint16_t>(state.nr13)
+                                     | static_cast<uint16_t>((state.nr14 & 0x07u) << 8u);
+        const int divisor = std::max(1, 2048 - static_cast<int>(frequencyBits));
+        const double frequencyHz = std::clamp(131072.0 / static_cast<double>(divisor), 32.0, 4096.0);
+
+        double dutyCycle = 0.5;
+        switch ((state.nr11 >> 6) & 0x03u) {
+        case 0x00u:
+            dutyCycle = 0.125;
+            break;
+        case 0x01u:
+            dutyCycle = 0.25;
+            break;
+        case 0x02u:
+            dutyCycle = 0.5;
+            break;
+        case 0x03u:
+            dutyCycle = 0.75;
+            break;
+        }
+
+        double phase = audioPhase_;
+        const double phaseStep = std::clamp(frequencyHz / static_cast<double>(std::max(preview.sampleRate, 1)),
+                                            1.0 / 4096.0,
+                                            0.45);
+        for (auto& sample : preview.samples) {
+            sample = static_cast<int16_t>(phase < dutyCycle ? amplitude : -amplitude);
+            phase += phaseStep;
+            while (phase >= 1.0) {
+                phase -= 1.0;
+            }
+        }
+        audioPhase_ = phase;
         return preview;
     }
 
@@ -1036,10 +1263,14 @@ private:
     std::string lastRenderSummary_;
     std::string lastBackendError_;
     uint32_t initializedBackendFlags_ = 0;
+    int audioSampleRate_ = 48000;
+    double audioPhase_ = 0.0;
+    uint64_t lastQueuedAudioFrameCounter_ = 0;
 #if BMMQ_SDL_FRONTEND_HAS_SDL2 && BMMQ_SDL_FRONTEND_LINKED
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
     SDL_Texture* texture_ = nullptr;
+    SDL_AudioDeviceID audioDevice_ = 0;
 #endif
     int textureWidth_ = 0;
     int textureHeight_ = 0;

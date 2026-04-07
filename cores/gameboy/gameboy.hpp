@@ -52,6 +52,77 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
     CachedRegisterRef ie{};
   };
 
+  static constexpr uint32_t kCpuClockHz = 4194304u;
+  static constexpr uint32_t kApuSampleRate = 48000u;
+  static constexpr std::size_t kApuHistorySamples = 4096u;
+  static constexpr std::size_t kApuFrameChunkSamples = 256u;
+
+  struct ApuPulseChannel {
+    bool enabled = false;
+    bool dacEnabled = false;
+    bool lengthEnabled = false;
+    uint8_t duty = 0;
+    uint8_t dutyStep = 0;
+    uint8_t lengthCounter = 0;
+    uint8_t initialVolume = 0;
+    uint8_t volume = 0;
+    bool envelopeIncrease = false;
+    uint8_t envelopePeriod = 0;
+    uint8_t envelopeTimer = 0;
+    uint16_t frequency = 0;
+    uint16_t timer = 0;
+    bool hasSweep = false;
+    uint8_t sweepPeriod = 0;
+    uint8_t sweepTimer = 0;
+    bool sweepNegate = false;
+    uint8_t sweepShift = 0;
+    uint16_t shadowFrequency = 0;
+    bool sweepEnabled = false;
+  };
+
+  struct ApuWaveChannel {
+    bool enabled = false;
+    bool dacEnabled = false;
+    bool lengthEnabled = false;
+    uint16_t lengthCounter = 0;
+    uint16_t frequency = 0;
+    uint16_t timer = 0;
+    uint8_t sampleIndex = 0;
+  };
+
+  struct ApuNoiseChannel {
+    bool enabled = false;
+    bool dacEnabled = false;
+    bool lengthEnabled = false;
+    uint8_t lengthCounter = 0;
+    uint8_t initialVolume = 0;
+    uint8_t volume = 0;
+    bool envelopeIncrease = false;
+    uint8_t envelopePeriod = 0;
+    uint8_t envelopeTimer = 0;
+    uint8_t clockShift = 0;
+    uint8_t divisorCode = 0;
+    bool widthMode7 = false;
+    uint16_t timer = 0;
+    uint16_t lfsr = 0x7FFFu;
+  };
+
+  struct ApuState {
+    bool masterEnabled = true;
+    uint32_t frameSequencerCounter = 0;
+    uint8_t frameSequencerStep = 0;
+    uint32_t sampleAccumulator = 0;
+    uint64_t sampleCounter = 0;
+    uint64_t frameCounter = 0;
+    std::array<int16_t, kApuHistorySamples> recentSamples{};
+    std::size_t recentWriteCursor = 0;
+    std::size_t recentSampleCount = 0;
+    ApuPulseChannel pulse1{};
+    ApuPulseChannel pulse2{};
+    ApuWaveChannel wave{};
+    ApuNoiseChannel noise{};
+  };
+
   BMMQ::MemoryPool<AddressType, DataType, AddressType> mem;
   OpcodeTable opcodeTable;
   uint16_t flagset;
@@ -73,6 +144,7 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   std::size_t pendingCycleCharge_ = 0;
   bool serialTransferActive = false;
   uint16_t serialCycleProgress = 0;
+  ApuState apu_{};
   DataType joypSelect = 0x30;
   DataType joypadPressedMask = 0;
   uint32_t ppuDotCounter = 0;
@@ -125,6 +197,25 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   void writeCachedRegister(const CachedRegisterRef& slot, DataType value);
   DataType readIoRegister(std::string_view name) const;
   void writeIoRegister(std::string_view name, DataType value);
+  void initializeApu();
+  void handleApuRegisterWrite(AddressType address, DataType value);
+  void stepApuOneCycle();
+  void stepApuFrameSequencer();
+  void tickApuLengthCounters();
+  void tickApuSweep();
+  void tickApuEnvelope(ApuPulseChannel& channel);
+  void tickApuEnvelope(ApuNoiseChannel& channel);
+  void triggerApuPulse(ApuPulseChannel& channel, DataType control, DataType envelope, bool withSweep);
+  void triggerApuWave();
+  void triggerApuNoise();
+  [[nodiscard]] uint16_t pulseTimerPeriod(uint16_t frequency) const;
+  [[nodiscard]] uint16_t waveTimerPeriod(uint16_t frequency) const;
+  [[nodiscard]] uint16_t noiseTimerPeriod() const;
+  [[nodiscard]] int currentPulseSample(const ApuPulseChannel& channel) const;
+  [[nodiscard]] int currentWaveSample() const;
+  [[nodiscard]] int currentNoiseSample() const;
+  void pushApuSample();
+  void updateApuStatusRegister();
   void retireInstruction(std::size_t executedByteCount);
   [[nodiscard]] bool lcdEnabled() const;
   [[nodiscard]] DataType currentPpuMode() const;
@@ -166,6 +257,10 @@ public:
   void setIme(bool enabled);
   void scheduleImeEnable();
   void resetDivider();
+  void resetApu() { initializeApu(); }
+  [[nodiscard]] uint32_t audioSampleRate() const noexcept { return kApuSampleRate; }
+  [[nodiscard]] uint64_t audioFrameCounter() const noexcept { return apu_.frameCounter; }
+  [[nodiscard]] std::vector<int16_t> copyRecentAudioSamples() const;
   void setJoypadState(DataType pressedMask);
   bool handleMemoryRead(AddressType address, std::span<DataType> value) const;
   bool handleMemoryWrite(AddressType address, std::span<const DataType> value);
