@@ -567,6 +567,55 @@ int main()
         assert((static_cast<uint8_t>(ifEntry->reg->value) & 0x08u) != 0);
     }
 
+    {
+        LR3592_DMG cpu;
+        auto* ieEntry = cpu.getMemory().file.findRegister(GB::RegisterId::IE);
+        auto* ifEntry = cpu.getMemory().file.findRegister("IF");
+        assert(ieEntry != nullptr && ieEntry->reg != nullptr);
+        assert(ifEntry != nullptr && ifEntry->reg != nullptr);
+
+        ieEntry->reg->value = 0x01;
+        ifEntry->reg->value = 0x01;
+        cpu.setIme(false);
+        cpu.loadProgram({0x76, 0x3E, 0x14, 0x00}, 0);
+
+        step(cpu);
+        assert(scalar(cpu, GB::RegisterId::PC) == 0x0001);
+
+        step(cpu);
+        assert(pair(cpu, GB::RegisterId::AF)->hi == 0x3E);
+        assert(scalar(cpu, GB::RegisterId::PC) == 0x0002);
+
+        step(cpu);
+        assert(pair(cpu, GB::RegisterId::AF)->hi == 0x3E);
+        assert(pair(cpu, GB::RegisterId::DE)->hi == 0x01);
+        assert(scalar(cpu, GB::RegisterId::PC) == 0x0003);
+    }
+
+    {
+        LR3592_DMG cpu;
+        auto* lcdcEntry = cpu.getMemory().file.findRegister("LCDC");
+        auto* statEntry = cpu.getMemory().file.findRegister("STAT");
+        assert(lcdcEntry != nullptr && lcdcEntry->reg != nullptr);
+        assert(statEntry != nullptr && statEntry->reg != nullptr);
+
+        lcdcEntry->reg->value = 0x80;
+        cpu.loadProgram(std::vector<uint8_t>(256, 0x00), 0);
+
+        step(cpu);
+        assert((static_cast<uint8_t>(statEntry->reg->value) & 0x03u) == 0x02u);
+
+        for (int i = 0; i < 20; ++i) {
+            step(cpu);
+        }
+        assert((static_cast<uint8_t>(statEntry->reg->value) & 0x03u) == 0x03u);
+
+        for (int i = 0; i < 50; ++i) {
+            step(cpu);
+        }
+        assert((static_cast<uint8_t>(statEntry->reg->value) & 0x03u) == 0x00u);
+    }
+
     requireDecodeFailure({0xD3, 0x00, 0x00});
 
     return 0;

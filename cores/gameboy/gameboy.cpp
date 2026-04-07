@@ -1082,6 +1082,12 @@ void LR3592_DMG::fetchInto(BMMQ::fetchBlock<AddressType, DataType>& f)
         return;
     }
 
+    const bool triggerHaltBug = haltFlag && pending != 0 && !ime;
+    if (triggerHaltBug) {
+        haltFlag = false;
+        haltBugActive = true;
+    }
+
     if (serviceInterruptIfPending()) {
         f.setbaseAddress(pcRegister_ != nullptr ? static_cast<AddressType>(pcRegister_->value) : pc);
         blockData[0].offset = 0;
@@ -1096,12 +1102,24 @@ void LR3592_DMG::fetchInto(BMMQ::fetchBlock<AddressType, DataType>& f)
     stream.resize(1, 0);
     mem.read(std::span<DataType>(stream.data(), stream.size()), pc);
 
+    const bool useHaltBugFetch = haltBugActive;
+    haltBugActive = false;
+    haltBugPcAdjustPending = useHaltBugFetch;
+
     const auto opcodeByte = stream[0];
     if (const auto& entry = opcodeTable[opcodeByte]; entry.has_value()) {
         const auto opcodeLength = entry->length();
         if (opcodeLength > stream.size()) {
             stream.resize(opcodeLength, 0);
-            mem.read(std::span<DataType>(stream.data(), stream.size()), pc);
+            if (useHaltBugFetch) {
+                for (std::size_t i = 1; i < opcodeLength; ++i) {
+                    DataType byte = 0;
+                    mem.read(std::span<DataType>(&byte, 1), static_cast<AddressType>(pc + i - 1u));
+                    stream[i] = byte;
+                }
+            } else {
+                mem.read(std::span<DataType>(stream.data(), stream.size()), pc);
+            }
         }
     }
 }
@@ -1184,8 +1202,14 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
     feedback.segmentBoundaryHint = feedback.isControlFlow;
 
     auto finalizeFast = [&](std::size_t executedByteCount) {
+        std::size_t pcAdvance = executedByteCount;
+        if (haltBugPcAdjustPending && pcAdvance > 0) {
+            --pcAdvance;
+        }
+        haltBugPcAdjustPending = false;
+
         if (pcRegister_ != nullptr) {
-            pcRegister_->value = static_cast<AddressType>(pcRegister_->value + executedByteCount);
+            pcRegister_->value = static_cast<AddressType>(pcRegister_->value + pcAdvance);
             feedback.pcAfter = static_cast<uint32_t>(pcRegister_->value);
         } else {
             feedback.pcAfter = feedback.pcBefore;
@@ -1610,9 +1634,15 @@ void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, Addre
         step(*snapshot, fb);
     }
 
+    std::size_t pcAdvance = executedByteCount;
+    if (haltBugPcAdjustPending && pcAdvance > 0) {
+        --pcAdvance;
+    }
+    haltBugPcAdjustPending = false;
+
     if (pcRegister_ != nullptr) {
         pcRegister_->value = static_cast<AddressType>(
-            pcRegister_->value + executedByteCount);
+            pcRegister_->value + pcAdvance);
         feedback.pcAfter = static_cast<uint32_t>(pcRegister_->value);
     } else {
         feedback.pcAfter = feedback.pcBefore;

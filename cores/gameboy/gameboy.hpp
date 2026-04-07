@@ -64,6 +64,8 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   LR3592_Register *spRegister_ = nullptr;
   HardwareRegisterCache hardwareRegisters_{};
   bool stopFlag = false, haltFlag = false;
+  bool haltBugActive = false;
+  bool haltBugPcAdjustPending = false;
   uint16_t dividerCounter = 0;
   bool dmaActive = false;
   AddressType dmaSourceBase = 0;
