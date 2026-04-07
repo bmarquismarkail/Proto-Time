@@ -713,11 +713,50 @@ DataType LR3592_DMG::readCachedRegister(const CachedRegisterRef& slot)
     return static_cast<DataType>(slot.reg->value & 0x00FFu);
 }
 
+const LR3592_DMG::CachedRegisterRef* LR3592_DMG::cachedIoRegisterForAddress(AddressType address) const
+{
+    switch (address) {
+    case 0xFF01u:
+        return &hardwareRegisters_.sb;
+    case 0xFF02u:
+        return &hardwareRegisters_.sc;
+    case 0xFF04u:
+        return &hardwareRegisters_.div;
+    case 0xFF05u:
+        return &hardwareRegisters_.tima;
+    case 0xFF06u:
+        return &hardwareRegisters_.tma;
+    case 0xFF07u:
+        return &hardwareRegisters_.tac;
+    case 0xFF0Fu:
+        return &hardwareRegisters_.interruptFlags;
+    case 0xFF40u:
+        return &hardwareRegisters_.lcdc;
+    case 0xFF41u:
+        return &hardwareRegisters_.stat;
+    case 0xFF44u:
+        return &hardwareRegisters_.ly;
+    case 0xFF45u:
+        return &hardwareRegisters_.lyc;
+    case 0xFF46u:
+        return &hardwareRegisters_.dma;
+    case 0xFFFFu:
+        return &hardwareRegisters_.ie;
+    default:
+        return nullptr;
+    }
+}
+
 void LR3592_DMG::writeCachedRegister(const CachedRegisterRef& slot, DataType value)
 {
     if (slot.reg == nullptr) {
         return;
     }
+
+    if (static_cast<DataType>(slot.reg->value & 0x00FFu) == value) {
+        return;
+    }
+
     slot.reg->value = value;
     mem.backingStore().load(std::span<const DataType>(&value, 1), slot.address);
 }
@@ -1736,6 +1775,13 @@ bool LR3592_DMG::handleMemoryRead(AddressType address, std::span<DataType> value
     if (dmaActive && !isHramAddress(address)) {
         std::fill(value.begin(), value.end(), static_cast<DataType>(0xFF));
         return true;
+    }
+
+    if (value.size() == 1) {
+        if (const auto* slot = cachedIoRegisterForAddress(address); slot != nullptr) {
+            value[0] = readCachedRegister(*slot);
+            return true;
+        }
     }
 
     if (lcdEnabled()) {

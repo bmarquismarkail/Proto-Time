@@ -476,6 +476,32 @@ int main()
 
     {
         LR3592_DMG cpu;
+        auto* divEntry = cpu.getMemory().file.findRegister("DIV");
+        auto* timaEntry = cpu.getMemory().file.findRegister("TIMA");
+        auto* statEntry = cpu.getMemory().file.findRegister("STAT");
+        auto* lyEntry = cpu.getMemory().file.findRegister("LY");
+        auto* ieEntry = cpu.getMemory().file.findRegister(GB::RegisterId::IE);
+        assert(divEntry != nullptr && divEntry->reg != nullptr);
+        assert(timaEntry != nullptr && timaEntry->reg != nullptr);
+        assert(statEntry != nullptr && statEntry->reg != nullptr);
+        assert(lyEntry != nullptr && lyEntry->reg != nullptr);
+        assert(ieEntry != nullptr && ieEntry->reg != nullptr);
+
+        divEntry->reg->value = 0x9Au;
+        timaEntry->reg->value = 0xABu;
+        statEntry->reg->value = 0x85u;
+        lyEntry->reg->value = 0x22u;
+        ieEntry->reg->value = 0x1Fu;
+
+        assert(readByte(cpu, 0xFF04) == 0x9Au);
+        assert(readByte(cpu, 0xFF05) == 0xABu);
+        assert(readByte(cpu, 0xFF41) == 0x85u);
+        assert(readByte(cpu, 0xFF44) == 0x22u);
+        assert(readByte(cpu, 0xFFFF) == 0x1Fu);
+    }
+
+    {
+        LR3592_DMG cpu;
         auto* joypEntry = cpu.getMemory().file.findRegister("JOYP");
         auto* ifEntry = cpu.getMemory().file.findRegister("IF");
         assert(joypEntry != nullptr && joypEntry->reg != nullptr);

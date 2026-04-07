@@ -121,6 +121,7 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   void initializeRegisterCache();
   void cacheRegisterRef(CachedRegisterRef& slot, std::string_view name, AddressType address);
   [[nodiscard]] static DataType readCachedRegister(const CachedRegisterRef& slot);
+  [[nodiscard]] const CachedRegisterRef* cachedIoRegisterForAddress(AddressType address) const;
   void writeCachedRegister(const CachedRegisterRef& slot, DataType value);
   DataType readIoRegister(std::string_view name) const;
   void writeIoRegister(std::string_view name, DataType value);
