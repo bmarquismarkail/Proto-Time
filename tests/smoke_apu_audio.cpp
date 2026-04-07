@@ -47,7 +47,6 @@ int main()
 {
     GameBoyMachine machine;
     std::vector<uint8_t> cartridgeRom(0x8000, 0x00);
-    cartridgeRom[0x0100] = 0x00;
     machine.loadRom(cartridgeRom);
 
     auto audioPlugin = std::make_unique<RecordingAudioPlugin>();
