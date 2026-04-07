@@ -790,9 +790,15 @@ DataType LR3592_DMG::joypadLowNibble() const
 void LR3592_DMG::setJoypadState(DataType pressedMask)
 {
     const DataType oldLow = joypadLowNibble();
+    const DataType oldPressedMask = joypadPressedMask;
     joypadPressedMask = pressedMask;
     const DataType newLow = joypadLowNibble();
     writeIoRegister("JOYP", static_cast<DataType>(0xC0u | joypSelect | newLow));
+
+    const DataType newlyPressed = static_cast<DataType>(pressedMask & static_cast<DataType>(~oldPressedMask));
+    if (newlyPressed != 0) {
+        stopFlag = false;
+    }
 
     if ((oldLow & static_cast<DataType>(~newLow)) != 0) {
         requestInterrupt(kInterruptJoypad);
@@ -1744,6 +1750,28 @@ bool LR3592_DMG::handleMemoryWrite(AddressType address, std::span<const DataType
     }
     if (value.size() == 1 && address == 0xFF04) {
         resetDivider();
+        return true;
+    }
+    if (value.size() == 1 && address == 0xFF41) {
+        const DataType current = readCachedRegister(hardwareRegisters_.stat);
+        const DataType writableBits = static_cast<DataType>(value[0] & 0x78u);
+        const DataType readOnlyBits = static_cast<DataType>(current & 0x07u);
+        writeIoRegister("STAT", static_cast<DataType>(0x80u | writableBits | readOnlyBits));
+        return true;
+    }
+    if (value.size() == 1 && address == 0xFF44) {
+        ppuDotCounter = 0;
+        const DataType lyc = readCachedRegister(hardwareRegisters_.lyc);
+        const DataType mode = lcdEnabled() ? 0x02u : 0x00u;
+        DataType stat = static_cast<DataType>((readCachedRegister(hardwareRegisters_.stat) & 0x78u) | mode | 0x80u);
+        if (lyc == 0u) {
+            stat = static_cast<DataType>(stat | 0x04u);
+        } else {
+            stat = static_cast<DataType>(stat & ~0x04u);
+        }
+        writeIoRegister("LY", 0x00u);
+        writeIoRegister("STAT", stat);
+        statInterruptLatched = false;
         return true;
     }
     if (value.size() == 1 && address == 0xFF46) {

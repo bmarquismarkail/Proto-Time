@@ -503,6 +503,41 @@ int main()
 
     {
         LR3592_DMG cpu;
+        cpu.loadProgram({0x10, 0x00, 0x00}, 0);
+
+        step(cpu);
+        assert(scalar(cpu, GB::RegisterId::PC) == 0x0002);
+        auto stoppedFetch = cpu.fetch();
+        assert(!stoppedFetch.getblockData().empty());
+        assert(stoppedFetch.getblockData().front().data.empty());
+
+        cpu.setJoypadState(GB::Joypad::Start);
+        step(cpu);
+        assert(scalar(cpu, GB::RegisterId::PC) == 0x0003);
+    }
+
+    {
+        LR3592_DMG cpu;
+        auto* lyEntry = cpu.getMemory().file.findRegister("LY");
+        auto* statEntry = cpu.getMemory().file.findRegister("STAT");
+        assert(lyEntry != nullptr && lyEntry->reg != nullptr);
+        assert(statEntry != nullptr && statEntry->reg != nullptr);
+
+        lyEntry->reg->value = 0x25;
+        statEntry->reg->value = 0x83;
+
+        cpu.getMemory().write(std::span<const uint8_t>({0x91}), static_cast<uint16_t>(0xFF44));
+        const auto statLowBitsBeforeWrite = static_cast<uint8_t>(statEntry->reg->value & 0x07u);
+        cpu.getMemory().write(std::span<const uint8_t>({0x78}), static_cast<uint16_t>(0xFF41));
+
+        assert(static_cast<uint8_t>(lyEntry->reg->value) == 0x00);
+        assert(readByte(cpu, 0xFF44) == 0x00);
+        assert((static_cast<uint8_t>(statEntry->reg->value) & 0x78u) == 0x78u);
+        assert((static_cast<uint8_t>(statEntry->reg->value) & 0x07u) == statLowBitsBeforeWrite);
+    }
+
+    {
+        LR3592_DMG cpu;
         auto* sbEntry = cpu.getMemory().file.findRegister("SB");
         auto* scEntry = cpu.getMemory().file.findRegister("SC");
         auto* ifEntry = cpu.getMemory().file.findRegister("IF");

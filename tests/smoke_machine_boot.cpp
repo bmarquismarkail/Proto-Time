@@ -159,6 +159,12 @@ int main() {
     assert(host.runtimeContext().read16(0xE100) == 0x3456);
     host.runtimeContext().write8(0xFF68, 0x91);
     assert(host.runtimeContext().read8(0xFF68) == 0x91);
+    host.runtimeContext().write8(0xFF44, 0x77);
+    assert(host.runtimeContext().read8(0xFF44) == 0x00);
+    const auto statLowBitsBeforeWrite = static_cast<uint8_t>(host.runtimeContext().read8(0xFF41) & 0x07u);
+    host.runtimeContext().write8(0xFF41, 0x78);
+    assert((host.runtimeContext().read8(0xFF41) & 0x78u) == 0x78u);
+    assert((host.runtimeContext().read8(0xFF41) & 0x07u) == statLowBitsBeforeWrite);
     host.step();
     assert(host.readRegisterPair(GB::RegisterId::AF) == static_cast<uint16_t>(0x12B0));
     assert(host.runtimeContext().readRegister16(GB::RegisterId::AF) == static_cast<uint16_t>(0x12B0));
