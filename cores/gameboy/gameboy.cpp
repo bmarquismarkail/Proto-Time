@@ -859,7 +859,10 @@ uint16_t LR3592_DMG::noiseTimerPeriod() const
     return static_cast<uint16_t>(std::min<uint32_t>(std::max<uint32_t>(period, 8u), 0xFFFFu));
 }
 
-void LR3592_DMG::tickApuEnvelope(ApuPulseChannel& channel)
+namespace {
+
+template <typename Channel>
+void tickApuEnvelopeImpl(Channel& channel)
 {
     if (!channel.enabled || channel.envelopePeriod == 0u) {
         return;
@@ -880,25 +883,16 @@ void LR3592_DMG::tickApuEnvelope(ApuPulseChannel& channel)
     }
 }
 
+} // namespace
+
+void LR3592_DMG::tickApuEnvelope(ApuPulseChannel& channel)
+{
+    tickApuEnvelopeImpl(channel);
+}
+
 void LR3592_DMG::tickApuEnvelope(ApuNoiseChannel& channel)
 {
-    if (!channel.enabled || channel.envelopePeriod == 0u) {
-        return;
-    }
-    if (channel.envelopeTimer > 0u) {
-        --channel.envelopeTimer;
-    }
-    if (channel.envelopeTimer != 0u) {
-        return;
-    }
-    channel.envelopeTimer = channel.envelopePeriod;
-    if (channel.envelopeIncrease) {
-        if (channel.volume < 15u) {
-            ++channel.volume;
-        }
-    } else if (channel.volume > 0u) {
-        --channel.volume;
-    }
+    tickApuEnvelopeImpl(channel);
 }
 
 void LR3592_DMG::tickApuLengthCounters()
@@ -1052,15 +1046,18 @@ void LR3592_DMG::triggerApuNoise()
     if (channel.lengthCounter == 0u) {
         channel.lengthCounter = 64u;
     }
-    channel.initialVolume = static_cast<uint8_t>((readIoRegister("NR42") >> 4) & 0x0Fu);
+
+    const uint8_t nr42 = readIoRegister("NR42");
+    const uint8_t nr43 = readIoRegister("NR43");
+    channel.initialVolume = static_cast<uint8_t>((nr42 >> 4) & 0x0Fu);
     channel.volume = channel.initialVolume;
-    channel.envelopeIncrease = (readIoRegister("NR42") & 0x08u) != 0u;
-    channel.envelopePeriod = static_cast<uint8_t>(readIoRegister("NR42") & 0x07u);
+    channel.envelopeIncrease = (nr42 & 0x08u) != 0u;
+    channel.envelopePeriod = static_cast<uint8_t>(nr42 & 0x07u);
     channel.envelopeTimer = channel.envelopePeriod == 0u ? 8u : channel.envelopePeriod;
-    channel.clockShift = static_cast<uint8_t>((readIoRegister("NR43") >> 4) & 0x0Fu);
-    channel.widthMode7 = (readIoRegister("NR43") & 0x08u) != 0u;
-    channel.divisorCode = static_cast<uint8_t>(readIoRegister("NR43") & 0x07u);
-    channel.dacEnabled = (readIoRegister("NR42") & 0xF8u) != 0u;
+    channel.clockShift = static_cast<uint8_t>((nr43 >> 4) & 0x0Fu);
+    channel.widthMode7 = (nr43 & 0x08u) != 0u;
+    channel.divisorCode = static_cast<uint8_t>(nr43 & 0x07u);
+    channel.dacEnabled = (nr42 & 0xF8u) != 0u;
     channel.enabled = apu_.masterEnabled && channel.dacEnabled;
     channel.lfsr = 0x7FFFu;
     channel.timer = noiseTimerPeriod();

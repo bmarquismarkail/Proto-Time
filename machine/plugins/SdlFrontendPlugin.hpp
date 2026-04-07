@@ -1060,9 +1060,22 @@ private:
             return false;
         }
         if (state.hasPcmSamples()) {
-            return std::any_of(state.pcmSamples.begin(), state.pcmSamples.end(), [](int16_t sample) {
-                return sample != 0;
-            });
+            constexpr std::size_t kAudibleProbeWindow = 64u;
+            const auto hasNonZeroSample = [](auto begin, auto end) {
+                return std::any_of(begin, end, [](int16_t sample) {
+                    return sample != 0;
+                });
+            };
+
+            const auto windowSize = std::min<std::size_t>(state.pcmSamples.size(), kAudibleProbeWindow);
+            if (hasNonZeroSample(state.pcmSamples.begin(), state.pcmSamples.begin() + static_cast<std::ptrdiff_t>(windowSize))) {
+                return true;
+            }
+            if (state.pcmSamples.size() > windowSize) {
+                return hasNonZeroSample(state.pcmSamples.end() - static_cast<std::ptrdiff_t>(windowSize),
+                                        state.pcmSamples.end());
+            }
+            return false;
         }
         if ((state.nr52 & 0x01u) == 0u && (state.nr14 & 0x80u) == 0u) {
             return false;
@@ -1172,9 +1185,6 @@ private:
         }
 
         const auto previewBytes = static_cast<uint32_t>(lastAudioPreview_->samples.size() * sizeof(int16_t));
-        if (previewBytes == 0u) {
-            return false;
-        }
 
         if (SDL_QueueAudio(audioDevice_, lastAudioPreview_->samples.data(), previewBytes) != 0) {
             lastBackendError_ = SDL_GetError();
