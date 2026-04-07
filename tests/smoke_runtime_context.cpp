@@ -68,6 +68,9 @@ struct AdvancedRuntimeContext final : BMMQ::RuntimeContext {
 int main()
 {
     AdvancedRuntimeContext context;
+    BMMQ::Plugin::VisibleStatePreservingStepPolicy visibleStatePolicy;
+    assert(visibleStatePolicy.guarantee() == BMMQ::ExecutionGuarantee::VisibleStatePreserving);
+    assert(visibleStatePolicy.metadata().id == "bmmq.executor.policy.visible-state-preserving-step");
     assert(context.read16(0x0100) == 0x0000);
     context.write16(0xC000, 0x1234);
     context.commitVisibleState();

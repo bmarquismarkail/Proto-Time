@@ -1185,6 +1185,8 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
             feedback.pcAfter = feedback.pcBefore;
         }
 
+        feedback.executionPath = BMMQ::ExecutionPathHint::CpuOptimizedFastPath;
+
         std::size_t retiredCycles = pendingCycleCharge_;
         pendingCycleCharge_ = 0;
         if (retiredCycles == 0) {
@@ -1593,6 +1595,7 @@ void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, Addre
         executedByteCount += dataBlock.data.size();
     }
     feedback.segmentBoundaryHint = feedback.isControlFlow;
+    feedback.executionPath = BMMQ::ExecutionPathHint::CanonicalFetchDecodeExecute;
 
     auto* snapshot = block.getSnapshot();
     if (snapshot == nullptr) return;

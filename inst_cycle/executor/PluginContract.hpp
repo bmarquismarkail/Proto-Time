@@ -140,6 +140,36 @@ public:
     }
 };
 
+class VisibleStatePreservingStepPolicy final : public IExecutorPolicyPlugin {
+public:
+    const PluginMetadata& metadata() const override {
+        static const PluginMetadata meta{
+            sizeof(PluginMetadata),
+            "bmmq.executor.policy.visible-state-preserving-step",
+            "Visible-State-Preserving Step Policy",
+            PluginKind::ExecutorPolicy,
+            kHostAbiVersion
+        };
+        return meta;
+    }
+
+    BMMQ::ExecutionGuarantee guarantee() const override {
+        return BMMQ::ExecutionGuarantee::VisibleStatePreserving;
+    }
+
+    BMMQ::RuntimeCapabilityProfile capabilityProfile() const override {
+        return {};
+    }
+
+    bool shouldRecord(const FetchBlock&, const BMMQ::CpuFeedback&) const override {
+        return true;
+    }
+
+    bool shouldSegment(const FetchBlock&, const BMMQ::CpuFeedback& feedback) const override {
+        return feedback.segmentBoundaryHint;
+    }
+};
+
 } // namespace BMMQ::Plugin
 
 #endif // PLUGIN_CONTRACT_HPP

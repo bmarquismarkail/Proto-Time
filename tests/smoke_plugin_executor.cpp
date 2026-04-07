@@ -107,6 +107,7 @@ int main()
     const auto result = executor.step(host.runtimeContext());
     assert(result.executed);
     assert(result.guarantee == BMMQ::ExecutionGuarantee::Experimental);
+    assert(result.feedback.executionPath == BMMQ::ExecutionPathHint::CpuOptimizedFastPath);
     assert(!result.feedback.isControlFlow);
     assert(!result.feedback.segmentBoundaryHint);
     assert(host.runtimeContext().attachedPolicyMetadata() != nullptr);

@@ -9,11 +9,18 @@
 
 namespace BMMQ {
 
+enum class ExecutionPathHint {
+    Unknown,
+    CanonicalFetchDecodeExecute,
+    CpuOptimizedFastPath,
+};
+
 struct CpuFeedback {
     bool segmentBoundaryHint = false;
     bool isControlFlow = false;
     uint32_t pcBefore = 0;
     uint32_t pcAfter = 0;
+    ExecutionPathHint executionPath = ExecutionPathHint::Unknown;
 };
 
 ///////////////////////////////////////////////////////////////////////

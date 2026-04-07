@@ -95,6 +95,7 @@ int main()
     const auto stepResultRecord = recorder.step(host.runtimeContext());
     assert(stepResultRecord.executed);
     assert(stepResultRecord.guarantee == BMMQ::ExecutionGuarantee::BaselineFaithful);
+    assert(stepResultRecord.feedback.executionPath == BMMQ::ExecutionPathHint::CanonicalFetchDecodeExecute);
     assert(!stepResultRecord.feedback.isControlFlow);
     assert(!stepResultRecord.feedback.segmentBoundaryHint);
     assert(recorder.recordedBlocks().size() == 1);

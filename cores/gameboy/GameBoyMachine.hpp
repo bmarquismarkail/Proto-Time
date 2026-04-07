@@ -27,7 +27,9 @@ public:
         BMMQ::MemoryMap& memoryMap,
         const bool& romLoaded,
         BMMQ::Plugin::IExecutorPolicyPlugin*& activePolicy)
-        : runtime_(runtime), memoryMap_(memoryMap), romLoaded_(romLoaded), activePolicy_(activePolicy) {}
+        : runtime_(runtime), memoryMap_(memoryMap), romLoaded_(romLoaded), activePolicy_(activePolicy) {
+        refreshExecutionMode();
+    }
 
     FetchBlock fetch() override {
         if (!romLoaded_) {
@@ -45,7 +47,7 @@ public:
     }
 
     BMMQ::CpuFeedback step(FetchBlock& fetchBlock) override {
-        if (runtime_.cpu().tryFastExecute(fetchBlock)) {
+        if (allowFastPath_ && runtime_.cpu().tryFastExecute(fetchBlock)) {
             return runtime_.getLastFeedback();
         }
         cachedExecutionBlock_.clear();
@@ -175,6 +177,11 @@ public:
         return *activePolicy_;
     }
 
+    void refreshExecutionMode() {
+        allowFastPath_ = activePolicy_ != nullptr &&
+            activePolicy_->guarantee() != BMMQ::ExecutionGuarantee::BaselineFaithful;
+    }
+
 private:
     static AddressType resolveEchoAddress(AddressType address) {
         if (address >= 0xE000 && address <= 0xFDFF) {
@@ -207,6 +214,7 @@ private:
     ExecutionBlock cachedExecutionBlock_{};
     const bool& romLoaded_;
     BMMQ::Plugin::IExecutorPolicyPlugin*& activePolicy_;
+    bool allowFastPath_ = false;
 };
 
 class GameBoyMachine final : public BMMQ::Machine {
@@ -357,6 +365,7 @@ public:
     void attachExecutorPolicy(BMMQ::Plugin::IExecutorPolicyPlugin& policy) override {
         BMMQ::Plugin::validateExecutorPolicyStartup(policy);
         activePolicy_ = &policy;
+        context_.refreshExecutionMode();
     }
 
     const BMMQ::Plugin::IExecutorPolicyPlugin& attachedExecutorPolicy() const override {
