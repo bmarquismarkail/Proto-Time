@@ -33,6 +33,14 @@ namespace BMMQ
             code.push_back(std::move(step));
         }
 
+        void clear() {
+            code.clear();
+        }
+
+        void reserve(std::size_t count) {
+            code.reserve(count);
+        }
+
         const std::vector<step_t>& getSteps() const {
             return code;
         }

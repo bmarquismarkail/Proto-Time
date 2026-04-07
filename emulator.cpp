@@ -173,7 +173,8 @@ int main(int argc, char** argv)
             config.windowScale = std::max(options.windowScale, 1);
             config.autoInitializeBackend = true;
             config.createHiddenWindowOnInitialize = true;
-            config.autoPresentOnVideoEvent = true;
+            config.pumpBackendEventsOnInputSample = false;
+            config.autoPresentOnVideoEvent = false;
             config.showWindowOnPresent = true;
 
             auto frontendPlugin = std::make_unique<BMMQ::SdlFrontendPlugin>(config);

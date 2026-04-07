@@ -229,7 +229,7 @@ public:
         const bool visibilityChanged = windowVisible_ != windowVisibilityRequested_;
 
         bool presented = false;
-        if (hadFrame) {
+        if (hadFrame && (frameDirty_ || visibilityChanged)) {
             presented = presentLatestFrame();
         }
 
@@ -395,6 +395,7 @@ public:
         SDL_RenderCopy(renderer_, texture_, nullptr, nullptr);
         SDL_RenderPresent(renderer_);
         ++stats_.framesPresented;
+        frameDirty_ = false;
         lastRenderSummary_ = "Presented frame " + std::to_string(lastFrame_->width) + "x" + std::to_string(lastFrame_->height);
         return true;
 #else
@@ -563,31 +564,44 @@ public:
             return;
         }
         ++stats_.videoEvents;
-        lastVideoState_ = view.videoState();
-        if (lastVideoState_.has_value()) {
-            const bool shouldRefreshFrame =
-                event.type == MachineEventType::VBlank ||
-                !lastFrame_.has_value() ||
-                !lastVideoState_->lcdEnabled();
-            if (shouldRefreshFrame) {
-                lastFrame_ = buildDebugFrame(*lastVideoState_);
-                ++stats_.framesPrepared;
-                if (config_.autoPresentOnVideoEvent) {
-                    presentLatestFrame();
+        const bool lcdControlWrite = event.type == MachineEventType::MemoryWriteObserved && event.address == 0xFF40u;
+        const bool shouldSampleVideoState =
+            event.type == MachineEventType::VBlank ||
+            !lastFrame_.has_value() ||
+            lcdControlWrite;
+
+        if (shouldSampleVideoState) {
+            lastVideoState_ = view.videoState();
+            if (lastVideoState_.has_value()) {
+                const bool shouldRefreshFrame =
+                    event.type == MachineEventType::VBlank ||
+                    !lastFrame_.has_value() ||
+                    !lastVideoState_->lcdEnabled() ||
+                    lcdControlWrite;
+                if (shouldRefreshFrame) {
+                    lastFrame_ = buildDebugFrame(*lastVideoState_);
+                    ++stats_.framesPrepared;
+                    frameDirty_ = true;
+                    if (config_.autoPresentOnVideoEvent) {
+                        presentLatestFrame();
+                    }
                 }
+            } else {
+                lastFrame_.reset();
+                frameDirty_ = false;
             }
-        } else {
-            lastFrame_.reset();
         }
 
-        std::string message = std::string("sdl: video event=") + detail::machineEventTypeName(event.type);
-        if (lastVideoState_.has_value()) {
-            message += " lcdc=" + detail::hexByte(lastVideoState_->lcdc);
+        if (event.type != MachineEventType::MemoryWriteObserved || shouldSampleVideoState) {
+            std::string message = std::string("sdl: video event=") + detail::machineEventTypeName(event.type);
+            if (lastVideoState_.has_value()) {
+                message += " lcdc=" + detail::hexByte(lastVideoState_->lcdc);
+            }
+            if (lastFrame_.has_value()) {
+                message += " frame=" + std::to_string(lastFrame_->width) + "x" + std::to_string(lastFrame_->height);
+            }
+            appendLog(std::move(message));
         }
-        if (lastFrame_.has_value()) {
-            message += " frame=" + std::to_string(lastFrame_->width) + "x" + std::to_string(lastFrame_->height);
-        }
-        appendLog(std::move(message));
     }
 
     void onAudioEvent(const MachineEvent& event, const MachineView& view) override
@@ -1013,6 +1027,7 @@ private:
     std::optional<SdlAudioPreviewBuffer> lastAudioPreview_;
     std::optional<DigitalInputStateView> lastInputState_;
     std::optional<SdlFrameBuffer> lastFrame_;
+    bool frameDirty_ = false;
     std::optional<uint32_t> queuedDigitalInputMask_;
     bool quitRequested_ = false;
     bool windowVisible_ = false;

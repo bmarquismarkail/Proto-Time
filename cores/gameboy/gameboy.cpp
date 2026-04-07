@@ -607,6 +607,7 @@ LR3592_DMG::LR3592_DMG()
     PC.registration(mem.file, "PC");
 
     mem.store = buildMemoryStore();
+    initializeRegisterCache();
     loadProgram({0x3E, 0x12, 0x00});
     populateOpcodes();
     resetDivider();
@@ -671,8 +672,73 @@ const BMMQ::MemoryPool<AddressType, DataType, AddressType>& LR3592_DMG::getMemor
     return mem;
 }
 
+void LR3592_DMG::cacheRegisterRef(CachedRegisterRef& slot, std::string_view name, AddressType address)
+{
+    slot.address = address;
+    if (auto* entry = mem.file.findRegister(name); entry != nullptr && entry->reg != nullptr) {
+        slot.reg = entry->reg.get();
+    }
+}
+
+void LR3592_DMG::initializeRegisterCache()
+{
+    if (auto* entry = mem.file.findRegister(GB::RegisterId::PC); entry != nullptr && entry->reg != nullptr) {
+        pcRegister_ = entry->reg.get();
+    }
+    if (auto* entry = mem.file.findRegister(GB::RegisterId::SP); entry != nullptr && entry->reg != nullptr) {
+        spRegister_ = entry->reg.get();
+    }
+
+    cacheRegisterRef(hardwareRegisters_.joyp, "JOYP", 0xFF00u);
+    cacheRegisterRef(hardwareRegisters_.sb, "SB", 0xFF01u);
+    cacheRegisterRef(hardwareRegisters_.sc, "SC", 0xFF02u);
+    cacheRegisterRef(hardwareRegisters_.div, "DIV", 0xFF04u);
+    cacheRegisterRef(hardwareRegisters_.tima, "TIMA", 0xFF05u);
+    cacheRegisterRef(hardwareRegisters_.tma, "TMA", 0xFF06u);
+    cacheRegisterRef(hardwareRegisters_.tac, "TAC", 0xFF07u);
+    cacheRegisterRef(hardwareRegisters_.interruptFlags, "IF", 0xFF0Fu);
+    cacheRegisterRef(hardwareRegisters_.lcdc, "LCDC", 0xFF40u);
+    cacheRegisterRef(hardwareRegisters_.stat, "STAT", 0xFF41u);
+    cacheRegisterRef(hardwareRegisters_.ly, "LY", 0xFF44u);
+    cacheRegisterRef(hardwareRegisters_.lyc, "LYC", 0xFF45u);
+    cacheRegisterRef(hardwareRegisters_.dma, "DMA", 0xFF46u);
+    cacheRegisterRef(hardwareRegisters_.ie, GB::RegisterId::IE, 0xFFFFu);
+}
+
+DataType LR3592_DMG::readCachedRegister(const CachedRegisterRef& slot)
+{
+    if (slot.reg == nullptr) {
+        return 0;
+    }
+    return static_cast<DataType>(slot.reg->value & 0x00FFu);
+}
+
+void LR3592_DMG::writeCachedRegister(const CachedRegisterRef& slot, DataType value)
+{
+    if (slot.reg == nullptr) {
+        return;
+    }
+    slot.reg->value = value;
+    mem.backingStore().load(std::span<const DataType>(&value, 1), slot.address);
+}
+
 DataType LR3592_DMG::readIoRegister(std::string_view name) const
 {
+    if (name == "JOYP") return readCachedRegister(hardwareRegisters_.joyp);
+    if (name == "SB") return readCachedRegister(hardwareRegisters_.sb);
+    if (name == "SC") return readCachedRegister(hardwareRegisters_.sc);
+    if (name == "DIV") return readCachedRegister(hardwareRegisters_.div);
+    if (name == "TIMA") return readCachedRegister(hardwareRegisters_.tima);
+    if (name == "TMA") return readCachedRegister(hardwareRegisters_.tma);
+    if (name == "TAC") return readCachedRegister(hardwareRegisters_.tac);
+    if (name == "IF") return readCachedRegister(hardwareRegisters_.interruptFlags);
+    if (name == "LCDC") return readCachedRegister(hardwareRegisters_.lcdc);
+    if (name == "STAT") return readCachedRegister(hardwareRegisters_.stat);
+    if (name == "LY") return readCachedRegister(hardwareRegisters_.ly);
+    if (name == "LYC") return readCachedRegister(hardwareRegisters_.lyc);
+    if (name == "DMA") return readCachedRegister(hardwareRegisters_.dma);
+    if (name == GB::RegisterId::IE) return readCachedRegister(hardwareRegisters_.ie);
+
     auto* entry = mem.file.findRegister(name);
     if (entry == nullptr || entry->reg == nullptr) {
         return 0;
@@ -682,6 +748,21 @@ DataType LR3592_DMG::readIoRegister(std::string_view name) const
 
 void LR3592_DMG::writeIoRegister(std::string_view name, DataType value)
 {
+    if (name == "JOYP") { writeCachedRegister(hardwareRegisters_.joyp, value); return; }
+    if (name == "SB") { writeCachedRegister(hardwareRegisters_.sb, value); return; }
+    if (name == "SC") { writeCachedRegister(hardwareRegisters_.sc, value); return; }
+    if (name == "DIV") { writeCachedRegister(hardwareRegisters_.div, value); return; }
+    if (name == "TIMA") { writeCachedRegister(hardwareRegisters_.tima, value); return; }
+    if (name == "TMA") { writeCachedRegister(hardwareRegisters_.tma, value); return; }
+    if (name == "TAC") { writeCachedRegister(hardwareRegisters_.tac, value); return; }
+    if (name == "IF") { writeCachedRegister(hardwareRegisters_.interruptFlags, value); return; }
+    if (name == "LCDC") { writeCachedRegister(hardwareRegisters_.lcdc, value); return; }
+    if (name == "STAT") { writeCachedRegister(hardwareRegisters_.stat, value); return; }
+    if (name == "LY") { writeCachedRegister(hardwareRegisters_.ly, value); return; }
+    if (name == "LYC") { writeCachedRegister(hardwareRegisters_.lyc, value); return; }
+    if (name == "DMA") { writeCachedRegister(hardwareRegisters_.dma, value); return; }
+    if (name == GB::RegisterId::IE) { writeCachedRegister(hardwareRegisters_.ie, value); return; }
+
     auto* entry = mem.file.findRegister(name);
     if (entry == nullptr || entry->reg == nullptr) {
         return;
@@ -720,14 +801,14 @@ void LR3592_DMG::setJoypadState(DataType pressedMask)
 
 void LR3592_DMG::requestInterrupt(DataType mask)
 {
-    const auto current = readIoRegister("IF");
-    writeIoRegister("IF", static_cast<DataType>((current | mask) & kInterruptMask));
+    const auto current = readCachedRegister(hardwareRegisters_.interruptFlags);
+    writeCachedRegister(hardwareRegisters_.interruptFlags, static_cast<DataType>((current | mask) & kInterruptMask));
 }
 
 bool LR3592_DMG::serviceInterruptIfPending()
 {
-    const DataType enabled = readIoRegister(GB::RegisterId::IE);
-    const DataType requested = readIoRegister("IF");
+    const DataType enabled = readCachedRegister(hardwareRegisters_.ie);
+    const DataType requested = readCachedRegister(hardwareRegisters_.interruptFlags);
     const DataType pending = static_cast<DataType>((enabled & requested) & kInterruptMask);
     if (pending == 0) {
         return false;
@@ -757,22 +838,20 @@ bool LR3592_DMG::serviceInterruptIfPending()
         vector = 0x0060;
     }
 
-    writeIoRegister("IF", static_cast<DataType>(requested & ~servicedMask));
+    writeCachedRegister(hardwareRegisters_.interruptFlags, static_cast<DataType>(requested & ~servicedMask));
     ime = false;
     imeEnablePending = false;
     imeEnableDelay = 0;
 
-    auto* pcEntry = mem.file.findRegister(GB::RegisterId::PC);
-    auto* spEntry = mem.file.findRegister(GB::RegisterId::SP);
-    if (pcEntry != nullptr && pcEntry->reg != nullptr && spEntry != nullptr && spEntry->reg != nullptr) {
-        const AddressType currentPc = static_cast<AddressType>(pcEntry->reg->value);
-        spEntry->reg->value = static_cast<AddressType>(spEntry->reg->value - 2);
+    if (pcRegister_ != nullptr && spRegister_ != nullptr) {
+        const AddressType currentPc = static_cast<AddressType>(pcRegister_->value);
+        spRegister_->value = static_cast<AddressType>(spRegister_->value - 2);
         std::array<DataType, 2> bytes {
             static_cast<DataType>(currentPc & 0x00FFu),
             static_cast<DataType>((currentPc >> 8) & 0x00FFu)
         };
-        mem.write(std::span<const DataType>(bytes.data(), bytes.size()), static_cast<AddressType>(spEntry->reg->value));
-        pcEntry->reg->value = vector;
+        mem.write(std::span<const DataType>(bytes.data(), bytes.size()), static_cast<AddressType>(spRegister_->value));
+        pcRegister_->value = vector;
     }
 
     pendingCycleCharge_ = 20u;
@@ -782,6 +861,31 @@ bool LR3592_DMG::serviceInterruptIfPending()
 void LR3592_DMG::retireInstruction(std::size_t executedCycles)
 {
     const auto cycles = static_cast<uint32_t>(executedCycles);
+    if (cycles == 0u) {
+        return;
+    }
+
+    DataType interruptFlags = readCachedRegister(hardwareRegisters_.interruptFlags);
+    DataType sb = readCachedRegister(hardwareRegisters_.sb);
+    DataType sc = readCachedRegister(hardwareRegisters_.sc);
+    DataType tima = readCachedRegister(hardwareRegisters_.tima);
+    const DataType tma = readCachedRegister(hardwareRegisters_.tma);
+    const DataType tac = readCachedRegister(hardwareRegisters_.tac);
+    const bool timerEnabled = (tac & 0x04u) != 0;
+    const uint16_t timerBitMask = timerBitMaskForTac(tac);
+
+    const DataType lcdc = readCachedRegister(hardwareRegisters_.lcdc);
+    DataType stat = readCachedRegister(hardwareRegisters_.stat);
+    DataType ly = readCachedRegister(hardwareRegisters_.ly);
+    const DataType lyc = readCachedRegister(hardwareRegisters_.lyc);
+    const bool lcdEnabled = (lcdc & 0x80u) != 0;
+
+    bool serialDirty = false;
+    bool timerDirty = false;
+    bool interruptDirty = false;
+    bool statDirty = false;
+    bool lyDirty = false;
+
     for (uint32_t i = 0; i < cycles; ++i) {
         if (dmaActive) {
             if ((dmaCycleProgress % 4u) == 0u) {
@@ -810,51 +914,48 @@ void LR3592_DMG::retireInstruction(std::size_t executedCycles)
             if (serialCycleProgress >= 4096u) {
                 serialTransferActive = false;
                 serialCycleProgress = 0;
-                writeIoRegister("SB", 0xFF);
-                writeIoRegister("SC", static_cast<DataType>(readIoRegister("SC") & 0x7Fu));
-                requestInterrupt(kInterruptSerial);
+                sb = 0xFFu;
+                sc = static_cast<DataType>(sc & 0x7Fu);
+                serialDirty = true;
+                interruptFlags = static_cast<DataType>((interruptFlags | kInterruptSerial) & kInterruptMask);
+                interruptDirty = true;
             }
         }
 
-        const DataType tac = readIoRegister("TAC");
-        const bool timerEnabled = (tac & 0x04u) != 0;
-        const uint16_t timerBitMask = timerBitMaskForTac(tac);
         const bool oldSignal = timerEnabled && ((dividerCounter & timerBitMask) != 0);
-
         dividerCounter = static_cast<uint16_t>(dividerCounter + 1u);
-        writeIoRegister("DIV", static_cast<DataType>((dividerCounter >> 8) & 0x00FFu));
-
         const bool newSignal = timerEnabled && ((dividerCounter & timerBitMask) != 0);
         if (oldSignal && !newSignal) {
-            const DataType tima = readIoRegister("TIMA");
             if (tima == 0xFFu) {
-                writeIoRegister("TIMA", readIoRegister("TMA"));
-                requestInterrupt(kInterruptTimer);
+                tima = tma;
+                interruptFlags = static_cast<DataType>((interruptFlags | kInterruptTimer) & kInterruptMask);
+                interruptDirty = true;
             } else {
-                writeIoRegister("TIMA", static_cast<DataType>(tima + 1u));
+                tima = static_cast<DataType>(tima + 1u);
             }
+            timerDirty = true;
         }
 
-        const bool lcdEnabled = (readIoRegister("LCDC") & 0x80u) != 0;
         if (!lcdEnabled) {
             ppuDotCounter = 0;
             lcdEnabledLastTick = false;
             statInterruptLatched = false;
-            writeIoRegister("LY", 0);
-            DataType stat = readIoRegister("STAT");
+            ly = 0;
+            lyDirty = true;
             stat = static_cast<DataType>(stat & 0xF8u);
-            if (readIoRegister("LYC") == 0) {
+            if (lyc == 0) {
                 stat = static_cast<DataType>(stat | 0x04u);
             } else {
                 stat = static_cast<DataType>(stat & ~0x04u);
             }
-            writeIoRegister("STAT", stat);
+            statDirty = true;
             continue;
         }
 
         if (!lcdEnabledLastTick) {
             ppuDotCounter = 0;
-            writeIoRegister("LY", 0);
+            ly = 0;
+            lyDirty = true;
             lcdEnabledLastTick = true;
             statInterruptLatched = false;
         }
@@ -862,10 +963,9 @@ void LR3592_DMG::retireInstruction(std::size_t executedCycles)
         const auto previousLy = static_cast<DataType>(ppuDotCounter / 456u);
         ppuDotCounter = (ppuDotCounter + 1u) % (154u * 456u);
 
-        const auto ly = static_cast<DataType>(ppuDotCounter / 456u);
+        ly = static_cast<DataType>(ppuDotCounter / 456u);
+        lyDirty = true;
         const auto lineDot = static_cast<uint16_t>(ppuDotCounter % 456u);
-        const auto lyc = readIoRegister("LYC");
-        writeIoRegister("LY", ly);
 
         DataType mode = 0;
         if (ly >= 144u) {
@@ -878,7 +978,6 @@ void LR3592_DMG::retireInstruction(std::size_t executedCycles)
             mode = 0;
         }
 
-        DataType stat = readIoRegister("STAT");
         stat = static_cast<DataType>((stat & 0xF8u) | mode);
         const bool coincidence = ly == lyc;
         if (coincidence) {
@@ -886,7 +985,7 @@ void LR3592_DMG::retireInstruction(std::size_t executedCycles)
         } else {
             stat = static_cast<DataType>(stat & ~0x04u);
         }
-        writeIoRegister("STAT", stat);
+        statDirty = true;
 
         const bool statInterruptRequested =
             (coincidence && (stat & 0x40u) != 0) ||
@@ -894,13 +993,33 @@ void LR3592_DMG::retireInstruction(std::size_t executedCycles)
             (mode == 1 && (stat & 0x10u) != 0) ||
             (mode == 2 && (stat & 0x20u) != 0);
         if (statInterruptRequested && !statInterruptLatched) {
-            requestInterrupt(kInterruptLcdStat);
+            interruptFlags = static_cast<DataType>((interruptFlags | kInterruptLcdStat) & kInterruptMask);
+            interruptDirty = true;
         }
         statInterruptLatched = statInterruptRequested;
 
         if (previousLy != 144u && ly == 144u) {
-            requestInterrupt(kInterruptVBlank);
+            interruptFlags = static_cast<DataType>((interruptFlags | kInterruptVBlank) & kInterruptMask);
+            interruptDirty = true;
         }
+    }
+
+    writeCachedRegister(hardwareRegisters_.div, static_cast<DataType>((dividerCounter >> 8) & 0x00FFu));
+    if (serialDirty) {
+        writeCachedRegister(hardwareRegisters_.sb, sb);
+        writeCachedRegister(hardwareRegisters_.sc, sc);
+    }
+    if (timerDirty) {
+        writeCachedRegister(hardwareRegisters_.tima, tima);
+    }
+    if (lyDirty) {
+        writeCachedRegister(hardwareRegisters_.ly, ly);
+    }
+    if (statDirty) {
+        writeCachedRegister(hardwareRegisters_.stat, stat);
+    }
+    if (interruptDirty) {
+        writeCachedRegister(hardwareRegisters_.interruptFlags, interruptFlags);
     }
 
     if (imeEnablePending) {
@@ -915,33 +1034,60 @@ void LR3592_DMG::retireInstruction(std::size_t executedCycles)
 
 BMMQ::fetchBlock<AddressType, DataType> LR3592_DMG::fetch()
 {
-    if (stopFlag) {
-        return {};
+    BMMQ::fetchBlock<AddressType, DataType> f;
+    f.reserve(1);
+    fetchInto(f);
+    return f;
+};
+
+void LR3592_DMG::fetchInto(BMMQ::fetchBlock<AddressType, DataType>& f)
+{
+    auto& blockData = f.getblockData();
+    if (blockData.empty()) {
+        blockData.emplace_back();
+        blockData[0].data.reserve(3);
+    } else if (blockData.size() > 1) {
+        blockData.resize(1);
     }
 
-    auto* pcEntry = mem.file.findRegister("PC");
-    const auto pc = (pcEntry != nullptr && pcEntry->reg != nullptr)
-        ? static_cast<AddressType>(pcEntry->reg->value)
+    if (stopFlag) {
+        f.setbaseAddress(0);
+        blockData[0].offset = 0;
+        blockData[0].data.clear();
+        return;
+    }
+
+    const auto pc = pcRegister_ != nullptr
+        ? static_cast<AddressType>(pcRegister_->value)
         : static_cast<AddressType>(0);
 
     if (dmaActive && !isHramAddress(pc)) {
-        return {};
+        f.setbaseAddress(pc);
+        blockData[0].offset = 0;
+        blockData[0].data.clear();
+        return;
     }
 
-    const DataType pending = static_cast<DataType>((readIoRegister("IF") & readIoRegister(GB::RegisterId::IE)) & kInterruptMask);
+    const DataType pending = static_cast<DataType>((readCachedRegister(hardwareRegisters_.interruptFlags) & readCachedRegister(hardwareRegisters_.ie)) & kInterruptMask);
     if (haltFlag && pending == 0) {
-        return {};
+        f.setbaseAddress(pc);
+        blockData[0].offset = 0;
+        blockData[0].data.clear();
+        return;
     }
 
     if (serviceInterruptIfPending()) {
-        return {};
+        f.setbaseAddress(pcRegister_ != nullptr ? static_cast<AddressType>(pcRegister_->value) : pc);
+        blockData[0].offset = 0;
+        blockData[0].data.clear();
+        return;
     }
-
-    BMMQ::fetchBlock<AddressType, DataType> f;
 
     f.setbaseAddress(pc);
 
-    std::vector<DataType> stream(1, 0);
+    auto& stream = blockData[0].data;
+    blockData[0].offset = 0;
+    stream.resize(1, 0);
     mem.read(std::span<DataType>(stream.data(), stream.size()), pc);
 
     const auto opcodeByte = stream[0];
@@ -952,14 +1098,7 @@ BMMQ::fetchBlock<AddressType, DataType> LR3592_DMG::fetch()
             mem.read(std::span<DataType>(stream.data(), stream.size()), pc);
         }
     }
-
-    BMMQ::fetchBlockData<AddressType, DataType> data {
-        0, std::move(stream)
-    };
-
-    f.getblockData().push_back(data);
-    return f;
-};
+}
 
 void LR3592_DMG::loadProgram(const std::vector<DataType>& program,
                              AddressType startAddress)
@@ -971,6 +1110,15 @@ BMMQ::executionBlock<AddressType, DataType, AddressType>
 LR3592_DMG::decode(BMMQ::fetchBlock<AddressType, DataType>& fetchData)
 {
     BMMQ::executionBlock<AddressType, DataType, AddressType> block;
+    block.reserve(4);
+    decodeInto(fetchData, block);
+    return block;
+}
+
+void LR3592_DMG::decodeInto(BMMQ::fetchBlock<AddressType, DataType>& fetchData,
+                            BMMQ::executionBlock<AddressType, DataType, AddressType>& block)
+{
+    block.clear();
     block.setSnapshot(&mem);
 
     auto& blockDataList = fetchData.getblockData();
@@ -1012,26 +1160,437 @@ LR3592_DMG::decode(BMMQ::fetchBlock<AddressType, DataType>& fetchData)
 
         dataBlock.data.resize(consumedBytes);
     }
+}
 
-    return block;
+bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
+{
+    const auto& blocks = fb.getblockData();
+    if (blocks.empty() || blocks.front().data.empty()) {
+        return false;
+    }
+
+    auto& data = blocks.front().data;
+    const DataType opcode = data[0];
+    feedback.pcBefore = (pcRegister_ != nullptr)
+        ? static_cast<uint32_t>(pcRegister_->value)
+        : 0;
+    feedback.isControlFlow = isControlFlowOpcode(opcode);
+    feedback.segmentBoundaryHint = feedback.isControlFlow;
+
+    auto finalizeFast = [&](std::size_t executedByteCount) {
+        if (pcRegister_ != nullptr) {
+            pcRegister_->value = static_cast<AddressType>(pcRegister_->value + executedByteCount);
+            feedback.pcAfter = static_cast<uint32_t>(pcRegister_->value);
+        } else {
+            feedback.pcAfter = feedback.pcBefore;
+        }
+
+        std::size_t retiredCycles = pendingCycleCharge_;
+        pendingCycleCharge_ = 0;
+        if (retiredCycles == 0) {
+            retiredCycles = instructionCyclesFor(
+                fb,
+                static_cast<AddressType>(feedback.pcBefore),
+                static_cast<AddressType>(feedback.pcAfter));
+        }
+        retireInstruction(retiredCycles);
+        return true;
+    };
+
+    auto executeMathOp = [&](DataType code, DataType rhs) {
+        auto& a = accumulator(mem);
+        const DataType lhs = a;
+        const bool carryIn = (flags(mem) & kFlagC) != 0;
+
+        DataType result = lhs;
+        bool z = false;
+        bool n = false;
+        bool h = false;
+        bool c = false;
+
+        switch ((code >> 3) & 0x07u) {
+        case 0: {
+            result = static_cast<DataType>(lhs + rhs);
+            h = static_cast<uint16_t>((lhs & 0x0Fu) + (rhs & 0x0Fu)) > 0x0Fu;
+            c = static_cast<uint16_t>(lhs) + static_cast<uint16_t>(rhs) > 0xFFu;
+            break;
+        }
+        case 1: {
+            const uint16_t sum = static_cast<uint16_t>(lhs) + static_cast<uint16_t>(rhs) + (carryIn ? 1u : 0u);
+            result = static_cast<DataType>(sum);
+            h = static_cast<uint16_t>((lhs & 0x0Fu) + (rhs & 0x0Fu) + (carryIn ? 1u : 0u)) > 0x0Fu;
+            c = sum > 0xFFu;
+            break;
+        }
+        case 2:
+            result = static_cast<DataType>(lhs - rhs);
+            h = (lhs & 0x0Fu) < (rhs & 0x0Fu);
+            c = lhs < rhs;
+            n = true;
+            break;
+        case 3: {
+            const uint16_t subtrahend = static_cast<uint16_t>(rhs) + (carryIn ? 1u : 0u);
+            result = static_cast<DataType>(lhs - subtrahend);
+            h = (lhs & 0x0Fu) < ((rhs & 0x0Fu) + (carryIn ? 1u : 0u));
+            c = static_cast<uint16_t>(lhs) < subtrahend;
+            n = true;
+            break;
+        }
+        case 4:
+            result = static_cast<DataType>(lhs & rhs);
+            h = true;
+            break;
+        case 5:
+            result = static_cast<DataType>(lhs ^ rhs);
+            break;
+        case 6:
+            result = static_cast<DataType>(lhs | rhs);
+            break;
+        case 7:
+            h = (lhs & 0x0Fu) < (rhs & 0x0Fu);
+            c = lhs < rhs;
+            z = lhs == rhs;
+            n = true;
+            setFlags(mem, z, n, h, c);
+            return;
+        }
+
+        a = result;
+        z = (a == 0);
+        setFlags(mem, z, n, h, c);
+    };
+
+    if (opcode >= 0x40u && opcode <= 0x7Fu && opcode != 0x76u) {
+        writeR8(mem, GB::Decode::decodeR8Dest(opcode), readR8(mem, GB::Decode::decodeR8Src(opcode)));
+        return finalizeFast(1);
+    }
+
+    if (opcode >= 0x80u && opcode <= 0xBFu) {
+        executeMathOp(opcode, readR8(mem, GB::Decode::decodeR8Src(opcode)));
+        return finalizeFast(1);
+    }
+
+    switch (opcode) {
+    case 0x00:
+        return finalizeFast(1);
+    case 0x10:
+        setStopFlag(true);
+        return finalizeFast(2);
+    case 0x76:
+        setHaltFlag(true);
+        return finalizeFast(1);
+    case 0x01:
+    case 0x11:
+    case 0x21:
+    case 0x31:
+        accessR16(mem, GB::Decode::decodeR16(opcode)) = fetchImm16(blocks.front(), 0);
+        return finalizeFast(3);
+    case 0x03:
+    case 0x13:
+    case 0x23:
+    case 0x33: {
+        auto& reg = accessR16(mem, GB::Decode::decodeR16(opcode));
+        reg = static_cast<AddressType>(reg + 1u);
+        return finalizeFast(1);
+    }
+    case 0x0B:
+    case 0x1B:
+    case 0x2B:
+    case 0x3B: {
+        auto& reg = accessR16(mem, GB::Decode::decodeR16(opcode));
+        reg = static_cast<AddressType>(reg - 1u);
+        return finalizeFast(1);
+    }
+    case 0x08:
+        write16(mem, fetchImm16(blocks.front(), 0), static_cast<AddressType>(getRegister(mem, GB::RegisterId::SP)->value));
+        return finalizeFast(3);
+    case 0x09:
+    case 0x19:
+    case 0x29:
+    case 0x39: {
+        auto& hl = getRegisterPair(mem, GB::RegisterId::HL)->value;
+        const AddressType lhs = hl;
+        const AddressType rhs = accessR16(mem, GB::Decode::decodeR16(opcode));
+        hl = static_cast<AddressType>(lhs + rhs);
+        const bool h = ((lhs & 0x0FFFu) + (rhs & 0x0FFFu)) > 0x0FFFu;
+        const bool c = static_cast<uint32_t>(lhs) + static_cast<uint32_t>(rhs) > 0xFFFFu;
+        const bool z = (flags(mem) & kFlagZ) != 0;
+        setFlags(mem, z, false, h, c);
+        return finalizeFast(1);
+    }
+    case 0x18: {
+        const int8_t offset = static_cast<int8_t>(fetchImm8(blocks.front(), 0));
+        const auto target = static_cast<AddressType>(static_cast<int32_t>(feedback.pcBefore) + 2 + offset);
+        updateControlFlowPc(mem, target, 2);
+        return finalizeFast(2);
+    }
+    case 0x20:
+    case 0x28:
+    case 0x30:
+    case 0x38: {
+        if (conditionHolds(mem, GB::Decode::decodeCondition(opcode))) {
+            const int8_t offset = static_cast<int8_t>(fetchImm8(blocks.front(), 0));
+            const auto target = static_cast<AddressType>(static_cast<int32_t>(feedback.pcBefore) + 2 + offset);
+            updateControlFlowPc(mem, target, 2);
+        }
+        return finalizeFast(2);
+    }
+    case 0xC3:
+        updateControlFlowPc(mem, fetchImm16(blocks.front(), 0), 3);
+        return finalizeFast(3);
+    case 0xC2:
+    case 0xCA:
+    case 0xD2:
+    case 0xDA:
+        if (conditionHolds(mem, GB::Decode::decodeCondition(opcode))) {
+            updateControlFlowPc(mem, fetchImm16(blocks.front(), 0), 3);
+        }
+        return finalizeFast(3);
+    case 0xC9:
+        updateControlFlowPc(mem, pop16(mem), 1);
+        return finalizeFast(1);
+    case 0xD9:
+        updateControlFlowPc(mem, pop16(mem), 1);
+        setIme(true);
+        return finalizeFast(1);
+    case 0xC0:
+    case 0xC8:
+    case 0xD0:
+    case 0xD8:
+        if (conditionHolds(mem, GB::Decode::decodeCondition(opcode))) {
+            updateControlFlowPc(mem, pop16(mem), 1);
+        }
+        return finalizeFast(1);
+    case 0xCD: {
+        const AddressType target = fetchImm16(blocks.front(), 0);
+        push16(mem, static_cast<AddressType>(feedback.pcBefore + 3u));
+        updateControlFlowPc(mem, target, 3);
+        return finalizeFast(3);
+    }
+    case 0xC4:
+    case 0xCC:
+    case 0xD4:
+    case 0xDC:
+        if (conditionHolds(mem, GB::Decode::decodeCondition(opcode))) {
+            push16(mem, static_cast<AddressType>(feedback.pcBefore + 3u));
+            updateControlFlowPc(mem, fetchImm16(blocks.front(), 0), 3);
+        }
+        return finalizeFast(3);
+    case 0xC1:
+    case 0xD1:
+    case 0xE1:
+    case 0xF1: {
+        const auto target = GB::Decode::decodeR16Stack(opcode);
+        AddressType value = pop16(mem);
+        if (target == GB::Decode::R16Stack::AF) {
+            value = static_cast<AddressType>(value & 0xFFF0u);
+        }
+        accessStackR16(mem, target) = value;
+        return finalizeFast(1);
+    }
+    case 0xC5:
+    case 0xD5:
+    case 0xE5:
+    case 0xF5:
+        push16(mem, accessStackR16(mem, GB::Decode::decodeR16Stack(opcode)));
+        return finalizeFast(1);
+    case 0xE9:
+        updateControlFlowPc(mem, getRegisterPair(mem, GB::RegisterId::HL)->value, 1);
+        return finalizeFast(1);
+    case 0xE0:
+        write8(mem, static_cast<AddressType>(0xFF00u + fetchImm8(blocks.front(), 0)), accumulator(mem));
+        return finalizeFast(2);
+    case 0xF0:
+        accumulator(mem) = read8(mem, static_cast<AddressType>(0xFF00u + fetchImm8(blocks.front(), 0)));
+        return finalizeFast(2);
+    case 0xE2:
+        write8(mem, static_cast<AddressType>(0xFF00u + getRegisterPair(mem, GB::RegisterId::BC)->lo), accumulator(mem));
+        return finalizeFast(1);
+    case 0xF2:
+        accumulator(mem) = read8(mem, static_cast<AddressType>(0xFF00u + getRegisterPair(mem, GB::RegisterId::BC)->lo));
+        return finalizeFast(1);
+    case 0xE8: {
+        const int8_t offset = static_cast<int8_t>(fetchImm8(blocks.front(), 0));
+        auto* sp = getRegister(mem, GB::RegisterId::SP);
+        const AddressType original = sp->value;
+        sp->value = static_cast<AddressType>(static_cast<int32_t>(original) + offset);
+        const uint8_t low = static_cast<uint8_t>(original & 0xFFu);
+        const uint8_t imm = static_cast<uint8_t>(offset);
+        setFlags(mem, false, false, ((low & 0x0Fu) + (imm & 0x0Fu)) > 0x0Fu,
+                 static_cast<uint16_t>(low) + static_cast<uint16_t>(imm) > 0xFFu);
+        return finalizeFast(2);
+    }
+    case 0xF8: {
+        const int8_t offset = static_cast<int8_t>(fetchImm8(blocks.front(), 0));
+        const AddressType sp = static_cast<AddressType>(getRegister(mem, GB::RegisterId::SP)->value);
+        const uint8_t low = static_cast<uint8_t>(sp & 0xFFu);
+        const uint8_t imm = static_cast<uint8_t>(offset);
+        getRegisterPair(mem, GB::RegisterId::HL)->value = static_cast<AddressType>(static_cast<int32_t>(sp) + offset);
+        setFlags(mem, false, false, ((low & 0x0Fu) + (imm & 0x0Fu)) > 0x0Fu,
+                 static_cast<uint16_t>(low) + static_cast<uint16_t>(imm) > 0xFFu);
+        return finalizeFast(2);
+    }
+    case 0xF9:
+        getRegister(mem, GB::RegisterId::SP)->value = getRegisterPair(mem, GB::RegisterId::HL)->value;
+        return finalizeFast(1);
+    case 0xEA:
+        write8(mem, fetchImm16(blocks.front(), 0), accumulator(mem));
+        return finalizeFast(3);
+    case 0xFA:
+        accumulator(mem) = read8(mem, fetchImm16(blocks.front(), 0));
+        return finalizeFast(3);
+    case 0xF3:
+        setIme(false);
+        return finalizeFast(1);
+    case 0xFB:
+        scheduleImeEnable();
+        return finalizeFast(1);
+    case 0x07:
+    case 0x0F:
+    case 0x17:
+    case 0x1F: {
+        auto& a = accumulator(mem);
+        const bool carryIn = (flags(mem) & kFlagC) != 0;
+        const DataType oldValue = a;
+        switch ((opcode >> 3) & 0x03u) {
+        case 0:
+            a = static_cast<DataType>((a << 1) | (a >> 7));
+            setFlags(mem, false, false, false, (oldValue & 0x80u) != 0);
+            break;
+        case 1:
+            a = static_cast<DataType>((a >> 1) | (a << 7));
+            setFlags(mem, false, false, false, (oldValue & 0x01u) != 0);
+            break;
+        case 2:
+            a = static_cast<DataType>((a << 1) | (carryIn ? 1 : 0));
+            setFlags(mem, false, false, false, (oldValue & 0x80u) != 0);
+            break;
+        case 3:
+            a = static_cast<DataType>((a >> 1) | (carryIn ? 0x80u : 0u));
+            setFlags(mem, false, false, false, (oldValue & 0x01u) != 0);
+            break;
+        }
+        return finalizeFast(1);
+    }
+    case 0x27: {
+        auto& a = accumulator(mem);
+        const DataType flagReg = flags(mem);
+        const bool n = (flagReg & kFlagN) != 0;
+        const bool h = (flagReg & kFlagH) != 0;
+        const bool c = (flagReg & kFlagC) != 0;
+        DataType adjust = 0;
+        bool carry = c;
+        if (!n) {
+            if (h || (a & 0x0Fu) > 0x09u) adjust |= 0x06u;
+            if (c || a > 0x99u) { adjust |= 0x60u; carry = true; }
+            a = static_cast<DataType>(a + adjust);
+        } else {
+            if (h) adjust |= 0x06u;
+            if (c) adjust |= 0x60u;
+            a = static_cast<DataType>(a - adjust);
+        }
+        flags(mem) = static_cast<DataType>(((a == 0) ? kFlagZ : 0) | (n ? kFlagN : 0) | (carry ? kFlagC : 0));
+        return finalizeFast(1);
+    }
+    case 0x2F:
+        accumulator(mem) = static_cast<DataType>(~accumulator(mem));
+        flags(mem) = static_cast<DataType>((flags(mem) & (kFlagZ | kFlagC)) | kFlagN | kFlagH);
+        return finalizeFast(1);
+    case 0x37:
+        flags(mem) = static_cast<DataType>((flags(mem) & kFlagZ) | kFlagC);
+        return finalizeFast(1);
+    case 0x3F: {
+        const bool carry = (flags(mem) & kFlagC) == 0;
+        flags(mem) = static_cast<DataType>(flags(mem) & kFlagZ);
+        if (carry) flags(mem) = static_cast<DataType>(flags(mem) | kFlagC);
+        return finalizeFast(1);
+    }
+    case 0xC6:
+    case 0xCE:
+    case 0xD6:
+    case 0xDE:
+    case 0xE6:
+    case 0xEE:
+    case 0xF6:
+    case 0xFE:
+        executeMathOp(opcode, fetchImm8(blocks.front(), 0));
+        return finalizeFast(2);
+    default:
+        break;
+    }
+
+    if ((opcode & 0xC7u) == 0x04u) {
+        const auto reg = GB::Decode::decodeR8Dest(opcode);
+        const DataType oldValue = readR8(mem, reg);
+        const DataType newValue = static_cast<DataType>(oldValue + 1u);
+        writeR8(mem, reg, newValue);
+        const bool c = (flags(mem) & kFlagC) != 0;
+        setFlags(mem, newValue == 0, false, ((oldValue & 0x0Fu) + 1u) > 0x0Fu, c);
+        return finalizeFast(1);
+    }
+
+    if ((opcode & 0xC7u) == 0x05u) {
+        const auto reg = GB::Decode::decodeR8Dest(opcode);
+        const DataType oldValue = readR8(mem, reg);
+        const DataType newValue = static_cast<DataType>(oldValue - 1u);
+        writeR8(mem, reg, newValue);
+        const bool c = (flags(mem) & kFlagC) != 0;
+        setFlags(mem, newValue == 0, true, (oldValue & 0x0Fu) == 0, c);
+        return finalizeFast(1);
+    }
+
+    if ((opcode & 0xC7u) == 0x06u) {
+        writeR8(mem, GB::Decode::decodeR8Dest(opcode), fetchImm8(blocks.front(), 0));
+        return finalizeFast(2);
+    }
+
+    if (opcode == 0x02 || opcode == 0x12 || opcode == 0x22 || opcode == 0x32 ||
+        opcode == 0x0A || opcode == 0x1A || opcode == 0x2A || opcode == 0x3A) {
+        auto* hl = getRegisterPair(mem, GB::RegisterId::HL);
+        AddressType address = 0;
+        switch (opcode) {
+        case 0x02:
+        case 0x0A:
+            address = getRegisterPair(mem, GB::RegisterId::BC)->value;
+            break;
+        case 0x12:
+        case 0x1A:
+            address = getRegisterPair(mem, GB::RegisterId::DE)->value;
+            break;
+        default:
+            address = hl->value;
+            break;
+        }
+        if ((opcode & 0x08u) == 0) {
+            write8(mem, address, accumulator(mem));
+        } else {
+            accumulator(mem) = read8(mem, address);
+        }
+        if (opcode == 0x22 || opcode == 0x2A) {
+            hl->value = static_cast<AddressType>(hl->value + 1u);
+        } else if (opcode == 0x32 || opcode == 0x3A) {
+            hl->value = static_cast<AddressType>(hl->value - 1u);
+        }
+        return finalizeFast(1);
+    }
+
+    return false;
 }
 
 void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, AddressType>& block, BMMQ::fetchBlock<AddressType, DataType>& fb)
 {
-    auto* pcEntry = mem.file.findRegister("PC");
-    feedback.pcBefore = (pcEntry != nullptr && pcEntry->reg != nullptr)
-        ? static_cast<uint32_t>(pcEntry->reg->value)
+    feedback.pcBefore = (pcRegister_ != nullptr)
+        ? static_cast<uint32_t>(pcRegister_->value)
         : 0;
 
     feedback.isControlFlow = false;
     std::size_t executedByteCount = 0;
-    for (const auto& dataBlock : fb.getblockData()) {
+    const auto& blocks = fb.getblockData();
+    if (!blocks.empty() && !blocks.front().data.empty()) {
+        feedback.isControlFlow = isControlFlowOpcode(blocks.front().data[0]);
+    }
+    for (const auto& dataBlock : blocks) {
         executedByteCount += dataBlock.data.size();
-        for (const auto opcode : dataBlock.data) {
-            if (opcode == 0x00 || opcode == 0xC3 || opcode == 0xCD || opcode == 0xC9) {
-                feedback.isControlFlow = true;
-            }
-        }
     }
     feedback.segmentBoundaryHint = feedback.isControlFlow;
 
@@ -1042,10 +1601,10 @@ void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, Addre
         step(*snapshot, fb);
     }
 
-    if (pcEntry != nullptr && pcEntry->reg != nullptr) {
-        pcEntry->reg->value = static_cast<AddressType>(
-            pcEntry->reg->value + executedByteCount);
-        feedback.pcAfter = static_cast<uint32_t>(pcEntry->reg->value);
+    if (pcRegister_ != nullptr) {
+        pcRegister_->value = static_cast<AddressType>(
+            pcRegister_->value + executedByteCount);
+        feedback.pcAfter = static_cast<uint32_t>(pcRegister_->value);
     } else {
         feedback.pcAfter = feedback.pcBefore;
     }
@@ -1099,7 +1658,7 @@ AddressType LR3592_DMG::normalizeAccessAddress(AddressType address)
 
 bool LR3592_DMG::lcdEnabled() const
 {
-    return (readIoRegister("LCDC") & 0x80u) != 0;
+    return (readCachedRegister(hardwareRegisters_.lcdc) & 0x80u) != 0;
 }
 
 DataType LR3592_DMG::currentPpuMode() const
@@ -1108,7 +1667,7 @@ DataType LR3592_DMG::currentPpuMode() const
         return 0;
     }
 
-    const auto ly = readIoRegister("LY");
+    const auto ly = readCachedRegister(hardwareRegisters_.ly);
     if (ly >= 144u) {
         return 1;
     }

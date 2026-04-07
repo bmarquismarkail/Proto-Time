@@ -13,6 +13,12 @@ AddressType fetchBlock<AddressType, DataType>::getbaseAddress() const
 }
 
 template<typename AddressType, typename DataType>
+void fetchBlock<AddressType, DataType>::reserve(std::size_t count)
+{
+    blockData.reserve(count);
+}
+
+template<typename AddressType, typename DataType>
 std::vector<fetchBlockData<AddressType, DataType>>& fetchBlock<AddressType, DataType>::getblockData()
 {
     return blockData;

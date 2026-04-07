@@ -44,6 +44,25 @@ public:
         runtime_.execute(block, fetchBlock);
     }
 
+    BMMQ::CpuFeedback step(FetchBlock& fetchBlock) override {
+        if (runtime_.cpu().tryFastExecute(fetchBlock)) {
+            return runtime_.getLastFeedback();
+        }
+        cachedExecutionBlock_.clear();
+        cachedExecutionBlock_.reserve(4);
+        runtime_.cpu().decodeInto(fetchBlock, cachedExecutionBlock_);
+        runtime_.execute(cachedExecutionBlock_, fetchBlock);
+        return runtime_.getLastFeedback();
+    }
+
+    BMMQ::CpuFeedback step() override {
+        if (!romLoaded_) {
+            throw std::runtime_error("ROM is not loaded");
+        }
+        runtime_.cpu().fetchInto(cachedFetchBlock_);
+        return step(cachedFetchBlock_);
+    }
+
     DataType read8(AddressType address) const override {
         return memoryMap_.read8(resolveEchoAddress(address));
     }
@@ -184,6 +203,8 @@ private:
 
     LR3592_PluginRuntime& runtime_;
     BMMQ::MemoryMap& memoryMap_;
+    FetchBlock cachedFetchBlock_{};
+    ExecutionBlock cachedExecutionBlock_{};
     const bool& romLoaded_;
     BMMQ::Plugin::IExecutorPolicyPlugin*& activePolicy_;
 };

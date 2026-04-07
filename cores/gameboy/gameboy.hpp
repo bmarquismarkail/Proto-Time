@@ -30,6 +30,28 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   using Opcode = BMMQ::Opcode<AddressType, DataType, AddressType>;
   using OpcodeTable = std::array<std::optional<Opcode>, 256>;
 
+  struct CachedRegisterRef {
+    LR3592_Register *reg = nullptr;
+    AddressType address = 0;
+  };
+
+  struct HardwareRegisterCache {
+    CachedRegisterRef joyp{};
+    CachedRegisterRef sb{};
+    CachedRegisterRef sc{};
+    CachedRegisterRef div{};
+    CachedRegisterRef tima{};
+    CachedRegisterRef tma{};
+    CachedRegisterRef tac{};
+    CachedRegisterRef interruptFlags{};
+    CachedRegisterRef lcdc{};
+    CachedRegisterRef stat{};
+    CachedRegisterRef ly{};
+    CachedRegisterRef lyc{};
+    CachedRegisterRef dma{};
+    CachedRegisterRef ie{};
+  };
+
   BMMQ::MemoryPool<AddressType, DataType, AddressType> mem;
   OpcodeTable opcodeTable;
   uint16_t flagset;
@@ -38,6 +60,9 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   bool ime = false;
   bool imeEnablePending = false;
   DataType imeEnableDelay = 0;
+  LR3592_Register *pcRegister_ = nullptr;
+  LR3592_Register *spRegister_ = nullptr;
+  HardwareRegisterCache hardwareRegisters_{};
   bool stopFlag = false, haltFlag = false;
   uint16_t dividerCounter = 0;
   bool dmaActive = false;
@@ -91,6 +116,10 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   void populateOpcodes();
   void requestInterrupt(DataType mask);
   bool serviceInterruptIfPending();
+  void initializeRegisterCache();
+  void cacheRegisterRef(CachedRegisterRef& slot, std::string_view name, AddressType address);
+  [[nodiscard]] static DataType readCachedRegister(const CachedRegisterRef& slot);
+  void writeCachedRegister(const CachedRegisterRef& slot, DataType value);
   DataType readIoRegister(std::string_view name) const;
   void writeIoRegister(std::string_view name, DataType value);
   void retireInstruction(std::size_t executedByteCount);
@@ -114,11 +143,15 @@ public:
   LR3592_RegisterFile buildRegisterfile();
   void attachMemory(BMMQ::MemoryStorage<AddressType, DataType>& store);
   BMMQ::fetchBlock<AddressType, DataType> fetch();
+  void fetchInto(BMMQ::fetchBlock<AddressType, DataType>& out);
   void loadProgram(const std::vector<DataType>& program,
                    AddressType startAddress = 0);
 
   BMMQ::executionBlock<AddressType, DataType, AddressType>
   decode(BMMQ::fetchBlock<AddressType, DataType> &fetchData) override;
+  void decodeInto(BMMQ::fetchBlock<AddressType, DataType>& fetchData,
+                  BMMQ::executionBlock<AddressType, DataType, AddressType>& block);
+  bool tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fetchData);
 
   void
   execute(const BMMQ::executionBlock<AddressType, DataType, AddressType> &block,
