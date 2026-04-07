@@ -90,6 +90,13 @@ int main()
     machine.runtimeContext().write8(0xFF48, 0xE4u);
     machine.runtimeContext().write8(0xFF40, 0x93u);
     machine.runtimeContext().write8(0xFF12, 0xF3u);
+    if (initResult && frontend->audioOutputReady()) {
+        const auto queueWritesAfterEvent = frontend->stats().audioQueueWrites;
+        const auto queuedSamplesAfterEvent = frontend->stats().audioSamplesQueued;
+        assert(frontend->serviceFrontend());
+        assert(frontend->stats().audioQueueWrites == queueWritesAfterEvent);
+        assert(frontend->stats().audioSamplesQueued == queuedSamplesAfterEvent);
+    }
     const auto pumpedBeforeStep = frontend->pumpBackendEvents();
     (void)pumpedBeforeStep;
     for (int i = 0; i < 20000; ++i) {

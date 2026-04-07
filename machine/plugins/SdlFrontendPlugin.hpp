@@ -653,6 +653,7 @@ public:
         if (lastAudioState_.has_value()) {
             lastAudioPreview_ = buildAudioPreview(*lastAudioState_);
             ++stats_.audioPreviewsBuilt;
+            ++audioPreviewGeneration_;
             queuedAudio = refillAudioQueue();
         } else {
             lastAudioPreview_.reset();
@@ -830,6 +831,7 @@ private:
             audioDevice_ = 0;
         }
         lastQueuedAudioFrameCounter_ = 0;
+        lastQueuedAudioPreviewGeneration_ = 0;
         if (texture_ != nullptr) {
             SDL_DestroyTexture(texture_);
             texture_ = nullptr;
@@ -1100,6 +1102,7 @@ private:
             audioSampleRate_ = obtained.freq;
         }
         lastQueuedAudioFrameCounter_ = 0;
+        lastQueuedAudioPreviewGeneration_ = 0;
         SDL_PauseAudioDevice(audioDevice_, 0);
         appendLog("sdl: audio device opened at " + std::to_string(audioSampleRate_) + " Hz");
         return true;
@@ -1164,6 +1167,9 @@ private:
         if (!lastAudioPreview_.has_value() || lastAudioPreview_->empty()) {
             return false;
         }
+        if (audioPreviewGeneration_ == 0u || lastQueuedAudioPreviewGeneration_ == audioPreviewGeneration_) {
+            return false;
+        }
 
         const auto previewBytes = static_cast<uint32_t>(lastAudioPreview_->samples.size() * sizeof(int16_t));
         if (previewBytes == 0u) {
@@ -1176,6 +1182,7 @@ private:
             return false;
         }
 
+        lastQueuedAudioPreviewGeneration_ = audioPreviewGeneration_;
         ++stats_.audioQueueWrites;
         stats_.audioSamplesQueued += lastAudioPreview_->samples.size();
         return true;
@@ -1265,7 +1272,9 @@ private:
     uint32_t initializedBackendFlags_ = 0;
     int audioSampleRate_ = 48000;
     double audioPhase_ = 0.0;
+    uint64_t audioPreviewGeneration_ = 0;
     uint64_t lastQueuedAudioFrameCounter_ = 0;
+    uint64_t lastQueuedAudioPreviewGeneration_ = 0;
 #if BMMQ_SDL_FRONTEND_HAS_SDL2 && BMMQ_SDL_FRONTEND_LINKED
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
