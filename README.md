@@ -1,159 +1,182 @@
 # Project T.I.M.E
 
-Welcome to T.I.M.E: The Infinite Modder's Emulator. As of right now(23 Oct, 2020), it is in its pre-alpha stage
+T.I.M.E (The Infinite Modder's Emulator) is an emulator framework prototype focused on:
 
-## Build Instructions
+- Machine-owned execution with a native host runtime
+- Declarative-ish instruction flow (`fetch -> decode -> execute`)
+- Memory/register snapshotting for traceability
+- Executor-driven orchestration
+- Plugin-oriented extension points for core runtimes and executor policies
 
-This project uses the cmake build system. To use:
+## Current Status
 
-> $ cmake  
-> $ make 
+This repository is still pre-alpha and intentionally incomplete in several areas, but it now has:
 
-It is recommended to make a build directory and run cmake as follows
+- A minimal Game Boy reference machine shell
+- A minimal runnable instruction-cycle slice
+- CPU feedback hooks from core to executor
+- A plugin contract layer
+- Smoke tests covering snapshots, instruction cycle, machine-owned execution, and plugin executor flow
 
-`$ cmake [Path To Project]`
+## Build
 
-## Installation
+```bash
+cmake -S . -B build-working
+cmake --build build-working -j4
+```
 
-There are no installation instructions.
+Run tests:
 
-## The API
-### Structures
-#### Fetch/Decode/Execute
-##### fetchBlockData
-`template<typename AddressType, typename DataType> struct fetchBlockData`
+```bash
+ctest --test-dir build-working --output-on-failure
+```
 
-The fetchBlockData struct is variable that stores an address offset and a dynamic array of raw execution data.
+## Architecture Overview
 
-Members:
+### 1. Native Machine Host
 
-- offset:<br>
-The Offset of the data, which coincides with a fetchBlock.
-- data:<br>
-Raw execution data.
+`GameBoyMachine` is the first reference machine shell. It owns the CPU plugin instance and exposes a `RuntimeContext` that executors run against.
 
----
+For lab-style experiments, `GameBoyMachine` also provides `loadBootRom(...)`, which accepts a user-supplied Game Boy boot ROM that must be exactly `256` bytes long.
 
-##### fetchBlock
-`template<typename AddressType, typename DataType> class fetchBlock`
+`Machine` is the host-facing contract for:
 
-An entire fetchblock.
+- `loadRom(...)`
+- `step()`
+- `guarantee()`
+- `readRegisterPair(...)`
+- `runtimeContext()`
 
-Members:
-- baseAddress:  
-The starting address of the fetchBlock
-- blockData:  
-A dynamic array of fetchBlockData types
+Relevant files:
 
-Functions:
-- void setbaseAddress(AddressType address)  
-Sets the base address of the *fetchBlock*
-- AddressType getbaseAddress() const  
-Gets the base address of the *fetchBlock*
-- std::vector<fetchBlockData<AddressType, DataType>> &getblockData()  
-returns a reference of *blockData*
----
-##### microcodefunc
-`using microcodeFunc = std::function<void()>`  
-a microcode function.
+- `cores/gameboy/GameBoyMachine.hpp`
+- `machine/Machine.hpp`
+- `machine/RuntimeContext.hpp`
 
-##### Imicrocode
-`class Imicrocode`
+### 2. Core CPU Contract
 
-The Microcode interface.
+`CPU` defines the main execution cycle and feedback channel:
 
-This type hold multiple *microcodefunc*'s instances. this allows one microcode to be a combination of functions.
+- `fetch() -> fetchBlock`
+- `decode(fetchBlock&) -> executionBlock`
+- `execute(executionBlock&, fetchBlock&)`
+- `getLastFeedback() -> CpuFeedback`
 
-Members:
-- static std::map< std::string, microcodeFunc  > v  
-A map of string keys to *microcodeFunc*'s
+`CpuFeedback` currently exposes:
 
-Functions:
-- const microcodeFunc \*findMicrocode(const std::string id)  
-searches for microcode identified by string *id*
-- void registerMicrocode(const std::string id, microcodeFunc func)  
-inserts function *func* into *v* with string key *id*
+- `segmentBoundaryHint`
+- `isControlFlow`
+- `pcBefore`
+- `pcAfter`
+- `executionPath` (`CanonicalFetchDecodeExecute` vs `CpuOptimizedFastPath`)
 
----
+Relevant file:
 
-##### IOpcode
-`class IOpcode`
+- `machine/CPU.hpp`
 
-The Opcode Interface
+### 3. Instruction Data Structures
 
-This holds multiple *Imicrocode*'s, which in turn creates a CPU operation. Like a *Imicrocode* is able to obtain multiple *microcodeFunc*'s, an *IOpcode* can have multiple *Imicrocode*'s
+`fetchBlock` and `fetchBlockData` store fetched instruction bytes with offsets and base address.
 
-Members:
-- std::vector<const microcodeFunc *> microcode  
-A dynamic array of *microcodeFunc*'s  
-> **TODO**: implement this as a vector of *Imicrocode*'s
+Relevant files:
 
-Functions:
-- IOpcode(Imicrocode& library, const std::string id)  
-Creates an IOpcode, adding microcode in *library* with string *id*  
-> **TODO**: this needs to add ALL of *library* after above is implementated
-- IOpcode(const microcodeFunc  \*func)  
-Creates an IOpcode, adding microcodeFunc pointer *\*func* into it  
-> **TODO**: Remove this when above is implemented
-- IOpcode(std::initializer_list<const microcodeFunc  *> list): microcode(list)  
-Creates an IOpcode, adding *list* to vector  
-> **TODO**: Remove this when above is implemented
-- void push_microcode(const microcodeFunc  *func)  
-Adds microcodeFunc pointer *\*func* in *microcode*
-> **TODO**: Change *func* from *microcodeFunc* to *Imicrocode* after above is implemented
-- void push_microcode(Imicrocode& library, const std::string id)  
-Adds microcode in *library* with string *id*<br>
-> **TODO**: this needs to add ALL of *library* after above is implementated
-- template<typename AddressType, typename DataType>
-void operator()(fetchBlock<AddressType, DataType> &fb)  
-Executes object by iterating *microcode* and invoking their function call
+- `inst_cycle/fetch/fetchBlock.hpp`
+- `inst_cycle/fetch/templ/fetchBlock.impl.hpp`
 
----
+`executionBlock` stores executable step functions and the target memory snapshot pointer.
 
-#### Memory
-##### memAccess
+Relevant file:
 
-An enumerator that indicates how a certain part of the memory pool can be accessed
-- 0: No Access
-- 1: Read Access
-- 2: Write Access
-- 3: Read and Write Access
+- `inst_cycle/execute/executionBlock.hpp`
 
-##### MemoryPool
-`template<typename AddressType, typename DataType> class MemoryPool`
+### 4. Executor Layer
 
-The MemoryPool. This type will hold the entire memory structure of the CPU being emulated, as well as establish read/write access
+#### Classic executor
 
-Members:
-- std::vector<std::tuple<AddressType, AddressType, memAccess>> memoryMap  
-A vector of 3-member tuples:  
-  - The Absolute Beginning of the Map, represented by an AddressType  
-  - The Absolute End of the Map, represented by an AddressType  
-  - And Read/Write Access, represented by an memAccess emumeration  
-- std::vector<DataType> mem  
-The Raw memory array of *DataType\**s
+`inst_cycle/executor/Executor.hpp`:
 
----
+- Runs one step by default through `RuntimeContext`
+- Can record fetched blocks
+- Can segment blocks
+- Can save/load block scripts
+- Exposes `recordedBlocks()` and `recordedSegments()`
 
-#### The CPU
-`template<typename AddressType, typename DataType> class CPU`
+Segmentation decisions use both:
 
-The CPU class
+- `fetchBlock`
+- `CpuFeedback`
 
-Functions:
-- virtual fetchBlock<AddressType, DataType> fetch()=0  
-Fetches Data and creates a fetchBlock instance.
-- virtual executionBlock decode(OpcodeList &oplist, fetchBlock<AddressType, DataType>& fetchData)=0
-Using an OpcodeList reference *&oplist* and fetchBlock reference \*&fetchData*, creates an executionBlock with it
-- virtual void execute(const executionBlock& block, fetchBlock<AddressType, DataType> &fb)=0
-Executes all opcodes in reference *&block* using data from *&fb*
+#### Plugin-oriented executor
 
----
+Plugin contracts:
 
-## Implementing a New Core
+- `inst_cycle/executor/PluginContract.hpp`
 
-To implement a core, you make a class derived from the BMMG::CPU class, and define its fetch, decode, and execute function
+Defines:
 
-Unless needed, the fetch() function usually requires reading from memory, so the MemoryPool class was made to make contiguous memory, and a fetchBlock class to hold raw, undecode data from the memory pool
+- `ICpuCoreRuntime`
+- `IExecutorPolicyPlugin`
+- `PluginMetadata`
+- `AbiVersion` + host ABI constants
+- compatibility helpers (`isAbiCompatible`, `validateMetadata`)
+- `PluginDescriptorV1` C-entrypoint descriptor for future dynamic loading
+- `DefaultStepPolicy`
+- `VisibleStatePreservingStepPolicy`
 
-The decode() function will most likely be the function with the most deviation, because it requires architecture-specific code. However, the end result is the same: a list of *IOpcode*s 
+Execution guarantees are now explicit:
+
+- `BaselineFaithful` — canonical `fetch -> decode -> execute` only
+- `VisibleStatePreserving` — may use CPU fast paths but must preserve final visible machine state
+- `Experimental` — intentionally looser behavior for advanced policies
+
+Plugin runtime executor:
+
+- `inst_cycle/executor/PluginExecutor.hpp`
+
+Runs a machine-owned runtime context through the same cycle and delegates recording/segmentation behavior to a policy plugin. It now mirrors the classic executor surface for:
+
+- `recordedBlocks()`
+- `recordedSegments()`
+- save/load block-script playback
+
+### 5. Game Boy Core Adapter
+
+`LR3592_DMG` implements the CPU contract and produces `CpuFeedback`.
+
+Plugin runtime adapter:
+
+- `cores/gameboy/gameboy_plugin_runtime.hpp`
+
+This wraps `LR3592_DMG` into `ICpuCoreRuntime`, while `GameBoyMachine` hosts the runtime and ROM-backed memory path.
+
+## Tests
+
+Current smoke tests:
+
+- `tests/smoke_snapshot.cpp`
+- `tests/smoke_register_snapshot.cpp`
+- `tests/smoke_instruction_cycle.cpp`
+- `tests/smoke_machine_boot.cpp`
+- `tests/smoke_executor.cpp`
+- `tests/smoke_plugin_executor.cpp`
+- `tests/smoke_plugin_abi.cpp`
+
+These verify:
+
+- Snapshot memory read-through and overlay behavior
+- Register snapshot copy/isolation behavior
+- Minimal direct CPU `fetch -> decode -> execute` behavior
+- Machine-owned ROM-backed execution
+- Executor recording/script replay through `RuntimeContext`
+- Plugin executor orchestration and feedback-driven policy behavior
+- Plugin ABI compatibility, metadata validation, and guarantee labeling
+- Baseline-vs-optimized visible-state equivalence for the Game Boy core (`smoke_trace_executor`)
+- Game Boy hardware-sensitive behavior such as `STOP` wake-on-input and `LY` / `STAT` write semantics
+
+## Short-Term Direction
+
+The next practical expansion points are:
+
+- Extend the machine host beyond the initial Game Boy shell
+- Grow `RuntimeContext` from a narrow baseline API into a capability-based boundary
+- Add more opcode coverage while preserving executor/plugin interfaces

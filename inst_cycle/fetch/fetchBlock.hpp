@@ -1,0 +1,30 @@
+#ifndef INSTRUCTION_CYCLE
+#define INSTRUCTION_CYCLE
+
+#include <vector>
+#include <string>
+
+namespace BMMQ {
+
+template<typename AddressType, typename DataType>
+struct fetchBlockData {
+    AddressType offset;
+    std::vector<DataType> data;
+};
+
+template<typename AddressType, typename DataType>
+class fetchBlock {
+    AddressType baseAddress;
+    std::vector<fetchBlockData<AddressType, DataType>> blockData;
+
+public:
+    void setbaseAddress(AddressType address);
+    AddressType getbaseAddress() const;
+    void reserve(std::size_t count);
+    std::vector<fetchBlockData<AddressType, DataType>> &getblockData();
+    const std::vector<fetchBlockData<AddressType, DataType>> &getblockData() const;
+};
+}
+
+#include "templ/fetchBlock.impl.hpp"
+#endif // INSTRUCTION_CYCLE

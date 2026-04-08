@@ -1,0 +1,32 @@
+namespace BMMQ {
+
+template<typename AddressType, typename DataType>
+void fetchBlock<AddressType, DataType>::setbaseAddress(AddressType address)
+{
+    baseAddress = address;
+}
+
+template<typename AddressType, typename DataType>
+AddressType fetchBlock<AddressType, DataType>::getbaseAddress() const
+{
+    return baseAddress;
+}
+
+template<typename AddressType, typename DataType>
+void fetchBlock<AddressType, DataType>::reserve(std::size_t count)
+{
+    blockData.reserve(count);
+}
+
+template<typename AddressType, typename DataType>
+std::vector<fetchBlockData<AddressType, DataType>>& fetchBlock<AddressType, DataType>::getblockData()
+{
+    return blockData;
+}
+
+template<typename AddressType, typename DataType>
+const std::vector<fetchBlockData<AddressType, DataType>>& fetchBlock<AddressType, DataType>::getblockData() const
+{
+    return blockData;
+}
+}

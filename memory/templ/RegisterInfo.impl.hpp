@@ -1,40 +1,56 @@
+#include <stdexcept>
+
 namespace BMMQ {
-template<typename T>
-RegisterInfo<T>::RegisterInfo() :info(new std::pair< std::string, CPU_Register<T>*>("", nullptr)) {};
 
 template<typename T>
-RegisterInfo<T>::RegisterInfo(const std::string &id)
-    :info(new std::pair< std::string, CPU_Register<T>*>(id, nullptr)) {}
-
-template<typename T>
-RegisterInfo<T>::RegisterInfo(RegisterFile<T> &file, const std::string &id)
+RegisterInfo<T>::RegisterInfo(RegisterFile<T>& file, std::string_view id)
+    : name_(id)
 {
-    info = file.findRegister(id);
+    registration(file, id);
 }
+
 template<typename T>
-void RegisterInfo<T>::registration(RegisterFile<T> &file, std::string_view id)
+RegisterInfo<T>::RegisterInfo(RegisterFile<T>& file, RegisterId id)
+    : RegisterInfo(file, id.value)
 {
-    for (auto &i : file()) {
-        if (i.first.compare(id) == 0)
-            info = &i;
+}
+
+template<typename T>
+void RegisterInfo<T>::registration(RegisterFile<T>& file, std::string_view id)
+{
+    name_ = std::string(id);
+    auto* entry = file.findRegister(id);
+    if (entry == nullptr || entry->reg == nullptr) {
+        throw std::invalid_argument("register not found");
     }
+    reg_ = entry->reg.get();
 }
 
 template<typename T>
-CPU_Register<T>* RegisterInfo<T>::operator()()
+void RegisterInfo<T>::registration(RegisterFile<T>& file, RegisterId id)
 {
-    return info->second;
+    registration(file, id.value);
 }
 
 template<typename T>
-CPU_Register<T>* RegisterInfo<T>::operator->()
+CPU_Register<T>* RegisterInfo<T>::operator()() const
 {
-    return info->second;
+    if (reg_ == nullptr) {
+        throw std::logic_error("register info is not bound");
+    }
+    return reg_;
 }
 
 template<typename T>
-std::string_view RegisterInfo<T>::getRegisterID()
+CPU_Register<T>* RegisterInfo<T>::operator->() const
 {
-    return info->first;
+    return operator()();
 }
+
+template<typename T>
+std::string_view RegisterInfo<T>::getRegisterName() const noexcept
+{
+    return name_;
 }
+
+} // namespace BMMQ
