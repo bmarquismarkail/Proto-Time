@@ -28,7 +28,7 @@
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
-#include "machine/plugins/SdlFrontendPlugin.hpp"
+#include "machine/plugins/SdlFrontendPluginLoader.hpp"
 
 namespace {
 
@@ -42,6 +42,7 @@ void handleSignal(int)
 struct EmulatorOptions {
     std::filesystem::path romPath;
     std::optional<std::filesystem::path> bootRomPath;
+    std::optional<std::filesystem::path> pluginPath;
     std::optional<std::uint64_t> stepLimit;
     int windowScale = 3;
     bool headless = false;
@@ -54,6 +55,7 @@ void printUsage(std::string_view program)
               << "Options:\n"
               << "  --rom <path>       Cartridge ROM to load\n"
               << "  --boot-rom <path>  Optional 256-byte DMG boot ROM\n"
+              << "  --plugin <path>    Optional SDL frontend shared object override\n"
               << "  --steps <count>    Stop after a fixed number of instruction steps\n"
               << "  --scale <n>        SDL window scale factor (default: 3)\n"
               << "  --headless         Run without the SDL frontend plugin\n"
@@ -100,6 +102,11 @@ EmulatorOptions parseArguments(int argc, char** argv)
                 throw std::invalid_argument("--boot-rom requires a path");
             }
             options.bootRomPath = std::filesystem::path(argv[++i]);
+        } else if (arg == "--plugin") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--plugin requires a path");
+            }
+            options.pluginPath = std::filesystem::path(argv[++i]);
         } else if (arg == "--steps") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--steps requires a count");
@@ -166,7 +173,8 @@ int main(int argc, char** argv)
         const auto romBytes = readBinaryFile(options.romPath);
         machine.loadRom(romBytes);
 
-        BMMQ::SdlFrontendPlugin* frontend = nullptr;
+        BMMQ::ISdlFrontendPlugin* frontend = nullptr;
+        std::unique_ptr<BMMQ::ISdlFrontendPlugin> frontendPlugin;
         if (!options.headless) {
             BMMQ::SdlFrontendConfig config;
             config.windowTitle = "Proto-Time - " + options.romPath.filename().string();
@@ -177,12 +185,20 @@ int main(int argc, char** argv)
             config.autoPresentOnVideoEvent = false;
             config.showWindowOnPresent = true;
 
-            auto frontendPlugin = std::make_unique<BMMQ::SdlFrontendPlugin>(config);
-            frontend = frontendPlugin.get();
-            machine.pluginManager().add(std::move(frontendPlugin));
-            machine.pluginManager().initialize(machine.view());
-            frontend->requestWindowVisibility(true);
-            frontend->serviceFrontend();
+            const auto pluginPath = options.pluginPath.value_or(
+                BMMQ::defaultSdlFrontendPluginPath((argc > 0 && argv != nullptr)
+                    ? std::filesystem::path(argv[0])
+                    : std::filesystem::path("timeEmulator")));
+            try {
+                frontendPlugin = BMMQ::loadSdlFrontendPlugin(pluginPath, config);
+                frontend = frontendPlugin.get();
+                machine.pluginManager().add(std::move(frontendPlugin));
+                machine.pluginManager().initialize(machine.view());
+                frontend->requestWindowVisibility(true);
+                frontend->serviceFrontend();
+            } catch (const std::exception& ex) {
+                std::cerr << "warning: " << ex.what() << "; continuing headless\n";
+            }
         }
 
         std::cout << "Loaded ROM: " << options.romPath << " (" << romBytes.size() << " bytes)\n";

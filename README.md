@@ -25,6 +25,10 @@ cmake -S . -B build-working
 cmake --build build-working -j4
 ```
 
+This build now produces both the host executable `timeEmulator` and the runtime-loaded SDL frontend shared object `libtime-sdl-frontend-plugin.so`.
+
+`timeEmulator` will auto-load that shared object from the executable directory by default. Use `--plugin <path>` to override the plugin path or `--headless` to skip frontend loading entirely.
+
 Run tests:
 
 ```bash
@@ -149,6 +153,20 @@ Plugin runtime adapter:
 
 This wraps `LR3592_DMG` into `ICpuCoreRuntime`, while `GameBoyMachine` hosts the runtime and ROM-backed memory path.
 
+### 6. SDL Frontend Plugin
+
+The SDL frontend is no longer compiled directly into the emulator executable. The host uses:
+
+- `machine/plugins/SdlFrontendPlugin.hpp` for the shared frontend interface and factory ABI
+- `machine/plugins/SdlFrontendPluginLoader.hpp`
+- `machine/plugins/SdlFrontendPluginLoader.cpp`
+
+The plugin implementation lives in:
+
+- `machine/plugins/sdl_frontend/SdlFrontendPlugin.cpp`
+
+At runtime the emulator loads `libtime-sdl-frontend-plugin.so` with `dlopen`, creates an `ISdlFrontendPlugin` instance through the exported factory table, and registers that instance with `PluginManager` like any other host-side I/O plugin. If loading fails, the emulator logs a warning and continues in headless mode.
+
 ## Tests
 
 Current smoke tests:
@@ -160,6 +178,10 @@ Current smoke tests:
 - `tests/smoke_executor.cpp`
 - `tests/smoke_plugin_executor.cpp`
 - `tests/smoke_plugin_abi.cpp`
+- `tests/smoke_plugin_io.cpp`
+- `tests/smoke_sdl_frontend_plugin.cpp`
+- `tests/smoke_apu_audio.cpp`
+- `tests/smoke_trace_executor.cpp`
 
 These verify:
 
@@ -170,6 +192,8 @@ These verify:
 - Executor recording/script replay through `RuntimeContext`
 - Plugin executor orchestration and feedback-driven policy behavior
 - Plugin ABI compatibility, metadata validation, and guarantee labeling
+- Host-side I/O plugin lifecycle and failure handling
+- Runtime loading of the SDL frontend shared object without losing video, audio, input, or diagnostics behavior
 - Baseline-vs-optimized visible-state equivalence for the Game Boy core (`smoke_trace_executor`)
 - Game Boy hardware-sensitive behavior such as `STOP` wake-on-input and `LY` / `STAT` write semantics
 
