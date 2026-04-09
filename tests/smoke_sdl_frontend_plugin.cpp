@@ -1,12 +1,13 @@
 #include <cassert>
 #include <cstdlib>
-#include <memory>
+#include <filesystem>
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
 #include "machine/plugins/SdlFrontendPlugin.hpp"
+#include "machine/plugins/SdlFrontendPluginLoader.hpp"
 
-int main()
+int main(int argc, char** argv)
 {
 #if defined(__unix__) || defined(__APPLE__)
     ::setenv("SDL_AUDIODRIVER", "dummy", 1);
@@ -27,9 +28,24 @@ int main()
     cartridgeRom[0x0100] = 0x00;
     machine.loadRom(cartridgeRom);
 
-    auto frontendPlugin = std::make_unique<BMMQ::SdlFrontendPlugin>(config);
+    const auto executablePath = (argc > 0 && argv != nullptr)
+        ? std::filesystem::path(argv[0])
+        : std::filesystem::path("time-smoke-sdl-frontend-plugin");
+    auto frontendPlugin = BMMQ::loadSdlFrontendPlugin(
+        BMMQ::defaultSdlFrontendPluginPath(executablePath),
+        config);
     auto* frontend = frontendPlugin.get();
     machine.pluginManager().add(std::move(frontendPlugin));
+
+    bool missingLoadThrew = false;
+    try {
+        (void)BMMQ::loadSdlFrontendPlugin(
+            executablePath.parent_path() / "missing-time-sdl-frontend-plugin.so",
+            config);
+    } catch (const std::runtime_error&) {
+        missingLoadThrew = true;
+    }
+    assert(missingLoadThrew);
 
     machine.pluginManager().initialize(machine.view());
     assert(frontend->config().windowTitle == "Proto-Time SDL Smoke");
