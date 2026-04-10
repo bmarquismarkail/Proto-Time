@@ -64,12 +64,12 @@ int main(int argc, char** argv)
     frontend->requestWindowVisibility(true);
     assert(frontend->windowVisibilityRequested());
 
-    frontend->pressButton(BMMQ::SdlFrontendButton::Right);
-    frontend->pressButton(BMMQ::SdlFrontendButton::Up);
-    frontend->pressButton(BMMQ::SdlFrontendButton::A);
+    frontend->pressButton(BMMQ::InputButton::Right);
+    frontend->pressButton(BMMQ::InputButton::Up);
+    frontend->pressButton(BMMQ::InputButton::Button1);
     assert(frontend->queuedDigitalInputMask().has_value());
     assert(*frontend->queuedDigitalInputMask() == 0x15u);
-    assert(frontend->isButtonPressed(BMMQ::SdlFrontendButton::A));
+    assert(frontend->isButtonPressed(BMMQ::InputButton::Button1));
 
     GameBoyMachine dmaVisibilityMachine;
     dmaVisibilityMachine.loadRom(cartridgeRom);
@@ -166,16 +166,16 @@ int main(int argc, char** argv)
     assert(!frontend->lastRenderSummary().empty());
     assert(frontend->windowVisible());
 
-    frontend->releaseButton(BMMQ::SdlFrontendButton::Up);
+    frontend->releaseButton(BMMQ::InputButton::Up);
     assert(frontend->queuedDigitalInputMask().has_value());
     assert(*frontend->queuedDigitalInputMask() == 0x11u);
 
     assert(frontend->handleHostEvent({BMMQ::SdlFrontendHostEventType::KeyDown, BMMQ::SdlFrontendHostKey::Return, false}));
-    assert(frontend->isButtonPressed(BMMQ::SdlFrontendButton::Start));
+    assert(frontend->isButtonPressed(BMMQ::InputButton::Meta2));
     assert(frontend->handleHostEvent({BMMQ::SdlFrontendHostEventType::KeyDown, BMMQ::SdlFrontendHostKey::X, false}));
-    assert(frontend->isButtonPressed(BMMQ::SdlFrontendButton::B));
+    assert(frontend->isButtonPressed(BMMQ::InputButton::Button2));
     assert(frontend->handleHostEvent({BMMQ::SdlFrontendHostEventType::KeyUp, BMMQ::SdlFrontendHostKey::X, false}));
-    assert(!frontend->isButtonPressed(BMMQ::SdlFrontendButton::B));
+    assert(!frontend->isButtonPressed(BMMQ::InputButton::Button2));
     assert(frontend->stats().hostEventsHandled >= 3);
     assert(frontend->stats().keyEventsHandled >= 3);
     assert(!frontend->lastHostEventSummary().empty());

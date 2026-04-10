@@ -133,17 +133,17 @@ public:
         return queuedDigitalInputMask_;
     }
 
-    void pressButton(BMMQ::SdlFrontendButton button) override
+    void pressButton(BMMQ::InputButton button) override
     {
         setButtonState(button, true);
     }
 
-    void releaseButton(BMMQ::SdlFrontendButton button) override
+    void releaseButton(BMMQ::InputButton button) override
     {
         setButtonState(button, false);
     }
 
-    [[nodiscard]] bool isButtonPressed(BMMQ::SdlFrontendButton button) const noexcept override
+    [[nodiscard]] bool isButtonPressed(BMMQ::InputButton button) const noexcept override
     {
         if (!queuedDigitalInputMask_.has_value()) {
             return false;
@@ -473,53 +473,53 @@ public:
     }
 
 private:
-    [[nodiscard]] static constexpr uint8_t buttonMask(BMMQ::SdlFrontendButton button) noexcept
+    [[nodiscard]] static constexpr uint8_t buttonMask(BMMQ::InputButton button) noexcept
     {
-        return static_cast<uint8_t>(button);
+        return BMMQ::inputButtonMask(button);
     }
 
-    [[nodiscard]] static constexpr std::string_view buttonName(BMMQ::SdlFrontendButton button) noexcept
+    [[nodiscard]] static constexpr std::string_view buttonName(BMMQ::InputButton button) noexcept
     {
         switch (button) {
-        case BMMQ::SdlFrontendButton::Right:
+        case BMMQ::InputButton::Right:
             return "Right";
-        case BMMQ::SdlFrontendButton::Left:
+        case BMMQ::InputButton::Left:
             return "Left";
-        case BMMQ::SdlFrontendButton::Up:
+        case BMMQ::InputButton::Up:
             return "Up";
-        case BMMQ::SdlFrontendButton::Down:
+        case BMMQ::InputButton::Down:
             return "Down";
-        case BMMQ::SdlFrontendButton::A:
-            return "A";
-        case BMMQ::SdlFrontendButton::B:
-            return "B";
-        case BMMQ::SdlFrontendButton::Select:
-            return "Select";
-        case BMMQ::SdlFrontendButton::Start:
-            return "Start";
+        case BMMQ::InputButton::Button1:
+            return "Button1";
+        case BMMQ::InputButton::Button2:
+            return "Button2";
+        case BMMQ::InputButton::Meta1:
+            return "Meta1";
+        case BMMQ::InputButton::Meta2:
+            return "Meta2";
         }
         return "Unknown";
     }
 
-    [[nodiscard]] static constexpr std::optional<BMMQ::SdlFrontendButton> mapHostKey(BMMQ::SdlFrontendHostKey key) noexcept
+    [[nodiscard]] static constexpr std::optional<BMMQ::InputButton> mapHostKey(BMMQ::SdlFrontendHostKey key) noexcept
     {
         switch (key) {
         case BMMQ::SdlFrontendHostKey::Right:
-            return BMMQ::SdlFrontendButton::Right;
+            return BMMQ::InputButton::Right;
         case BMMQ::SdlFrontendHostKey::Left:
-            return BMMQ::SdlFrontendButton::Left;
+            return BMMQ::InputButton::Left;
         case BMMQ::SdlFrontendHostKey::Up:
-            return BMMQ::SdlFrontendButton::Up;
+            return BMMQ::InputButton::Up;
         case BMMQ::SdlFrontendHostKey::Down:
-            return BMMQ::SdlFrontendButton::Down;
+            return BMMQ::InputButton::Down;
         case BMMQ::SdlFrontendHostKey::Z:
-            return BMMQ::SdlFrontendButton::A;
+            return BMMQ::InputButton::Button1;
         case BMMQ::SdlFrontendHostKey::X:
-            return BMMQ::SdlFrontendButton::B;
+            return BMMQ::InputButton::Button2;
         case BMMQ::SdlFrontendHostKey::Backspace:
-            return BMMQ::SdlFrontendButton::Select;
+            return BMMQ::InputButton::Meta1;
         case BMMQ::SdlFrontendHostKey::Return:
-            return BMMQ::SdlFrontendButton::Start;
+            return BMMQ::InputButton::Meta2;
         case BMMQ::SdlFrontendHostKey::Unknown:
             break;
         }
@@ -576,7 +576,7 @@ private:
     }
 #endif
 
-    void setButtonState(BMMQ::SdlFrontendButton button, bool pressed)
+    void setButtonState(BMMQ::InputButton button, bool pressed)
     {
         auto mask = static_cast<uint8_t>(queuedDigitalInputMask_.value_or(0u) & 0x00FFu);
         const auto bit = buttonMask(button);

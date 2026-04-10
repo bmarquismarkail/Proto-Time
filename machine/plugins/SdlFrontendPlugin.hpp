@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include "../InputTypes.hpp"
 #include "IoPlugin.hpp"
 
 namespace BMMQ {
@@ -50,17 +51,6 @@ struct SdlFrontendStats {
     std::size_t eventPumpCalls = 0;
     std::size_t backendEventsTranslated = 0;
     std::size_t serviceCalls = 0;
-};
-
-enum class SdlFrontendButton : uint8_t {
-    Right = 0x01u,
-    Left = 0x02u,
-    Up = 0x04u,
-    Down = 0x08u,
-    A = 0x10u,
-    B = 0x20u,
-    Select = 0x40u,
-    Start = 0x80u,
 };
 
 enum class SdlFrontendHostEventType : uint8_t {
@@ -157,9 +147,9 @@ public:
     virtual void setQueuedDigitalInputMask(uint32_t pressedMask) = 0;
     virtual void clearQueuedDigitalInputMask() = 0;
     [[nodiscard]] virtual std::optional<uint32_t> queuedDigitalInputMask() const noexcept = 0;
-    virtual void pressButton(SdlFrontendButton button) = 0;
-    virtual void releaseButton(SdlFrontendButton button) = 0;
-    [[nodiscard]] virtual bool isButtonPressed(SdlFrontendButton button) const noexcept = 0;
+    virtual void pressButton(InputButton button) = 0;
+    virtual void releaseButton(InputButton button) = 0;
+    [[nodiscard]] virtual bool isButtonPressed(InputButton button) const noexcept = 0;
     virtual void clearQuitRequest() noexcept = 0;
     [[nodiscard]] virtual bool quitRequested() const noexcept = 0;
     [[nodiscard]] virtual std::string_view lastHostEventSummary() const noexcept = 0;

@@ -170,17 +170,17 @@ public:
         return implementation_->queuedDigitalInputMask();
     }
 
-    void pressButton(BMMQ::SdlFrontendButton button) override
+    void pressButton(BMMQ::InputButton button) override
     {
         implementation_->pressButton(button);
     }
 
-    void releaseButton(BMMQ::SdlFrontendButton button) override
+    void releaseButton(BMMQ::InputButton button) override
     {
         implementation_->releaseButton(button);
     }
 
-    [[nodiscard]] bool isButtonPressed(BMMQ::SdlFrontendButton button) const noexcept override
+    [[nodiscard]] bool isButtonPressed(BMMQ::InputButton button) const noexcept override
     {
         return implementation_->isButtonPressed(button);
     }
