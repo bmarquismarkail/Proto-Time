@@ -81,6 +81,37 @@ int main()
     {
         LR3592_DMG cpu;
         cpu.loadProgram({0x00, 0x00, 0x00});
+        auto fetchBlock = cpu.fetch();
+        auto execBlock = cpu.decode(fetchBlock);
+        if (execBlock.cyclesIfNotTaken() != 4 || execBlock.cyclesIfTaken() != 4) {
+            throw std::runtime_error("NOP should decode to 4 cycles");
+        }
+    }
+
+    {
+        LR3592_DMG cpu;
+        cpu.loadProgram({0x20, 0x02, 0x00});
+        auto fetchBlock = cpu.fetch();
+        auto execBlock = cpu.decode(fetchBlock);
+        if (execBlock.cyclesIfNotTaken() != 8 || execBlock.cyclesIfTaken() != 12) {
+            throw std::runtime_error("JR NZ should decode to 8/12 cycles");
+        }
+    }
+
+    {
+        LR3592_DMG cpu;
+        pair(cpu, GB::RegisterId::HL)->value = 0xC000;
+        cpu.loadProgram({0xCB, 0x06, 0x00});
+        auto fetchBlock = cpu.fetch();
+        auto execBlock = cpu.decode(fetchBlock);
+        if (execBlock.cyclesIfNotTaken() != 16 || execBlock.cyclesIfTaken() != 16) {
+            throw std::runtime_error("RLC (HL) should decode to 16 cycles");
+        }
+    }
+
+    {
+        LR3592_DMG cpu;
+        cpu.loadProgram({0x00, 0x00, 0x00});
         step(cpu);
         assert(pair(cpu, GB::RegisterId::AF)->hi == 0x00);
         assert(scalar(cpu, GB::RegisterId::PC) == 1);
