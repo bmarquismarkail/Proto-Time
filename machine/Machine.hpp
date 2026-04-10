@@ -48,6 +48,9 @@ public:
     virtual uint64_t audioFrameCounter() const {
         return 0u;
     }
+    virtual uint32_t clockHz() const {
+        return runtimeContext().clockHz();
+    }
     virtual ExecutionGuarantee guarantee() const noexcept {
         return runtimeContext().guarantee();
     }

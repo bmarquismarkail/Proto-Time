@@ -165,6 +165,10 @@ public:
         return runtime_.getLastFeedback();
     }
 
+    uint32_t clockHz() const override {
+        return runtime_.cpu().clockHz();
+    }
+
     BMMQ::ExecutionGuarantee guarantee() const override {
         return activePolicy_->guarantee();
     }
@@ -387,6 +391,10 @@ public:
 
     uint64_t audioFrameCounter() const override {
         return cpu_.cpu().audioFrameCounter();
+    }
+
+    uint32_t clockHz() const override {
+        return cpu_.cpu().clockHz();
     }
 
     void attachExecutorPolicy(BMMQ::Plugin::IExecutorPolicyPlugin& policy) override {

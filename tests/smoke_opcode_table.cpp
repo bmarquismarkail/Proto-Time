@@ -10,11 +10,12 @@ namespace {
 
 using RegisterPair = BMMQ::CPU_RegisterPair<uint16_t>;
 
-void step(LR3592_DMG& cpu)
+BMMQ::CpuFeedback step(LR3592_DMG& cpu)
 {
     auto fetchBlock = cpu.fetch();
     auto execBlock = cpu.decode(fetchBlock);
     cpu.execute(execBlock, fetchBlock);
+    return cpu.getLastFeedback();
 }
 
 RegisterPair* pair(LR3592_DMG& cpu, BMMQ::RegisterId id)
@@ -80,6 +81,13 @@ int main()
 {
     {
         LR3592_DMG cpu;
+        if (cpu.clockHz() != 4194304u) {
+            throw std::runtime_error("LR3592 clock contract should expose 4194304 Hz");
+        }
+    }
+
+    {
+        LR3592_DMG cpu;
         cpu.loadProgram({0x00, 0x00, 0x00});
         auto fetchBlock = cpu.fetch();
         auto execBlock = cpu.decode(fetchBlock);
@@ -112,7 +120,10 @@ int main()
     {
         LR3592_DMG cpu;
         cpu.loadProgram({0x00, 0x00, 0x00});
-        step(cpu);
+        const auto feedback = step(cpu);
+        if (feedback.retiredCycles != 4u) {
+            throw std::runtime_error("NOP should retire 4 cycles");
+        }
         assert(pair(cpu, GB::RegisterId::AF)->hi == 0x00);
         assert(scalar(cpu, GB::RegisterId::PC) == 1);
     }
@@ -172,7 +183,10 @@ int main()
     {
         LR3592_DMG cpu;
         cpu.loadProgram({0x18, 0x02, 0x00}, 0);
-        step(cpu);
+        const auto feedback = step(cpu);
+        if (feedback.retiredCycles != 12u) {
+            throw std::runtime_error("JR should retire 12 cycles when taken");
+        }
         assert(scalar(cpu, GB::RegisterId::PC) == 4);
     }
 
@@ -180,8 +194,22 @@ int main()
         LR3592_DMG cpu;
         pair(cpu, GB::RegisterId::AF)->lo = 0x80;
         cpu.loadProgram({0x28, 0x02, 0x00}, 0);
-        step(cpu);
+        const auto feedback = step(cpu);
+        if (feedback.retiredCycles != 12u) {
+            throw std::runtime_error("JR Z should retire 12 cycles when taken");
+        }
         assert(scalar(cpu, GB::RegisterId::PC) == 4);
+    }
+
+    {
+        LR3592_DMG cpu;
+        pair(cpu, GB::RegisterId::AF)->lo = 0x00;
+        cpu.loadProgram({0x28, 0x02, 0x00}, 0);
+        const auto feedback = step(cpu);
+        if (feedback.retiredCycles != 8u) {
+            throw std::runtime_error("JR Z should retire 8 cycles when not taken");
+        }
+        assert(scalar(cpu, GB::RegisterId::PC) == 2);
     }
 
     {

@@ -251,6 +251,7 @@ public:
   execute(const BMMQ::executionBlock<AddressType, DataType, AddressType> &block,
           BMMQ::fetchBlock<AddressType, DataType> &fb) override;
   const BMMQ::CpuFeedback &getLastFeedback() const override;
+  uint32_t clockHz() const override { return kCpuClockHz; }
 
   BMMQ::MemoryPool<AddressType, DataType, AddressType> &getMemory();
   const BMMQ::MemoryPool<AddressType, DataType, AddressType> &getMemory() const;

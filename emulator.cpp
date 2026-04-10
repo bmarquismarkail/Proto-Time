@@ -215,32 +215,86 @@ int main(int argc, char** argv)
         }
 
         std::uint64_t steps = 0;
-        constexpr std::uint64_t kFrontendServiceInterval = 512;
-        constexpr std::uint64_t kYieldInterval = 8192;
+        const auto cpuClockHz = machine.clockHz();
+        using SteadyClock = std::chrono::steady_clock;
+        constexpr auto kFrontendServicePeriod = std::chrono::milliseconds(2);
+        constexpr auto kMaxSleepSlice = std::chrono::milliseconds(1);
+        const double kMinInstructionCycles = 4.0;
+        const double kMaxCycleBudget = static_cast<double>(cpuClockHz) * 0.050;
+
+        auto lastTick = SteadyClock::now();
+        auto nextFrontendService = lastTick;
+        double cycleBudget = 0.0;
+
+        auto serviceFrontend = [&]() -> bool {
+            if (frontend == nullptr) {
+                return false;
+            }
+            frontend->serviceFrontend();
+            return frontend->quitRequested();
+        };
 
         while (gStopRequested == 0) {
             if (options.stepLimit.has_value() && steps >= *options.stepLimit) {
                 break;
             }
 
-            machine.step();
-            ++steps;
+            const auto now = SteadyClock::now();
+            const auto elapsed = std::chrono::duration<double>(now - lastTick).count();
+            lastTick = now;
+            cycleBudget = std::min(kMaxCycleBudget,
+                                   cycleBudget + (elapsed * static_cast<double>(cpuClockHz)));
 
-            if (frontend != nullptr && (steps % kFrontendServiceInterval) == 0u) {
-                frontend->serviceFrontend();
-                if (frontend->quitRequested()) {
+            bool executedInstruction = false;
+            while (cycleBudget >= kMinInstructionCycles && gStopRequested == 0) {
+                if (options.stepLimit.has_value() && steps >= *options.stepLimit) {
                     break;
+                }
+
+                machine.step();
+                ++steps;
+                executedInstruction = true;
+
+                const auto retiredCycles = static_cast<double>(machine.runtimeContext().getLastFeedback().retiredCycles);
+                if (retiredCycles > 0.0) {
+                    cycleBudget = std::max(0.0, cycleBudget - retiredCycles);
+                }
+
+                if (SteadyClock::now() >= nextFrontendService) {
+                    if (serviceFrontend()) {
+                        gStopRequested = 1;
+                        break;
+                    }
+                    nextFrontendService = SteadyClock::now() + kFrontendServicePeriod;
                 }
             }
 
-            if ((steps % kYieldInterval) == 0u) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            if (gStopRequested != 0) {
+                break;
+            }
+
+            if (serviceFrontend()) {
+                break;
+            }
+            nextFrontendService = SteadyClock::now() + kFrontendServicePeriod;
+
+            if (!executedInstruction) {
+                const auto cyclesUntilNextStep = std::max(0.0, kMinInstructionCycles - cycleBudget);
+                const auto secondsUntilNextStep = cyclesUntilNextStep / static_cast<double>(cpuClockHz);
+                const auto nextStepDelay =
+                    std::chrono::duration_cast<SteadyClock::duration>(std::chrono::duration<double>(secondsUntilNextStep));
+                auto sleepDuration = std::min(kMaxSleepSlice, kFrontendServicePeriod);
+                if (nextStepDelay > SteadyClock::duration::zero()) {
+                    sleepDuration = std::min(sleepDuration,
+                        std::chrono::duration_cast<std::chrono::milliseconds>(nextStepDelay));
+                }
+                if (sleepDuration > std::chrono::milliseconds::zero()) {
+                    std::this_thread::sleep_for(sleepDuration);
+                }
             }
         }
 
-        if (frontend != nullptr) {
-            frontend->serviceFrontend();
-        }
+        serviceFrontend();
 
         const auto pc = machine.runtimeContext().readRegister16(GB::RegisterId::PC);
         const auto ly = machine.runtimeContext().read8(0xFF44);

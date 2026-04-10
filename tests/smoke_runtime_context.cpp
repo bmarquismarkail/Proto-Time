@@ -48,6 +48,7 @@ struct AdvancedRuntimeContext final : BMMQ::RuntimeContext {
     uint16_t readRegister16(std::string_view) const override { return 0; }
     void writeRegister16(std::string_view, uint16_t) override {}
     const BMMQ::CpuFeedback& getLastFeedback() const override { return feedback; }
+    uint32_t clockHz() const override { return 1000000u; }
     BMMQ::ExecutionGuarantee guarantee() const override {
         return BMMQ::ExecutionGuarantee::Experimental;
     }

@@ -47,6 +47,7 @@ struct DescriptorRuntimeContext final : BMMQ::RuntimeContext {
     uint16_t readRegisterPair(std::string_view id) const override;
     void writeRegisterPair(std::string_view id, uint16_t value) override;
     const BMMQ::CpuFeedback& getLastFeedback() const override { return feedback; }
+    uint32_t clockHz() const override { return 1000000u; }
     BMMQ::ExecutionGuarantee guarantee() const override { return BMMQ::ExecutionGuarantee::BaselineFaithful; }
     const BMMQ::Plugin::PluginMetadata* attachedPolicyMetadata() const override { return &policy.metadata(); }
     const BMMQ::Plugin::IExecutorPolicyPlugin& attachedExecutorPolicy() const override { return policy; }

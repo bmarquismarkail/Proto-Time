@@ -1698,6 +1698,7 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
         : 0;
     feedback.isControlFlow = isControlFlowOpcode(opcode);
     feedback.segmentBoundaryHint = feedback.isControlFlow;
+    feedback.retiredCycles = 0;
 
     auto finalizeFast = [&](std::size_t executedByteCount) {
         std::size_t pcAdvance = executedByteCount;
@@ -1726,6 +1727,7 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
                     : cycles.notTaken;
             }
         }
+        feedback.retiredCycles = static_cast<uint32_t>(retiredCycles);
         retireInstruction(retiredCycles);
         return true;
     };
@@ -2127,6 +2129,7 @@ void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, Addre
     }
     feedback.segmentBoundaryHint = feedback.isControlFlow;
     feedback.executionPath = BMMQ::ExecutionPathHint::CanonicalFetchDecodeExecute;
+    feedback.retiredCycles = 0;
 
     auto* snapshot = block.getSnapshot();
     if (snapshot == nullptr) return;
@@ -2161,6 +2164,7 @@ void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, Addre
                 : block.cyclesIfNotTaken();
         }
     }
+    feedback.retiredCycles = static_cast<uint32_t>(retiredCycles);
     retireInstruction(retiredCycles);
 }
 

@@ -97,6 +97,7 @@ public:
     }
     virtual void commitVisibleState() {}
     virtual const CpuFeedback& getLastFeedback() const = 0;
+    virtual uint32_t clockHz() const = 0;
     virtual ExecutionGuarantee guarantee() const = 0;
     virtual const Plugin::PluginMetadata* attachedPolicyMetadata() const = 0;
     virtual const Plugin::IExecutorPolicyPlugin& attachedExecutorPolicy() const = 0;
