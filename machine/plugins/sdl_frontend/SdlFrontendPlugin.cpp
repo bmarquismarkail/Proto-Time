@@ -38,6 +38,9 @@ struct AudioTransportCounters {
     std::atomic<std::size_t> silenceSamplesFilled{0};
     std::atomic<std::size_t> overrunDropCount{0};
     std::atomic<std::size_t> droppedSamples{0};
+    std::atomic<std::size_t> sourceSamplesPushed{0};
+    std::atomic<std::size_t> resampleSourceSamplesConsumed{0};
+    std::atomic<std::size_t> resampleOutputSamplesProduced{0};
 };
 
 struct AudioTransportBuffer {
@@ -648,6 +651,11 @@ private:
         stats_.audioSilenceSamplesFilled = audioCounters_.silenceSamplesFilled.load(std::memory_order_relaxed);
         stats_.audioOverrunDropCount = audioCounters_.overrunDropCount.load(std::memory_order_relaxed);
         stats_.audioDroppedSamples = audioCounters_.droppedSamples.load(std::memory_order_relaxed);
+        stats_.audioResamplingActive = audioSampleRate_ != sourceAudioSampleRate_;
+        stats_.audioResampleRatio = audioResampler_.ratio();
+        stats_.audioSourceSamplesPushed = audioCounters_.sourceSamplesPushed.load(std::memory_order_relaxed);
+        stats_.audioResampleSourceSamplesConsumed = audioCounters_.resampleSourceSamplesConsumed.load(std::memory_order_relaxed);
+        stats_.audioResampleOutputSamplesProduced = audioCounters_.resampleOutputSamplesProduced.load(std::memory_order_relaxed);
         stats_.lastQueuedAudioBytes = queuedAudioBytes();
         stats_.peakQueuedAudioBytes = std::max<std::uint32_t>(
             stats_.peakQueuedAudioBytes,
@@ -663,12 +671,16 @@ private:
         audioCounters_.silenceSamplesFilled.store(0u, std::memory_order_relaxed);
         audioCounters_.overrunDropCount.store(0u, std::memory_order_relaxed);
         audioCounters_.droppedSamples.store(0u, std::memory_order_relaxed);
+        audioCounters_.sourceSamplesPushed.store(0u, std::memory_order_relaxed);
+        audioCounters_.resampleSourceSamplesConsumed.store(0u, std::memory_order_relaxed);
+        audioCounters_.resampleOutputSamplesProduced.store(0u, std::memory_order_relaxed);
     }
 
     void resetAudioTransportState() noexcept
     {
         audioTransport_.readIndex.store(0u, std::memory_order_release);
         audioTransport_.writeIndex.store(0u, std::memory_order_release);
+        audioResampler_.reset();
         lastQueuedAudioFrameCounter_ = 0;
         lastQueuedAudioPreviewGeneration_ = 0;
         syncAudioTransportStats();
@@ -714,31 +726,52 @@ private:
 
             audioTransport_.samples[writeIndex] = sample;
             audioTransport_.writeIndex.store(nextWriteIndex, std::memory_order_release);
+            audioCounters_.sourceSamplesPushed.fetch_add(1u, std::memory_order_relaxed);
             noteBufferedHighWater(audioBufferedSamples());
             return;
         }
     }
 
-    [[nodiscard]] bool popAudioSample(int16_t& sample) noexcept
+    [[nodiscard]] bool peekAudioSample(std::size_t offset, int16_t& sample) const noexcept
     {
-        if (audioTransport_.capacity == 0u) {
+        const auto capacity = audioTransport_.capacity;
+        if (capacity == 0u) {
             return false;
         }
 
-        while (true) {
-            auto readIndex = audioTransport_.readIndex.load(std::memory_order_relaxed);
-            const auto writeIndex = audioTransport_.writeIndex.load(std::memory_order_acquire);
-            if (readIndex == writeIndex) {
-                return false;
-            }
-
-            const auto nextReadIndex = (readIndex + 1u) % audioTransport_.capacity;
-            sample = audioTransport_.samples[readIndex];
-            if (audioTransport_.readIndex.compare_exchange_weak(
-                    readIndex, nextReadIndex, std::memory_order_acq_rel, std::memory_order_relaxed)) {
-                return true;
-            }
+        const auto readIndex = audioTransport_.readIndex.load(std::memory_order_acquire);
+        const auto writeIndex = audioTransport_.writeIndex.load(std::memory_order_acquire);
+        const auto available = writeIndex >= readIndex
+                                 ? (writeIndex - readIndex)
+                                 : (capacity - (readIndex - writeIndex));
+        if (offset >= available) {
+            return false;
         }
+
+        const auto index = (readIndex + offset) % capacity;
+        sample = audioTransport_.samples[index];
+        return true;
+    }
+
+    void consumeAudioSamples(std::size_t count) noexcept
+    {
+        const auto capacity = audioTransport_.capacity;
+        if (capacity == 0u || count == 0u) {
+            return;
+        }
+
+        const auto readIndex = audioTransport_.readIndex.load(std::memory_order_acquire);
+        const auto writeIndex = audioTransport_.writeIndex.load(std::memory_order_acquire);
+        const auto available = writeIndex >= readIndex
+                                 ? (writeIndex - readIndex)
+                                 : (capacity - (readIndex - writeIndex));
+        const auto consumed = std::min(count, available);
+        if (consumed == 0u) {
+            return;
+        }
+
+        const auto nextReadIndex = (readIndex + consumed) % capacity;
+        audioTransport_.readIndex.store(nextReadIndex, std::memory_order_release);
     }
 
     void appendAudioSamples(const BMMQ::AudioStateView& state)
@@ -793,25 +826,27 @@ private:
 
         audioCounters_.callbackCount.fetch_add(1u, std::memory_order_relaxed);
         std::size_t delivered = 0u;
-        std::size_t silenceFilled = 0u;
-        for (std::size_t i = 0; i < requestedSamples; ++i) {
-            int16_t sample = 0;
-            if (popAudioSample(sample)) {
-                ++delivered;
-                out[i] = sample;
-            } else {
-                ++silenceFilled;
-                out[i] = 0;
-            }
-        }
 
-        if (silenceFilled != 0u) {
+        const auto renderStats = audioResampler_.render(
+            std::span<int16_t>(out, requestedSamples),
+            [this](std::size_t offset, int16_t& sample) noexcept {
+                return peekAudioSample(offset, sample);
+            },
+            [this](std::size_t consumed) noexcept {
+                const auto available = audioBufferedSamples();
+                const auto actual = std::min(consumed, available);
+                consumeAudioSamples(actual);
+                return actual;
+            });
+
+        delivered = renderStats.outputSamplesProduced - renderStats.silenceSamplesFilled;
+        if (renderStats.silenceSamplesFilled != 0u) {
             audioCounters_.underrunCount.fetch_add(1u, std::memory_order_relaxed);
-            audioCounters_.silenceSamplesFilled.fetch_add(silenceFilled, std::memory_order_relaxed);
+            audioCounters_.silenceSamplesFilled.fetch_add(renderStats.silenceSamplesFilled, std::memory_order_relaxed);
         }
-        if (delivered != 0u) {
-            audioCounters_.samplesDelivered.fetch_add(delivered, std::memory_order_relaxed);
-        }
+        audioCounters_.samplesDelivered.fetch_add(delivered, std::memory_order_relaxed);
+        audioCounters_.resampleSourceSamplesConsumed.fetch_add(renderStats.sourceSamplesConsumed, std::memory_order_relaxed);
+        audioCounters_.resampleOutputSamplesProduced.fetch_add(renderStats.outputSamplesProduced, std::memory_order_relaxed);
     }
 #endif
 
@@ -1178,6 +1213,7 @@ private:
         }
 
         initializeAudioTransport();
+        audioResampler_.configure(sourceAudioSampleRate_, sourceAudioSampleRate_);
 
         SDL_AudioSpec desired{};
         desired.freq = sourceAudioSampleRate_;
@@ -1196,14 +1232,15 @@ private:
         }
 
         audioSampleRate_ = obtained.freq > 0 ? obtained.freq : desired.freq;
-        if (audioSampleRate_ != sourceAudioSampleRate_) {
-            lastBackendError_ = "SDL audio device rate mismatch: expected 48000 Hz, got " + std::to_string(audioSampleRate_) + " Hz";
-            appendLog("sdl: " + lastBackendError_);
+        if (obtained.format != AUDIO_S16SYS || obtained.channels != 1) {
+            lastBackendError_ = "SDL audio device format mismatch";
+            appendLog("sdl: audio device format mismatch");
             SDL_CloseAudioDevice(audioDevice_);
             audioDevice_ = 0;
             resetAudioTransportState();
             return false;
         }
+        audioResampler_.configure(sourceAudioSampleRate_, audioSampleRate_);
 
         syncAudioTransportStats();
         SDL_PauseAudioDevice(audioDevice_, 0);
@@ -1299,6 +1336,7 @@ private:
     uint64_t audioPreviewGeneration_ = 0;
     uint64_t lastQueuedAudioFrameCounter_ = 0;
     uint64_t lastQueuedAudioPreviewGeneration_ = 0;
+    BMMQ::SdlAudioResampler audioResampler_{48000, 48000};
     AudioTransportCounters audioCounters_{};
     AudioTransportBuffer audioTransport_{};
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL

@@ -70,6 +70,8 @@ int main(int argc, char** argv)
         assert(frontend->stats().audioDeviceSampleRate == 48000);
         assert(frontend->stats().audioCallbackChunkSamples == 256u);
         assert(frontend->stats().audioRingBufferCapacitySamples == 2048u);
+        assert(!frontend->stats().audioResamplingActive);
+        assert(frontend->stats().audioResampleRatio == 1.0);
 
         stepUntilAudioFrames(machine, 2u);
         assert(frontend->stats().audioBufferedHighWaterSamples >= 256u);
@@ -81,6 +83,8 @@ int main(int argc, char** argv)
         assert(bufferedAfterDrain <= frontend->stats().audioRingBufferCapacitySamples);
         assert(frontend->stats().audioCallbackCount >= 1u);
         assert(frontend->stats().audioSamplesDelivered >= 256u);
+        assert(frontend->stats().audioResampleOutputSamplesProduced >= frontend->stats().audioSamplesDelivered);
+        assert(frontend->stats().audioResampleSourceSamplesConsumed >= 1u);
 
         std::this_thread::sleep_for(std::chrono::milliseconds(80));
         assert(frontend->stats().audioUnderrunCount >= 1u);

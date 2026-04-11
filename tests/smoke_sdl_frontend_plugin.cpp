@@ -149,6 +149,8 @@ int main(int argc, char** argv)
         assert(stats.audioDeviceSampleRate == 48000);
         assert(stats.audioCallbackChunkSamples == 256u);
         assert(stats.audioRingBufferCapacitySamples == 2048u);
+        assert(!stats.audioResamplingActive);
+        assert(stats.audioResampleRatio == 1.0);
         assert(frontend->bufferedAudioSamples() <= stats.audioRingBufferCapacitySamples);
         assert(stats.audioOverrunDropCount == 0u);
     }

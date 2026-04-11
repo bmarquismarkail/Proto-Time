@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "../InputTypes.hpp"
+#include "SdlAudioResampler.hpp"
 #include "IoPlugin.hpp"
 
 namespace BMMQ {
@@ -21,6 +22,7 @@ struct SdlFrontendConfig {
     int audioPreviewSampleCount = 128;
     int audioCallbackChunkSamples = 256;
     std::size_t audioRingBufferCapacitySamples = 2048;
+    bool enableAudioResamplingDiagnostics = false;
     bool enableVideo = true;
     bool enableAudio = true;
     bool enableInput = true;
@@ -54,6 +56,11 @@ struct SdlFrontendStats {
     std::size_t audioSilenceSamplesFilled = 0;
     std::size_t audioOverrunDropCount = 0;
     std::size_t audioDroppedSamples = 0;
+    bool audioResamplingActive = false;
+    double audioResampleRatio = 1.0;
+    std::size_t audioSourceSamplesPushed = 0;
+    std::size_t audioResampleSourceSamplesConsumed = 0;
+    std::size_t audioResampleOutputSamplesProduced = 0;
     std::size_t audioQueueWrites = 0;
     std::size_t audioSamplesQueued = 0;
     std::size_t audioQueueLowWaterHits = 0;
