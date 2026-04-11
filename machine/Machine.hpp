@@ -34,7 +34,8 @@ public:
     virtual void attachExecutorPolicy(Plugin::IExecutorPolicyPlugin& policy) = 0;
     virtual const Plugin::IExecutorPolicyPlugin& attachedExecutorPolicy() const = 0;
     [[nodiscard]] MachineView view() const {
-        return MachineView{*this, runtimeContext(), describeIoRegions()};
+        const auto regions = describeIoRegions();
+        return MachineView{*this, runtimeContext(), std::vector<IoRegionDescriptor>(regions.begin(), regions.end())};
     }
     virtual std::optional<uint32_t> currentDigitalInputMask() const {
         return std::nullopt;

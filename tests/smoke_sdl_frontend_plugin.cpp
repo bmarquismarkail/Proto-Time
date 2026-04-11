@@ -45,6 +45,7 @@ int main(int argc, char** argv)
     } catch (const std::runtime_error&) {
         missingLoadThrew = true;
     }
+    (void)missingLoadThrew;
     assert(missingLoadThrew);
 
     machine.pluginManager().initialize(machine.view());
@@ -109,6 +110,8 @@ int main(int argc, char** argv)
     if (initResult && frontend->audioOutputReady()) {
         const auto queueWritesAfterEvent = frontend->stats().audioQueueWrites;
         const auto queuedSamplesAfterEvent = frontend->stats().audioSamplesQueued;
+        (void)queueWritesAfterEvent;
+        (void)queuedSamplesAfterEvent;
         assert(frontend->serviceFrontend());
         assert(frontend->stats().audioQueueWrites == queueWritesAfterEvent);
         assert(frontend->stats().audioSamplesQueued == queuedSamplesAfterEvent);
@@ -124,6 +127,7 @@ int main(int argc, char** argv)
     assert(frontend->serviceFrontend());
 
     const auto& stats = frontend->stats();
+    (void)stats;
     assert(stats.videoEvents >= 1);
     assert(stats.audioEvents >= 1);
     assert(stats.inputEvents >= 1);
@@ -141,13 +145,12 @@ int main(int argc, char** argv)
     assert(frontend->lastAudioPreview().has_value());
     assert(frontend->lastAudioPreview()->sampleCount() == 64u);
     if (initResult && frontend->audioOutputReady()) {
-        assert(stats.audioQueueWrites >= 1);
-        assert(stats.audioSamplesQueued >= frontend->lastAudioPreview()->sampleCount());
-        const auto queueWritesBefore = stats.audioQueueWrites;
-        const auto samplesQueuedBefore = stats.audioSamplesQueued;
-        assert(frontend->serviceFrontend());
-        assert(stats.audioQueueWrites == queueWritesBefore);
-        assert(stats.audioSamplesQueued == samplesQueuedBefore);
+        assert(stats.audioSourceSampleRate == 48000);
+        assert(stats.audioDeviceSampleRate == 48000);
+        assert(stats.audioCallbackChunkSamples == 256u);
+        assert(stats.audioRingBufferCapacitySamples == 2048u);
+        assert(frontend->bufferedAudioSamples() <= stats.audioRingBufferCapacitySamples);
+        assert(stats.audioOverrunDropCount == 0u);
     }
     assert(frontend->lastInputState().has_value());
     assert(frontend->lastInputState()->pressedMask == 0x15u);
@@ -157,6 +160,8 @@ int main(int argc, char** argv)
     assert(frontend->lastFrame()->pixelCount() == 32u * 24u);
     const auto shade1 = 0xFF88C070u;
     const auto shade3 = 0xFF081820u;
+    (void)shade1;
+    (void)shade3;
     assert(frontend->lastFrame()->pixels[0] == shade1);
     assert(frontend->lastFrame()->pixels[1] == shade1);
     assert(frontend->lastFrame()->pixels[7] == shade1);

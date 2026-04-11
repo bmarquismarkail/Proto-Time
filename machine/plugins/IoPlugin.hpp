@@ -177,7 +177,7 @@ struct ParallelStateView {
 struct MachineView {
     const Machine& machine;
     const RuntimeContext& runtime;
-    std::span<const IoRegionDescriptor> ioRegions;
+    std::vector<IoRegionDescriptor> ioRegions;
 
     [[nodiscard]] uint8_t read8(uint16_t address) const {
         return runtime.peek8(address);

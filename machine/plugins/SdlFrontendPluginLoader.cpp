@@ -230,6 +230,11 @@ public:
         return implementation_->audioOutputReady();
     }
 
+    [[nodiscard]] std::size_t bufferedAudioSamples() const noexcept override
+    {
+        return implementation_->bufferedAudioSamples();
+    }
+
     [[nodiscard]] uint32_t queuedAudioBytes() const noexcept override
     {
         return implementation_->queuedAudioBytes();

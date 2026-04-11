@@ -1,6 +1,7 @@
 #include "../SdlFrontendPlugin.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -27,6 +28,25 @@
 
 namespace {
 
+constexpr std::size_t kApuFrameSamples = 256u;
+
+struct AudioTransportCounters {
+    std::atomic<std::size_t> bufferedHighWaterSamples{0};
+    std::atomic<std::size_t> callbackCount{0};
+    std::atomic<std::size_t> samplesDelivered{0};
+    std::atomic<std::size_t> underrunCount{0};
+    std::atomic<std::size_t> silenceSamplesFilled{0};
+    std::atomic<std::size_t> overrunDropCount{0};
+    std::atomic<std::size_t> droppedSamples{0};
+};
+
+struct AudioTransportBuffer {
+    std::vector<int16_t> samples;
+    std::atomic<std::size_t> readIndex{0};
+    std::atomic<std::size_t> writeIndex{0};
+    std::size_t capacity = 0;
+};
+
 class SdlFrontendPluginImpl final : public BMMQ::ISdlFrontendPlugin,
                                     public BMMQ::LoggingPluginSupport {
 public:
@@ -40,6 +60,7 @@ public:
 
     [[nodiscard]] const BMMQ::SdlFrontendStats& stats() const noexcept override
     {
+        syncAudioTransportStats();
         return stats_;
     }
 
@@ -103,6 +124,7 @@ public:
         }
 
         const bool hadFrame = config_.enableVideo && lastFrame_.has_value();
+        const bool hasAudioState = config_.enableAudio && lastAudioState_.has_value();
         const bool hadAudioPreview = config_.enableAudio && lastAudioPreview_.has_value();
         const bool visibilityChanged = windowVisible_ != windowVisibilityRequested_;
 
@@ -111,9 +133,9 @@ public:
             presented = presentLatestFrame();
         }
 
-        const bool queuedAudio = hadAudioPreview && refillAudioQueue();
+        const bool audioActive = hasAudioState || bufferedAudioSamples() != 0u;
         applyWindowVisibilityRequest();
-        return handledEvents != 0 || hadFrame || hadAudioPreview || visibilityChanged || presented || queuedAudio || quitRequested_;
+        return handledEvents != 0 || hadFrame || hasAudioState || hadAudioPreview || visibilityChanged || presented || audioActive || quitRequested_;
     }
 
     void setQueuedDigitalInputMask(uint32_t pressedMask) override
@@ -251,16 +273,16 @@ public:
 #endif
     }
 
+    [[nodiscard]] std::size_t bufferedAudioSamples() const noexcept override
+    {
+        const auto buffered = audioBufferedSamples();
+        syncAudioTransportStats();
+        return buffered;
+    }
+
     [[nodiscard]] uint32_t queuedAudioBytes() const noexcept override
     {
-#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
-        if (audioDevice_ == 0) {
-            return 0;
-        }
-        return SDL_GetQueuedAudioSize(audioDevice_);
-#else
-        return 0;
-#endif
+        return static_cast<uint32_t>(audioBufferedSamples() * sizeof(int16_t));
     }
 
     bool tryInitializeBackend() override
@@ -417,14 +439,14 @@ public:
         }
         ++stats_.audioEvents;
         lastAudioState_ = view.audioState();
-        bool queuedAudio = false;
         if (lastAudioState_.has_value()) {
             lastAudioPreview_ = buildAudioPreview(*lastAudioState_);
             ++stats_.audioPreviewsBuilt;
             ++audioPreviewGeneration_;
-            queuedAudio = refillAudioQueue();
+            appendAudioSamples(*lastAudioState_);
         } else {
             lastAudioPreview_.reset();
+            resetAudioTransportState();
         }
 
         std::string message = std::string("sdl: audio event=") + BMMQ::detail::machineEventTypeName(event.type);
@@ -435,9 +457,7 @@ public:
         if (lastAudioPreview_.has_value()) {
             message += " samples=" + std::to_string(lastAudioPreview_->sampleCount());
         }
-        if (queuedAudio) {
-            message += " queued=" + std::to_string(queuedAudioBytes()) + "B";
-        }
+        message += " buffered=" + std::to_string(bufferedAudioSamples()) + " samples";
         appendLog(std::move(message));
     }
 
@@ -600,6 +620,201 @@ private:
         appendLog("sdl: quit requested");
     }
 
+    [[nodiscard]] std::size_t audioBufferedSamples() const noexcept
+    {
+        const auto capacity = audioTransport_.capacity;
+        if (capacity == 0u) {
+            return 0u;
+        }
+
+        const auto readIndex = audioTransport_.readIndex.load(std::memory_order_acquire);
+        const auto writeIndex = audioTransport_.writeIndex.load(std::memory_order_acquire);
+        if (writeIndex >= readIndex) {
+            return writeIndex - readIndex;
+        }
+        return capacity - (readIndex - writeIndex);
+    }
+
+    void syncAudioTransportStats() const noexcept
+    {
+        stats_.audioSourceSampleRate = sourceAudioSampleRate_;
+        stats_.audioDeviceSampleRate = audioSampleRate_;
+        stats_.audioCallbackChunkSamples = static_cast<std::size_t>(std::max(config_.audioCallbackChunkSamples, 1));
+        stats_.audioRingBufferCapacitySamples = audioTransport_.capacity;
+        stats_.audioBufferedHighWaterSamples = audioCounters_.bufferedHighWaterSamples.load(std::memory_order_relaxed);
+        stats_.audioCallbackCount = audioCounters_.callbackCount.load(std::memory_order_relaxed);
+        stats_.audioSamplesDelivered = audioCounters_.samplesDelivered.load(std::memory_order_relaxed);
+        stats_.audioUnderrunCount = audioCounters_.underrunCount.load(std::memory_order_relaxed);
+        stats_.audioSilenceSamplesFilled = audioCounters_.silenceSamplesFilled.load(std::memory_order_relaxed);
+        stats_.audioOverrunDropCount = audioCounters_.overrunDropCount.load(std::memory_order_relaxed);
+        stats_.audioDroppedSamples = audioCounters_.droppedSamples.load(std::memory_order_relaxed);
+        stats_.lastQueuedAudioBytes = queuedAudioBytes();
+        stats_.peakQueuedAudioBytes = std::max<std::uint32_t>(
+            stats_.peakQueuedAudioBytes,
+            static_cast<std::uint32_t>(stats_.audioBufferedHighWaterSamples * sizeof(int16_t)));
+    }
+
+    void resetAudioTransportCounters() noexcept
+    {
+        audioCounters_.bufferedHighWaterSamples.store(0u, std::memory_order_relaxed);
+        audioCounters_.callbackCount.store(0u, std::memory_order_relaxed);
+        audioCounters_.samplesDelivered.store(0u, std::memory_order_relaxed);
+        audioCounters_.underrunCount.store(0u, std::memory_order_relaxed);
+        audioCounters_.silenceSamplesFilled.store(0u, std::memory_order_relaxed);
+        audioCounters_.overrunDropCount.store(0u, std::memory_order_relaxed);
+        audioCounters_.droppedSamples.store(0u, std::memory_order_relaxed);
+    }
+
+    void resetAudioTransportState() noexcept
+    {
+        audioTransport_.readIndex.store(0u, std::memory_order_release);
+        audioTransport_.writeIndex.store(0u, std::memory_order_release);
+        lastQueuedAudioFrameCounter_ = 0;
+        lastQueuedAudioPreviewGeneration_ = 0;
+        syncAudioTransportStats();
+    }
+
+    void initializeAudioTransport()
+    {
+        const auto requestedCapacity = std::max<std::size_t>(config_.audioRingBufferCapacitySamples, kApuFrameSamples);
+        audioTransport_.samples.assign(requestedCapacity, 0);
+        audioTransport_.capacity = audioTransport_.samples.size();
+        resetAudioTransportCounters();
+        resetAudioTransportState();
+    }
+
+    void noteBufferedHighWater(std::size_t bufferedSamples) noexcept
+    {
+        auto previous = audioCounters_.bufferedHighWaterSamples.load(std::memory_order_relaxed);
+        while (bufferedSamples > previous &&
+               !audioCounters_.bufferedHighWaterSamples.compare_exchange_weak(
+                   previous, bufferedSamples, std::memory_order_relaxed, std::memory_order_relaxed)) {
+        }
+    }
+
+    void pushAudioSample(int16_t sample) noexcept
+    {
+        if (audioTransport_.capacity == 0u) {
+            return;
+        }
+
+        while (true) {
+            auto readIndex = audioTransport_.readIndex.load(std::memory_order_acquire);
+            const auto writeIndex = audioTransport_.writeIndex.load(std::memory_order_relaxed);
+            const auto nextWriteIndex = (writeIndex + 1u) % audioTransport_.capacity;
+            if (nextWriteIndex == readIndex) {
+                const auto nextReadIndex = (readIndex + 1u) % audioTransport_.capacity;
+                if (!audioTransport_.readIndex.compare_exchange_weak(
+                        readIndex, nextReadIndex, std::memory_order_acq_rel, std::memory_order_acquire)) {
+                    continue;
+                }
+                audioCounters_.overrunDropCount.fetch_add(1u, std::memory_order_relaxed);
+                audioCounters_.droppedSamples.fetch_add(1u, std::memory_order_relaxed);
+            }
+
+            audioTransport_.samples[writeIndex] = sample;
+            audioTransport_.writeIndex.store(nextWriteIndex, std::memory_order_release);
+            noteBufferedHighWater(audioBufferedSamples());
+            return;
+        }
+    }
+
+    [[nodiscard]] bool popAudioSample(int16_t& sample) noexcept
+    {
+        if (audioTransport_.capacity == 0u) {
+            return false;
+        }
+
+        while (true) {
+            auto readIndex = audioTransport_.readIndex.load(std::memory_order_relaxed);
+            const auto writeIndex = audioTransport_.writeIndex.load(std::memory_order_acquire);
+            if (readIndex == writeIndex) {
+                return false;
+            }
+
+            const auto nextReadIndex = (readIndex + 1u) % audioTransport_.capacity;
+            sample = audioTransport_.samples[readIndex];
+            if (audioTransport_.readIndex.compare_exchange_weak(
+                    readIndex, nextReadIndex, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+                return true;
+            }
+        }
+    }
+
+    void appendAudioSamples(const BMMQ::AudioStateView& state)
+    {
+        if (!state.hasPcmSamples()) {
+            return;
+        }
+
+        const bool resetRequired =
+            lastQueuedAudioFrameCounter_ == 0u ||
+            state.frameCounter < lastQueuedAudioFrameCounter_;
+        std::size_t desiredSampleCount = 0u;
+        if (resetRequired) {
+            desiredSampleCount = std::min<std::size_t>(state.pcmSamples.size(), kApuFrameSamples);
+        } else if (state.frameCounter > lastQueuedAudioFrameCounter_) {
+            const auto frameDelta = state.frameCounter - lastQueuedAudioFrameCounter_;
+            desiredSampleCount = static_cast<std::size_t>(std::min<uint64_t>(
+                static_cast<uint64_t>(state.pcmSamples.size()),
+                frameDelta * static_cast<uint64_t>(kApuFrameSamples)));
+        }
+
+        if (desiredSampleCount == 0u) {
+            return;
+        }
+
+        if (resetRequired) {
+            resetAudioTransportState();
+        }
+
+        const auto startIndex = state.pcmSamples.size() - desiredSampleCount;
+        for (std::size_t i = startIndex; i < state.pcmSamples.size(); ++i) {
+            pushAudioSample(state.pcmSamples[i]);
+        }
+        lastQueuedAudioFrameCounter_ = state.frameCounter;
+        syncAudioTransportStats();
+    }
+
+#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
+    static void sdlAudioCallback(void* userdata, Uint8* stream, int len)
+    {
+        if (userdata == nullptr || stream == nullptr || len <= 0) {
+            return;
+        }
+
+        static_cast<SdlFrontendPluginImpl*>(userdata)->drainAudioCallback(stream, len);
+    }
+
+    void drainAudioCallback(Uint8* stream, int len) noexcept
+    {
+        auto* out = reinterpret_cast<int16_t*>(stream);
+        const auto requestedSamples = static_cast<std::size_t>(len / static_cast<int>(sizeof(int16_t)));
+
+        audioCounters_.callbackCount.fetch_add(1u, std::memory_order_relaxed);
+        std::size_t delivered = 0u;
+        std::size_t silenceFilled = 0u;
+        for (std::size_t i = 0; i < requestedSamples; ++i) {
+            int16_t sample = 0;
+            if (popAudioSample(sample)) {
+                ++delivered;
+                out[i] = sample;
+            } else {
+                ++silenceFilled;
+                out[i] = 0;
+            }
+        }
+
+        if (silenceFilled != 0u) {
+            audioCounters_.underrunCount.fetch_add(1u, std::memory_order_relaxed);
+            audioCounters_.silenceSamplesFilled.fetch_add(silenceFilled, std::memory_order_relaxed);
+        }
+        if (delivered != 0u) {
+            audioCounters_.samplesDelivered.fetch_add(delivered, std::memory_order_relaxed);
+        }
+    }
+#endif
+
     bool presentLatestFrame()
     {
         ++stats_.renderAttempts;
@@ -693,12 +908,9 @@ private:
     {
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
         if (audioDevice_ != 0) {
-            SDL_ClearQueuedAudio(audioDevice_);
             SDL_CloseAudioDevice(audioDevice_);
             audioDevice_ = 0;
         }
-        lastQueuedAudioFrameCounter_ = 0;
-        lastQueuedAudioPreviewGeneration_ = 0;
         if (texture_ != nullptr) {
             SDL_DestroyTexture(texture_);
             texture_ = nullptr;
@@ -718,6 +930,8 @@ private:
             initializedBackendFlags_ = 0u;
         }
 #endif
+        resetAudioTransportCounters();
+        resetAudioTransportState();
         backendReady_ = false;
     }
 
@@ -963,12 +1177,15 @@ private:
             return true;
         }
 
+        initializeAudioTransport();
+
         SDL_AudioSpec desired{};
-        desired.freq = audioSampleRate_;
+        desired.freq = sourceAudioSampleRate_;
         desired.format = AUDIO_S16SYS;
         desired.channels = 1;
-        desired.samples = 1024;
-        desired.callback = nullptr;
+        desired.samples = static_cast<Uint16>(std::max(config_.audioCallbackChunkSamples, 1));
+        desired.callback = &SdlFrontendPluginImpl::sdlAudioCallback;
+        desired.userdata = this;
 
         SDL_AudioSpec obtained{};
         audioDevice_ = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
@@ -978,90 +1195,19 @@ private:
             return false;
         }
 
-        if (obtained.freq > 0) {
-            audioSampleRate_ = obtained.freq;
+        audioSampleRate_ = obtained.freq > 0 ? obtained.freq : desired.freq;
+        if (audioSampleRate_ != sourceAudioSampleRate_) {
+            lastBackendError_ = "SDL audio device rate mismatch: expected 48000 Hz, got " + std::to_string(audioSampleRate_) + " Hz";
+            appendLog("sdl: " + lastBackendError_);
+            SDL_CloseAudioDevice(audioDevice_);
+            audioDevice_ = 0;
+            resetAudioTransportState();
+            return false;
         }
-        lastQueuedAudioFrameCounter_ = 0;
-        lastQueuedAudioPreviewGeneration_ = 0;
+
+        syncAudioTransportStats();
         SDL_PauseAudioDevice(audioDevice_, 0);
         appendLog("sdl: audio device opened at " + std::to_string(audioSampleRate_) + " Hz");
-        return true;
-#else
-        return false;
-#endif
-    }
-
-    bool refillAudioQueue()
-    {
-#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
-        if (!config_.enableAudio || audioDevice_ == 0 || !lastAudioState_.has_value()) {
-            return false;
-        }
-
-        const auto& state = *lastAudioState_;
-        if (!hasAudibleChannelOneState(state)) {
-            SDL_ClearQueuedAudio(audioDevice_);
-            lastQueuedAudioFrameCounter_ = state.frameCounter;
-            return false;
-        }
-        if (state.frameCounter < lastQueuedAudioFrameCounter_) {
-            lastQueuedAudioFrameCounter_ = 0;
-        }
-
-        constexpr uint32_t kHardQueueMs = 120u;
-        const auto hardQueueBytes = static_cast<uint32_t>((static_cast<uint64_t>(audioSampleRate_) * sizeof(int16_t) * kHardQueueMs) / 1000u);
-        if (SDL_GetQueuedAudioSize(audioDevice_) > hardQueueBytes) {
-            SDL_ClearQueuedAudio(audioDevice_);
-        }
-
-        if (state.hasPcmSamples()) {
-            constexpr std::size_t kApuFrameSamples = 256u;
-            if (state.frameCounter <= lastQueuedAudioFrameCounter_) {
-                return false;
-            }
-
-            const auto frameDelta = state.frameCounter - lastQueuedAudioFrameCounter_;
-            lastQueuedAudioFrameCounter_ = state.frameCounter;
-
-            const auto desiredSampleCount = static_cast<std::size_t>(std::min<uint64_t>(
-                static_cast<uint64_t>(state.pcmSamples.size()),
-                frameDelta * static_cast<uint64_t>(kApuFrameSamples)));
-            if (desiredSampleCount == 0u) {
-                return false;
-            }
-
-            const auto startIndex = state.pcmSamples.size() - desiredSampleCount;
-            const auto* chunkData = state.pcmSamples.data() + static_cast<std::ptrdiff_t>(startIndex);
-            const auto chunkBytes = static_cast<uint32_t>(desiredSampleCount * sizeof(int16_t));
-            if (SDL_QueueAudio(audioDevice_, chunkData, chunkBytes) != 0) {
-                lastBackendError_ = SDL_GetError();
-                appendLog("sdl: audio queue failed: " + lastBackendError_);
-                return false;
-            }
-
-            ++stats_.audioQueueWrites;
-            stats_.audioSamplesQueued += desiredSampleCount;
-            return true;
-        }
-
-        if (!lastAudioPreview_.has_value() || lastAudioPreview_->empty()) {
-            return false;
-        }
-        if (audioPreviewGeneration_ == 0u || lastQueuedAudioPreviewGeneration_ == audioPreviewGeneration_) {
-            return false;
-        }
-
-        const auto previewBytes = static_cast<uint32_t>(lastAudioPreview_->samples.size() * sizeof(int16_t));
-
-        if (SDL_QueueAudio(audioDevice_, lastAudioPreview_->samples.data(), previewBytes) != 0) {
-            lastBackendError_ = SDL_GetError();
-            appendLog("sdl: audio queue failed: " + lastBackendError_);
-            return false;
-        }
-
-        lastQueuedAudioPreviewGeneration_ = audioPreviewGeneration_;
-        ++stats_.audioQueueWrites;
-        stats_.audioSamplesQueued += lastAudioPreview_->samples.size();
         return true;
 #else
         return false;
@@ -1131,7 +1277,7 @@ private:
     }
 
     BMMQ::SdlFrontendConfig config_;
-    BMMQ::SdlFrontendStats stats_;
+    mutable BMMQ::SdlFrontendStats stats_;
     bool backendReady_ = false;
     std::optional<BMMQ::VideoStateView> lastVideoState_;
     std::optional<BMMQ::AudioStateView> lastAudioState_;
@@ -1147,11 +1293,14 @@ private:
     std::string lastRenderSummary_;
     std::string lastBackendError_;
     uint32_t initializedBackendFlags_ = 0;
+    int sourceAudioSampleRate_ = 48000;
     int audioSampleRate_ = 48000;
     double audioPhase_ = 0.0;
     uint64_t audioPreviewGeneration_ = 0;
     uint64_t lastQueuedAudioFrameCounter_ = 0;
     uint64_t lastQueuedAudioPreviewGeneration_ = 0;
+    AudioTransportCounters audioCounters_{};
+    AudioTransportBuffer audioTransport_{};
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;

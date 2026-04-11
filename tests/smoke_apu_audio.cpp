@@ -93,12 +93,17 @@ int main()
         }
     }
 
+    const auto frameCounterAfterWarmup = machine.audioFrameCounter();
+    for (int i = 0; i < 12000; ++i) {
+        machine.step();
+    }
+
     const auto recentSamples = machine.recentAudioSamples();
     assert(!recentSamples.empty());
     assert(hasNonZeroSample(recentSamples));
     assert(hasPositiveAndNegativeSample(recentSamples));
     assert(machine.audioSampleRate() == 48000u);
-    assert(machine.audioFrameCounter() >= 1u);
+    assert(machine.audioFrameCounter() > frameCounterAfterWarmup);
 
     assert(recorder->audioEventCount >= 3);
     assert(recorder->lastAudioState.has_value());

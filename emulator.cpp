@@ -217,13 +217,15 @@ int main(int argc, char** argv)
         std::uint64_t steps = 0;
         const auto cpuClockHz = machine.clockHz();
         using SteadyClock = std::chrono::steady_clock;
-        constexpr auto kFrontendServicePeriod = std::chrono::milliseconds(2);
-        constexpr auto kMaxSleepSlice = std::chrono::milliseconds(1);
+        constexpr auto kFrontendServicePeriod = std::chrono::milliseconds(1);
+        constexpr auto kMaxCatchUpWindow = std::chrono::milliseconds(8);
         const double kMinInstructionCycles = 4.0;
-        const double kMaxCycleBudget = static_cast<double>(cpuClockHz) * 0.050;
+        const double kMaxCycleBudget = std::max(
+            kMinInstructionCycles,
+            static_cast<double>(cpuClockHz) * std::chrono::duration<double>(kMaxCatchUpWindow).count());
 
         auto lastTick = SteadyClock::now();
-        auto nextFrontendService = lastTick;
+        auto nextFrontendService = lastTick + kFrontendServicePeriod;
         double cycleBudget = 0.0;
 
         auto serviceFrontend = [&]() -> bool {
@@ -234,12 +236,32 @@ int main(int argc, char** argv)
             return frontend->quitRequested();
         };
 
+        auto serviceFrontendUntil = [&](SteadyClock::time_point now) -> bool {
+            if (frontend == nullptr || now < nextFrontendService) {
+                return false;
+            }
+            if (now - nextFrontendService > kMaxCatchUpWindow) {
+                nextFrontendService = now;
+            }
+            do {
+                if (serviceFrontend()) {
+                    return true;
+                }
+                nextFrontendService += kFrontendServicePeriod;
+            } while (nextFrontendService <= now);
+            return false;
+        };
+
         while (gStopRequested == 0) {
             if (options.stepLimit.has_value() && steps >= *options.stepLimit) {
                 break;
             }
 
             const auto now = SteadyClock::now();
+            if (serviceFrontendUntil(now)) {
+                break;
+            }
+
             const auto elapsed = std::chrono::duration<double>(now - lastTick).count();
             lastTick = now;
             cycleBudget = std::min(kMaxCycleBudget,
@@ -256,16 +278,12 @@ int main(int argc, char** argv)
                 executedInstruction = true;
 
                 const auto retiredCycles = static_cast<double>(machine.runtimeContext().getLastFeedback().retiredCycles);
-                if (retiredCycles > 0.0) {
-                    cycleBudget = std::max(0.0, cycleBudget - retiredCycles);
-                }
+                const auto chargedCycles = std::max(kMinInstructionCycles, retiredCycles);
+                cycleBudget = std::max(0.0, cycleBudget - chargedCycles);
 
-                if (SteadyClock::now() >= nextFrontendService) {
-                    if (serviceFrontend()) {
-                        gStopRequested = 1;
-                        break;
-                    }
-                    nextFrontendService = SteadyClock::now() + kFrontendServicePeriod;
+                if (serviceFrontendUntil(SteadyClock::now())) {
+                    gStopRequested = 1;
+                    break;
                 }
             }
 
@@ -273,23 +291,21 @@ int main(int argc, char** argv)
                 break;
             }
 
-            if (serviceFrontend()) {
+            const auto idleNow = SteadyClock::now();
+            if (serviceFrontendUntil(idleNow)) {
                 break;
             }
-            nextFrontendService = SteadyClock::now() + kFrontendServicePeriod;
 
             if (!executedInstruction) {
                 const auto cyclesUntilNextStep = std::max(0.0, kMinInstructionCycles - cycleBudget);
                 const auto secondsUntilNextStep = cyclesUntilNextStep / static_cast<double>(cpuClockHz);
-                const auto nextStepDelay =
+                const auto nextStepTime = idleNow +
                     std::chrono::duration_cast<SteadyClock::duration>(std::chrono::duration<double>(secondsUntilNextStep));
-                auto sleepDuration = std::min(kMaxSleepSlice, kFrontendServicePeriod);
-                if (nextStepDelay > SteadyClock::duration::zero()) {
-                    sleepDuration = std::min(sleepDuration,
-                        std::chrono::duration_cast<std::chrono::milliseconds>(nextStepDelay));
-                }
-                if (sleepDuration > std::chrono::milliseconds::zero()) {
-                    std::this_thread::sleep_for(sleepDuration);
+                const auto nextWakeTime = (frontend != nullptr)
+                    ? std::min(nextFrontendService, nextStepTime)
+                    : nextStepTime;
+                if (nextWakeTime > idleNow) {
+                    std::this_thread::sleep_until(nextWakeTime);
                 }
             }
         }
