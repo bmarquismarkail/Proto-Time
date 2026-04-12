@@ -33,7 +33,7 @@ Introduce a machine-level audio service that exposes a shared `AudioEngine` to p
 
 - `Machine::audioService()` returns `AudioService&` and `const AudioService&`.
 - `Machine::setAudioService(std::unique_ptr<AudioService>) -> bool` swaps the service, returning `true` on success and `false` if the swap is disallowed by the contract.
-- `MachineView::audioService()` returns `AudioService&` and `const AudioService&`. The non-const overload uses a documented `const_cast` escape to allow plugin-side resets without changing `MachineView` storage. The intent is to mutate only the audio service, not other machine state.
+- `MachineView::audioService()` returns `AudioService&` and `const AudioService&`. The non-const overload uses a documented `const_cast` escape to allow plugin-side resets without changing `MachineView` storage. The intent is to mutate only the audio service, not other machine state. **Precondition:** this overload is only valid when the underlying `Machine` is non-const; if a `MachineView` is derived from a `const Machine`, only the `const` overload may be used (non-const use is undefined behavior).
 
 ## Ownership and Lifetime
 
