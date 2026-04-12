@@ -108,13 +108,8 @@ int main(int argc, char** argv)
     machine.runtimeContext().write8(0xFF40, 0x93u);
     machine.runtimeContext().write8(0xFF12, 0xF3u);
     if (initResult && frontend->audioOutputReady()) {
-        const auto queueWritesAfterEvent = frontend->stats().audioQueueWrites;
-        const auto queuedSamplesAfterEvent = frontend->stats().audioSamplesQueued;
-        (void)queueWritesAfterEvent;
-        (void)queuedSamplesAfterEvent;
         assert(frontend->serviceFrontend());
-        assert(frontend->stats().audioQueueWrites == queueWritesAfterEvent);
-        assert(frontend->stats().audioSamplesQueued == queuedSamplesAfterEvent);
+        assert(frontend->bufferedAudioSamples() <= frontend->stats().audioRingBufferCapacitySamples);
     }
     const auto pumpedBeforeStep = frontend->pumpBackendEvents();
     (void)pumpedBeforeStep;
@@ -153,6 +148,7 @@ int main(int argc, char** argv)
         assert(stats.audioResampleRatio == 1.0);
         assert(frontend->bufferedAudioSamples() <= stats.audioRingBufferCapacitySamples);
         assert(stats.audioOverrunDropCount == 0u);
+        assert(stats.audioQueueRecoveryClears == 0u);
     }
     assert(frontend->lastInputState().has_value());
     assert(frontend->lastInputState()->pressedMask == 0x15u);

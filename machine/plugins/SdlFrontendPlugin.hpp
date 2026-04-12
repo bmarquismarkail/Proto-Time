@@ -9,7 +9,6 @@
 #include <vector>
 
 #include "../InputTypes.hpp"
-#include "SdlAudioResampler.hpp"
 #include "IoPlugin.hpp"
 
 namespace BMMQ {
