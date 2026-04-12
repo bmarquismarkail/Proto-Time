@@ -1,9 +1,11 @@
 #include "../SdlFrontendPlugin.hpp"
 #include "../AudioEngine.hpp"
+#include "SdlAudioOutput.hpp"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -249,11 +251,7 @@ public:
 
     [[nodiscard]] bool audioOutputReady() const noexcept override
     {
-#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
-        return audioDevice_ != 0;
-#else
-        return false;
-#endif
+        return audioOutput_ != nullptr && audioOutput_->ready();
     }
 
     [[nodiscard]] std::size_t bufferedAudioSamples() const noexcept override
@@ -607,9 +605,13 @@ private:
     void syncAudioTransportStats() const noexcept
     {
         const auto engineStats = audioEngine_.stats();
+        const auto outputDeviceInfo = audioOutput_ != nullptr ? audioOutput_->deviceInfo() : BMMQ::AudioOutputDeviceInfo{};
         stats_.audioSourceSampleRate = audioEngine_.config().sourceSampleRate;
         stats_.audioDeviceSampleRate = audioEngine_.config().deviceSampleRate;
-        stats_.audioCallbackChunkSamples = static_cast<std::size_t>(std::max(config_.audioCallbackChunkSamples, 1));
+        stats_.audioCallbackChunkSamples =
+            outputDeviceInfo.callbackChunkSamples != 0u
+                ? outputDeviceInfo.callbackChunkSamples
+                : static_cast<std::size_t>(std::max(config_.audioCallbackChunkSamples, 1));
         stats_.audioRingBufferCapacitySamples = audioEngine_.bufferCapacitySamples();
         stats_.audioBufferedHighWaterSamples = engineStats.bufferedHighWaterSamples;
         stats_.audioCallbackCount = engineStats.callbackCount;
@@ -628,24 +630,6 @@ private:
             stats_.peakQueuedAudioBytes,
             static_cast<std::uint32_t>(stats_.audioBufferedHighWaterSamples * sizeof(int16_t)));
     }
-
-#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
-    static void sdlAudioCallback(void* userdata, Uint8* stream, int len)
-    {
-        if (userdata == nullptr || stream == nullptr || len <= 0) {
-            return;
-        }
-
-        static_cast<SdlFrontendPluginImpl*>(userdata)->drainAudioCallback(stream, len);
-    }
-
-    void drainAudioCallback(Uint8* stream, int len) noexcept
-    {
-        auto* out = reinterpret_cast<int16_t*>(stream);
-        const auto requestedSamples = static_cast<std::size_t>(len / static_cast<int>(sizeof(int16_t)));
-        audioEngine_.render(std::span<int16_t>(out, requestedSamples));
-    }
-#endif
 
     bool presentLatestFrame()
     {
@@ -739,9 +723,8 @@ private:
     void shutdownBackend() noexcept
     {
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
-        if (audioDevice_ != 0) {
-            SDL_CloseAudioDevice(audioDevice_);
-            audioDevice_ = 0;
+        if (audioOutput_ != nullptr) {
+            audioOutput_->close();
         }
         if (texture_ != nullptr) {
             SDL_DestroyTexture(texture_);
@@ -1005,7 +988,7 @@ private:
     bool ensureAudioDevice()
     {
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
-        if (!config_.enableAudio || audioDevice_ != 0) {
+        if (!config_.enableAudio || audioOutputReady()) {
             return true;
         }
 
@@ -1017,39 +1000,24 @@ private:
             .frameChunkSamples = kApuFrameSamples,
         });
 
-        SDL_AudioSpec desired{};
-        desired.freq = kSourceAudioSampleRate;
-        desired.format = AUDIO_S16SYS;
-        desired.channels = 1;
-        desired.samples = static_cast<Uint16>(std::max(config_.audioCallbackChunkSamples, 1));
-        desired.callback = &SdlFrontendPluginImpl::sdlAudioCallback;
-        desired.userdata = this;
-
-        SDL_AudioSpec obtained{};
-        audioDevice_ = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
-        if (audioDevice_ == 0) {
-            lastBackendError_ = SDL_GetError();
+        if (audioOutput_ == nullptr) {
+            audioOutput_ = std::make_unique<BMMQ::SdlAudioOutputBackend>();
+        }
+        if (!audioOutput_->open(audioEngine_, {
+                .requestedSampleRate = kSourceAudioSampleRate,
+                .callbackChunkSamples = static_cast<std::size_t>(std::max(config_.audioCallbackChunkSamples, 1)),
+                .channels = 1,
+                .testForcedDeviceSampleRate = config_.enableAudioResamplingDiagnostics
+                                                ? config_.testForcedAudioDeviceSampleRate
+                                                : 0,
+            })) {
+            lastBackendError_ = std::string(audioOutput_->lastError());
             appendLog("sdl: audio device open failed: " + lastBackendError_);
             return false;
         }
 
-        int deviceSampleRate = obtained.freq > 0 ? obtained.freq : desired.freq;
-        if (config_.enableAudioResamplingDiagnostics && config_.testForcedAudioDeviceSampleRate > 0) {
-            deviceSampleRate = config_.testForcedAudioDeviceSampleRate;
-        }
-        if (obtained.format != AUDIO_S16SYS || obtained.channels != 1) {
-            lastBackendError_ = "SDL audio device format mismatch";
-            appendLog("sdl: audio device format mismatch");
-            SDL_CloseAudioDevice(audioDevice_);
-            audioDevice_ = 0;
-            audioEngine_.resetStream();
-            return false;
-        }
-        audioEngine_.setDeviceSampleRate(deviceSampleRate);
-
         syncAudioTransportStats();
-        SDL_PauseAudioDevice(audioDevice_, 0);
-        appendLog("sdl: audio device opened at " + std::to_string(deviceSampleRate) + " Hz");
+        appendLog("sdl: audio device opened at " + std::to_string(audioEngine_.config().deviceSampleRate) + " Hz");
         return true;
 #else
         return false;
@@ -1143,11 +1111,11 @@ private:
         .ringBufferCapacitySamples = 2048,
         .frameChunkSamples = kApuFrameSamples,
     }};
+    std::unique_ptr<BMMQ::IAudioOutputBackend> audioOutput_ = std::make_unique<BMMQ::SdlAudioOutputBackend>();
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
     SDL_Texture* texture_ = nullptr;
-    SDL_AudioDeviceID audioDevice_ = 0;
 #endif
     int textureWidth_ = 0;
     int textureHeight_ = 0;
