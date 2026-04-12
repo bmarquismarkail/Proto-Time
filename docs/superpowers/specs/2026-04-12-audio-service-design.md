@@ -4,7 +4,7 @@ Date: 2026-04-12
 
 ## Goal
 
-Introduce a machine-level audio service that exposes a shared `AudioEngine` to plugins and frontends while keeping device I/O in backend-specific code. The service must be swappable at runtime, and plugins must be allowed to reset the engine.
+Introduce a machine-level audio service that exposes a shared `AudioEngine` to plugins and frontends while keeping device I/O in backend-specific code. The service must be swappable during controlled lifecycle windows, and plugins must be allowed to reset the engine.
 
 ## Non-Goals
 
@@ -33,7 +33,7 @@ Introduce a machine-level audio service that exposes a shared `AudioEngine` to p
 
 - `Machine::audioService()` returns `AudioService&` and `const AudioService&`.
 - `Machine::setAudioService(std::unique_ptr<AudioService>) -> bool` swaps the service, returning `true` on success and `false` if the swap is disallowed by the contract.
-- `MachineView::audioService()` returns `AudioService&` and `const AudioService&`.
+- `MachineView::audioService()` returns `AudioService&` and `const AudioService&`. The non-const overload uses a documented `const_cast` escape to allow plugin-side resets without changing `MachineView` storage.
 
 ## Ownership and Lifetime
 
