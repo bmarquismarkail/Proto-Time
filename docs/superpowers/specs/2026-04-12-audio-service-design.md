@@ -32,7 +32,7 @@ Introduce a machine-level audio service that exposes a shared `AudioEngine` to p
 ### Machine / MachineView
 
 - `Machine::audioService()` returns `AudioService&`.
-- `Machine::setAudioService(std::unique_ptr<AudioService>)` swaps the service.
+- `Machine::setAudioService(std::unique_ptr<AudioService>) -> bool` swaps the service, returning `true` on success and `false` if the swap is disallowed by the contract.
 - `MachineView::audioService()` returns `AudioService&`.
 
 ## Ownership and Lifetime
@@ -40,9 +40,9 @@ Introduce a machine-level audio service that exposes a shared `AudioEngine` to p
 - `Machine` owns `std::unique_ptr<AudioService> audioService_`.
 - `Machine` constructs a default `AudioService` in its constructor; `audioService_` is never null.
 - `MachineView` holds a reference to the current `AudioService`.
-- **Swap contract:** `Machine::setAudioService(...)` is only legal when the plugin manager is not initialized (before attach) or after full shutdown. If called outside that window it must return `false` (or throw), so no live `MachineView` can observe a dangling reference.
+- **Swap contract:** `Machine::setAudioService(...)` is only legal when the plugin manager is not initialized (before attach) or after full shutdown. If called outside that window it must return `false`. The caller must also ensure no `MachineView` instances outlive the swap (views are ephemeral and invalidated by a successful swap).
 - Swapping the service updates the `Machine` and is visible through new `MachineView` instances on subsequent plugin calls.
-- Plugins may call `resetStream()` and `resetStats()` at their discretion **only when their backend is not actively pulling audio** (e.g., device closed or paused). These calls are not required to be real-time safe against active callbacks.
+- **Thread-safety:** `AudioEngine::appendRecentPcm(...)` and `AudioEngine::render(...)` are safe to call concurrently from the emulation thread and audio callback. `resetStream()`, `resetStats()`, and `configure(...)` are **not** real-time safe and must only be called when the backend is closed or paused.
 
 ## SDL Frontend Changes
 
@@ -57,6 +57,7 @@ Introduce a machine-level audio service that exposes a shared `AudioEngine` to p
 
 - Update existing SDL smoke tests to operate with the shared engine without changing the SDL plugin ABI.
 - Add `smoke_audio_service`:
+  - Default `AudioService` exists immediately after `Machine` construction (non-null invariant).
   - `MachineView::audioService()` exists and is mutable.
   - Swapping the service before plugin init returns the new instance through `MachineView`.
   - Swapping the service after plugin initialization is rejected (assert `false`/exception/return value, depending on API).
