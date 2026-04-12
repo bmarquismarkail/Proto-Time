@@ -53,14 +53,13 @@ int main()
     {
         BMMQ::SdlAudioResampler resampler(48000, 96000);
         const std::vector<int16_t> input{1200};
-        const auto expectedHeldSample = input.front();
         std::vector<int16_t> output(4, -1);
         const auto stats = resampler.render(input, output);
         (void)stats;
         assert(stats.outputSamplesProduced == 4u);
         assert(stats.silenceSamplesFilled >= 1u);
-        assert(output[0] == expectedHeldSample);
-        assert(output[1] == expectedHeldSample);
+        assert(output[0] == input.front());
+        assert(output[1] == input.front());
     }
 
     {

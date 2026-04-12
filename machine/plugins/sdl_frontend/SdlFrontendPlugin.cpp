@@ -1232,6 +1232,9 @@ private:
         }
 
         audioSampleRate_ = obtained.freq > 0 ? obtained.freq : desired.freq;
+        if (config_.enableAudioResamplingDiagnostics && config_.testForcedAudioDeviceSampleRate > 0) {
+            audioSampleRate_ = config_.testForcedAudioDeviceSampleRate;
+        }
         if (obtained.format != AUDIO_S16SYS || obtained.channels != 1) {
             lastBackendError_ = "SDL audio device format mismatch";
             appendLog("sdl: audio device format mismatch");

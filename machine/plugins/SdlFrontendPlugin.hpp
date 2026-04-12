@@ -21,6 +21,7 @@ struct SdlFrontendConfig {
     int frameHeight = 144;
     int audioPreviewSampleCount = 128;
     int audioCallbackChunkSamples = 256;
+    int testForcedAudioDeviceSampleRate = 0;
     std::size_t audioRingBufferCapacitySamples = 2048;
     bool enableAudioResamplingDiagnostics = false;
     bool enableVideo = true;
