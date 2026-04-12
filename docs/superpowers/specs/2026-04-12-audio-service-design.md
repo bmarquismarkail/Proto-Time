@@ -34,17 +34,19 @@ Introduce a machine-level audio service that exposes a shared `AudioEngine` to p
 - `Machine::audioService()` returns `AudioService&` and `const AudioService&`.
 - `Machine::setAudioService(std::unique_ptr<AudioService>) -> bool` swaps the service, returning `true` on success and `false` if the swap is disallowed by the contract.
 - `MachineView::audioService()` returns `AudioService&` and `const AudioService&`. The non-const overload uses a documented `const_cast` escape to allow plugin-side resets without changing `MachineView` storage. The intent is to mutate only the audio service, not other machine state. **Precondition:** this overload is only valid when the underlying `Machine` is non-const; if a `MachineView` is derived from a `const Machine`, only the `const` overload may be used (non-const use is undefined behavior).
+  - No runtime guard is required; misuse is undefined behavior and must be avoided by callers.
 
 ## Ownership and Lifetime
 
 - `Machine` owns `std::unique_ptr<AudioService> audioService_`.
 - `Machine` constructs a default `AudioService` in its constructor; `audioService_` is never null.
+- Default `AudioService` uses `AudioEngineConfig` defaults (48 kHz source/device, 2048 ring buffer samples, 256 frame chunk samples).
 - `MachineView` does **not** store a new member. It exposes `audioService()` as an inline accessor that reaches `machine.audioService()` to avoid ABI/layout changes.
-- **Swap contract:** `Machine::setAudioService(...)` is only legal when `pluginManager().initialized()` is `false`. If called while the plugin manager is initialized it must return `false`. The caller must also ensure no `MachineView` instances outlive the swap (views are ephemeral and invalidated by a successful swap). The plugin manager gate is the only runtime enforcement; all other safety is caller responsibility.
+- **Swap contract:** `Machine::setAudioService(...)` is only legal when `pluginManager().initialized()` is `false`. If called while the plugin manager is initialized it must return `false`, even if no plugins are loaded. The caller must also ensure no `MachineView` instances outlive the swap (views are ephemeral and invalidated by a successful swap). The plugin manager gate is the only runtime enforcement; all other safety is caller responsibility.
 - **Swap safety:** If a `MachineView` outlives a successful swap, behavior is undefined. Callers must only swap before any `MachineView` is handed out or after all views are known to be destroyed. No runtime checks are required.
 - `Machine::setAudioService(nullptr)` is rejected and returns `false` (service is never null).
 - Swapping the service updates the `Machine` and is visible through new `MachineView` instances on subsequent plugin calls.
-- **Thread-safety:** `AudioEngine::appendRecentPcm(...)` and `AudioEngine::render(...)` are safe to call concurrently from the emulation thread and audio callback. `resetStream()`, `resetStats()`, and `configure(...)` are **not** real-time safe and must only be called when the backend is closed or paused. This is a documented rule; no runtime guard is required.
+- **Thread-safety:** `AudioEngine::appendRecentPcm(...)` and `AudioEngine::render(...)` are safe to call concurrently from the emulation thread and audio callback. `resetStream()`, `resetStats()`, and `configure(...)` are **not** real-time safe and must only be called when the backend is closed or paused. This is a documented rule; no runtime guard is required. These preconditions should be documented on the `AudioService` methods in the header.
 
 ## SDL Frontend Changes
 
@@ -65,6 +67,8 @@ Introduce a machine-level audio service that exposes a shared `AudioEngine` to p
   - Swapping the service after plugin initialization is rejected (`setAudioService` returns `false`).
   - `resetStream()` / `resetStats()` are callable from plugin/test code.
   - Add the executable and test registration in `CMakeLists.txt`.
+  - `setAudioService(nullptr)` returns `false`.
+  - Failed swap leaves the original service intact (validate identity/state).
 
 ## Risks and Mitigations
 
