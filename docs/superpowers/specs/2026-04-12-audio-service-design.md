@@ -27,7 +27,7 @@ Introduce a machine-level audio service that exposes a shared `AudioEngine` to p
 - `class AudioService` that owns `AudioEngine`.
 - `AudioEngine& engine()` and `const AudioEngine& engine() const`.
 - `void resetStream()` and `void resetStats()` pass-throughs.
-- Optional constructor overload taking `AudioEngineConfig` (if needed by future callers).
+- Constructor overload taking `AudioEngineConfig` for callers that want explicit defaults.
 
 ### Machine / MachineView
 
@@ -40,9 +40,9 @@ Introduce a machine-level audio service that exposes a shared `AudioEngine` to p
 - `Machine` owns `std::unique_ptr<AudioService> audioService_`.
 - `Machine` constructs a default `AudioService` in its constructor; `audioService_` is never null.
 - `MachineView` holds a reference to the current `AudioService`.
-- **Swap contract:** `Machine::setAudioService(...)` is only legal when the plugin manager is not initialized (before attach) or after full shutdown. If called outside that window it must return `false`. The caller must also ensure no `MachineView` instances outlive the swap (views are ephemeral and invalidated by a successful swap).
+- **Swap contract:** `Machine::setAudioService(...)` is only legal when `pluginManager().initialized()` is `false`. If called while the plugin manager is initialized it must return `false`. The caller must also ensure no `MachineView` instances outlive the swap (views are ephemeral and invalidated by a successful swap). This is a documented rule; no runtime check is required beyond the plugin manager gate.
 - Swapping the service updates the `Machine` and is visible through new `MachineView` instances on subsequent plugin calls.
-- **Thread-safety:** `AudioEngine::appendRecentPcm(...)` and `AudioEngine::render(...)` are safe to call concurrently from the emulation thread and audio callback. `resetStream()`, `resetStats()`, and `configure(...)` are **not** real-time safe and must only be called when the backend is closed or paused.
+- **Thread-safety:** `AudioEngine::appendRecentPcm(...)` and `AudioEngine::render(...)` are safe to call concurrently from the emulation thread and audio callback. `resetStream()`, `resetStats()`, and `configure(...)` are **not** real-time safe and must only be called when the backend is closed or paused. This is a documented rule; no runtime guard is required.
 
 ## SDL Frontend Changes
 
@@ -60,7 +60,7 @@ Introduce a machine-level audio service that exposes a shared `AudioEngine` to p
   - Default `AudioService` exists immediately after `Machine` construction (non-null invariant).
   - `MachineView::audioService()` exists and is mutable.
   - Swapping the service before plugin init returns the new instance through `MachineView`.
-  - Swapping the service after plugin initialization is rejected (assert `false`/exception/return value, depending on API).
+  - Swapping the service after plugin initialization is rejected (`setAudioService` returns `false`).
   - `resetStream()` / `resetStats()` are callable from plugin/test code.
 
 ## Risks and Mitigations
