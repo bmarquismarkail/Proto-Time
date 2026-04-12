@@ -31,9 +31,9 @@ Introduce a machine-level audio service that exposes a shared `AudioEngine` to p
 
 ### Machine / MachineView
 
-- `Machine::audioService()` returns `AudioService&`.
+- `Machine::audioService()` returns `AudioService&` and `const AudioService&`.
 - `Machine::setAudioService(std::unique_ptr<AudioService>) -> bool` swaps the service, returning `true` on success and `false` if the swap is disallowed by the contract.
-- `MachineView::audioService()` returns `AudioService&`.
+- `MachineView::audioService()` returns `AudioService&` and `const AudioService&`.
 
 ## Ownership and Lifetime
 
@@ -41,6 +41,7 @@ Introduce a machine-level audio service that exposes a shared `AudioEngine` to p
 - `Machine` constructs a default `AudioService` in its constructor; `audioService_` is never null.
 - `MachineView` does **not** store a new member. It exposes `audioService()` as an inline accessor that reaches `machine.audioService()` to avoid ABI/layout changes.
 - **Swap contract:** `Machine::setAudioService(...)` is only legal when `pluginManager().initialized()` is `false`. If called while the plugin manager is initialized it must return `false`. The caller must also ensure no `MachineView` instances outlive the swap (views are ephemeral and invalidated by a successful swap). This is a documented rule; no runtime check is required beyond the plugin manager gate.
+- **Swap safety:** If a `MachineView` outlives a successful swap, behavior is undefined. Callers must only swap before any `MachineView` is handed out or after all views are known to be destroyed. No runtime checks are required.
 - `Machine::setAudioService(nullptr)` is rejected and returns `false` (service is never null).
 - Swapping the service updates the `Machine` and is visible through new `MachineView` instances on subsequent plugin calls.
 - **Thread-safety:** `AudioEngine::appendRecentPcm(...)` and `AudioEngine::render(...)` are safe to call concurrently from the emulation thread and audio callback. `resetStream()`, `resetStats()`, and `configure(...)` are **not** real-time safe and must only be called when the backend is closed or paused. This is a documented rule; no runtime guard is required.
@@ -63,6 +64,7 @@ Introduce a machine-level audio service that exposes a shared `AudioEngine` to p
   - Swapping the service before plugin init returns the new instance through `MachineView`.
   - Swapping the service after plugin initialization is rejected (`setAudioService` returns `false`).
   - `resetStream()` / `resetStats()` are callable from plugin/test code.
+  - Add the executable and test registration in `CMakeLists.txt`.
 
 ## Risks and Mitigations
 
