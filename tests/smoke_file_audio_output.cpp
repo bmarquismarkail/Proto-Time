@@ -60,14 +60,16 @@ int main()
     }
     engine.appendRecentPcm(samples, 1u);
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+    backend.close();
+    assert(!backend.ready());
+
+    engine.appendRecentPcm(samples, 2u);
     std::vector<int16_t> output(256, 123);
     service.renderForOutput(std::span<int16_t>(output.data(), output.size()));
     for ([[maybe_unused]] auto sample : output) {
         assert(sample == 0);
     }
-
-    backend.close();
-    assert(!backend.ready());
     assert(std::filesystem::exists(outputPath));
     assert(std::filesystem::file_size(outputPath) > 0u);
     std::filesystem::remove(outputPath);

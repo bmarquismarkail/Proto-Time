@@ -55,6 +55,11 @@ int main()
     engine.appendRecentPcm(samples, 1u);
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
     assert(engine.stats().outputSamplesProduced > 0u);
+
+    backend.close();
+    assert(!backend.ready());
+
+    engine.appendRecentPcm(samples, 2u);
     std::vector<int16_t> output(256, 123);
     service.renderForOutput(std::span<int16_t>(output.data(), output.size()));
     for (auto sample : output) {
@@ -63,8 +68,5 @@ int main()
             return 1;
         }
     }
-
-    backend.close();
-    assert(!backend.ready());
     return 0;
 }

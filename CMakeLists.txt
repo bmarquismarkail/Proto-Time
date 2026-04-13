@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.10)
 
 project(timeEmulator)
 
+option(BMMQ_ENABLE_TSAN "Enable ThreadSanitizer for race detection builds" OFF)
+
 find_package(SDL2 QUIET)
 
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -14,6 +16,18 @@ set(CMAKE_CXX_EXTENSIONS ON)
 set (CMAKE_CXX_STANDARD_REQUIRED True)
 include_directories(. templ memory cores)
 add_compile_options(-Wall -Wextra )
+
+if (BMMQ_ENABLE_TSAN)
+    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        add_compile_options(-fsanitize=thread -fno-omit-frame-pointer -g)
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=thread")
+        set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=thread")
+        set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} -fsanitize=thread")
+        add_compile_definitions(BMMQ_TSAN_ENABLED=1)
+    else()
+        message(FATAL_ERROR "BMMQ_ENABLE_TSAN=ON requires Clang or GCC")
+    endif()
+endif()
 add_library(time-gameboy-interpreter-core
 	cores/gameboy/decode/gb_decoder.cpp
 	cores/gameboy/decode/gb_interpreter.cpp
