@@ -11,7 +11,7 @@ class AudioEngine;
 
 class DummyAudioOutputBackend final : public IAudioOutputBackend {
 public:
-    DummyAudioOutputBackend() = default;
+    DummyAudioOutputBackend();
     ~DummyAudioOutputBackend() override;
     DummyAudioOutputBackend(const DummyAudioOutputBackend&) = delete;
     DummyAudioOutputBackend& operator=(const DummyAudioOutputBackend&) = delete;

@@ -12,7 +12,7 @@ class AudioEngine;
 
 class FileAudioOutputBackend final : public IAudioOutputBackend {
 public:
-    FileAudioOutputBackend() = default;
+    FileAudioOutputBackend();
     ~FileAudioOutputBackend() override;
     FileAudioOutputBackend(const FileAudioOutputBackend&) = delete;
     FileAudioOutputBackend& operator=(const FileAudioOutputBackend&) = delete;

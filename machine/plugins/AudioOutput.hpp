@@ -8,6 +8,7 @@
 namespace BMMQ {
 
 class AudioEngine;
+class AudioService;
 
 struct AudioOutputOpenConfig {
     int requestedSampleRate = 48000;
@@ -15,6 +16,7 @@ struct AudioOutputOpenConfig {
     int channels = 1;
     int testForcedDeviceSampleRate = 0;
     std::filesystem::path filePath;
+    AudioService* audioService = nullptr;
 };
 
 struct AudioOutputDeviceInfo {

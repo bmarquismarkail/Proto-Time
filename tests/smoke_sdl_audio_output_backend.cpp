@@ -4,7 +4,7 @@
 #include <thread>
 #include <vector>
 
-#include "machine/plugins/AudioEngine.hpp"
+#include "machine/AudioService.hpp"
 #include "machine/plugins/AudioOutput.hpp"
 #include "machine/plugins/sdl_frontend/SdlAudioOutput.hpp"
 
@@ -14,12 +14,8 @@ int main()
     ::setenv("SDL_AUDIODRIVER", "dummy", 1);
 #endif
 
-    BMMQ::AudioEngine engine({
-        .sourceSampleRate = 48000,
-        .deviceSampleRate = 48000,
-        .ringBufferCapacitySamples = 1024,
-        .frameChunkSamples = 256,
-    });
+    BMMQ::AudioService service;
+    auto& engine = service.engine();
     BMMQ::SdlAudioOutputBackend output;
 
     assert(!output.name().empty());
@@ -27,6 +23,8 @@ int main()
         .requestedSampleRate = 48000,
         .callbackChunkSamples = 256,
         .channels = 1,
+        .filePath = {},
+        .audioService = &service,
     }));
     assert(output.ready());
     assert(output.deviceInfo().sampleRate > 0);
@@ -46,17 +44,16 @@ int main()
     output.close();
     assert(!output.ready());
 
-    BMMQ::AudioEngine resampledEngine({
-        .sourceSampleRate = 48000,
-        .deviceSampleRate = 48000,
-        .ringBufferCapacitySamples = 1024,
-        .frameChunkSamples = 256,
-    });
+    BMMQ::AudioService resampledService;
+    auto& resampledEngine = resampledService.engine();
+    (void)resampledEngine;
     assert(output.open(resampledEngine, {
         .requestedSampleRate = 48000,
         .callbackChunkSamples = 256,
         .channels = 1,
         .testForcedDeviceSampleRate = 44100,
+        .filePath = {},
+        .audioService = &resampledService,
     }));
     assert(resampledEngine.config().deviceSampleRate == 44100);
     assert(resampledEngine.stats().resamplingActive);

@@ -1,6 +1,6 @@
 #include "FileAudioOutput.hpp"
 
-#include "../AudioEngine.hpp"
+#include "../../AudioService.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -37,6 +37,10 @@ public:
         lastError_.clear();
         runtimeError_.store(RuntimeError::None, std::memory_order_release);
 
+        if (config.audioService == nullptr) {
+            lastError_ = "Audio service is required";
+            return false;
+        }
         if (config.filePath.empty()) {
             lastError_ = "File path is required";
             return false;
@@ -48,6 +52,7 @@ public:
             return false;
         }
 
+        service_ = config.audioService;
         engine_ = &engine;
         deviceInfo_.sampleRate = config.testForcedDeviceSampleRate > 0
             ? config.testForcedDeviceSampleRate
@@ -74,6 +79,7 @@ public:
             output_.close();
         }
         engine_ = nullptr;
+        service_ = nullptr;
     }
 
     [[nodiscard]] bool ready() const noexcept
@@ -100,7 +106,7 @@ public:
 private:
     void run()
     {
-        if (engine_ == nullptr || !output_.is_open()) {
+        if (service_ == nullptr || !output_.is_open()) {
             return;
         }
         std::vector<int16_t> buffer(deviceInfo_.callbackChunkSamples, 0);
@@ -113,7 +119,7 @@ private:
         }
         while (running_.load(std::memory_order_acquire)) {
             try {
-                engine_->render(buffer);
+                service_->renderForOutput(buffer);
                 output_.write(reinterpret_cast<const char*>(buffer.data()),
                               static_cast<std::streamsize>(buffer.size() * sizeof(int16_t)));
                 if (!output_) {
@@ -134,6 +140,7 @@ private:
     }
 
     AudioEngine* engine_ = nullptr;
+    AudioService* service_ = nullptr;
     AudioOutputDeviceInfo deviceInfo_{};
     std::string lastError_;
     std::atomic<RuntimeError> runtimeError_{RuntimeError::None};
@@ -143,6 +150,7 @@ private:
     std::ofstream output_{};
 };
 
+FileAudioOutputBackend::FileAudioOutputBackend() = default;
 FileAudioOutputBackend::~FileAudioOutputBackend() = default;
 
 std::string_view FileAudioOutputBackend::name() const noexcept

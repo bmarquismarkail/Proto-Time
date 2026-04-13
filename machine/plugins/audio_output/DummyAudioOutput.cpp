@@ -1,6 +1,6 @@
 #include "DummyAudioOutput.hpp"
 
-#include "../AudioEngine.hpp"
+#include "../../AudioService.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -29,6 +29,11 @@ public:
         close();
         lastError_.clear();
 
+        if (config.audioService == nullptr) {
+            lastError_ = "Audio service is required";
+            return false;
+        }
+        service_ = config.audioService;
         engine_ = &engine;
         deviceInfo_.sampleRate = config.testForcedDeviceSampleRate > 0
             ? config.testForcedDeviceSampleRate
@@ -51,6 +56,7 @@ public:
         }
         ready_.store(false, std::memory_order_release);
         engine_ = nullptr;
+        service_ = nullptr;
     }
 
     [[nodiscard]] bool ready() const noexcept
@@ -71,7 +77,7 @@ public:
 private:
     void run()
     {
-        if (engine_ == nullptr) {
+        if (engine_ == nullptr || service_ == nullptr) {
             return;
         }
         std::vector<int16_t> buffer(deviceInfo_.callbackChunkSamples, 0);
@@ -84,7 +90,7 @@ private:
         }
         while (running_.load(std::memory_order_acquire)) {
             try {
-                engine_->render(buffer);
+                service_->renderForOutput(buffer);
                 std::this_thread::sleep_for(sleepDuration);
             } catch (const std::exception&) {
                 running_.store(false, std::memory_order_release);
@@ -97,6 +103,7 @@ private:
     }
 
     AudioEngine* engine_ = nullptr;
+    AudioService* service_ = nullptr;
     AudioOutputDeviceInfo deviceInfo_{};
     std::string lastError_;
     std::atomic<bool> running_{false};
@@ -104,6 +111,7 @@ private:
     std::thread worker_{};
 };
 
+DummyAudioOutputBackend::DummyAudioOutputBackend() = default;
 DummyAudioOutputBackend::~DummyAudioOutputBackend() = default;
 
 std::string_view DummyAudioOutputBackend::name() const noexcept

@@ -3,23 +3,21 @@
 #include <thread>
 #include <vector>
 
-#include "machine/plugins/AudioEngine.hpp"
 #include "machine/plugins/audio_output/DummyAudioOutput.hpp"
+#include "machine/AudioService.hpp"
 
 int main()
 {
-    BMMQ::AudioEngine engine({
-        .sourceSampleRate = 48000,
-        .deviceSampleRate = 48000,
-        .ringBufferCapacitySamples = 1024,
-        .frameChunkSamples = 256,
-    });
+    BMMQ::AudioService service;
+    auto& engine = service.engine();
 
     BMMQ::DummyAudioOutputBackend backend;
     assert(backend.open(engine, {
         .requestedSampleRate = 48000,
         .callbackChunkSamples = 256,
         .channels = 1,
+        .filePath = {},
+        .audioService = &service,
     }));
     assert(backend.ready());
 
@@ -30,6 +28,25 @@ int main()
     engine.appendRecentPcm(samples, 1u);
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
     assert(engine.stats().outputSamplesProduced > 0u);
+
+    class ZeroProcessor final : public BMMQ::IAudioProcessor {
+    public:
+        void process(BMMQ::AudioBufferView input,
+                     std::vector<int16_t>& output) override
+        {
+            output.assign(input.samples.size(), 0);
+        }
+    };
+
+    service.addProcessor(std::make_unique<ZeroProcessor>());
+    std::vector<int16_t> output(256, 123);
+    service.renderForOutput(std::span<int16_t>(output.data(), output.size()));
+    for (auto sample : output) {
+        assert(sample == 0);
+        if (sample != 0) {
+            return 1;
+        }
+    }
 
     backend.close();
     assert(!backend.ready());

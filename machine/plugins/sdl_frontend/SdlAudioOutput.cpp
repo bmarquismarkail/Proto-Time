@@ -1,6 +1,6 @@
 #include "SdlAudioOutput.hpp"
 
-#include "../AudioEngine.hpp"
+#include "../../AudioService.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -39,6 +39,11 @@ public:
         lastError_.clear();
 
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
+        if (config.audioService == nullptr) {
+            lastError_ = "Audio service is required";
+            return false;
+        }
+        service_ = config.audioService;
         engine_ = &engine;
 
         SDL_AudioSpec desired{};
@@ -90,6 +95,7 @@ public:
         }
 #endif
         engine_ = nullptr;
+        service_ = nullptr;
         deviceInfo_ = {};
     }
 
@@ -125,18 +131,19 @@ private:
 
     void drainAudioCallback(Uint8* stream, int len) noexcept
     {
-        if (engine_ == nullptr) {
+        if (engine_ == nullptr || service_ == nullptr) {
             return;
         }
 
         auto* out = reinterpret_cast<int16_t*>(stream);
         const auto requestedSamples = static_cast<std::size_t>(len / static_cast<int>(sizeof(int16_t)));
-        engine_->render(std::span<int16_t>(out, requestedSamples));
+        service_->renderForOutput(std::span<int16_t>(out, requestedSamples));
     }
 
     SDL_AudioDeviceID audioDevice_ = 0;
 #endif
     AudioEngine* engine_ = nullptr;
+    AudioService* service_ = nullptr;
     AudioOutputDeviceInfo deviceInfo_{};
     std::string lastError_;
 };

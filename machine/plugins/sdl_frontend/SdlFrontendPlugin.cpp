@@ -1034,6 +1034,8 @@ private:
                 .testForcedDeviceSampleRate = config_.enableAudioResamplingDiagnostics
                                                 ? config_.testForcedAudioDeviceSampleRate
                                                 : 0,
+                .filePath = {},
+                .audioService = audioService_,
             })) {
             lastBackendError_ = std::string(audioOutput_->lastError());
             appendLog("sdl: audio device open failed: " + lastBackendError_);
