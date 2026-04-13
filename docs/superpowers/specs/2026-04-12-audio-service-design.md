@@ -67,7 +67,52 @@ Semantics and thread-safety for these methods:
 - Keep `IAudioOutputBackend` handling and device open logic in the SDL frontend.
 - Continue populating `SdlFrontendStats` from the shared engine.
 - If the backend is open, SDL should avoid calling `resetStream()`/`resetStats()` from the emulation thread to prevent races with the audio callback.
- - `AudioOutputOpenConfig` includes `filePath` for file-backed output (raw `int16_t` PCM).
+
+### Audio Output Backend Selection and Config Contract
+
+- Current code status (verified): `AudioOutputOpenConfig` currently contains no backend selector, and the SDL frontend currently hardwires `SdlAudioOutputBackend`.
+- Planned contract: backend selection is determined by `AudioOutputOpenConfig::backend` (for example: `"sdl"`, `"file"`, `"dummy"`).
+- SDL frontend behavior: SDL frontend does not currently support file output selection and does not route to `FileAudioOutputBackend`; it opens SDL audio output only. Once `backend` is wired into SDL frontend config plumbing, SDL frontend may route to the selected backend implementation.
+- `AudioOutputOpenConfig::filePath` is required only when `backend == "file"`.
+- For `backend != "file"`, `filePath` is optional and ignored.
+- For `backend == "file"`, empty/omitted `filePath` must reject open with:
+  - code: `AUDIO_OUTPUT_ERR_INVALID_PATH`
+  - message: `"file backend requires a non-empty filePath"`
+
+### File Backend Specification
+
+- Output encoding: raw PCM `int16_t` sample stream.
+- Endianness: little-endian byte order.
+- Frame layout: interleaved frames (`L,R,L,R,...` for stereo; mono writes one sample per frame).
+- Sample rate inheritance:
+  - default file output sample rate inherits from `AudioEngineConfig::deviceSampleRate`.
+  - override is allowed via `AudioOutputOpenConfig::requestedSampleRate` when > 0.
+  - if override is <= 0, backend falls back to inherited engine rate.
+- Channel count inheritance:
+  - default file output channels inherit from `AudioEngineConfig` / engine channel configuration.
+  - override is allowed via `AudioOutputOpenConfig::channels` when > 0.
+  - until multichannel support is implemented in all backends, unsupported channel requests must fail with `AUDIO_OUTPUT_ERR_UNSUPPORTED_CONFIG`.
+- File open mode semantics:
+  - default behavior is overwrite/truncate.
+  - optional append behavior is controlled by a planned `AudioOutputOpenConfig::appendToFile` flag (default `false`).
+
+### File Backend Error Handling Contract
+
+- `AUDIO_OUTPUT_ERR_INVALID_PATH`: invalid/empty path or path cannot be resolved.
+- `AUDIO_OUTPUT_ERR_PERMISSION_DENIED`: OS rejects create/open/write due to permissions.
+- `AUDIO_OUTPUT_ERR_DISK_FULL`: write cannot complete because no space remains.
+- `AUDIO_OUTPUT_ERR_WRITE_FAILED`: partial or failed write for reasons other than permissions/disk full.
+
+On `open(...)` failure:
+
+- backend returns `false`.
+- `lastError()` returns stable human-readable text.
+- backend exposes the error code through a structured status surface (planned API extension), and no worker thread remains running.
+
+During streaming writes:
+
+- write failures transition backend to not-ready.
+- backend records error code/message and stops accepting new writes until reopened.
 
 ## Tests
 
@@ -81,6 +126,11 @@ Semantics and thread-safety for these methods:
   - Add the executable and test registration in `CMakeLists.txt`.
   - `setAudioService(nullptr)` returns `false`.
   - Failed swap leaves the original service intact (validate identity/state).
+- Add/extend file backend smoke coverage:
+  - empty `filePath` for file backend returns `false` with `AUDIO_OUTPUT_ERR_INVALID_PATH`.
+  - non-file backend ignores `filePath`.
+  - invalid path / permission denied / disk-full write cases map to defined error codes.
+  - append mode and overwrite mode semantics are verified.
 
 ## Risks and Mitigations
 
@@ -94,6 +144,8 @@ Semantics and thread-safety for these methods:
   - **Mitigation:** Document ownership rules and cleanup semantics explicitly: ownership is transferred into the call by value, successful swaps replace `Machine`'s owned service, and failed swaps destroy the passed replacement object while leaving `Machine::audioService()` unchanged.
 - **Risk:** Expanded `MachineView` surface.
   - **Mitigation:** Keep the API minimal and focused on `AudioService`.
+- **Risk: File I/O performance and callback jitter.** Synchronous/over-frequent file flushes can cause throughput loss and timing jitter, especially under slow storage or high sample rates.
+  - **Mitigation:** use buffered writes, optional async writer thread, bounded queue with explicit backpressure policy (drop, block, or fail-fast by mode), and telemetry for queue depth/write latency.
 
 ## Follow-ups
 

@@ -2,6 +2,7 @@
 #define BMMQ_AUDIO_OUTPUT_HPP
 
 #include <cstddef>
+#include <filesystem>
 #include <string_view>
 
 namespace BMMQ {
@@ -13,6 +14,7 @@ struct AudioOutputOpenConfig {
     std::size_t callbackChunkSamples = 256;
     int channels = 1;
     int testForcedDeviceSampleRate = 0;
+    std::filesystem::path filePath;
 };
 
 struct AudioOutputDeviceInfo {

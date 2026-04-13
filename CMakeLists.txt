@@ -27,7 +27,15 @@ set(BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE 0)
 add_library(time-sdl-audio-output STATIC
     machine/plugins/sdl_frontend/SdlAudioOutput.cpp
 )
+add_library(time-dummy-audio-output STATIC
+    machine/plugins/audio_output/DummyAudioOutput.cpp
+)
+add_library(time-file-audio-output STATIC
+    machine/plugins/audio_output/FileAudioOutput.cpp
+)
 set_target_properties(time-sdl-audio-output PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set_target_properties(time-dummy-audio-output PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set_target_properties(time-file-audio-output PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(time-sdl-frontend-plugin SHARED
     machine/plugins/sdl_frontend/SdlFrontendPlugin.cpp
 )
@@ -88,6 +96,12 @@ add_test(NAME smoke_audio_service COMMAND time-smoke-audio-service)
 add_executable(time-smoke-sdl-audio-output-backend tests/smoke_sdl_audio_output_backend.cpp)
 target_link_libraries(time-smoke-sdl-audio-output-backend time-gameboy-interpreter-core time-sdl-audio-output)
 add_test(NAME smoke_sdl_audio_output_backend COMMAND time-smoke-sdl-audio-output-backend)
+add_executable(time-smoke-dummy-audio-output tests/smoke_dummy_audio_output.cpp)
+target_link_libraries(time-smoke-dummy-audio-output time-gameboy-interpreter-core time-dummy-audio-output)
+add_test(NAME smoke_dummy_audio_output COMMAND time-smoke-dummy-audio-output)
+add_executable(time-smoke-file-audio-output tests/smoke_file_audio_output.cpp)
+target_link_libraries(time-smoke-file-audio-output time-gameboy-interpreter-core time-file-audio-output)
+add_test(NAME smoke_file_audio_output COMMAND time-smoke-file-audio-output)
 add_executable(time-smoke-sdl-audio-resampling-integration tests/smoke_sdl_audio_resampling_integration.cpp)
 target_link_libraries(time-smoke-sdl-audio-resampling-integration time-gameboy-interpreter-core time-sdl-frontend-loader)
 add_test(NAME smoke_sdl_audio_resampling_integration COMMAND time-smoke-sdl-audio-resampling-integration)
