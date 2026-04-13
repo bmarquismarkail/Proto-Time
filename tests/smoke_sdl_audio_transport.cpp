@@ -108,5 +108,70 @@ int main(int argc, char** argv)
     }
 
     machine.pluginManager().shutdown(machine.view());
+
+    // Torture lifecycle: repeatedly re-attach/re-detach frontend and reopen audio backend.
+    constexpr int kLifecycleCycles = 25;
+    for (int cycle = 0; cycle < kLifecycleCycles; ++cycle) {
+        machine.pluginManager().initialize(machine.view());
+        const bool cycleInitResult = frontend->tryInitializeBackend();
+        if (cycleInitResult && frontend->audioOutputReady()) {
+            const auto startFrameCounter = machine.audioFrameCounter();
+            if (!stepUntilAudioFrames(machine, startFrameCounter + 1u)) {
+                std::cerr << "smoke_sdl_audio_transport: churn cycle frame advance failed at cycle "
+                          << cycle << '\n';
+                machine.pluginManager().shutdown(machine.view());
+                return 1;
+            }
+            assert(frontend->bufferedAudioSamples() <= frontend->stats().audioRingBufferCapacitySamples);
+        }
+        machine.pluginManager().shutdown(machine.view());
+    }
+
+    // Stress tiny callback chunks with forced sample-rate mismatch.
+    BMMQ::SdlFrontendConfig resampleStressConfig;
+    resampleStressConfig.enableVideo = false;
+    resampleStressConfig.enableInput = false;
+    resampleStressConfig.autoInitializeBackend = false;
+    resampleStressConfig.audioPreviewSampleCount = 64;
+    resampleStressConfig.audioCallbackChunkSamples = 32;
+    resampleStressConfig.audioRingBufferCapacitySamples = 512;
+    resampleStressConfig.enableAudioResamplingDiagnostics = true;
+    resampleStressConfig.testForcedAudioDeviceSampleRate = 44100;
+
+    GameBoyMachine resampleStressMachine;
+    resampleStressMachine.loadRom(cartridgeRom);
+    primeAudioRegisters(resampleStressMachine);
+
+    auto resampleStressPlugin = BMMQ::loadSdlFrontendPlugin(
+        BMMQ::defaultSdlFrontendPluginPath(executablePath),
+        resampleStressConfig);
+    auto* resampleStressFrontend = resampleStressPlugin.get();
+    resampleStressMachine.pluginManager().add(std::move(resampleStressPlugin));
+
+    constexpr int kResampleCycles = 12;
+    for (int cycle = 0; cycle < kResampleCycles; ++cycle) {
+        resampleStressMachine.pluginManager().initialize(resampleStressMachine.view());
+        const bool cycleInitResult = resampleStressFrontend->tryInitializeBackend();
+        if (cycleInitResult && resampleStressFrontend->audioOutputReady()) {
+            assert(resampleStressFrontend->stats().audioDeviceSampleRate == 44100);
+            assert(resampleStressFrontend->stats().audioResamplingActive);
+
+            const auto startFrameCounter = resampleStressMachine.audioFrameCounter();
+            if (!stepUntilAudioFrames(resampleStressMachine, startFrameCounter + 1u)) {
+                std::cerr << "smoke_sdl_audio_transport: resample churn frame advance failed at cycle "
+                          << cycle << '\n';
+                resampleStressMachine.pluginManager().shutdown(resampleStressMachine.view());
+                return 1;
+            }
+            assert(resampleStressFrontend->bufferedAudioSamples() <= resampleStressFrontend->stats().audioRingBufferCapacitySamples);
+        }
+        resampleStressMachine.pluginManager().shutdown(resampleStressMachine.view());
+    }
+
+    assert(frontend->stats().attachCount >= static_cast<std::size_t>(kLifecycleCycles + 1));
+    assert(frontend->stats().detachCount >= static_cast<std::size_t>(kLifecycleCycles + 1));
+    assert(resampleStressFrontend->stats().attachCount >= static_cast<std::size_t>(kResampleCycles));
+    assert(resampleStressFrontend->stats().detachCount >= static_cast<std::size_t>(kResampleCycles));
+
     return 0;
 }
