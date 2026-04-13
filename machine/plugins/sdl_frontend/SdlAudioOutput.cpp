@@ -85,6 +85,12 @@ public:
         deviceInfo_.channels = obtained.channels != 0 ? obtained.channels : desired.channels;
 
         engine_->setDeviceSampleRate(deviceInfo_.sampleRate);
+        if (!service_->configureFixedCallbackCapacity(deviceInfo_.callbackChunkSamples)) {
+            lastError_ = "Audio callback capacity configuration failed";
+            lastErrorCode_ = AudioOutputErrorCode::InvalidConfig;
+            close();
+            return false;
+        }
         SDL_PauseAudioDevice(audioDevice_, 0);
         return true;
 #else

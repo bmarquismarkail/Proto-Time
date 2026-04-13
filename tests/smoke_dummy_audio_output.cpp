@@ -1,5 +1,7 @@
 #include <cassert>
 #include <chrono>
+#include <cstddef>
+#include <algorithm>
 #include <thread>
 #include <vector>
 
@@ -10,6 +12,23 @@ int main()
 {
     BMMQ::AudioService service;
     auto& engine = service.engine();
+
+    class ZeroProcessor final : public BMMQ::IAudioProcessor {
+    public:
+        bool process(BMMQ::AudioBufferView input,
+                     std::span<int16_t> output,
+                     std::size_t& producedSamples) noexcept override
+        {
+            if (output.size() < input.samples.size()) {
+                producedSamples = 0;
+                return false;
+            }
+            std::fill_n(output.begin(), static_cast<std::ptrdiff_t>(input.samples.size()), 0);
+            producedSamples = input.samples.size();
+            return true;
+        }
+    };
+    assert(service.addProcessor(std::make_unique<ZeroProcessor>()));
 
     BMMQ::DummyAudioOutputBackend backend;
     assert(backend.open(engine, {
@@ -28,17 +47,6 @@ int main()
     engine.appendRecentPcm(samples, 1u);
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
     assert(engine.stats().outputSamplesProduced > 0u);
-
-    class ZeroProcessor final : public BMMQ::IAudioProcessor {
-    public:
-        void process(BMMQ::AudioBufferView input,
-                     std::vector<int16_t>& output) override
-        {
-            output.assign(input.samples.size(), 0);
-        }
-    };
-
-    service.addProcessor(std::make_unique<ZeroProcessor>());
     std::vector<int16_t> output(256, 123);
     service.renderForOutput(std::span<int16_t>(output.data(), output.size()));
     for (auto sample : output) {

@@ -1,9 +1,32 @@
 #include <cassert>
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
 #include "machine/AudioService.hpp"
+
+namespace {
+
+class PassthroughProcessor final : public BMMQ::IAudioProcessor {
+public:
+    bool process(BMMQ::AudioBufferView input,
+                 std::span<int16_t> output,
+                 std::size_t& producedSamples) noexcept override
+    {
+        if (output.size() < input.samples.size()) {
+            producedSamples = 0;
+            return false;
+        }
+        std::copy_n(input.samples.begin(), static_cast<std::ptrdiff_t>(input.samples.size()), output.begin());
+        producedSamples = input.samples.size();
+        return true;
+    }
+};
+
+} // namespace
 
 int main()
 {
@@ -19,10 +42,12 @@ int main()
 
     auto view = machine.view();
     assert(view.audioService().canPerformReset());
-    view.audioService().resetStats();
-    view.audioService().resetStream();
+    assert(view.audioService().resetStats());
+    assert(view.audioService().resetStream());
     view.audioService().setBackendPausedOrClosed(false);
     assert(!view.audioService().canPerformReset());
+    assert(!view.audioService().addProcessor(std::make_unique<PassthroughProcessor>()));
+    assert(!view.audioService().clearProcessors());
     view.audioService().setBackendPausedOrClosed(true);
     assert(view.audioService().canPerformReset());
 

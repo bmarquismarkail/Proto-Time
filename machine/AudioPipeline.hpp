@@ -1,6 +1,8 @@
 #ifndef BMMQ_AUDIO_PIPELINE_HPP
 #define BMMQ_AUDIO_PIPELINE_HPP
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -16,12 +18,22 @@ struct AudioBufferView {
 class IAudioProcessor {
 public:
     virtual ~IAudioProcessor() = default;
-    virtual void process(AudioBufferView input,
-                         std::vector<int16_t>& output) = 0;
+    // Process `input` into the caller-provided fixed-capacity `output` buffer.
+    // Returns false when the processor cannot produce output within capacity.
+    virtual bool process(AudioBufferView input,
+                         std::span<int16_t> output,
+                         std::size_t& producedSamples) noexcept = 0;
 };
 
 class AudioPipeline {
 public:
+    void configureFixedCapacity(std::size_t maxSamples)
+    {
+        fixedCapacitySamples_ = maxSamples;
+        scratchA_.assign(fixedCapacitySamples_, 0);
+        scratchB_.assign(fixedCapacitySamples_, 0);
+    }
+
     void addProcessor(std::unique_ptr<IAudioProcessor> processor)
     {
         if (processor) {
@@ -32,8 +44,8 @@ public:
     void clearProcessors()
     {
         processors_.clear();
-        scratchA_.clear();
-        scratchB_.clear();
+        std::fill(scratchA_.begin(), scratchA_.end(), 0);
+        std::fill(scratchB_.begin(), scratchB_.end(), 0);
     }
 
     [[nodiscard]] bool empty() const noexcept
@@ -41,29 +53,75 @@ public:
         return processors_.empty();
     }
 
-    // Returned samples view points to caller-owned `output` storage.
-    AudioBufferView process(AudioBufferView input, std::vector<int16_t>& output)
+    [[nodiscard]] bool process(AudioBufferView input,
+                               std::span<int16_t> output,
+                               std::size_t& producedSamples) noexcept
     {
+        producedSamples = 0;
+
         if (processors_.empty()) {
-            output.assign(input.samples.begin(), input.samples.end());
-            return {std::span<const int16_t>(output.data(), output.size()), input.sampleRate};
+            const auto copyCount = std::min(input.samples.size(), output.size());
+            if (copyCount != 0u) {
+                std::copy_n(input.samples.begin(), static_cast<std::ptrdiff_t>(copyCount), output.begin());
+            }
+            producedSamples = copyCount;
+            return true;
+        }
+
+        if (fixedCapacitySamples_ == 0u || output.size() < fixedCapacitySamples_) {
+            return false;
         }
 
         AudioBufferView current = input;
         bool useA = true;
         for (auto& processor : processors_) {
             auto& scratch = useA ? scratchA_ : scratchB_;
-            scratch.reserve(current.samples.size());
-            scratch.clear();
-            processor->process(current, scratch);
-            current = {std::span<const int16_t>(scratch.data(), scratch.size()), current.sampleRate};
+            if (scratch.empty()) {
+                return false;
+            }
+
+            std::size_t stageProduced = 0;
+            if (!processor->process(current, std::span<int16_t>(scratch.data(), scratch.size()), stageProduced)) {
+                return false;
+            }
+            if (stageProduced > scratch.size()) {
+                return false;
+            }
+
+            current = {std::span<const int16_t>(scratch.data(), stageProduced), current.sampleRate};
             useA = !useA;
         }
-        output.assign(current.samples.begin(), current.samples.end());
-        return {std::span<const int16_t>(output.data(), output.size()), current.sampleRate};
+
+        const auto copyCount = std::min(current.samples.size(), output.size());
+        if (copyCount != 0u) {
+            std::copy_n(current.samples.begin(), static_cast<std::ptrdiff_t>(copyCount), output.begin());
+        }
+        producedSamples = copyCount;
+        return true;
+    }
+
+    // Returned samples view points to caller-owned `output` storage.
+    AudioBufferView process(AudioBufferView input, std::vector<int16_t>& output)
+    {
+        const auto boundedSize = fixedCapacitySamples_ != 0u
+            ? std::min(input.samples.size(), fixedCapacitySamples_)
+            : input.samples.size();
+        output.assign(boundedSize, 0);
+
+        std::size_t producedSamples = 0;
+        if (!process(input,
+                     std::span<int16_t>(output.data(), output.size()),
+                     producedSamples)) {
+            output.clear();
+            return {std::span<const int16_t>{}, input.sampleRate};
+        }
+
+        output.resize(producedSamples);
+        return {std::span<const int16_t>(output.data(), output.size()), input.sampleRate};
     }
 
 private:
+    std::size_t fixedCapacitySamples_ = 0;
     std::vector<std::unique_ptr<IAudioProcessor>> processors_{};
     std::vector<int16_t> scratchA_{};
     std::vector<int16_t> scratchB_{};

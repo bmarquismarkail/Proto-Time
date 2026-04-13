@@ -114,6 +114,7 @@ public:
     {
         readIndex_.store(0u, std::memory_order_release);
         writeIndex_.store(0u, std::memory_order_release);
+        pendingReset_.store(false, std::memory_order_release);
         resampler_.reset();
         lastFrameCounter_ = 0u;
     }
@@ -126,9 +127,10 @@ public:
             return;
         }
 
-        const bool resetRequired = lastFrameCounter_ == 0u || frameCounter < lastFrameCounter_;
+        const bool isFirstFrame = (lastFrameCounter_ == 0u);
+        const bool resetRequired = frameCounter < lastFrameCounter_;
         std::size_t desiredSampleCount = 0u;
-        if (resetRequired) {
+        if (isFirstFrame || resetRequired) {
             desiredSampleCount = std::min<std::size_t>(pcm.size(), config_.frameChunkSamples);
         } else if (frameCounter > lastFrameCounter_) {
             const auto frameDelta = frameCounter - lastFrameCounter_;
@@ -142,7 +144,7 @@ public:
         }
 
         if (resetRequired) {
-            resetStream();
+            pendingReset_.store(true, std::memory_order_release);
         }
 
         const auto startIndex = pcm.size() - desiredSampleCount;
@@ -156,6 +158,13 @@ public:
     // Callers must avoid concurrent reset/configure unless AudioService reports reset-safe.
     void render(std::span<int16_t> output) noexcept
     {
+        if (pendingReset_.exchange(false, std::memory_order_acq_rel)) {
+            // Flush buffered source samples at a callback boundary instead of producer-side reset.
+            // This avoids concurrent producer resets of callback-consumed state.
+            resampler_.reset();
+            readIndex_.store(writeIndex_.load(std::memory_order_acquire), std::memory_order_release);
+        }
+
         callbackCount_.fetch_add(1u, std::memory_order_relaxed);
 
         const auto renderStats = resampler_.render(
@@ -221,26 +230,20 @@ private:
             return;
         }
 
-        while (true) {
-            auto readIndex = readIndex_.load(std::memory_order_acquire);
-            const auto writeIndex = writeIndex_.load(std::memory_order_relaxed);
-            const auto nextWriteIndex = (writeIndex + 1u) % capacity;
-            if (nextWriteIndex == readIndex) {
-                const auto nextReadIndex = (readIndex + 1u) % capacity;
-                if (!readIndex_.compare_exchange_weak(
-                        readIndex, nextReadIndex, std::memory_order_acq_rel, std::memory_order_acquire)) {
-                    continue;
-                }
-                overrunDropCount_.fetch_add(1u, std::memory_order_relaxed);
-                droppedSamples_.fetch_add(1u, std::memory_order_relaxed);
-            }
-
-            buffer_[writeIndex] = sample;
-            writeIndex_.store(nextWriteIndex, std::memory_order_release);
-            sourceSamplesPushed_.fetch_add(1u, std::memory_order_relaxed);
-            noteBufferedHighWater(bufferedSamples());
+        const auto readIndex = readIndex_.load(std::memory_order_acquire);
+        const auto writeIndex = writeIndex_.load(std::memory_order_relaxed);
+        const auto nextWriteIndex = (writeIndex + 1u) % capacity;
+        if (nextWriteIndex == readIndex) {
+            // Keep index ownership simple: producer drops on full buffer.
+            overrunDropCount_.fetch_add(1u, std::memory_order_relaxed);
+            droppedSamples_.fetch_add(1u, std::memory_order_relaxed);
             return;
         }
+
+        buffer_[writeIndex] = sample;
+        writeIndex_.store(nextWriteIndex, std::memory_order_release);
+        sourceSamplesPushed_.fetch_add(1u, std::memory_order_relaxed);
+        noteBufferedHighWater(bufferedSamples());
     }
 
     [[nodiscard]] bool peekSample(std::size_t offset, int16_t& sample) const noexcept
@@ -298,6 +301,7 @@ private:
     std::atomic<std::size_t> sourceSamplesPushed_{0};
     std::atomic<std::size_t> sourceSamplesConsumed_{0};
     std::atomic<std::size_t> outputSamplesProduced_{0};
+    std::atomic<bool> pendingReset_{false};
     uint64_t lastFrameCounter_ = 0;
 };
 

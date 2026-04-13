@@ -40,21 +40,32 @@ public:
         }
         service_ = config.audioService;
         engine_ = &engine;
+        service_->setBackendPausedOrClosed(true);
         deviceInfo_.sampleRate = config.testForcedDeviceSampleRate > 0
             ? config.testForcedDeviceSampleRate
             : std::max(config.requestedSampleRate, 1);
         deviceInfo_.callbackChunkSamples = std::max<std::size_t>(config.callbackChunkSamples, 1u);
         deviceInfo_.channels = 1;
         engine_->setDeviceSampleRate(deviceInfo_.sampleRate);
+        if (!service_->configureFixedCallbackCapacity(deviceInfo_.callbackChunkSamples)) {
+            setError(AudioOutputErrorCode::InvalidConfig, "Failed to configure callback buffer capacity");
+            engine_ = nullptr;
+            service_ = nullptr;
+            return false;
+        }
 
         running_.store(true, std::memory_order_release);
         worker_ = std::thread([this]() { run(); });
         ready_.store(true, std::memory_order_release);
+        service_->setBackendPausedOrClosed(false);
         return true;
     }
 
     void close() noexcept
     {
+        if (service_ != nullptr) {
+            service_->setBackendPausedOrClosed(true);
+        }
         running_.store(false, std::memory_order_release);
         if (worker_.joinable()) {
             worker_.join();

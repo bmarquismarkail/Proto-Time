@@ -12,15 +12,21 @@ public:
     explicit GainProcessor(float gain)
         : gain_(gain) {}
 
-    void process(BMMQ::AudioBufferView input,
-                 std::vector<int16_t>& output) override
+    bool process(BMMQ::AudioBufferView input,
+                 std::span<int16_t> output,
+                 std::size_t& producedSamples) noexcept override
     {
-        output.resize(input.samples.size());
+        if (output.size() < input.samples.size()) {
+            producedSamples = 0;
+            return false;
+        }
         for (std::size_t i = 0; i < input.samples.size(); ++i) {
             const auto value = static_cast<float>(input.samples[i]) * gain_;
             const auto clamped = std::max(-32768.0f, std::min(32767.0f, value));
             output[i] = static_cast<int16_t>(clamped);
         }
+        producedSamples = input.samples.size();
+        return true;
     }
 
 private:
@@ -29,27 +35,39 @@ private:
 
 class DoubleLengthProcessor final : public BMMQ::IAudioProcessor {
 public:
-    void process(BMMQ::AudioBufferView input,
-                 std::vector<int16_t>& output) override
+    bool process(BMMQ::AudioBufferView input,
+                 std::span<int16_t> output,
+                 std::size_t& producedSamples) noexcept override
     {
-        output.resize(input.samples.size() * 2);
+        if (output.size() < input.samples.size() * 2u) {
+            producedSamples = 0;
+            return false;
+        }
         for (std::size_t i = 0; i < input.samples.size(); ++i) {
             output[i * 2] = input.samples[i];
             output[i * 2 + 1] = input.samples[i];
         }
+        producedSamples = input.samples.size() * 2u;
+        return true;
     }
 };
 
 class HalfLengthProcessor final : public BMMQ::IAudioProcessor {
 public:
-    void process(BMMQ::AudioBufferView input,
-                 std::vector<int16_t>& output) override
+    bool process(BMMQ::AudioBufferView input,
+                 std::span<int16_t> output,
+                 std::size_t& producedSamples) noexcept override
     {
         const auto outCount = input.samples.size() / 2;
-        output.resize(outCount);
+        if (output.size() < outCount) {
+            producedSamples = 0;
+            return false;
+        }
         for (std::size_t i = 0; i < outCount; ++i) {
             output[i] = input.samples[i * 2];
         }
+        producedSamples = outCount;
+        return true;
     }
 };
 
@@ -58,6 +76,7 @@ public:
 int main()
 {
     BMMQ::AudioPipeline pipeline;
+    pipeline.configureFixedCapacity(4u);
 
     std::vector<int16_t> baseSamples = {100, -100, 200, -200};
     BMMQ::AudioBufferView baseView{std::span<const int16_t>(baseSamples.data(), baseSamples.size()), 48000};
@@ -75,7 +94,7 @@ int main()
     pipeline.clearProcessors();
     pipeline.addProcessor(std::make_unique<DoubleLengthProcessor>());
     const auto doubled = pipeline.process(baseView, processedSamples);
-    assert(doubled.samples.size() == baseSamples.size() * 2);
+    assert(doubled.samples.empty());
 
     pipeline.clearProcessors();
     pipeline.addProcessor(std::make_unique<HalfLengthProcessor>());

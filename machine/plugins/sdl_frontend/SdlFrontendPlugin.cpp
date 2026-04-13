@@ -439,8 +439,8 @@ public:
         } else {
             lastAudioPreview_.reset();
             if (audioService_ != nullptr && audioService_->canPerformReset()) {
-                audioService_->resetStats();
-                audioService_->resetStream();
+                (void)audioService_->resetStats();
+                (void)audioService_->resetStream();
             }
         }
 
@@ -765,8 +765,8 @@ private:
         }
 #endif
         if (audioService_ != nullptr) {
-            audioService_->resetStats();
-            audioService_->resetStream();
+            (void)audioService_->resetStats();
+            (void)audioService_->resetStream();
         }
         backendReady_ = false;
     }
@@ -1020,12 +1020,16 @@ private:
             return false;
         }
         audioService_->setBackendPausedOrClosed(true);
-        audioService_->configureEngine({
+        if (!audioService_->configureEngine({
             .sourceSampleRate = kSourceAudioSampleRate,
             .deviceSampleRate = kSourceAudioSampleRate,
             .ringBufferCapacitySamples = config_.audioRingBufferCapacitySamples,
             .frameChunkSamples = kApuFrameSamples,
-        });
+        })) {
+            lastBackendError_ = "Audio engine configure rejected while backend active";
+            appendLog("sdl: " + lastBackendError_);
+            return false;
+        }
 
         const auto normalizedBackend = normalizeAudioBackend(config_.audioBackend);
         if (audioOutput_ == nullptr || selectedAudioBackend_ != normalizedBackend) {
