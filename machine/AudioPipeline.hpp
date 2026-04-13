@@ -110,7 +110,8 @@ public:
         return true;
     }
 
-    // Returned samples view points to caller-owned `output` storage.
+    // Non-real-time helper for tests/offline processing only. This path resizes
+    // the caller-owned vector and must not be used from the live audio callback.
     AudioBufferView process(AudioBufferView input, std::vector<int16_t>& output)
     {
         const auto boundedSize = fixedCapacitySamples_ != 0u

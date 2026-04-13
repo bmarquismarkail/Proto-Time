@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <iostream>
 #include <memory>
 #include <span>
 
@@ -100,6 +101,33 @@ int main()
     assert(!view.audioService().clearProcessors());
     view.audioService().setBackendPausedOrClosed(true);
     assert(view.audioService().canPerformReset());
+
+    if (!view.audioService().configureFixedCallbackCapacity(4u)) {
+        std::cerr << "audio service did not accept fixed callback capacity reconfiguration" << '\n';
+        return 1;
+    }
+    if (!view.audioService().addProcessor(std::make_unique<PassthroughProcessor>())) {
+        std::cerr << "audio service did not accept passthrough processor for fallback test" << '\n';
+        return 1;
+    }
+    std::vector<int16_t> fallbackSamples = {101, 102, 103, 104, 105, 106};
+    view.audioService().engine().appendRecentPcm(fallbackSamples, 1u);
+    std::vector<int16_t> fallbackOutput(6, 0);
+    view.audioService().renderForOutput(std::span<int16_t>(fallbackOutput.data(), fallbackOutput.size()));
+    if (fallbackOutput[0] != 101 || fallbackOutput[1] != 102 || fallbackOutput[2] != 103
+        || fallbackOutput[3] != 104 || fallbackOutput[4] != 105 || fallbackOutput[5] != 106) {
+        std::cerr << "audio service did not preserve dry output on callback-capacity fallback" << '\n';
+        return 1;
+    }
+    if (view.audioService().engine().stats().pipelineCapacitySkipCount != 1u) {
+        std::cerr << "audio service did not record callback-capacity fallback; count="
+                  << view.audioService().engine().stats().pipelineCapacitySkipCount << '\n';
+        return 1;
+    }
+    if (!view.audioService().clearProcessors()) {
+        std::cerr << "audio service did not clear processors after fallback test" << '\n';
+        return 1;
+    }
 
     assert(!machine.setAudioService(nullptr));
     assert(&machine.audioService() == defaultService);

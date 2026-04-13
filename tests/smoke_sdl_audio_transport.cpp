@@ -73,6 +73,7 @@ int main(int argc, char** argv)
         assert(frontend->stats().audioRingBufferCapacitySamples == 2048u);
         assert(!frontend->stats().audioResamplingActive);
         assert(frontend->stats().audioResampleRatio == 1.0);
+        assert(frontend->stats().audioPipelineCapacitySkipCount == 0u);
 
         if (!stepUntilAudioFrames(machine, 2u)) {
             std::cerr << "smoke_sdl_audio_transport: audio frame counter did not reach 2" << '\n';
@@ -155,6 +156,7 @@ int main(int argc, char** argv)
         if (cycleInitResult && resampleStressFrontend->audioOutputReady()) {
             assert(resampleStressFrontend->stats().audioDeviceSampleRate == 44100);
             assert(resampleStressFrontend->stats().audioResamplingActive);
+            assert(resampleStressFrontend->stats().audioPipelineCapacitySkipCount == 0u);
 
             const auto startFrameCounter = resampleStressMachine.audioFrameCounter();
             if (!stepUntilAudioFrames(resampleStressMachine, startFrameCounter + 1u)) {

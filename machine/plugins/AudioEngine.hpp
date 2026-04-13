@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <thread>
 #include <vector>
 
 #include "SdlAudioResampler.hpp"
@@ -30,6 +31,7 @@ struct AudioEngineStats {
     std::size_t sourceSamplesPushed = 0;
     std::size_t sourceSamplesConsumed = 0;
     std::size_t outputSamplesProduced = 0;
+    std::size_t pipelineCapacitySkipCount = 0;
     bool resamplingActive = false;
     double resampleRatio = 1.0;
 };
@@ -105,6 +107,7 @@ public:
         sourceSamplesPushed_.store(0u, std::memory_order_relaxed);
         sourceSamplesConsumed_.store(0u, std::memory_order_relaxed);
         outputSamplesProduced_.store(0u, std::memory_order_relaxed);
+        pipelineCapacitySkipCount_.store(0u, std::memory_order_relaxed);
     }
 
     // Not real-time safe against concurrent callbacks.
@@ -117,6 +120,7 @@ public:
         pendingReset_.store(false, std::memory_order_release);
         resampler_.reset();
         lastFrameCounter_ = 0u;
+        clearDeferredResetChunk();
     }
 
     // Real-time path producer entrypoint. Remains lock-free and unchanged.
@@ -144,12 +148,17 @@ public:
         }
 
         if (resetRequired) {
+            stageDeferredResetChunk(pcm, desiredSampleCount);
             pendingReset_.store(true, std::memory_order_release);
-        }
-
-        const auto startIndex = pcm.size() - desiredSampleCount;
-        for (std::size_t i = startIndex; i < pcm.size(); ++i) {
-            pushSample(pcm[i]);
+        } else if (pendingReset_.load(std::memory_order_acquire)) {
+            // Keep post-reset audio out of the live ring until the callback has flushed
+            // the old generation. With a single deferred chunk, newest data wins.
+            stageDeferredResetChunk(pcm, desiredSampleCount);
+        } else {
+            const auto startIndex = pcm.size() - desiredSampleCount;
+            for (std::size_t i = startIndex; i < pcm.size(); ++i) {
+                pushSample(pcm[i]);
+            }
         }
         lastFrameCounter_ = frameCounter;
     }
@@ -163,6 +172,7 @@ public:
             // This avoids concurrent producer resets of callback-consumed state.
             resampler_.reset();
             readIndex_.store(writeIndex_.load(std::memory_order_acquire), std::memory_order_release);
+            publishDeferredResetChunk();
         }
 
         callbackCount_.fetch_add(1u, std::memory_order_relaxed);
@@ -202,9 +212,15 @@ public:
         stats.sourceSamplesPushed = sourceSamplesPushed_.load(std::memory_order_relaxed);
         stats.sourceSamplesConsumed = sourceSamplesConsumed_.load(std::memory_order_relaxed);
         stats.outputSamplesProduced = outputSamplesProduced_.load(std::memory_order_relaxed);
+        stats.pipelineCapacitySkipCount = pipelineCapacitySkipCount_.load(std::memory_order_relaxed);
         stats.resamplingActive = config_.deviceSampleRate != config_.sourceSampleRate;
         stats.resampleRatio = resampler_.ratio();
         return stats;
+    }
+
+    void notePipelineCapacitySkip() noexcept
+    {
+        pipelineCapacitySkipCount_.fetch_add(1u, std::memory_order_relaxed);
     }
 
 private:
@@ -212,6 +228,50 @@ private:
     {
         const auto capacity = std::max<std::size_t>(config_.ringBufferCapacitySamples, config_.frameChunkSamples);
         buffer_.assign(capacity, 0);
+        deferredResetChunk_.assign(std::max<std::size_t>(config_.frameChunkSamples, 1u), 0);
+        deferredResetChunkSize_ = 0u;
+    }
+
+    void stageDeferredResetChunk(std::span<const int16_t> pcm, std::size_t desiredSampleCount) noexcept
+    {
+        lockDeferredResetChunk();
+        const auto boundedCount = std::min(desiredSampleCount, deferredResetChunk_.size());
+        deferredResetChunkSize_ = boundedCount;
+        const auto startIndex = pcm.size() - boundedCount;
+        for (std::size_t i = 0; i < boundedCount; ++i) {
+            deferredResetChunk_[i] = pcm[startIndex + i];
+        }
+        unlockDeferredResetChunk();
+    }
+
+    void publishDeferredResetChunk() noexcept
+    {
+        lockDeferredResetChunk();
+        const auto count = deferredResetChunkSize_;
+        for (std::size_t i = 0; i < count; ++i) {
+            pushSample(deferredResetChunk_[i]);
+        }
+        deferredResetChunkSize_ = 0u;
+        unlockDeferredResetChunk();
+    }
+
+    void clearDeferredResetChunk() noexcept
+    {
+        lockDeferredResetChunk();
+        deferredResetChunkSize_ = 0u;
+        unlockDeferredResetChunk();
+    }
+
+    void lockDeferredResetChunk() noexcept
+    {
+        while (deferredResetChunkLock_.test_and_set(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+    }
+
+    void unlockDeferredResetChunk() noexcept
+    {
+        deferredResetChunkLock_.clear(std::memory_order_release);
     }
 
     void noteBufferedHighWater(std::size_t buffered) noexcept
@@ -301,7 +361,11 @@ private:
     std::atomic<std::size_t> sourceSamplesPushed_{0};
     std::atomic<std::size_t> sourceSamplesConsumed_{0};
     std::atomic<std::size_t> outputSamplesProduced_{0};
+    std::atomic<std::size_t> pipelineCapacitySkipCount_{0};
     std::atomic<bool> pendingReset_{false};
+    std::vector<int16_t> deferredResetChunk_{};
+    std::size_t deferredResetChunkSize_ = 0u;
+    std::atomic_flag deferredResetChunkLock_ = ATOMIC_FLAG_INIT;
     uint64_t lastFrameCounter_ = 0;
 };
 

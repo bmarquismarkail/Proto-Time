@@ -67,6 +67,7 @@ struct SdlFrontendStats {
     std::size_t audioSourceSamplesPushed = 0;
     std::size_t audioResampleSourceSamplesConsumed = 0;
     std::size_t audioResampleOutputSamplesProduced = 0;
+    std::size_t audioPipelineCapacitySkipCount = 0;
     std::size_t audioQueueWrites = 0;
     std::size_t audioSamplesQueued = 0;
     std::size_t audioQueueLowWaterHits = 0;

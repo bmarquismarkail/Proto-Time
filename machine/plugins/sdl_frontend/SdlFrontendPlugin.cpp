@@ -641,6 +641,7 @@ private:
         stats_.audioSourceSamplesPushed = engineStats.sourceSamplesPushed;
         stats_.audioResampleSourceSamplesConsumed = engineStats.sourceSamplesConsumed;
         stats_.audioResampleOutputSamplesProduced = engineStats.outputSamplesProduced;
+        stats_.audioPipelineCapacitySkipCount = engineStats.pipelineCapacitySkipCount;
         stats_.lastQueuedAudioBytes = queuedAudioBytes();
         stats_.peakQueuedAudioBytes = std::max<std::uint32_t>(
             stats_.peakQueuedAudioBytes,
