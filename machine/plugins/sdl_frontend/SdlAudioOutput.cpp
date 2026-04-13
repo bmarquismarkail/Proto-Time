@@ -37,10 +37,17 @@ public:
     {
         close();
         lastError_.clear();
+        lastErrorCode_ = AudioOutputErrorCode::None;
 
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
         if (config.audioService == nullptr) {
             lastError_ = "Audio service is required";
+            lastErrorCode_ = AudioOutputErrorCode::InvalidConfig;
+            return false;
+        }
+        if (config.channels != 1) {
+            lastError_ = "Only mono output is supported";
+            lastErrorCode_ = AudioOutputErrorCode::UnsupportedConfig;
             return false;
         }
         service_ = config.audioService;
@@ -49,7 +56,7 @@ public:
         SDL_AudioSpec desired{};
         desired.freq = std::max(config.requestedSampleRate, 1);
         desired.format = AUDIO_S16SYS;
-        desired.channels = static_cast<Uint8>(std::clamp(config.channels, 1, 1));
+        desired.channels = static_cast<Uint8>(config.channels);
         desired.samples = static_cast<Uint16>(std::max<std::size_t>(config.callbackChunkSamples, 1u));
         desired.callback = &Impl::sdlAudioCallback;
         desired.userdata = this;
@@ -58,12 +65,14 @@ public:
         audioDevice_ = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
         if (audioDevice_ == 0) {
             lastError_ = SDL_GetError();
+            lastErrorCode_ = AudioOutputErrorCode::DeviceOpenFailed;
             engine_ = nullptr;
             return false;
         }
 
         if (obtained.format != AUDIO_S16SYS || obtained.channels != 1) {
             lastError_ = "SDL audio device format mismatch";
+            lastErrorCode_ = AudioOutputErrorCode::UnsupportedConfig;
             close();
             return false;
         }
@@ -82,6 +91,7 @@ public:
         (void)engine;
         (void)config;
         lastError_ = "SDL audio backend unavailable";
+        lastErrorCode_ = AudioOutputErrorCode::BackendUnavailable;
         return false;
 #endif
     }
@@ -111,6 +121,11 @@ public:
     [[nodiscard]] std::string_view lastError() const noexcept
     {
         return lastError_;
+    }
+
+    [[nodiscard]] AudioOutputErrorCode lastErrorCode() const noexcept
+    {
+        return lastErrorCode_;
     }
 
     [[nodiscard]] AudioOutputDeviceInfo deviceInfo() const noexcept
@@ -146,13 +161,11 @@ private:
     AudioService* service_ = nullptr;
     AudioOutputDeviceInfo deviceInfo_{};
     std::string lastError_;
+    AudioOutputErrorCode lastErrorCode_ = AudioOutputErrorCode::None;
 };
 
-SdlAudioOutputBackend::~SdlAudioOutputBackend()
-{
-    delete impl_;
-    impl_ = nullptr;
-}
+SdlAudioOutputBackend::SdlAudioOutputBackend() = default;
+SdlAudioOutputBackend::~SdlAudioOutputBackend() = default;
 
 std::string_view SdlAudioOutputBackend::name() const noexcept
 {
@@ -162,7 +175,7 @@ std::string_view SdlAudioOutputBackend::name() const noexcept
 bool SdlAudioOutputBackend::open(AudioEngine& engine, const AudioOutputOpenConfig& config)
 {
     if (impl_ == nullptr) {
-        impl_ = new Impl();
+        impl_ = std::make_unique<Impl>();
     }
     return impl_->open(engine, config);
 }
@@ -182,6 +195,11 @@ bool SdlAudioOutputBackend::ready() const noexcept
 std::string_view SdlAudioOutputBackend::lastError() const noexcept
 {
     return impl_ != nullptr ? impl_->lastError() : std::string_view{};
+}
+
+AudioOutputErrorCode SdlAudioOutputBackend::lastErrorCode() const noexcept
+{
+    return impl_ != nullptr ? impl_->lastErrorCode() : AudioOutputErrorCode::None;
 }
 
 AudioOutputDeviceInfo SdlAudioOutputBackend::deviceInfo() const noexcept

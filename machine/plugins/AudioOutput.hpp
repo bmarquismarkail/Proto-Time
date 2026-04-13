@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <string>
 #include <string_view>
 
 namespace BMMQ {
@@ -10,12 +11,26 @@ namespace BMMQ {
 class AudioEngine;
 class AudioService;
 
+enum class AudioOutputErrorCode {
+    None = 0,
+    InvalidConfig,
+    InvalidPath,
+    PermissionDenied,
+    DiskFull,
+    UnsupportedConfig,
+    WriteFailed,
+    BackendUnavailable,
+    DeviceOpenFailed,
+};
+
 struct AudioOutputOpenConfig {
+    std::string backend = "sdl";
     int requestedSampleRate = 48000;
     std::size_t callbackChunkSamples = 256;
     int channels = 1;
     int testForcedDeviceSampleRate = 0;
     std::filesystem::path filePath;
+    bool appendToFile = false;
     AudioService* audioService = nullptr;
 };
 
@@ -34,6 +49,7 @@ public:
     virtual void close() noexcept = 0;
     [[nodiscard]] virtual bool ready() const noexcept = 0;
     [[nodiscard]] virtual std::string_view lastError() const noexcept = 0;
+    [[nodiscard]] virtual AudioOutputErrorCode lastErrorCode() const noexcept = 0;
     [[nodiscard]] virtual AudioOutputDeviceInfo deviceInfo() const noexcept = 0;
 };
 

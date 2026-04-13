@@ -54,7 +54,7 @@ elseif (SDL2_FOUND)
 endif()
 target_compile_definitions(time-sdl-audio-output PRIVATE BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL=${BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE})
 target_compile_definitions(time-sdl-frontend-plugin PRIVATE BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL=${BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE})
-target_link_libraries(time-sdl-frontend-plugin PRIVATE time-sdl-audio-output)
+target_link_libraries(time-sdl-frontend-plugin PRIVATE time-sdl-audio-output time-dummy-audio-output time-file-audio-output)
 
 enable_testing()
 add_executable(time-smoke-snapshot tests/smoke_snapshot.cpp)

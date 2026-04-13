@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <fstream>
@@ -36,18 +37,35 @@ public:
         close();
         lastError_.clear();
         runtimeError_.store(RuntimeError::None, std::memory_order_release);
+        lastErrorCode_.store(AudioOutputErrorCode::None, std::memory_order_release);
 
         if (config.audioService == nullptr) {
             lastError_ = "Audio service is required";
+            lastErrorCode_.store(AudioOutputErrorCode::InvalidConfig, std::memory_order_release);
             return false;
         }
         if (config.filePath.empty()) {
             lastError_ = "File path is required";
+            lastErrorCode_.store(AudioOutputErrorCode::InvalidPath, std::memory_order_release);
+            return false;
+        }
+        if (config.channels != 1) {
+            lastError_ = "Only mono output is supported";
+            lastErrorCode_.store(AudioOutputErrorCode::UnsupportedConfig, std::memory_order_release);
             return false;
         }
 
-        output_.open(config.filePath, std::ios::binary | std::ios::out | std::ios::trunc);
+        errno = 0;
+        const auto openMode = config.appendToFile
+            ? (std::ios::binary | std::ios::out | std::ios::app)
+            : (std::ios::binary | std::ios::out | std::ios::trunc);
+        output_.open(config.filePath, openMode);
         if (!output_.is_open()) {
+            if (errno == EACCES || errno == EPERM) {
+                lastErrorCode_.store(AudioOutputErrorCode::PermissionDenied, std::memory_order_release);
+            } else {
+                lastErrorCode_.store(AudioOutputErrorCode::InvalidPath, std::memory_order_release);
+            }
             lastError_ = "Failed to open output file";
             return false;
         }
@@ -98,6 +116,11 @@ public:
         return lastError_;
     }
 
+    [[nodiscard]] AudioOutputErrorCode lastErrorCode() const noexcept
+    {
+        return lastErrorCode_.load(std::memory_order_acquire);
+    }
+
     [[nodiscard]] AudioOutputDeviceInfo deviceInfo() const noexcept
     {
         return deviceInfo_;
@@ -123,6 +146,13 @@ private:
                 output_.write(reinterpret_cast<const char*>(buffer.data()),
                               static_cast<std::streamsize>(buffer.size() * sizeof(int16_t)));
                 if (!output_) {
+                    if (errno == ENOSPC) {
+                        lastErrorCode_.store(AudioOutputErrorCode::DiskFull, std::memory_order_release);
+                    } else if (errno == EACCES || errno == EPERM) {
+                        lastErrorCode_.store(AudioOutputErrorCode::PermissionDenied, std::memory_order_release);
+                    } else {
+                        lastErrorCode_.store(AudioOutputErrorCode::WriteFailed, std::memory_order_release);
+                    }
                     runtimeError_.store(RuntimeError::WriteFailed, std::memory_order_release);
                     ready_.store(false, std::memory_order_release);
                     running_.store(false, std::memory_order_release);
@@ -143,6 +173,7 @@ private:
     AudioService* service_ = nullptr;
     AudioOutputDeviceInfo deviceInfo_{};
     std::string lastError_;
+    std::atomic<AudioOutputErrorCode> lastErrorCode_{AudioOutputErrorCode::None};
     std::atomic<RuntimeError> runtimeError_{RuntimeError::None};
     std::atomic<bool> running_{false};
     std::atomic<bool> ready_{false};
@@ -181,6 +212,11 @@ bool FileAudioOutputBackend::ready() const noexcept
 std::string_view FileAudioOutputBackend::lastError() const noexcept
 {
     return impl_ != nullptr ? impl_->lastError() : std::string_view{};
+}
+
+AudioOutputErrorCode FileAudioOutputBackend::lastErrorCode() const noexcept
+{
+    return impl_ != nullptr ? impl_->lastErrorCode() : AudioOutputErrorCode::None;
 }
 
 AudioOutputDeviceInfo FileAudioOutputBackend::deviceInfo() const noexcept

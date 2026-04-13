@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -21,6 +22,9 @@ struct SdlFrontendConfig {
     int audioPreviewSampleCount = 128;
     int audioCallbackChunkSamples = 256;
     int testForcedAudioDeviceSampleRate = 0;
+    std::string audioBackend = "sdl";
+    std::filesystem::path audioOutputFilePath;
+    bool audioFileAppend = false;
     std::size_t audioRingBufferCapacitySamples = 2048;
     bool enableAudioResamplingDiagnostics = false;
     bool enableVideo = true;

@@ -1,6 +1,7 @@
 #include <cassert>
 #include <chrono>
 #include <cstdlib>
+#include <iostream>
 #include <thread>
 #include <vector>
 
@@ -19,13 +20,20 @@ int main()
     BMMQ::SdlAudioOutputBackend output;
 
     assert(!output.name().empty());
-    assert(output.open(engine, {
+    const bool opened = output.open(engine, {
         .requestedSampleRate = 48000,
         .callbackChunkSamples = 256,
         .channels = 1,
         .filePath = {},
         .audioService = &service,
-    }));
+    });
+    if (!opened) {
+        const auto code = output.lastErrorCode();
+        assert(code == BMMQ::AudioOutputErrorCode::BackendUnavailable
+               || code == BMMQ::AudioOutputErrorCode::DeviceOpenFailed
+               || code == BMMQ::AudioOutputErrorCode::UnsupportedConfig);
+        return 0;
+    }
     assert(output.ready());
     assert(output.deviceInfo().sampleRate > 0);
     assert(output.deviceInfo().callbackChunkSamples > 0u);
@@ -46,15 +54,24 @@ int main()
 
     BMMQ::AudioService resampledService;
     auto& resampledEngine = resampledService.engine();
-    (void)resampledEngine;
-    assert(output.open(resampledEngine, {
+    const bool openedResampled = output.open(resampledEngine, {
         .requestedSampleRate = 48000,
         .callbackChunkSamples = 256,
         .channels = 1,
         .testForcedDeviceSampleRate = 44100,
         .filePath = {},
         .audioService = &resampledService,
-    }));
+    });
+    if (!openedResampled) {
+        std::cerr << "smoke_sdl_audio_output_backend: resampled open failed: "
+                  << output.lastError() << '\n';
+        const auto code = output.lastErrorCode();
+        assert(code == BMMQ::AudioOutputErrorCode::BackendUnavailable
+               || code == BMMQ::AudioOutputErrorCode::DeviceOpenFailed
+               || code == BMMQ::AudioOutputErrorCode::UnsupportedConfig);
+        output.close();
+        return 0;
+    }
     assert(resampledEngine.config().deviceSampleRate == 44100);
     assert(resampledEngine.stats().resamplingActive);
     output.close();

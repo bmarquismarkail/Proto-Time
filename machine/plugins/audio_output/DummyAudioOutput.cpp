@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -27,10 +28,14 @@ public:
     [[nodiscard]] bool open(AudioEngine& engine, const AudioOutputOpenConfig& config)
     {
         close();
-        lastError_.clear();
+        clearError();
 
         if (config.audioService == nullptr) {
-            lastError_ = "Audio service is required";
+            setError(AudioOutputErrorCode::InvalidConfig, "Audio service is required");
+            return false;
+        }
+        if (config.channels != 1) {
+            setError(AudioOutputErrorCode::UnsupportedConfig, "Only mono output is supported");
             return false;
         }
         service_ = config.audioService;
@@ -66,7 +71,16 @@ public:
 
     [[nodiscard]] std::string_view lastError() const noexcept
     {
-        return lastError_;
+        std::lock_guard<std::mutex> lock(errorMutex_);
+        thread_local std::shared_ptr<const std::string> threadLocalLastError;
+        threadLocalLastError = lastError_;
+        return threadLocalLastError != nullptr ? std::string_view(*threadLocalLastError) : std::string_view{};
+    }
+
+    [[nodiscard]] AudioOutputErrorCode lastErrorCode() const noexcept
+    {
+        std::lock_guard<std::mutex> lock(errorMutex_);
+        return lastErrorCode_;
     }
 
     [[nodiscard]] AudioOutputDeviceInfo deviceInfo() const noexcept
@@ -75,6 +89,26 @@ public:
     }
 
 private:
+    void clearError() noexcept
+    {
+        std::lock_guard<std::mutex> lock(errorMutex_);
+        lastError_ = emptyErrorMessage();
+        lastErrorCode_ = AudioOutputErrorCode::None;
+    }
+
+    void setError(AudioOutputErrorCode code, std::string_view message)
+    {
+        std::lock_guard<std::mutex> lock(errorMutex_);
+        lastError_ = std::make_shared<const std::string>(message);
+        lastErrorCode_ = code;
+    }
+
+    [[nodiscard]] static const std::shared_ptr<const std::string>& emptyErrorMessage() noexcept
+    {
+        static const auto empty = std::make_shared<const std::string>();
+        return empty;
+    }
+
     void run()
     {
         if (engine_ == nullptr || service_ == nullptr) {
@@ -105,7 +139,9 @@ private:
     AudioEngine* engine_ = nullptr;
     AudioService* service_ = nullptr;
     AudioOutputDeviceInfo deviceInfo_{};
-    std::string lastError_;
+    mutable std::mutex errorMutex_;
+    std::shared_ptr<const std::string> lastError_{emptyErrorMessage()};
+    AudioOutputErrorCode lastErrorCode_{AudioOutputErrorCode::None};
     std::atomic<bool> running_{false};
     std::atomic<bool> ready_{false};
     std::thread worker_{};
@@ -142,6 +178,11 @@ bool DummyAudioOutputBackend::ready() const noexcept
 std::string_view DummyAudioOutputBackend::lastError() const noexcept
 {
     return impl_ != nullptr ? impl_->lastError() : std::string_view{};
+}
+
+AudioOutputErrorCode DummyAudioOutputBackend::lastErrorCode() const noexcept
+{
+    return impl_ != nullptr ? impl_->lastErrorCode() : AudioOutputErrorCode::None;
 }
 
 AudioOutputDeviceInfo DummyAudioOutputBackend::deviceInfo() const noexcept

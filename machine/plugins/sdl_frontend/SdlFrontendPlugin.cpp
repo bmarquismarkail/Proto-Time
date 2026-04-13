@@ -1,10 +1,13 @@
 #include "../SdlFrontendPlugin.hpp"
 #include "../../AudioService.hpp"
+#include "../audio_output/DummyAudioOutput.hpp"
+#include "../audio_output/FileAudioOutput.hpp"
 #include "SdlAudioOutput.hpp"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cctype>
 #include <memory>
 #include <optional>
 #include <span>
@@ -1024,17 +1027,33 @@ private:
             .frameChunkSamples = kApuFrameSamples,
         });
 
-        if (audioOutput_ == nullptr) {
-            audioOutput_ = std::make_unique<BMMQ::SdlAudioOutputBackend>();
+        const auto normalizedBackend = normalizeAudioBackend(config_.audioBackend);
+        if (audioOutput_ == nullptr || selectedAudioBackend_ != normalizedBackend) {
+            if (audioOutput_ != nullptr) {
+                audioOutput_->close();
+            }
+            auto replacement = makeAudioOutputBackend(normalizedBackend);
+            audioOutput_ = std::move(replacement);
+            if (audioOutput_ != nullptr) {
+                selectedAudioBackend_ = normalizedBackend;
+            }
         }
+        if (audioOutput_ == nullptr) {
+            lastBackendError_ = "Unsupported audio backend '" + config_.audioBackend + "'";
+            appendLog("sdl: " + lastBackendError_);
+            return false;
+        }
+
         if (!audioOutput_->open(audioService_->engine(), {
+                .backend = selectedAudioBackend_,
                 .requestedSampleRate = kSourceAudioSampleRate,
                 .callbackChunkSamples = static_cast<std::size_t>(std::max(config_.audioCallbackChunkSamples, 1)),
                 .channels = 1,
                 .testForcedDeviceSampleRate = config_.enableAudioResamplingDiagnostics
                                                 ? config_.testForcedAudioDeviceSampleRate
                                                 : 0,
-                .filePath = {},
+                .filePath = config_.audioOutputFilePath,
+                .appendToFile = config_.audioFileAppend,
                 .audioService = audioService_,
             })) {
             lastBackendError_ = std::string(audioOutput_->lastError());
@@ -1050,6 +1069,31 @@ private:
 #else
         return false;
 #endif
+    }
+
+    [[nodiscard]] static std::string normalizeAudioBackend(std::string backend)
+    {
+        if (backend.empty()) {
+            return "sdl";
+        }
+        std::transform(backend.begin(), backend.end(), backend.begin(), [](unsigned char ch) {
+            return static_cast<char>(std::tolower(ch));
+        });
+        return backend;
+    }
+
+    [[nodiscard]] static std::unique_ptr<BMMQ::IAudioOutputBackend> makeAudioOutputBackend(const std::string& backend)
+    {
+        if (backend == "sdl") {
+            return std::make_unique<BMMQ::SdlAudioOutputBackend>();
+        }
+        if (backend == "file") {
+            return std::make_unique<BMMQ::FileAudioOutputBackend>();
+        }
+        if (backend == "dummy") {
+            return std::make_unique<BMMQ::DummyAudioOutputBackend>();
+        }
+        return nullptr;
     }
 
     [[nodiscard]] BMMQ::SdlAudioPreviewBuffer buildAudioPreview(const BMMQ::AudioStateView& state)
@@ -1136,6 +1180,7 @@ private:
     uint64_t audioPreviewGeneration_ = 0;
     BMMQ::AudioService* audioService_ = nullptr;
     std::unique_ptr<BMMQ::IAudioOutputBackend> audioOutput_ = std::make_unique<BMMQ::SdlAudioOutputBackend>();
+    std::string selectedAudioBackend_ = "sdl";
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;

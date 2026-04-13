@@ -46,7 +46,7 @@ int main()
     service.addProcessor(std::make_unique<ZeroProcessor>());
     std::vector<int16_t> output(256, 123);
     service.renderForOutput(std::span<int16_t>(output.data(), output.size()));
-    for (auto [[maybe_unused]] sample : output) {
+    for ([[maybe_unused]] auto sample : output) {
         assert(sample == 0);
     }
 

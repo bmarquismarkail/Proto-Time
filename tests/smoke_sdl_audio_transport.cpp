@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <iostream>
 #include <thread>
 #include <vector>
 
@@ -23,15 +24,15 @@ void primeAudioRegisters(GameBoyMachine& machine)
     machine.runtimeContext().write8(0xFF14, 0x87u);
 }
 
-void stepUntilAudioFrames(GameBoyMachine& machine, uint64_t targetFrameCounter)
+bool stepUntilAudioFrames(GameBoyMachine& machine, uint64_t targetFrameCounter)
 {
     for (int i = 0; i < 60000; ++i) {
         machine.step();
         if (machine.audioFrameCounter() >= targetFrameCounter) {
-            return;
+            return true;
         }
     }
-    assert(false && "audio frame counter did not reach target");
+    return false;
 }
 
 } // namespace
@@ -73,7 +74,11 @@ int main(int argc, char** argv)
         assert(!frontend->stats().audioResamplingActive);
         assert(frontend->stats().audioResampleRatio == 1.0);
 
-        stepUntilAudioFrames(machine, 2u);
+        if (!stepUntilAudioFrames(machine, 2u)) {
+            std::cerr << "smoke_sdl_audio_transport: audio frame counter did not reach 2" << '\n';
+            machine.pluginManager().shutdown(machine.view());
+            return 1;
+        }
         assert(frontend->stats().audioBufferedHighWaterSamples >= 256u);
         assert(frontend->bufferedAudioSamples() > 0u);
 
@@ -90,7 +95,11 @@ int main(int argc, char** argv)
         assert(frontend->stats().audioUnderrunCount >= 1u);
         assert(frontend->stats().audioSilenceSamplesFilled >= 1u);
 
-        stepUntilAudioFrames(machine, 20u);
+        if (!stepUntilAudioFrames(machine, 20u)) {
+            std::cerr << "smoke_sdl_audio_transport: audio frame counter did not reach 20" << '\n';
+            machine.pluginManager().shutdown(machine.view());
+            return 1;
+        }
         assert(frontend->bufferedAudioSamples() <= frontend->stats().audioRingBufferCapacitySamples);
         assert(frontend->stats().audioOverrunDropCount >= 1u);
         assert(frontend->stats().audioDroppedSamples >= 1u);
