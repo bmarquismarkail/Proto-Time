@@ -1,5 +1,5 @@
 #include "../SdlFrontendPlugin.hpp"
-#include "../AudioEngine.hpp"
+#include "../../AudioService.hpp"
 #include "SdlAudioOutput.hpp"
 
 #include <algorithm>
@@ -118,7 +118,7 @@ public:
             presented = presentLatestFrame();
         }
 
-        const bool audioActive = hasAudioState || audioEngine_.bufferedSamples() != 0u;
+        const bool audioActive = hasAudioState || (audioService_ != nullptr && audioService_->engine().bufferedSamples() != 0u);
         applyWindowVisibilityRequest();
         return handledEvents != 0 || hadFrame || hasAudioState || hadAudioPreview || visibilityChanged || presented || audioActive || quitRequested_;
     }
@@ -256,14 +256,17 @@ public:
 
     [[nodiscard]] std::size_t bufferedAudioSamples() const noexcept override
     {
-        const auto buffered = audioEngine_.bufferedSamples();
+        const auto buffered = audioService_ != nullptr ? audioService_->engine().bufferedSamples() : 0u;
         syncAudioTransportStats();
         return buffered;
     }
 
     [[nodiscard]] uint32_t queuedAudioBytes() const noexcept override
     {
-        return static_cast<uint32_t>(audioEngine_.queuedBytes());
+        if (audioService_ == nullptr) {
+            return 0u;
+        }
+        return static_cast<uint32_t>(audioService_->engine().queuedBytes());
     }
 
     bool tryInitializeBackend() override
@@ -350,9 +353,11 @@ public:
 #endif
     }
 
-    void onAttach(const BMMQ::MachineView&) override
+    void onAttach(const BMMQ::MachineView& view) override
     {
         ++stats_.attachCount;
+        audioService_ = &const_cast<BMMQ::MachineView&>(view).audioService();
+        audioService_->setBackendPausedOrClosed(true);
         appendLog("sdl: attached");
         if (config_.autoInitializeBackend) {
             tryInitializeBackend();
@@ -363,6 +368,7 @@ public:
     {
         ++stats_.detachCount;
         shutdownBackend();
+        audioService_ = nullptr;
         windowVisible_ = false;
         appendLog("sdl: detached");
     }
@@ -424,11 +430,15 @@ public:
             lastAudioPreview_ = buildAudioPreview(*lastAudioState_);
             ++stats_.audioPreviewsBuilt;
             ++audioPreviewGeneration_;
-            audioEngine_.appendRecentPcm(lastAudioState_->pcmSamples, lastAudioState_->frameCounter);
+            if (audioService_ != nullptr) {
+                audioService_->engine().appendRecentPcm(lastAudioState_->pcmSamples, lastAudioState_->frameCounter);
+            }
         } else {
             lastAudioPreview_.reset();
-            audioEngine_.resetStats();
-            audioEngine_.resetStream();
+            if (!audioOutputReady() && audioService_ != nullptr) {
+                audioService_->resetStats();
+                audioService_->resetStream();
+            }
         }
 
         std::string message = std::string("sdl: audio event=") + BMMQ::detail::machineEventTypeName(event.type);
@@ -439,7 +449,7 @@ public:
         if (lastAudioPreview_.has_value()) {
             message += " samples=" + std::to_string(lastAudioPreview_->sampleCount());
         }
-        message += " buffered=" + std::to_string(audioEngine_.bufferedSamples()) + " samples";
+        message += " buffered=" + std::to_string(bufferedAudioSamples()) + " samples";
         appendLog(std::move(message));
     }
 
@@ -604,15 +614,18 @@ private:
 
     void syncAudioTransportStats() const noexcept
     {
-        const auto engineStats = audioEngine_.stats();
+        if (audioService_ == nullptr) {
+            return;
+        }
+        const auto engineStats = audioService_->engine().stats();
         const auto outputDeviceInfo = audioOutput_ != nullptr ? audioOutput_->deviceInfo() : BMMQ::AudioOutputDeviceInfo{};
-        stats_.audioSourceSampleRate = audioEngine_.config().sourceSampleRate;
-        stats_.audioDeviceSampleRate = audioEngine_.config().deviceSampleRate;
+        stats_.audioSourceSampleRate = audioService_->engine().config().sourceSampleRate;
+        stats_.audioDeviceSampleRate = audioService_->engine().config().deviceSampleRate;
         stats_.audioCallbackChunkSamples =
             outputDeviceInfo.callbackChunkSamples != 0u
                 ? outputDeviceInfo.callbackChunkSamples
                 : static_cast<std::size_t>(std::max(config_.audioCallbackChunkSamples, 1));
-        stats_.audioRingBufferCapacitySamples = audioEngine_.bufferCapacitySamples();
+        stats_.audioRingBufferCapacitySamples = audioService_->engine().bufferCapacitySamples();
         stats_.audioBufferedHighWaterSamples = engineStats.bufferedHighWaterSamples;
         stats_.audioCallbackCount = engineStats.callbackCount;
         stats_.audioSamplesDelivered = engineStats.samplesDelivered;
@@ -722,6 +735,9 @@ private:
 
     void shutdownBackend() noexcept
     {
+        if (audioService_ != nullptr) {
+            audioService_->setBackendPausedOrClosed(true);
+        }
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
         if (audioOutput_ != nullptr) {
             audioOutput_->close();
@@ -745,8 +761,10 @@ private:
             initializedBackendFlags_ = 0u;
         }
 #endif
-        audioEngine_.resetStats();
-        audioEngine_.resetStream();
+        if (audioService_ != nullptr) {
+            audioService_->resetStats();
+            audioService_->resetStream();
+        }
         backendReady_ = false;
     }
 
@@ -993,7 +1011,13 @@ private:
         }
 
         constexpr int kSourceAudioSampleRate = 48000;
-        audioEngine_.configure({
+        if (audioService_ == nullptr) {
+            lastBackendError_ = "Audio service unavailable";
+            appendLog("sdl: audio service unavailable");
+            return false;
+        }
+        audioService_->setBackendPausedOrClosed(true);
+        audioService_->configureEngine({
             .sourceSampleRate = kSourceAudioSampleRate,
             .deviceSampleRate = kSourceAudioSampleRate,
             .ringBufferCapacitySamples = config_.audioRingBufferCapacitySamples,
@@ -1003,7 +1027,7 @@ private:
         if (audioOutput_ == nullptr) {
             audioOutput_ = std::make_unique<BMMQ::SdlAudioOutputBackend>();
         }
-        if (!audioOutput_->open(audioEngine_, {
+        if (!audioOutput_->open(audioService_->engine(), {
                 .requestedSampleRate = kSourceAudioSampleRate,
                 .callbackChunkSamples = static_cast<std::size_t>(std::max(config_.audioCallbackChunkSamples, 1)),
                 .channels = 1,
@@ -1016,8 +1040,10 @@ private:
             return false;
         }
 
+        audioService_->setBackendPausedOrClosed(false);
+
         syncAudioTransportStats();
-        appendLog("sdl: audio device opened at " + std::to_string(audioEngine_.config().deviceSampleRate) + " Hz");
+        appendLog("sdl: audio device opened at " + std::to_string(audioService_->engine().config().deviceSampleRate) + " Hz");
         return true;
 #else
         return false;
@@ -1027,7 +1053,8 @@ private:
     [[nodiscard]] BMMQ::SdlAudioPreviewBuffer buildAudioPreview(const BMMQ::AudioStateView& state)
     {
         BMMQ::SdlAudioPreviewBuffer preview;
-        preview.sampleRate = state.sampleRate != 0u ? static_cast<int>(state.sampleRate) : audioEngine_.config().deviceSampleRate;
+        const int defaultSampleRate = audioService_ != nullptr ? audioService_->engine().config().deviceSampleRate : 48000;
+        preview.sampleRate = state.sampleRate != 0u ? static_cast<int>(state.sampleRate) : defaultSampleRate;
         const auto sampleCount = std::max(config_.audioPreviewSampleCount, 8);
         preview.samples.resize(static_cast<std::size_t>(sampleCount), 0);
 
@@ -1105,12 +1132,7 @@ private:
     uint32_t initializedBackendFlags_ = 0;
     double audioPhase_ = 0.0;
     uint64_t audioPreviewGeneration_ = 0;
-    BMMQ::AudioEngine audioEngine_{{
-        .sourceSampleRate = 48000,
-        .deviceSampleRate = 48000,
-        .ringBufferCapacitySamples = 2048,
-        .frameChunkSamples = kApuFrameSamples,
-    }};
+    BMMQ::AudioService* audioService_ = nullptr;
     std::unique_ptr<BMMQ::IAudioOutputBackend> audioOutput_ = std::make_unique<BMMQ::SdlAudioOutputBackend>();
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
     SDL_Window* window_ = nullptr;

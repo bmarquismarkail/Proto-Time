@@ -26,15 +26,25 @@ Introduce a machine-level audio service that exposes a shared `AudioEngine` to p
 
 - `class AudioService` that owns `AudioEngine`.
 - `AudioEngine& engine()` and `const AudioEngine& engine() const`.
-- `void resetStream()` and `void resetStats()` pass-throughs.
+- `void resetStream()` and `void resetStats()` non-real-time reset helpers.
+- `void configureEngine(const AudioEngineConfig&)` non-real-time reconfiguration helper.
+- `bool canPerformReset() const noexcept` safe-query method for callers to check whether reset/configure is currently allowed relative to callback activity.
+- `void setBackendPausedOrClosed(bool) noexcept` backend lifecycle hook used by frontend/backend code to publish whether callback execution is considered active.
 - Constructor overload taking `AudioEngineConfig` for callers that want explicit defaults.
+
+Semantics and thread-safety for these methods:
+
+- `AudioEngine::appendRecentPcm(...)` and `AudioEngine::render(...)` remain the real-time data path and are unchanged.
+- `AudioService::resetStream()`, `resetStats()`, and `configureEngine(...)` are not real-time safe and are only valid when `canPerformReset()` is `true`.
+- In debug builds, unsafe reset/configure calls should assert and return early.
+- Non-real-time reset/configure critical sections should be serialized (for example with an internal mutex) to prevent races between control-thread operations.
 
 ### Machine / MachineView
 
 - `Machine::audioService()` returns `AudioService&` and `const AudioService&`.
 - `Machine::setAudioService(std::unique_ptr<AudioService>) -> bool` swaps the service, returning `true` on success and `false` if the swap is disallowed by the contract.
 - `MachineView::audioService()` returns `AudioService&` and `const AudioService&`. The non-const overload uses a documented `const_cast` escape to allow plugin-side resets without changing `MachineView` storage. The intent is to mutate only the audio service, not other machine state. **Precondition:** this overload is only valid when the underlying `Machine` is non-const; if a `MachineView` is derived from a `const Machine`, only the `const` overload may be used (non-const use is undefined behavior).
-  - No runtime guard is required; misuse is undefined behavior and must be avoided by callers.
+  - For this const-cast precondition specifically, no runtime guard is required; misuse remains undefined behavior and must be avoided by callers.
 
 ## Ownership and Lifetime
 
@@ -46,7 +56,7 @@ Introduce a machine-level audio service that exposes a shared `AudioEngine` to p
 - **Swap safety:** If a `MachineView` outlives a successful swap, behavior is undefined. Callers must only swap before any `MachineView` is handed out or after all views are known to be destroyed. No runtime checks are required.
 - `Machine::setAudioService(nullptr)` is rejected and returns `false` (service is never null).
 - Swapping the service updates the `Machine` and is visible through new `MachineView` instances on subsequent plugin calls.
-- **Thread-safety:** `AudioEngine::appendRecentPcm(...)` and `AudioEngine::render(...)` are safe to call concurrently from the emulation thread and audio callback. `resetStream()`, `resetStats()`, and `configure(...)` are **not** real-time safe and must only be called when the backend is closed or paused. This is a documented rule; no runtime guard is required. These preconditions should be documented on the `AudioService` methods in the header.
+- **Thread-safety:** `AudioEngine::appendRecentPcm(...)` and `AudioEngine::render(...)` are safe to call concurrently from the emulation thread and audio callback. `AudioService::resetStream()`, `resetStats()`, and `configureEngine(...)` are **not** real-time safe and must only be called when the backend is closed or paused (`canPerformReset() == true`). Runtime debug-guard behavior and header documentation are part of the contract for these non-real-time methods.
 
 ## SDL Frontend Changes
 
@@ -72,8 +82,14 @@ Introduce a machine-level audio service that exposes a shared `AudioEngine` to p
 
 ## Risks and Mitigations
 
-- **Risk:** Plugins hold stale `AudioService` references if the service is swapped.
-  - **Mitigation:** Encourage swaps during controlled lifecycle points; use new `MachineView` instances after swaps.
+- **Risk: Concurrency violations.** Plugins/frontends may call `AudioService::resetStream()`, `resetStats()`, or configure paths while the backend callback thread can still execute `AudioEngine::render(...)`, creating races.
+  - **Mitigation:** Treat reset/configure paths as non-real-time-only operations, enforce debug assertions for unsafe calls, provide and use a safe-query method (for example `AudioService::canPerformReset()` / `isResetSafe()`), and protect non-real-time critical sections with a mutex or equivalent guard.
+- **Risk: Const-cast undefined behavior.** `MachineView::audioService()` non-const access from a view derived from `const Machine` can become undefined behavior because of the `const_cast` escape hatch.
+  - **Mitigation:** Prefer redesign that avoids `const_cast` in the long term; until then, document the precondition explicitly, add debug-only assertions where practical, and treat this as an accepted risk only for well-scoped plugin call paths.
+- **Risk: Stale view crashes.** Long-lived `MachineView` instances or cached `AudioService*` references can outlive `Machine::setAudioService(...)` swaps and dereference stale service state.
+  - **Mitigation:** Strengthen lifetime documentation for `MachineView`/`Machine`/`AudioService` relationships, keep views ephemeral, and consider generation counters or debug fencing to detect stale-view use during development.
+- **Risk: Failed swap cleanup confusion.** Callers may mis-handle ownership transfer around `Machine::setAudioService(std::unique_ptr<AudioService>)`, especially when swaps fail, causing leak/double-free concerns.
+  - **Mitigation:** Document ownership rules and cleanup semantics explicitly: ownership is transferred into the call by value, successful swaps replace `Machine`'s owned service, and failed swaps destroy the passed replacement object while leaving `Machine::audioService()` unchanged.
 - **Risk:** Expanded `MachineView` surface.
   - **Mitigation:** Keep the API minimal and focused on `AudioService`.
 

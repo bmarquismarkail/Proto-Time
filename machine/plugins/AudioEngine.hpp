@@ -90,6 +90,9 @@ public:
         return buffer_.size();
     }
 
+    // Not real-time safe against concurrent callbacks.
+    // Call through AudioService reset helpers after the backend is paused/closed.
+    // AudioService debug builds assert on unsafe reset usage.
     void resetStats() noexcept
     {
         bufferedHighWaterSamples_.store(0u, std::memory_order_relaxed);
@@ -104,6 +107,9 @@ public:
         outputSamplesProduced_.store(0u, std::memory_order_relaxed);
     }
 
+    // Not real-time safe against concurrent callbacks.
+    // Call through AudioService reset helpers after the backend is paused/closed.
+    // AudioService debug builds assert on unsafe reset usage.
     void resetStream() noexcept
     {
         readIndex_.store(0u, std::memory_order_release);
@@ -112,6 +118,8 @@ public:
         lastFrameCounter_ = 0u;
     }
 
+    // Real-time path producer entrypoint. Remains lock-free and unchanged.
+    // Callers must avoid concurrent reset/configure unless AudioService reports reset-safe.
     void appendRecentPcm(std::span<const int16_t> pcm, uint64_t frameCounter)
     {
         if (pcm.empty()) {
@@ -144,6 +152,8 @@ public:
         lastFrameCounter_ = frameCounter;
     }
 
+    // Real-time callback consumer entrypoint. Remains lock-free and unchanged.
+    // Callers must avoid concurrent reset/configure unless AudioService reports reset-safe.
     void render(std::span<int16_t> output) noexcept
     {
         callbackCount_.fetch_add(1u, std::memory_order_relaxed);
