@@ -435,7 +435,7 @@ public:
             }
         } else {
             lastAudioPreview_.reset();
-            if (!audioOutputReady() && audioService_ != nullptr) {
+            if (audioService_ != nullptr && audioService_->canPerformReset()) {
                 audioService_->resetStats();
                 audioService_->resetStream();
             }
