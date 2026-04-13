@@ -167,15 +167,17 @@ public:
     // Callers must avoid concurrent reset/configure unless AudioService reports reset-safe.
     void render(std::span<int16_t> output) noexcept
     {
-        if (pendingReset_.exchange(false, std::memory_order_acq_rel)) {
+        callbackCount_.fetch_add(1u, std::memory_order_relaxed);
+
+        if (pendingReset_.load(std::memory_order_acquire)) {
             // Flush buffered source samples at a callback boundary instead of producer-side reset.
             // This avoids concurrent producer resets of callback-consumed state.
             resampler_.reset();
             readIndex_.store(writeIndex_.load(std::memory_order_acquire), std::memory_order_release);
-            publishDeferredResetChunk();
+            if (publishDeferredResetChunk()) {
+                pendingReset_.store(false, std::memory_order_release);
+            }
         }
-
-        callbackCount_.fetch_add(1u, std::memory_order_relaxed);
 
         const auto renderStats = resampler_.render(
             output,
@@ -244,15 +246,19 @@ private:
         unlockDeferredResetChunk();
     }
 
-    void publishDeferredResetChunk() noexcept
+    [[nodiscard]] bool publishDeferredResetChunk() noexcept
     {
-        lockDeferredResetChunk();
+        if (!tryLockDeferredResetChunk()) {
+            return false;
+        }
+
         const auto count = deferredResetChunkSize_;
         for (std::size_t i = 0; i < count; ++i) {
             pushSample(deferredResetChunk_[i]);
         }
         deferredResetChunkSize_ = 0u;
         unlockDeferredResetChunk();
+        return true;
     }
 
     void clearDeferredResetChunk() noexcept
@@ -262,9 +268,14 @@ private:
         unlockDeferredResetChunk();
     }
 
+    [[nodiscard]] bool tryLockDeferredResetChunk() noexcept
+    {
+        return !deferredResetChunkLock_.test_and_set(std::memory_order_acquire);
+    }
+
     void lockDeferredResetChunk() noexcept
     {
-        while (deferredResetChunkLock_.test_and_set(std::memory_order_acquire)) {
+        while (!tryLockDeferredResetChunk()) {
             std::this_thread::yield();
         }
     }
