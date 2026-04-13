@@ -15,6 +15,7 @@ int main()
     assert(defaultConfig.deviceSampleRate == 48000);
     assert(defaultConfig.ringBufferCapacitySamples == 2048);
     assert(defaultConfig.frameChunkSamples == 256);
+    (void)defaultConfig;
 
     auto view = machine.view();
     assert(view.audioService().canPerformReset());
@@ -38,12 +39,15 @@ int main()
     auto* swappedService = &machine.audioService();
     assert(swappedService != defaultService);
     assert(machine.view().audioService().engine().config().deviceSampleRate == 44100);
+    (void)swappedService;
 
     machine.pluginManager().initialize(machine.view());
     auto* beforeFailedSwap = &machine.audioService();
-    auto rejected = machine.setAudioService(std::make_unique<BMMQ::AudioService>());
+    const bool rejected = machine.setAudioService(std::make_unique<BMMQ::AudioService>());
     assert(!rejected);
     assert(&machine.audioService() == beforeFailedSwap);
+    (void)beforeFailedSwap;
+    (void)rejected;
 
     machine.pluginManager().shutdown(machine.view());
     return 0;
