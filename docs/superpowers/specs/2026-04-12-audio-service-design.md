@@ -16,6 +16,7 @@ Introduce a machine-level audio service that exposes a shared `AudioEngine` to p
 
 - `AudioEngine` lives in the SDL frontend plugin.
 - `IAudioOutputBackend` and the SDL audio backend handle device open/close and callbacks.
+- Additional backends now exist: dummy (in-memory render loop) and file (raw PCM output).
 - The SDL frontend pulls audio stats directly from its local engine.
 
 ## Proposed API
@@ -66,6 +67,7 @@ Semantics and thread-safety for these methods:
 - Keep `IAudioOutputBackend` handling and device open logic in the SDL frontend.
 - Continue populating `SdlFrontendStats` from the shared engine.
 - If the backend is open, SDL should avoid calling `resetStream()`/`resetStats()` from the emulation thread to prevent races with the audio callback.
+ - `AudioOutputOpenConfig` includes `filePath` for file-backed output (raw `int16_t` PCM).
 
 ## Tests
 
