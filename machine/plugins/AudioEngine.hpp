@@ -2,11 +2,11 @@
 #define BMMQ_AUDIO_ENGINE_HPP
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <span>
-#include <thread>
 #include <vector>
 
 #include "SdlAudioResampler.hpp"
@@ -226,63 +226,78 @@ public:
     }
 
 private:
+    static constexpr uint8_t kInvalidDeferredResetSlot = 0xFFu;
+
     void initializeBuffer()
     {
         const auto capacity = std::max<std::size_t>(config_.ringBufferCapacitySamples, config_.frameChunkSamples);
         buffer_.assign(capacity, 0);
-        deferredResetChunk_.assign(std::max<std::size_t>(config_.frameChunkSamples, 1u), 0);
-        deferredResetChunkSize_ = 0u;
+        const auto chunkCapacity = std::max<std::size_t>(config_.frameChunkSamples, 1u);
+        deferredResetChunks_[0].assign(chunkCapacity, 0);
+        deferredResetChunks_[1].assign(chunkCapacity, 0);
+        deferredResetPublishScratch_.assign(chunkCapacity, 0);
+        deferredResetPublishedSlot_.store(kInvalidDeferredResetSlot, std::memory_order_relaxed);
+        deferredResetPublishedSize_.store(0u, std::memory_order_relaxed);
+        deferredResetNextWriteSlot_ = 0u;
     }
 
     void stageDeferredResetChunk(std::span<const int16_t> pcm, std::size_t desiredSampleCount) noexcept
     {
-        lockDeferredResetChunk();
-        const auto boundedCount = std::min(desiredSampleCount, deferredResetChunk_.size());
-        deferredResetChunkSize_ = boundedCount;
+        const auto publishedSlot = deferredResetPublishedSlot_.load(std::memory_order_acquire);
+        const uint8_t targetSlot = publishedSlot < deferredResetChunks_.size()
+            ? static_cast<uint8_t>(publishedSlot ^ 1u)
+            : deferredResetNextWriteSlot_;
+        auto& targetBuffer = deferredResetChunks_[targetSlot];
+        const auto boundedCount = std::min(desiredSampleCount, targetBuffer.size());
         const auto startIndex = pcm.size() - boundedCount;
         for (std::size_t i = 0; i < boundedCount; ++i) {
-            deferredResetChunk_[i] = pcm[startIndex + i];
+            targetBuffer[i] = pcm[startIndex + i];
         }
-        unlockDeferredResetChunk();
+        deferredResetPublishedSize_.store(boundedCount, std::memory_order_relaxed);
+        deferredResetPublishedSlot_.store(targetSlot, std::memory_order_release);
+        deferredResetNextWriteSlot_ = static_cast<uint8_t>(targetSlot ^ 1u);
     }
 
     [[nodiscard]] bool publishDeferredResetChunk() noexcept
     {
-        if (!tryLockDeferredResetChunk()) {
+        const auto publishedSlot = deferredResetPublishedSlot_.load(std::memory_order_acquire);
+        if (publishedSlot >= deferredResetChunks_.size()) {
             return false;
         }
 
-        const auto count = deferredResetChunkSize_;
+        const auto count = std::min(
+            deferredResetPublishedSize_.load(std::memory_order_relaxed),
+            deferredResetPublishScratch_.size());
+        const auto& publishedBuffer = deferredResetChunks_[publishedSlot];
         for (std::size_t i = 0; i < count; ++i) {
-            pushSample(deferredResetChunk_[i]);
+            deferredResetPublishScratch_[i] = publishedBuffer[i];
         }
-        deferredResetChunkSize_ = 0u;
-        unlockDeferredResetChunk();
+
+        if (deferredResetPublishedSlot_.load(std::memory_order_acquire) != publishedSlot) {
+            return false;
+        }
+
+        uint8_t expectedSlot = publishedSlot;
+        if (!deferredResetPublishedSlot_.compare_exchange_strong(
+                expectedSlot,
+                kInvalidDeferredResetSlot,
+                std::memory_order_acq_rel,
+                std::memory_order_acquire)) {
+            return false;
+        }
+
+        deferredResetPublishedSize_.store(0u, std::memory_order_relaxed);
+        for (std::size_t i = 0; i < count; ++i) {
+            pushSample(deferredResetPublishScratch_[i]);
+        }
         return true;
     }
 
     void clearDeferredResetChunk() noexcept
     {
-        lockDeferredResetChunk();
-        deferredResetChunkSize_ = 0u;
-        unlockDeferredResetChunk();
-    }
-
-    [[nodiscard]] bool tryLockDeferredResetChunk() noexcept
-    {
-        return !deferredResetChunkLock_.test_and_set(std::memory_order_acquire);
-    }
-
-    void lockDeferredResetChunk() noexcept
-    {
-        while (!tryLockDeferredResetChunk()) {
-            std::this_thread::yield();
-        }
-    }
-
-    void unlockDeferredResetChunk() noexcept
-    {
-        deferredResetChunkLock_.clear(std::memory_order_release);
+        deferredResetPublishedSize_.store(0u, std::memory_order_relaxed);
+        deferredResetPublishedSlot_.store(kInvalidDeferredResetSlot, std::memory_order_relaxed);
+        deferredResetNextWriteSlot_ = 0u;
     }
 
     void noteBufferedHighWater(std::size_t buffered) noexcept
@@ -374,9 +389,11 @@ private:
     std::atomic<std::size_t> outputSamplesProduced_{0};
     std::atomic<std::size_t> pipelineCapacitySkipCount_{0};
     std::atomic<bool> pendingReset_{false};
-    std::vector<int16_t> deferredResetChunk_{};
-    std::size_t deferredResetChunkSize_ = 0u;
-    std::atomic_flag deferredResetChunkLock_ = ATOMIC_FLAG_INIT;
+    std::array<std::vector<int16_t>, 2> deferredResetChunks_{};
+    std::vector<int16_t> deferredResetPublishScratch_{};
+    std::atomic<uint8_t> deferredResetPublishedSlot_{kInvalidDeferredResetSlot};
+    std::atomic<std::size_t> deferredResetPublishedSize_{0u};
+    uint8_t deferredResetNextWriteSlot_ = 0u;
     uint64_t lastFrameCounter_ = 0;
 };
 
