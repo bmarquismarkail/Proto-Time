@@ -47,6 +47,9 @@ public:
         if (!guardResetSafety(false)) {
             return false;
         }
+        if (processor == nullptr || !isLiveCallbackCompatible(*processor)) {
+            return false;
+        }
         std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
         if (!guardResetSafety(false)) {
             return false;
@@ -181,6 +184,12 @@ public:
     }
 
 private:
+    [[nodiscard]] static bool isLiveCallbackCompatible(const IAudioProcessor& processor) noexcept
+    {
+        const auto caps = processor.capabilities();
+        return caps.realtimeSafe && caps.fixedCapacityOutput;
+    }
+
     [[nodiscard]] bool guardResetSafety(bool assertOnUnsafe) const noexcept
     {
         const bool safe = canPerformReset();

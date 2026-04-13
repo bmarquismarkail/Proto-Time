@@ -12,6 +12,14 @@ namespace {
 
 class PassthroughProcessor final : public BMMQ::IAudioProcessor {
 public:
+    [[nodiscard]] BMMQ::AudioProcessorCapabilities capabilities() const noexcept override
+    {
+        return {
+            .realtimeSafe = true,
+            .fixedCapacityOutput = true,
+        };
+    }
+
     bool process(BMMQ::AudioBufferView input,
                  std::span<int16_t> output,
                  std::size_t& producedSamples) noexcept override
@@ -22,6 +30,44 @@ public:
         }
         std::copy_n(input.samples.begin(), static_cast<std::ptrdiff_t>(input.samples.size()), output.begin());
         producedSamples = input.samples.size();
+        return true;
+    }
+};
+
+class NonRealtimeProcessor final : public BMMQ::IAudioProcessor {
+public:
+    [[nodiscard]] BMMQ::AudioProcessorCapabilities capabilities() const noexcept override
+    {
+        return {
+            .realtimeSafe = false,
+            .fixedCapacityOutput = true,
+        };
+    }
+
+    bool process(BMMQ::AudioBufferView,
+                 std::span<int16_t>,
+                 std::size_t& producedSamples) noexcept override
+    {
+        producedSamples = 0;
+        return true;
+    }
+};
+
+class VariableOutputProcessor final : public BMMQ::IAudioProcessor {
+public:
+    [[nodiscard]] BMMQ::AudioProcessorCapabilities capabilities() const noexcept override
+    {
+        return {
+            .realtimeSafe = true,
+            .fixedCapacityOutput = false,
+        };
+    }
+
+    bool process(BMMQ::AudioBufferView,
+                 std::span<int16_t>,
+                 std::size_t& producedSamples) noexcept override
+    {
+        producedSamples = 0;
         return true;
     }
 };
@@ -44,6 +90,10 @@ int main()
     assert(view.audioService().canPerformReset());
     assert(view.audioService().resetStats());
     assert(view.audioService().resetStream());
+    assert(view.audioService().addProcessor(std::make_unique<PassthroughProcessor>()));
+    assert(!view.audioService().addProcessor(std::make_unique<NonRealtimeProcessor>()));
+    assert(!view.audioService().addProcessor(std::make_unique<VariableOutputProcessor>()));
+    assert(view.audioService().clearProcessors());
     view.audioService().setBackendPausedOrClosed(false);
     assert(!view.audioService().canPerformReset());
     assert(!view.audioService().addProcessor(std::make_unique<PassthroughProcessor>()));

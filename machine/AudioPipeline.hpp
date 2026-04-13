@@ -15,9 +15,19 @@ struct AudioBufferView {
     int sampleRate = 48000;
 };
 
+struct AudioProcessorCapabilities {
+    bool realtimeSafe = false;
+    bool fixedCapacityOutput = false;
+};
+
 class IAudioProcessor {
 public:
     virtual ~IAudioProcessor() = default;
+    [[nodiscard]] virtual AudioProcessorCapabilities capabilities() const noexcept
+    {
+        return {};
+    }
+
     // Process `input` into the caller-provided fixed-capacity `output` buffer.
     // Returns false when the processor cannot produce output within capacity.
     virtual bool process(AudioBufferView input,

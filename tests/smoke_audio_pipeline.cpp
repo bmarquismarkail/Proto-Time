@@ -12,6 +12,14 @@ public:
     explicit GainProcessor(float gain)
         : gain_(gain) {}
 
+    [[nodiscard]] BMMQ::AudioProcessorCapabilities capabilities() const noexcept override
+    {
+        return {
+            .realtimeSafe = true,
+            .fixedCapacityOutput = true,
+        };
+    }
+
     bool process(BMMQ::AudioBufferView input,
                  std::span<int16_t> output,
                  std::size_t& producedSamples) noexcept override
@@ -35,6 +43,14 @@ private:
 
 class DoubleLengthProcessor final : public BMMQ::IAudioProcessor {
 public:
+    [[nodiscard]] BMMQ::AudioProcessorCapabilities capabilities() const noexcept override
+    {
+        return {
+            .realtimeSafe = true,
+            .fixedCapacityOutput = true,
+        };
+    }
+
     bool process(BMMQ::AudioBufferView input,
                  std::span<int16_t> output,
                  std::size_t& producedSamples) noexcept override
@@ -54,6 +70,14 @@ public:
 
 class HalfLengthProcessor final : public BMMQ::IAudioProcessor {
 public:
+    [[nodiscard]] BMMQ::AudioProcessorCapabilities capabilities() const noexcept override
+    {
+        return {
+            .realtimeSafe = true,
+            .fixedCapacityOutput = true,
+        };
+    }
+
     bool process(BMMQ::AudioBufferView input,
                  std::span<int16_t> output,
                  std::size_t& producedSamples) noexcept override
