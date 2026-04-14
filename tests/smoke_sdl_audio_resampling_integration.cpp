@@ -63,7 +63,6 @@ int main(int argc, char** argv)
         BMMQ::defaultSdlFrontendPluginPath(executablePath),
         config);
     auto* frontend = frontendPlugin.get();
-    (void)frontend;
     machine.pluginManager().add(std::move(frontendPlugin));
     machine.pluginManager().initialize(machine.mutableView());
 
@@ -86,7 +85,6 @@ int main(int argc, char** argv)
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     stepUntilAudioFrames(machine, 8u);
     assert(frontend->stats().audioResampleOutputSamplesProduced >= frontend->stats().audioSamplesDelivered);
-    assert(frontend->stats().audioSilenceSamplesFilled >= 0u);
 
     machine.pluginManager().shutdown(machine.mutableView());
     return 0;

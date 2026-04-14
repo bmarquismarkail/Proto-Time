@@ -69,7 +69,6 @@ int main()
         assert(code == BMMQ::AudioOutputErrorCode::BackendUnavailable
                || code == BMMQ::AudioOutputErrorCode::DeviceOpenFailed
                || code == BMMQ::AudioOutputErrorCode::UnsupportedConfig);
-        output.close();
         return 0;
     }
     assert(resampledEngine.config().deviceSampleRate == 44100);

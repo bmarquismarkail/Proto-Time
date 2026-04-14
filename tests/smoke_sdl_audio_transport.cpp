@@ -42,6 +42,9 @@ int main(int argc, char** argv)
 #if defined(__unix__) || defined(__APPLE__)
     ::setenv("SDL_AUDIODRIVER", "dummy", 1);
     ::setenv("SDL_VIDEODRIVER", "dummy", 1);
+#elif defined(_WIN32)
+    _putenv_s("SDL_AUDIODRIVER", "dummy");
+    _putenv_s("SDL_VIDEODRIVER", "dummy");
 #endif
 
     BMMQ::SdlFrontendConfig config;
@@ -57,7 +60,7 @@ int main(int argc, char** argv)
 
     const auto executablePath = (argc > 0 && argv != nullptr)
         ? std::filesystem::path(argv[0])
-        : std::filesystem::path("time-smoke-sdl-audio-transport");
+        : std::filesystem::path("smoke-sdl-audio-transport");
     auto frontendPlugin = BMMQ::loadSdlFrontendPlugin(
         BMMQ::defaultSdlFrontendPluginPath(executablePath),
         config);
