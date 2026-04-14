@@ -13,11 +13,14 @@ namespace BMMQ {
 
 class Machine;
 class AudioService;
+class InputService;
 class VideoService;
 struct CpuFeedback;
 std::optional<uint32_t> queryDigitalInputMask(const Machine& machine);
 AudioService& queryAudioService(Machine& machine);
 const AudioService& queryAudioService(const Machine& machine);
+InputService& queryInputService(Machine& machine);
+const InputService& queryInputService(const Machine& machine);
 VideoService& queryVideoService(Machine& machine);
 const VideoService& queryVideoService(const Machine& machine);
 std::vector<int16_t> queryRecentAudioSamples(const Machine& machine);
@@ -187,6 +190,10 @@ struct MachineView {
 
     [[nodiscard]] const AudioService& audioService() const {
         return queryAudioService(machine);
+    }
+
+    [[nodiscard]] const InputService& inputService() const {
+        return queryInputService(machine);
     }
 
     [[nodiscard]] const VideoService& videoService() const {
@@ -366,6 +373,14 @@ struct MutableMachineView : MachineView {
 
     [[nodiscard]] const VideoService& videoService() const {
         return queryVideoService(mutableMachine);
+    }
+
+    [[nodiscard]] InputService& inputService() {
+        return queryInputService(mutableMachine);
+    }
+
+    [[nodiscard]] const InputService& inputService() const {
+        return queryInputService(mutableMachine);
     }
 };
 

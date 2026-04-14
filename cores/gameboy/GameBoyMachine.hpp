@@ -262,6 +262,8 @@ public:
         installVisibleRomBanks();
         initializeDmgStartupRegisters();
         romLoaded_ = true;
+        ++inputGeneration_;
+        inputService().advanceGeneration(inputGeneration_);
         lastDigitalInputMask_.reset();
         lastPolledDigitalInput_.reset();
         lastLy_ = context_.read8(0xFF44);
@@ -409,6 +411,17 @@ public:
 
 private:
     void pollInputPlugins() {
+        if (inputService().state() == BMMQ::InputLifecycleState::Active) {
+            (void)inputService().pollActiveAdapter(inputGeneration_);
+            if (const auto committedInput = inputService().committedDigitalMask(); committedInput.has_value()) {
+                const auto pressedMask = static_cast<uint8_t>(*committedInput & 0x00FFu);
+                if (!lastPolledDigitalInput_.has_value() || *lastPolledDigitalInput_ != pressedMask) {
+                    setJoypadState(pressedMask);
+                }
+                return;
+            }
+        }
+
         if (pluginManager_.size() == 0) {
             return;
         }
@@ -417,7 +430,6 @@ private:
             const auto pressedMask = static_cast<uint8_t>(*sampledInput & 0x00FFu);
             if (!lastPolledDigitalInput_.has_value() || *lastPolledDigitalInput_ != pressedMask) {
                 setJoypadState(pressedMask);
-                lastPolledDigitalInput_ = pressedMask;
             }
         }
     }
@@ -1047,6 +1059,7 @@ private:
     bool mbc1BankingModeSelect_ = false;
     uint8_t mbc5HighBankBit_ = 0;
     uint64_t stepCounter_ = 0;
+    uint64_t inputGeneration_ = 1;
     uint8_t lastLy_ = 0;
     uint64_t lastAudioFrameCounter_ = 0;
     std::optional<uint8_t> lastDigitalInputMask_;

@@ -135,13 +135,18 @@ public:
     void setQueuedDigitalInputMask(uint32_t pressedMask) override
     {
         queuedDigitalInputMask_ = pressedMask & 0x00FFu;
+        publishQueuedInputToService();
         appendLog("sdl: queued input mask=" + BMMQ::detail::hexByte(static_cast<uint8_t>(*queuedDigitalInputMask_)));
     }
 
     void clearQueuedDigitalInputMask() override
     {
+        // Publish an explicit neutral snapshot before clearing the optional so the
+        // InputService observes "no buttons pressed" rather than only local state loss.
+        queuedDigitalInputMask_ = 0u;
+        publishQueuedInputToService();
         queuedDigitalInputMask_.reset();
-        appendLog("sdl: cleared queued input mask");
+        appendLog("sdl: published neutral input and cleared queued input mask");
     }
 
     [[nodiscard]] std::optional<uint32_t> queuedDigitalInputMask() const noexcept override
@@ -351,6 +356,12 @@ public:
         ++stats_.attachCount;
         audioService_ = &view.audioService();
         audioService_->setBackendPausedOrClosed(true);
+        inputService_ = &view.inputService();
+        if (config_.enableInput) {
+            (void)inputService_->attachExternalAdapter(*this);
+            (void)inputService_->configureMappingProfile("sdl-default");
+            (void)inputService_->resume();
+        }
         videoService_ = &view.videoService();
         configureVideoService();
         appendLog("sdl: attached");
@@ -364,6 +375,10 @@ public:
         ++stats_.detachCount;
         shutdownBackend();
         audioService_ = nullptr;
+        if (config_.enableInput && inputService_ != nullptr) {
+            (void)inputService_->detachAdapter(inputService_->currentGeneration() + 1u);
+        }
+        inputService_ = nullptr;
         videoService_ = nullptr;
         videoPresenter_ = nullptr;
         windowVisible_ = false;
@@ -447,6 +462,14 @@ public:
 
     std::optional<uint32_t> sampleDigitalInput(const BMMQ::MachineView&) override
     {
+        if (const auto sample = sampleDigitalInput(); sample.has_value()) {
+            return static_cast<uint32_t>(*sample);
+        }
+        return std::nullopt;
+    }
+
+    std::optional<BMMQ::InputButtonMask> sampleDigitalInput() override
+    {
         if (!config_.enableInput) {
             return std::nullopt;
         }
@@ -456,10 +479,47 @@ public:
         }
         if (queuedDigitalInputMask_.has_value()) {
             ++stats_.inputSamplesProvided;
-            return queuedDigitalInputMask_;
+            return static_cast<BMMQ::InputButtonMask>(*queuedDigitalInputMask_ & 0x00FFu);
         }
         return std::nullopt;
     }
+
+    [[nodiscard]] BMMQ::InputPluginCapabilities capabilities() const noexcept override
+    {
+        return {
+            .pollingSafe = true,
+            .eventPumpSafe = true,
+            .deterministic = true,
+            .supportsDigital = config_.enableInput,
+            .supportsAnalog = false,
+            .fixedLogicalLayout = true,
+            .hotSwapSafe = false,
+            .liveSeek = false,
+            .nonRealtimeOnly = false,
+            .headlessSafe = true,
+        };
+    }
+
+    [[nodiscard]] std::string_view name() const noexcept override
+    {
+        return displayName();
+    }
+
+    [[nodiscard]] std::string_view lastError() const noexcept override
+    {
+        return lastBackendError();
+    }
+
+    // InputService expects open() to validate adapter availability, but this frontend
+    // performs real backend initialization through tryInitializeBackend() instead.
+    [[nodiscard]] bool open() override
+    {
+        return true;
+    }
+
+    // InputService may call close() during adapter lifecycle transitions, but actual
+    // backend teardown is owned by shutdownBackend() rather than this adapter hook.
+    void close() noexcept override {}
 
     void onDigitalInputEvent(const BMMQ::MachineEvent& event, const BMMQ::MachineView& view) override
     {
@@ -592,9 +652,27 @@ private:
         }
         queuedDigitalInputMask_ = mask;
         if (mask != oldMask) {
+            publishQueuedInputToService();
             ++stats_.buttonTransitions;
             appendLog(std::string("sdl: button ") + std::string(buttonName(button)) + (pressed ? " pressed" : " released"));
         }
+    }
+
+    void publishQueuedInputToService()
+    {
+        if (inputService_ == nullptr || !config_.enableInput) {
+            return;
+        }
+
+        const auto generation = std::max<uint64_t>(inputService_->currentGeneration(), 1u);
+        if (queuedDigitalInputMask_.has_value()) {
+            inputService_->publishDigitalSnapshot(
+                static_cast<BMMQ::InputButtonMask>(*queuedDigitalInputMask_ & 0x00FFu),
+                generation);
+            return;
+        }
+
+        inputService_->applyNeutralFallback(generation);
     }
 
     void requestQuit()
@@ -986,6 +1064,7 @@ private:
     double audioPhase_ = 0.0;
     uint64_t audioPreviewGeneration_ = 0;
     BMMQ::AudioService* audioService_ = nullptr;
+    BMMQ::InputService* inputService_ = nullptr;
     BMMQ::VideoService* videoService_ = nullptr;
     BMMQ::SdlVideoPresenter* videoPresenter_ = nullptr;
     std::unique_ptr<BMMQ::IAudioOutputBackend> audioOutput_ = std::make_unique<BMMQ::SdlAudioOutputBackend>();

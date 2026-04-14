@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "AudioService.hpp"
+#include "InputService.hpp"
 #include "RegisterId.hpp"
 #include "RuntimeContext.hpp"
 #include "VideoService.hpp"
@@ -25,6 +26,7 @@ public:
     virtual ~Machine() = default;
     Machine()
         : audioService_(std::make_unique<AudioService>()),
+          inputService_(std::make_unique<InputService>()),
           videoService_(std::make_unique<VideoService>()) {}
     Machine(const Machine&) = delete;
     Machine& operator=(const Machine&) = delete;
@@ -47,6 +49,12 @@ public:
     [[nodiscard]] const VideoService& videoService() const {
         return *videoService_;
     }
+    [[nodiscard]] InputService& inputService() {
+        return *inputService_;
+    }
+    [[nodiscard]] const InputService& inputService() const {
+        return *inputService_;
+    }
     [[nodiscard]] bool setAudioService(std::unique_ptr<AudioService> service) {
         if (!service) {
             return false;
@@ -65,6 +73,16 @@ public:
             return false;
         }
         videoService_ = std::move(service);
+        return true;
+    }
+    [[nodiscard]] bool setInputService(std::unique_ptr<InputService> service) {
+        if (!service) {
+            return false;
+        }
+        if (pluginManager().initialized()) {
+            return false;
+        }
+        inputService_ = std::move(service);
         return true;
     }
     virtual std::span<const IoRegionDescriptor> describeIoRegions() const = 0;
@@ -107,6 +125,7 @@ public:
 
 private:
     std::unique_ptr<AudioService> audioService_;
+    std::unique_ptr<InputService> inputService_;
     std::unique_ptr<VideoService> videoService_;
 };
 
@@ -120,6 +139,14 @@ inline AudioService& queryAudioService(Machine& machine) {
 
 inline const AudioService& queryAudioService(const Machine& machine) {
     return machine.audioService();
+}
+
+inline InputService& queryInputService(Machine& machine) {
+    return machine.inputService();
+}
+
+inline const InputService& queryInputService(const Machine& machine) {
+    return machine.inputService();
 }
 
 inline VideoService& queryVideoService(Machine& machine) {

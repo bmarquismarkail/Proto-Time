@@ -82,7 +82,12 @@ public:
 
     std::optional<uint32_t> sampleDigitalInput(const BMMQ::MachineView& view) override
     {
-        return implementation_->sampleDigitalInput(view);
+        return static_cast<BMMQ::IDigitalInputPlugin&>(*implementation_).sampleDigitalInput(view);
+    }
+
+    std::optional<BMMQ::InputButtonMask> sampleDigitalInput() override
+    {
+        return static_cast<BMMQ::IDigitalInputSourcePlugin&>(*implementation_).sampleDigitalInput();
     }
 
     void onDigitalInputEvent(const BMMQ::MachineEvent& event, const BMMQ::MachineView& view) override
@@ -93,6 +98,31 @@ public:
     [[nodiscard]] const BMMQ::SdlFrontendConfig& config() const noexcept override
     {
         return implementation_->config();
+    }
+
+    [[nodiscard]] BMMQ::InputPluginCapabilities capabilities() const noexcept override
+    {
+        return implementation_->capabilities();
+    }
+
+    [[nodiscard]] std::string_view name() const noexcept override
+    {
+        return implementation_->name();
+    }
+
+    [[nodiscard]] bool open() override
+    {
+        return implementation_->open();
+    }
+
+    void close() noexcept override
+    {
+        implementation_->close();
+    }
+
+    [[nodiscard]] std::string_view lastError() const noexcept override
+    {
+        return implementation_->lastError();
     }
 
     [[nodiscard]] const BMMQ::SdlFrontendStats& stats() const noexcept override

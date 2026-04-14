@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "../InputTypes.hpp"
+#include "input/InputPlugin.hpp"
 #include "IoPlugin.hpp"
 
 namespace BMMQ {
@@ -149,7 +150,8 @@ inline constexpr const char* kSdlFrontendPluginApiEntryPoint = "bmmq_get_sdl_fro
 
 class ISdlFrontendPlugin : public IVideoPlugin,
                            public IAudioPlugin,
-                           public IDigitalInputPlugin {
+                           public IDigitalInputPlugin,
+                           public IDigitalInputSourcePlugin {
 public:
     ~ISdlFrontendPlugin() override = default;
 
