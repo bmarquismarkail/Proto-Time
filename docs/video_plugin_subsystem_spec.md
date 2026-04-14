@@ -58,7 +58,7 @@ Responsibilities:
 - attach and detach presentation backends
 - validate video processors or overlays before live admission
 - configure format, scale, palette, and debug-view policy
-- gate reset and reconfiguration behind paused or closed backend state
+- gate reset and reconfiguration behind `Detached` or `Paused` backend state
 - surface diagnostics, active backend details, and degraded-mode state
 
 The service defines:
@@ -164,9 +164,25 @@ Video failures must remain visible and deterministic.
 Required degraded behavior:
 
 - if presentation fails, preserve the last valid frame or present a blank frame when none exists
-- if the frame queue is full, drop according to a documented policy and increment a drop counter
+- if the frame queue is full, apply the frame drop policy below and increment a drop counter
 - if a frame processor is incompatible with live-path constraints, bypass it and increment a compatibility fallback counter
 - if no video backend is available, run headless while preserving capture and diagnostic state where possible
+
+### Frame Drop Policy
+
+The frame queue policy is `drop_oldest` (FIFO eviction). When the queue is full and a new frame packet arrives, the oldest queued frame is discarded and the new frame is enqueued.
+
+Required behavior:
+
+- the queue insertion path (`VideoEngine` enqueue logic or equivalent `FrameQueue.enqueue(...)`) performs the eviction before publishing the new frame
+- `droppedFrameCount` is incremented exactly once for each frame evicted because the queue was full
+- `frameQueueHighWaterMark` continues to report the peak occupied depth before or at saturation; eviction does not reset it
+- no alternate runtime policy knob is part of the base contract; if a future `MAX_QUEUE_STRATEGY` or equivalent setting is introduced, it must default to `drop_oldest` and preserve the same counter semantics
+
+Rationale:
+
+- dropping the oldest queued frame minimizes presentation latency and keeps the presenter closest to the newest machine-visible state
+- FIFO eviction is deterministic and simple to reason about in smoke tests because the newest committed frame always wins when the queue saturates
 
 The service should expose at least:
 

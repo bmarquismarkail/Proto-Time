@@ -277,11 +277,45 @@ The audio subsystem must define explicit backend-relative states for:
 - `Active`
 - `Faulted`
 
+`AudioService::setBackendPausedOrClosed(bool)` is a safety gate, not the full lifecycle enum. It answers one question only: may non-real-time reset/configure work run without racing a live callback?
+
+State mapping:
+
+| Backend-relative state | `setBackendPausedOrClosed(...)` value | Meaning | `canPerformReset()` |
+| --- | --- | --- | --- |
+| `Detached` | `true` | no backend is attached or no callback-capable device/thread is live | `true` |
+| `PausedOrClosed` | `true` | backend exists but callbacks are intentionally quiesced for close, pause, reset, or reconfiguration | `true` |
+| `Active` | `false` | backend open succeeded and callbacks or backend worker activity may consume audio | `false` |
+| `Faulted` | transition through `true` before control returns to non-real-time code | backend hit a runtime failure, latched error state, and must quiesce callbacks before reset/configure becomes legal again | `true` after quiesce |
+
+Operational rule: `canPerformReset()` returns `true` if and only if the backend has been driven into a reset-safe quiesced state. In the four-state model above that means `Detached` or `PausedOrClosed`, and it also applies to `Faulted` only after the backend has stopped live callback activity and published the equivalent paused-or-closed gate.
+
+Simple transition model:
+
+```text
+Detached --attach/open begin--> PausedOrClosed --setBackendPausedOrClosed(false)--> Active
+Active --pause/close/reconfigure begin--> PausedOrClosed --detach--> Detached
+Active --runtime failure--> Faulted --quiesce callbacks + setBackendPausedOrClosed(true)--> PausedOrClosed
+Faulted --detach--> Detached
+```
+
+Allowed operations by state:
+
+| Operation | Detached | PausedOrClosed | Active | Faulted |
+| --- | --- | --- | --- | --- |
+| processor mutation | allowed | allowed | forbidden | allowed only after callbacks are quiesced |
+| reset/configure/stats reset | allowed | allowed | forbidden | allowed only after callbacks are quiesced |
+| attach/open backend | allowed | allowed | forbidden | allowed after fault cleanup |
+| detach/close backend | no-op or allowed | allowed | allowed, but must transition through `PausedOrClosed` first | allowed |
+| active callback or backend worker consumption | forbidden | forbidden | allowed | forbidden once fault is latched |
+
 Rules:
 
 - processor mutation is allowed only while `PausedOrClosed`
 - reset and configure operations are allowed only while `PausedOrClosed`
 - backend adapters are responsible for updating service state on lifecycle transitions
+- backends must call `setBackendPausedOrClosed(true)` before close, pause, reset-safe reconfiguration, or fault handoff to non-real-time code
+- backends must call `setBackendPausedOrClosed(false)` only after open succeeds and callback-capable activity is actually live
 - active callbacks must only observe preallocated buffers and prevalidated processors
 - backend attach and detach churn must preserve service invariants and reset safety guarantees
 

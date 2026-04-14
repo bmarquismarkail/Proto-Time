@@ -83,6 +83,8 @@ Recommended capabilities:
 - `supportsDigital`: can provide digital button state
 - `supportsAnalog`: can provide analog channels
 - `fixedLogicalLayout`: uses stable machine-owned logical controls
+- `hotSwapSafe`: safe to replace or rebind input devices at runtime without restarting the machine
+- `liveSeek`: supports live seeking or rewinding of input state while the machine is running
 - `nonRealtimeOnly`: requires paused or offline operation
 - `headlessSafe`: works without a windowing backend
 
@@ -173,8 +175,22 @@ Required degraded behavior:
 
 - on transient adapter polling failure, preserve the last committed logical input state and increment a polling failure counter
 - on adapter detach or hard backend loss, transition to neutral input state and latch the backend error
-- on queue overflow, drop the newest host event batch or coalesce to the latest complete snapshot, then increment an overflow counter
+- on queue overflow, either drop the newest host event batch or coalesce to the latest complete snapshot, using the overflow policy guidance below; increment the overflow counter in either case
 - on unsupported analog input, expose zeroed analog channels rather than undefined data
+
+### Queue Overflow Policy
+
+The "on queue overflow" clause intentionally allows two strategies, but the implementation must choose one policy per adapter path and document it:
+
+- `drop newest host event batch`: prefer lower latency when stale-but-complete committed state is better than spending extra work preserving every incoming event burst
+- `coalesce to the latest complete snapshot`: prefer state fidelity when the adapter can cheaply collapse many host events into one deterministic logical snapshot without exposing partial updates
+
+Decision guidance:
+
+- use `drop newest host event batch` for high-frequency live host input where responsiveness matters more than preserving every intermediate burst
+- use `coalesce to the latest complete snapshot` for adapters that already build snapshot-style logical state and can replace many pending event batches with one complete state image
+
+In both strategies, the overflow counter must be incremented once per overflow incident, and the resulting committed machine-visible state must remain deterministic.
 
 The service should expose at least:
 
