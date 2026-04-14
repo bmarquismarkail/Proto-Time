@@ -111,7 +111,7 @@ public:
         }
     }
 
-    void initialize(const MachineView& view)
+    void initialize(MutableMachineView view)
     {
         for (auto& entry : plugins_) {
             if (entry.disabled || entry.attached) {
@@ -128,7 +128,7 @@ public:
         initialized_ = true;
     }
 
-    void shutdown(const MachineView& view)
+    void shutdown(MutableMachineView view)
     {
         for (auto it = plugins_.rbegin(); it != plugins_.rend(); ++it) {
             if (!it->attached) {
@@ -146,7 +146,6 @@ public:
 
     void emit(const MachineView& view, const MachineEvent& event)
     {
-        initialize(view);
         for (auto& entry : plugins_) {
             if (entry.disabled) {
                 continue;
@@ -160,9 +159,14 @@ public:
         }
     }
 
-    std::optional<uint32_t> sampleDigitalInput(const MachineView& view)
+    void emit(MutableMachineView view, const MachineEvent& event)
     {
         initialize(view);
+        emit(static_cast<const MachineView&>(view), event);
+    }
+
+    std::optional<uint32_t> sampleDigitalInput(const MachineView& view)
+    {
         for (auto& entry : plugins_) {
             if (entry.disabled) {
                 continue;
@@ -182,9 +186,14 @@ public:
         return std::nullopt;
     }
 
-    std::optional<IAnalogInputPlugin::AnalogState> sampleAnalogInput(const MachineView& view)
+    std::optional<uint32_t> sampleDigitalInput(MutableMachineView view)
     {
         initialize(view);
+        return sampleDigitalInput(static_cast<const MachineView&>(view));
+    }
+
+    std::optional<IAnalogInputPlugin::AnalogState> sampleAnalogInput(const MachineView& view)
+    {
         for (auto& entry : plugins_) {
             if (entry.disabled) {
                 continue;
@@ -202,6 +211,12 @@ public:
             }
         }
         return std::nullopt;
+    }
+
+    std::optional<IAnalogInputPlugin::AnalogState> sampleAnalogInput(MutableMachineView view)
+    {
+        initialize(view);
+        return sampleAnalogInput(static_cast<const MachineView&>(view));
     }
 
 private:

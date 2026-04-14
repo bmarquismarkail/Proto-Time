@@ -129,11 +129,11 @@ int main()
     assert(machine.setVideoService(std::move(replacement)));
     assert(machine.videoService().engine().config().frameWidth == 4);
 
-    machine.pluginManager().initialize(machine.view());
+    machine.pluginManager().initialize(machine.mutableView());
     auto* beforeRejectedSwap = &machine.videoService();
     assert(!machine.setVideoService(std::make_unique<BMMQ::VideoService>()));
     assert(&machine.videoService() == beforeRejectedSwap);
-    machine.pluginManager().shutdown(machine.view());
+    machine.pluginManager().shutdown(machine.mutableView());
 
     return 0;
 }

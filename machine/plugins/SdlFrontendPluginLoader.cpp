@@ -55,12 +55,12 @@ public:
         }
     }
 
-    void onAttach(const BMMQ::MachineView& view) override
+    void onAttach(BMMQ::MutableMachineView& view) override
     {
         implementation_->onAttach(view);
     }
 
-    void onDetach(const BMMQ::MachineView& view) override
+    void onDetach(BMMQ::MutableMachineView& view) override
     {
         implementation_->onDetach(view);
     }

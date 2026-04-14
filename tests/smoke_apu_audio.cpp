@@ -52,7 +52,7 @@ int main()
     auto audioPlugin = std::make_unique<RecordingAudioPlugin>();
     auto* recorder = audioPlugin.get();
     machine.pluginManager().add(std::move(audioPlugin));
-    machine.pluginManager().initialize(machine.view());
+    machine.pluginManager().initialize(machine.mutableView());
 
     machine.runtimeContext().write8(0xFF26, 0x80u);
     machine.runtimeContext().write8(0xFF24, 0x77u);
@@ -115,6 +115,6 @@ int main()
     assert(!recorder->lastAudioState->pcmSamples.empty());
     assert(hasNonZeroSample(recorder->lastAudioState->pcmSamples));
 
-    machine.pluginManager().shutdown(machine.view());
+    machine.pluginManager().shutdown(machine.mutableView());
     return 0;
 }

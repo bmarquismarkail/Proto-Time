@@ -65,7 +65,7 @@ int main(int argc, char** argv)
     auto* frontend = frontendPlugin.get();
     (void)frontend;
     machine.pluginManager().add(std::move(frontendPlugin));
-    machine.pluginManager().initialize(machine.view());
+    machine.pluginManager().initialize(machine.mutableView());
 
     assert(frontend->tryInitializeBackend());
     assert(frontend->audioOutputReady());
@@ -88,6 +88,6 @@ int main(int argc, char** argv)
     assert(frontend->stats().audioResampleOutputSamplesProduced >= frontend->stats().audioSamplesDelivered);
     assert(frontend->stats().audioSilenceSamplesFilled >= 0u);
 
-    machine.pluginManager().shutdown(machine.view());
+    machine.pluginManager().shutdown(machine.mutableView());
     return 0;
 }

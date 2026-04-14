@@ -346,12 +346,12 @@ public:
 #endif
     }
 
-    void onAttach(const BMMQ::MachineView& view) override
+    void onAttach(BMMQ::MutableMachineView& view) override
     {
         ++stats_.attachCount;
-        audioService_ = &const_cast<BMMQ::MachineView&>(view).audioService();
+        audioService_ = &view.audioService();
         audioService_->setBackendPausedOrClosed(true);
-        videoService_ = &const_cast<BMMQ::MachineView&>(view).videoService();
+        videoService_ = &view.videoService();
         configureVideoService();
         appendLog("sdl: attached");
         if (config_.autoInitializeBackend) {
@@ -359,7 +359,7 @@ public:
         }
     }
 
-    void onDetach(const BMMQ::MachineView&) override
+    void onDetach(BMMQ::MutableMachineView&) override
     {
         ++stats_.detachCount;
         shutdownBackend();

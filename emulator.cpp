@@ -193,7 +193,7 @@ int main(int argc, char** argv)
                 frontendPlugin = BMMQ::loadSdlFrontendPlugin(pluginPath, config);
                 frontend = frontendPlugin.get();
                 machine.pluginManager().add(std::move(frontendPlugin));
-                machine.pluginManager().initialize(machine.view());
+                machine.pluginManager().initialize(machine.mutableView());
                 frontend->requestWindowVisibility(true);
                 frontend->serviceFrontend();
             } catch (const std::exception& ex) {

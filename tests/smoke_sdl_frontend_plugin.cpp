@@ -48,7 +48,7 @@ int main(int argc, char** argv)
     (void)missingLoadThrew;
     assert(missingLoadThrew);
 
-    machine.pluginManager().initialize(machine.view());
+    machine.pluginManager().initialize(machine.mutableView());
     assert(frontend->config().windowTitle == "Proto-Time SDL Smoke");
     assert(frontend->stats().attachCount == 1);
     assert(!frontend->backendReady());
@@ -191,7 +191,7 @@ int main(int argc, char** argv)
     frontend->clearQueuedDigitalInputMask();
     assert(!frontend->queuedDigitalInputMask().has_value());
 
-    machine.pluginManager().shutdown(machine.view());
+    machine.pluginManager().shutdown(machine.mutableView());
     assert(frontend->stats().detachCount == 1);
 
     return 0;

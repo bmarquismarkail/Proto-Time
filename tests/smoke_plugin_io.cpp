@@ -28,12 +28,12 @@ struct RecordingVideoPlugin final : BMMQ::IVideoPlugin {
         return "test.video.recorder";
     }
 
-    void onAttach(const BMMQ::MachineView& view) override {
+    void onAttach(BMMQ::MutableMachineView& view) override {
         ++attachCount;
         assert(!view.ioRegions.empty());
     }
 
-    void onDetach(const BMMQ::MachineView&) override {
+    void onDetach(BMMQ::MutableMachineView&) override {
         ++detachCount;
     }
 
@@ -129,7 +129,7 @@ struct ThrowingPlugin final : BMMQ::IPlugin {
         return "test.plugin.throwing";
     }
 
-    void onAttach(const BMMQ::MachineView&) override {
+    void onAttach(BMMQ::MutableMachineView&) override {
         ++attachCount;
     }
 
@@ -217,7 +217,7 @@ int main()
     assert(machine.pluginManager().size() == 12);
     assert(!machine.describeIoRegions().empty());
 
-    machine.pluginManager().initialize(machine.view());
+    machine.pluginManager().initialize(machine.mutableView());
     assert(video->attachCount == 1);
     assert(throwing->attachCount == 1);
 
@@ -327,7 +327,7 @@ int main()
     assert(machine.pluginManager().disabledCount() == 0);
     assert(!machine.pluginManager().hasDisabledPlugins());
 
-    machine.pluginManager().shutdown(machine.view());
+    machine.pluginManager().shutdown(machine.mutableView());
     assert(video->detachCount == 1);
 
     fs::remove(logPath);

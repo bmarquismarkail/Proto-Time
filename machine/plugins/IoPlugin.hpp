@@ -185,20 +185,8 @@ struct MachineView {
     const RuntimeContext& runtime;
     std::vector<IoRegionDescriptor> ioRegions;
 
-    [[nodiscard]] AudioService& audioService() {
-        // Precondition: underlying Machine is non-const; using this on a view
-        // sourced from const Machine is undefined behavior.
-        return queryAudioService(const_cast<Machine&>(machine));
-    }
-
     [[nodiscard]] const AudioService& audioService() const {
         return queryAudioService(machine);
-    }
-
-    [[nodiscard]] VideoService& videoService() {
-        // Precondition: underlying Machine is non-const; using this on a view
-        // sourced from const Machine is undefined behavior.
-        return queryVideoService(const_cast<Machine&>(machine));
     }
 
     [[nodiscard]] const VideoService& videoService() const {
@@ -355,6 +343,32 @@ struct MachineView {
     }
 };
 
+struct MutableMachineView : MachineView {
+    Machine& mutableMachine;
+
+    MutableMachineView(Machine& machine,
+                       RuntimeContext& runtime,
+                       std::vector<IoRegionDescriptor> ioRegionsIn)
+        : MachineView{machine, runtime, std::move(ioRegionsIn)},
+          mutableMachine(machine) {}
+
+    [[nodiscard]] AudioService& audioService() {
+        return queryAudioService(mutableMachine);
+    }
+
+    [[nodiscard]] const AudioService& audioService() const {
+        return queryAudioService(mutableMachine);
+    }
+
+    [[nodiscard]] VideoService& videoService() {
+        return queryVideoService(mutableMachine);
+    }
+
+    [[nodiscard]] const VideoService& videoService() const {
+        return queryVideoService(mutableMachine);
+    }
+};
+
 struct MachineEvent {
     MachineEventType type = MachineEventType::StepCompleted;
     PluginCategory category = PluginCategory::System;
@@ -372,8 +386,8 @@ public:
     virtual std::string_view displayName() const {
         return id();
     }
-    virtual void onAttach(const MachineView&) {}
-    virtual void onDetach(const MachineView&) {}
+    virtual void onAttach(MutableMachineView&) {}
+    virtual void onDetach(MutableMachineView&) {}
     virtual void onMachineEvent(const MachineEvent&, const MachineView&) {}
 };
 

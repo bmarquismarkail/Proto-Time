@@ -114,6 +114,11 @@ public:
     // the caller-owned vector and must not be used from the live audio callback.
     AudioBufferView process(AudioBufferView input, std::vector<int16_t>& output)
     {
+        if (fixedCapacitySamples_ == 0u && !processors_.empty()) {
+            output.clear();
+            return {std::span<const int16_t>{}, input.sampleRate};
+        }
+
         const auto boundedSize = fixedCapacitySamples_ != 0u
             ? std::min(input.samples.size(), fixedCapacitySamples_)
             : input.samples.size();

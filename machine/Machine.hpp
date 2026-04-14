@@ -74,6 +74,14 @@ public:
         const auto regions = describeIoRegions();
         return MachineView{*this, runtimeContext(), std::vector<IoRegionDescriptor>(regions.begin(), regions.end())};
     }
+    [[nodiscard]] MutableMachineView view() {
+        const auto regions = describeIoRegions();
+        return MutableMachineView{*this, runtimeContext(), std::vector<IoRegionDescriptor>(regions.begin(), regions.end())};
+    }
+    [[nodiscard]] MutableMachineView mutableView() {
+        const auto regions = describeIoRegions();
+        return MutableMachineView{*this, runtimeContext(), std::vector<IoRegionDescriptor>(regions.begin(), regions.end())};
+    }
     virtual std::optional<uint32_t> currentDigitalInputMask() const {
         return std::nullopt;
     }

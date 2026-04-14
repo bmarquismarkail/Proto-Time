@@ -143,12 +143,12 @@ public:
         return "Logging Video Plugin";
     }
 
-    void onAttach(const MachineView&) override
+    void onAttach(MutableMachineView&) override
     {
         appendLog("video: attached");
     }
 
-    void onDetach(const MachineView&) override
+    void onDetach(MutableMachineView&) override
     {
         appendLog("video: detached");
     }
@@ -179,12 +179,12 @@ public:
         return "Logging Audio Plugin";
     }
 
-    void onAttach(const MachineView&) override
+    void onAttach(MutableMachineView&) override
     {
         appendLog("audio: attached");
     }
 
-    void onDetach(const MachineView&) override
+    void onDetach(MutableMachineView&) override
     {
         appendLog("audio: detached");
     }
@@ -215,12 +215,12 @@ public:
         return "Logging Digital Input Plugin";
     }
 
-    void onAttach(const MachineView&) override
+    void onAttach(MutableMachineView&) override
     {
         appendLog("input: attached");
     }
 
-    void onDetach(const MachineView&) override
+    void onDetach(MutableMachineView&) override
     {
         appendLog("input: detached");
     }
