@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
 #  if defined(__has_include)
@@ -16,6 +17,21 @@
 #endif
 
 namespace BMMQ {
+
+namespace {
+
+[[nodiscard]] int clampScaledDimension(int dimension, int scale) noexcept
+{
+    const auto scaled = static_cast<long long>(dimension) * static_cast<long long>(scale);
+    const auto clamped = std::clamp(
+        scaled,
+        1LL,
+        static_cast<long long>(std::numeric_limits<int>::max())
+    );
+    return static_cast<int>(clamped);
+}
+
+} // namespace
 
 SdlVideoPresenter::~SdlVideoPresenter()
 {
@@ -63,8 +79,8 @@ bool SdlVideoPresenter::open(const VideoPresenterConfig& config)
     }
     initializedBackendFlags_ = SDL_INIT_VIDEO | SDL_INIT_EVENTS;
 
-    const int width = std::max(config_.frameWidth * config_.scale, 1);
-    const int height = std::max(config_.frameHeight * config_.scale, 1);
+    const int width = clampScaledDimension(config_.frameWidth, config_.scale);
+    const int height = clampScaledDimension(config_.frameHeight, config_.scale);
     const uint32_t windowFlags = config_.createHiddenWindowOnOpen ? SDL_WINDOW_HIDDEN : SDL_WINDOW_SHOWN;
     window_ = SDL_CreateWindow(config_.windowTitle.c_str(),
                                SDL_WINDOWPOS_UNDEFINED,
@@ -158,6 +174,7 @@ bool SdlVideoPresenter::present(const VideoFramePacket& frame) noexcept
             SDL_DestroyTexture(texture_);
             texture_ = nullptr;
         }
+        SDL_RenderSetLogicalSize(renderer_, frame.width, frame.height);
         texture_ = SDL_CreateTexture(renderer_,
                                      SDL_PIXELFORMAT_ARGB8888,
                                      SDL_TEXTUREACCESS_STREAMING,

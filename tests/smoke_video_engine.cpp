@@ -32,7 +32,7 @@ BMMQ::VideoStateView makeDebugVideoState()
     state.vram[0x0011] = 0xFFu;
     for (std::size_t row = 1; row < 8; ++row) {
         state.vram[0x0010u + row * 2u] = 0xFFu;
-        state.vram[0x0011u + row * 2u + 1u] = 0xFFu;
+        state.vram[0x0010u + row * 2u + 1u] = 0xFFu;
     }
 
     state.oam[0] = 32u;

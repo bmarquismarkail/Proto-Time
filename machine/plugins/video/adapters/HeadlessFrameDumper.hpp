@@ -1,6 +1,7 @@
 #ifndef BMMQ_HEADLESS_FRAME_DUMPER_HPP
 #define BMMQ_HEADLESS_FRAME_DUMPER_HPP
 
+#include <new>
 #include <string_view>
 #include <vector>
 
@@ -19,7 +20,7 @@ public:
     [[nodiscard]] VideoPluginCapabilities capabilities() const noexcept override
     {
         return {
-            .realtimeSafe = true,
+            .realtimeSafe = false,
             .frameSizePreserving = true,
             .snapshotAware = true,
             .deterministic = true,
@@ -45,14 +46,22 @@ public:
 
     bool present(const VideoFramePacket& frame) noexcept override
     {
-        frames_.push_back(frame);
-        return true;
+        try {
+            frames_.push_back(frame);
+            return true;
+        } catch (const std::bad_alloc&) {
+            return false;
+        }
     }
 
     bool capture(const VideoFramePacket& frame) noexcept override
     {
-        frames_.push_back(frame);
-        return true;
+        try {
+            frames_.push_back(frame);
+            return true;
+        } catch (const std::bad_alloc&) {
+            return false;
+        }
     }
 
     [[nodiscard]] std::string_view lastError() const noexcept override

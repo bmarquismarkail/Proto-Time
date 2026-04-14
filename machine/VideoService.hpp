@@ -167,9 +167,6 @@ public:
         if (!isLiveCompatible(caps)) {
             return false;
         }
-        if (state_ == VideoLifecycleState::Active && !caps.hotSwappable) {
-            return false;
-        }
         std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
         if (state_ == VideoLifecycleState::Active && !caps.hotSwappable) {
             return false;

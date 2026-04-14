@@ -41,11 +41,11 @@ int main()
         assert(service.submitFrame(BMMQ::makeBlankVideoFrame(8, 8, 12u)));
         (void)service.presentOneFrame();
         assert(!service.diagnostics().activeBackendName.empty());
+        assert(service.pause());
     } else {
         assert(service.state() == BMMQ::VideoLifecycleState::Faulted);
         assert(!service.diagnostics().lastBackendError.empty());
     }
-    assert(service.pause());
     assert(service.detachPresenter());
 
     return 0;
