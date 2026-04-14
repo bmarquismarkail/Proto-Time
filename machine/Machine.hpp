@@ -10,6 +10,7 @@
 #include "AudioService.hpp"
 #include "RegisterId.hpp"
 #include "RuntimeContext.hpp"
+#include "VideoService.hpp"
 #include "plugins/IoPlugin.hpp"
 #include "plugins/PluginManager.hpp"
 
@@ -23,7 +24,8 @@ class Machine {
 public:
     virtual ~Machine() = default;
     Machine()
-        : audioService_(std::make_unique<AudioService>()) {}
+        : audioService_(std::make_unique<AudioService>()),
+          videoService_(std::make_unique<VideoService>()) {}
     Machine(const Machine&) = delete;
     Machine& operator=(const Machine&) = delete;
     Machine(Machine&&) = delete;
@@ -39,6 +41,12 @@ public:
     [[nodiscard]] const AudioService& audioService() const {
         return *audioService_;
     }
+    [[nodiscard]] VideoService& videoService() {
+        return *videoService_;
+    }
+    [[nodiscard]] const VideoService& videoService() const {
+        return *videoService_;
+    }
     [[nodiscard]] bool setAudioService(std::unique_ptr<AudioService> service) {
         if (!service) {
             return false;
@@ -47,6 +55,16 @@ public:
             return false;
         }
         audioService_ = std::move(service);
+        return true;
+    }
+    [[nodiscard]] bool setVideoService(std::unique_ptr<VideoService> service) {
+        if (!service) {
+            return false;
+        }
+        if (pluginManager().initialized()) {
+            return false;
+        }
+        videoService_ = std::move(service);
         return true;
     }
     virtual std::span<const IoRegionDescriptor> describeIoRegions() const = 0;
@@ -81,6 +99,7 @@ public:
 
 private:
     std::unique_ptr<AudioService> audioService_;
+    std::unique_ptr<VideoService> videoService_;
 };
 
 inline std::optional<uint32_t> queryDigitalInputMask(const Machine& machine) {
@@ -93,6 +112,14 @@ inline AudioService& queryAudioService(Machine& machine) {
 
 inline const AudioService& queryAudioService(const Machine& machine) {
     return machine.audioService();
+}
+
+inline VideoService& queryVideoService(Machine& machine) {
+    return machine.videoService();
+}
+
+inline const VideoService& queryVideoService(const Machine& machine) {
+    return machine.videoService();
 }
 
 inline std::vector<int16_t> queryRecentAudioSamples(const Machine& machine) {

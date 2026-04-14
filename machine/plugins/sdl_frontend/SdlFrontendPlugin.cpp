@@ -1,7 +1,9 @@
 #include "../SdlFrontendPlugin.hpp"
 #include "../../AudioService.hpp"
+#include "../../VideoService.hpp"
 #include "../audio_output/DummyAudioOutput.hpp"
 #include "../audio_output/FileAudioOutput.hpp"
+#include "../video/adapters/SdlVideoPresenter.hpp"
 #include "SdlAudioOutput.hpp"
 
 #include <algorithm>
@@ -89,17 +91,20 @@ public:
 
     [[nodiscard]] bool windowVisible() const noexcept override
     {
-        return windowVisible_;
+        return videoPresenter_ != nullptr ? videoPresenter_->windowVisible() : windowVisible_;
     }
 
     [[nodiscard]] bool windowVisibilityRequested() const noexcept override
     {
-        return windowVisibilityRequested_;
+        return videoPresenter_ != nullptr ? videoPresenter_->windowVisibilityRequested() : windowVisibilityRequested_;
     }
 
     void requestWindowVisibility(bool visible) override
     {
         windowVisibilityRequested_ = visible;
+        if (videoPresenter_ != nullptr) {
+            videoPresenter_->requestWindowVisibility(visible);
+        }
         appendLog(std::string("sdl: window visibility requested=") + (visible ? "visible" : "hidden"));
     }
 
@@ -111,6 +116,7 @@ public:
             handledEvents = pumpBackendEvents();
         }
 
+        syncVideoTransportStats();
         const bool hadFrame = config_.enableVideo && lastFrame_.has_value();
         const bool hasAudioState = config_.enableAudio && lastAudioState_.has_value();
         const bool hadAudioPreview = config_.enableAudio && lastAudioPreview_.has_value();
@@ -287,9 +293,6 @@ public:
         if (config_.enableAudio) {
             initFlags |= SDL_INIT_AUDIO;
         }
-        if (config_.createHiddenWindowOnInitialize && config_.enableVideo) {
-            initFlags |= SDL_INIT_VIDEO;
-        }
 
         if (SDL_InitSubSystem(initFlags) != 0) {
             lastBackendError_ = SDL_GetError();
@@ -300,21 +303,8 @@ public:
         }
 
         initializedBackendFlags_ = initFlags;
-        if ((initFlags & SDL_INIT_VIDEO) != 0u) {
-            const int width = std::max(config_.frameWidth * std::max(config_.windowScale, 1), 1);
-            const int height = std::max(config_.frameHeight * std::max(config_.windowScale, 1), 1);
-            window_ = SDL_CreateWindow(config_.windowTitle.c_str(),
-                                       SDL_WINDOWPOS_UNDEFINED,
-                                       SDL_WINDOWPOS_UNDEFINED,
-                                       width,
-                                       height,
-                                       SDL_WINDOW_HIDDEN);
-            if (window_ == nullptr) {
-                lastBackendError_ = SDL_GetError();
-                appendLog("sdl: hidden window creation failed: " + lastBackendError_);
-                shutdownBackend();
-                return false;
-            }
+        if (config_.enableVideo && !ensureVideoPresenter()) {
+            appendLog("sdl: continuing without live video output");
         }
 
         if (config_.enableAudio && !ensureAudioDevice()) {
@@ -361,6 +351,8 @@ public:
         ++stats_.attachCount;
         audioService_ = &const_cast<BMMQ::MachineView&>(view).audioService();
         audioService_->setBackendPausedOrClosed(true);
+        videoService_ = &const_cast<BMMQ::MachineView&>(view).videoService();
+        configureVideoService();
         appendLog("sdl: attached");
         if (config_.autoInitializeBackend) {
             tryInitializeBackend();
@@ -372,6 +364,8 @@ public:
         ++stats_.detachCount;
         shutdownBackend();
         audioService_ = nullptr;
+        videoService_ = nullptr;
+        videoPresenter_ = nullptr;
         windowVisible_ = false;
         appendLog("sdl: detached");
     }
@@ -391,13 +385,8 @@ public:
         if (shouldSampleVideoState) {
             lastVideoState_ = view.videoState();
             if (lastVideoState_.has_value()) {
-                const bool shouldRefreshFrame =
-                    event.type == BMMQ::MachineEventType::VBlank ||
-                    !lastFrame_.has_value() ||
-                    !lastVideoState_->lcdEnabled() ||
-                    lcdControlWrite;
-                if (shouldRefreshFrame) {
-                    lastFrame_ = buildDebugFrame(*lastVideoState_);
+                if (videoService_ != nullptr && videoService_->submitVideoState(event, *lastVideoState_)) {
+                    syncVideoTransportStats();
                     ++stats_.framesPrepared;
                     frameDirty_ = true;
                     if (config_.autoPresentOnVideoEvent) {
@@ -648,6 +637,72 @@ private:
             static_cast<std::uint32_t>(stats_.audioBufferedHighWaterSamples * sizeof(int16_t)));
     }
 
+    void configureVideoService()
+    {
+        if (videoService_ == nullptr) {
+            return;
+        }
+        (void)videoService_->pause();
+        (void)videoService_->configure({
+            .frameWidth = std::max(config_.frameWidth, 1),
+            .frameHeight = std::max(config_.frameHeight, 1),
+            .queueCapacityFrames = 3,
+        });
+        (void)videoService_->configurePresenter({
+            .windowTitle = config_.windowTitle,
+            .scale = std::max(config_.windowScale, 1),
+            .frameWidth = std::max(config_.frameWidth, 1),
+            .frameHeight = std::max(config_.frameHeight, 1),
+            .createHiddenWindowOnOpen = true,
+            .showWindowOnPresent = config_.showWindowOnPresent,
+        });
+        if (config_.enableVideo) {
+            auto presenter = std::make_unique<BMMQ::SdlVideoPresenter>();
+            videoPresenter_ = presenter.get();
+            videoPresenter_->requestWindowVisibility(windowVisibilityRequested_);
+            (void)videoService_->attachPresenter(std::move(presenter));
+        }
+    }
+
+    bool ensureVideoPresenter()
+    {
+        if (!config_.enableVideo) {
+            return true;
+        }
+        if (videoService_ == nullptr) {
+            lastBackendError_ = "Video service unavailable";
+            appendLog("sdl: video service unavailable");
+            return false;
+        }
+        if (videoPresenter_ == nullptr) {
+            configureVideoService();
+        }
+        if (!videoService_->resume()) {
+            lastBackendError_ = videoService_->diagnostics().lastBackendError;
+            appendLog("sdl: video presenter open failed: " + lastBackendError_);
+            return false;
+        }
+        return true;
+    }
+
+    void syncVideoTransportStats() noexcept
+    {
+        if (videoService_ == nullptr) {
+            return;
+        }
+        if (const auto& frame = videoService_->engine().lastValidFrame(); frame.has_value()) {
+            BMMQ::SdlFrameBuffer compatFrame;
+            compatFrame.width = frame->width;
+            compatFrame.height = frame->height;
+            compatFrame.pixels = frame->pixels;
+            lastFrame_ = std::move(compatFrame);
+        }
+        if (videoPresenter_ != nullptr) {
+            windowVisible_ = videoPresenter_->windowVisible();
+            windowVisibilityRequested_ = videoPresenter_->windowVisibilityRequested();
+        }
+    }
+
     bool presentLatestFrame()
     {
         ++stats_.renderAttempts;
@@ -656,84 +711,40 @@ private:
             return false;
         }
 
-#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
-        if (!backendReady_) {
-            lastRenderSummary_ = "Frame prepared but backend not ready";
+        if (videoService_ == nullptr) {
+            lastRenderSummary_ = "Video service unavailable";
             return false;
         }
-        if (window_ == nullptr) {
-            lastRenderSummary_ = "Frame prepared without window";
+        if (!backendReady_ || videoService_->state() != BMMQ::VideoLifecycleState::Active) {
+            lastRenderSummary_ = "Frame prepared but backend not ready";
             return false;
         }
 
         if (config_.showWindowOnPresent) {
             requestWindowVisibility(true);
-            applyWindowVisibilityRequest();
         }
 
-        if (renderer_ == nullptr) {
-            SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
-            renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_SOFTWARE);
-            if (renderer_ == nullptr) {
-                lastBackendError_ = SDL_GetError();
-                lastRenderSummary_ = "Renderer creation failed";
-                appendLog("sdl: renderer creation failed: " + lastBackendError_);
-                return false;
-            }
-            SDL_RenderSetLogicalSize(renderer_, lastFrame_->width, lastFrame_->height);
-        }
-
-        if (texture_ == nullptr || textureWidth_ != lastFrame_->width || textureHeight_ != lastFrame_->height) {
-            if (texture_ != nullptr) {
-                SDL_DestroyTexture(texture_);
-                texture_ = nullptr;
-            }
-            texture_ = SDL_CreateTexture(renderer_,
-                                         SDL_PIXELFORMAT_ARGB8888,
-                                         SDL_TEXTUREACCESS_STREAMING,
-                                         lastFrame_->width,
-                                         lastFrame_->height);
-            if (texture_ == nullptr) {
-                lastBackendError_ = SDL_GetError();
-                lastRenderSummary_ = "Texture creation failed";
-                appendLog("sdl: texture creation failed: " + lastBackendError_);
-                return false;
-            }
-            textureWidth_ = lastFrame_->width;
-            textureHeight_ = lastFrame_->height;
-        }
-
-        if (SDL_UpdateTexture(texture_, nullptr, lastFrame_->pixels.data(), lastFrame_->width * static_cast<int>(sizeof(uint32_t))) != 0) {
-            lastBackendError_ = SDL_GetError();
-            lastRenderSummary_ = "Texture update failed";
-            appendLog("sdl: texture update failed: " + lastBackendError_);
+        const bool presented = videoService_->presentOneFrame();
+        syncVideoTransportStats();
+        if (!presented) {
+            lastBackendError_ = videoService_->diagnostics().lastBackendError;
+            lastRenderSummary_ = lastBackendError_.empty() ? "Video presentation failed" : lastBackendError_;
+            appendLog("sdl: video presentation failed: " + lastRenderSummary_);
             return false;
         }
-
-        SDL_RenderClear(renderer_);
-        SDL_RenderCopy(renderer_, texture_, nullptr, nullptr);
-        SDL_RenderPresent(renderer_);
         ++stats_.framesPresented;
         frameDirty_ = false;
         lastRenderSummary_ = "Presented frame " + std::to_string(lastFrame_->width) + "x" + std::to_string(lastFrame_->height);
         return true;
-#else
-        lastRenderSummary_ = "Frame prepared in skeleton mode";
-        return false;
-#endif
     }
 
     void applyWindowVisibilityRequest() noexcept
     {
-#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
-        if (window_ != nullptr) {
-            if (windowVisibilityRequested_) {
-                SDL_ShowWindow(window_);
-            } else {
-                SDL_HideWindow(window_);
-            }
+        if (videoPresenter_ != nullptr) {
+            videoPresenter_->requestWindowVisibility(windowVisibilityRequested_);
+            windowVisible_ = videoPresenter_->windowVisible();
+            return;
         }
-#endif
         windowVisible_ = windowVisibilityRequested_;
     }
 
@@ -742,23 +753,14 @@ private:
         if (audioService_ != nullptr) {
             audioService_->setBackendPausedOrClosed(true);
         }
+        if (videoService_ != nullptr) {
+            (void)videoService_->pause();
+            (void)videoService_->detachPresenter();
+            videoPresenter_ = nullptr;
+        }
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
         if (audioOutput_ != nullptr) {
             audioOutput_->close();
-        }
-        if (texture_ != nullptr) {
-            SDL_DestroyTexture(texture_);
-            texture_ = nullptr;
-        }
-        textureWidth_ = 0;
-        textureHeight_ = 0;
-        if (renderer_ != nullptr) {
-            SDL_DestroyRenderer(renderer_);
-            renderer_ = nullptr;
-        }
-        if (window_ != nullptr) {
-            SDL_DestroyWindow(window_);
-            window_ = nullptr;
         }
         if (initializedBackendFlags_ != 0u) {
             SDL_QuitSubSystem(initializedBackendFlags_);
@@ -770,206 +772,6 @@ private:
             (void)audioService_->resetStream();
         }
         backendReady_ = false;
-    }
-
-    static uint32_t paletteColor(uint8_t shade) noexcept
-    {
-        switch (shade & 0x03u) {
-        case 0:
-            return 0xFFE0F8D0u;
-        case 1:
-            return 0xFF88C070u;
-        case 2:
-            return 0xFF346856u;
-        default:
-            return 0xFF081820u;
-        }
-    }
-
-    [[nodiscard]] static uint8_t mapPaletteShade(uint8_t palette, uint8_t colorIndex) noexcept
-    {
-        return static_cast<uint8_t>((palette >> (colorIndex * 2u)) & 0x03u);
-    }
-
-    [[nodiscard]] static uint8_t readVramByte(const BMMQ::VideoStateView& state, uint16_t address) noexcept
-    {
-        if (address < 0x8000u || address >= 0xA000u) {
-            return 0xFFu;
-        }
-        const auto index = static_cast<std::size_t>(address - 0x8000u);
-        if (index >= state.vram.size()) {
-            return 0xFFu;
-        }
-        return state.vram[index];
-    }
-
-    [[nodiscard]] static uint8_t readOamByte(const BMMQ::VideoStateView& state, std::size_t index) noexcept
-    {
-        if (index >= state.oam.size()) {
-            return 0xFFu;
-        }
-        return state.oam[index];
-    }
-
-    [[nodiscard]] static uint8_t sampleTileColorIndex(const BMMQ::VideoStateView& state,
-                                                      uint8_t tileIndex,
-                                                      bool unsignedTileData,
-                                                      uint8_t tileX,
-                                                      uint8_t tileY) noexcept
-    {
-        uint16_t tileAddress = 0x8000u;
-        if (unsignedTileData) {
-            tileAddress = static_cast<uint16_t>(0x8000u + static_cast<uint16_t>(tileIndex) * 16u);
-        } else {
-            tileAddress = static_cast<uint16_t>(0x9000 + static_cast<int16_t>(static_cast<int8_t>(tileIndex)) * 16);
-        }
-
-        const auto rowAddress = static_cast<uint16_t>(tileAddress + static_cast<uint16_t>(tileY) * 2u);
-        const auto low = readVramByte(state, rowAddress);
-        const auto high = readVramByte(state, static_cast<uint16_t>(rowAddress + 1u));
-        const auto bit = static_cast<uint8_t>(7u - (tileX & 0x07u));
-        return static_cast<uint8_t>((((high >> bit) & 0x01u) << 1u) | ((low >> bit) & 0x01u));
-    }
-
-    [[nodiscard]] static uint8_t backgroundColorIndex(const BMMQ::VideoStateView& state, int screenX, int screenY) noexcept
-    {
-        const bool windowEnabled = (state.lcdc & 0x20u) != 0u;
-        const int windowLeft = static_cast<int>(state.wx) - 7;
-        const bool useWindow = windowEnabled && screenY >= static_cast<int>(state.wy) && screenX >= windowLeft;
-
-        int mapX = (screenX + static_cast<int>(state.scx)) & 0xFF;
-        int mapY = (screenY + static_cast<int>(state.scy)) & 0xFF;
-        uint16_t mapBase = (state.lcdc & 0x08u) != 0u ? 0x9C00u : 0x9800u;
-
-        if (useWindow) {
-            mapBase = (state.lcdc & 0x40u) != 0u ? 0x9C00u : 0x9800u;
-            mapX = std::max(0, screenX - windowLeft);
-            mapY = std::max(0, screenY - static_cast<int>(state.wy));
-        }
-
-        const auto tileMapAddress = static_cast<uint16_t>(
-            mapBase + static_cast<uint16_t>(((mapY >> 3) & 0x1Fu) * 32 + ((mapX >> 3) & 0x1Fu)));
-        const auto tileIndex = readVramByte(state, tileMapAddress);
-        const bool unsignedTileData = (state.lcdc & 0x10u) != 0u;
-        return sampleTileColorIndex(state,
-                                    tileIndex,
-                                    unsignedTileData,
-                                    static_cast<uint8_t>(mapX & 0x07),
-                                    static_cast<uint8_t>(mapY & 0x07));
-    }
-
-    void compositeSprites(BMMQ::SdlFrameBuffer& frame,
-                          const BMMQ::VideoStateView& state,
-                          std::span<const uint8_t> backgroundColorIndices) const
-    {
-        if ((state.lcdc & 0x02u) == 0u || state.oam.empty()) {
-            return;
-        }
-
-        const bool tallSprites = (state.lcdc & 0x04u) != 0u;
-        const int spriteHeight = tallSprites ? 16 : 8;
-        for (int spriteIndex = 39; spriteIndex >= 0; --spriteIndex) {
-            const auto base = static_cast<std::size_t>(spriteIndex) * 4u;
-            if (base + 3u >= state.oam.size()) {
-                continue;
-            }
-
-            const int spriteY = static_cast<int>(readOamByte(state, base)) - 16;
-            const int spriteX = static_cast<int>(readOamByte(state, base + 1u)) - 8;
-            uint8_t tileIndex = readOamByte(state, base + 2u);
-            const uint8_t attributes = readOamByte(state, base + 3u);
-            if (spriteX <= -8 || spriteX >= frame.width || spriteY <= -spriteHeight || spriteY >= frame.height) {
-                continue;
-            }
-
-            if (tallSprites) {
-                tileIndex = static_cast<uint8_t>(tileIndex & 0xFEu);
-            }
-
-            const bool xFlip = (attributes & 0x20u) != 0u;
-            const bool yFlip = (attributes & 0x40u) != 0u;
-            const bool behindBackground = (attributes & 0x80u) != 0u;
-            const uint8_t palette = (attributes & 0x10u) != 0u ? state.obp1 : state.obp0;
-
-            for (int localY = 0; localY < spriteHeight; ++localY) {
-                const int screenY = spriteY + localY;
-                if (screenY < 0 || screenY >= frame.height) {
-                    continue;
-                }
-
-                int spriteRow = yFlip ? (spriteHeight - 1 - localY) : localY;
-                uint8_t effectiveTile = tileIndex;
-                if (tallSprites && spriteRow >= 8) {
-                    effectiveTile = static_cast<uint8_t>(tileIndex + 1u);
-                    spriteRow -= 8;
-                }
-
-                for (int localX = 0; localX < 8; ++localX) {
-                    const int screenX = spriteX + localX;
-                    if (screenX < 0 || screenX >= frame.width) {
-                        continue;
-                    }
-
-                    const auto pixelIndex = static_cast<std::size_t>(screenY) * static_cast<std::size_t>(frame.width)
-                                          + static_cast<std::size_t>(screenX);
-                    const uint8_t spriteColumn = static_cast<uint8_t>(xFlip ? (7 - localX) : localX);
-                    const uint8_t colorIndex = sampleTileColorIndex(state,
-                                                                    effectiveTile,
-                                                                    true,
-                                                                    spriteColumn,
-                                                                    static_cast<uint8_t>(spriteRow));
-                    if (colorIndex == 0u) {
-                        continue;
-                    }
-                    if (behindBackground && backgroundColorIndices[pixelIndex] != 0u) {
-                        continue;
-                    }
-
-                    const uint8_t shade = mapPaletteShade(palette, colorIndex);
-                    frame.pixels[pixelIndex] = paletteColor(shade);
-                }
-            }
-        }
-    }
-
-    [[nodiscard]] BMMQ::SdlFrameBuffer buildDebugFrame(const BMMQ::VideoStateView& state) const
-    {
-        BMMQ::SdlFrameBuffer frame;
-        frame.width = std::max(config_.frameWidth, 1);
-        frame.height = std::max(config_.frameHeight, 1);
-
-        const auto pixelCount = static_cast<std::size_t>(frame.width) * static_cast<std::size_t>(frame.height);
-        frame.pixels.resize(pixelCount, paletteColor(0));
-        if (state.vram.empty()) {
-            return frame;
-        }
-
-        const bool lcdEnabled = state.lcdEnabled();
-        const bool backgroundEnabled = (state.lcdc & 0x01u) != 0u;
-        std::vector<uint8_t> backgroundColorIndices(pixelCount, 0u);
-        for (int y = 0; y < frame.height; ++y) {
-            for (int x = 0; x < frame.width; ++x) {
-                const auto pixelIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(frame.width)
-                                      + static_cast<std::size_t>(x);
-                if (!lcdEnabled) {
-                    frame.pixels[pixelIndex] = paletteColor(0);
-                    continue;
-                }
-
-                uint8_t shade = 0;
-                if (backgroundEnabled) {
-                    const auto colorIndex = backgroundColorIndex(state, x, y);
-                    backgroundColorIndices[pixelIndex] = colorIndex;
-                    shade = mapPaletteShade(state.bgp, colorIndex);
-                }
-                frame.pixels[pixelIndex] = paletteColor(shade);
-            }
-        }
-
-        if (lcdEnabled) {
-            compositeSprites(frame, state, std::span<const uint8_t>(backgroundColorIndices.data(), backgroundColorIndices.size()));
-        }
-        return frame;
     }
 
     [[nodiscard]] bool hasAudibleChannelOneState(const BMMQ::AudioStateView& state) const noexcept
@@ -1184,15 +986,10 @@ private:
     double audioPhase_ = 0.0;
     uint64_t audioPreviewGeneration_ = 0;
     BMMQ::AudioService* audioService_ = nullptr;
+    BMMQ::VideoService* videoService_ = nullptr;
+    BMMQ::SdlVideoPresenter* videoPresenter_ = nullptr;
     std::unique_ptr<BMMQ::IAudioOutputBackend> audioOutput_ = std::make_unique<BMMQ::SdlAudioOutputBackend>();
     std::string selectedAudioBackend_ = "sdl";
-#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
-    SDL_Window* window_ = nullptr;
-    SDL_Renderer* renderer_ = nullptr;
-    SDL_Texture* texture_ = nullptr;
-#endif
-    int textureWidth_ = 0;
-    int textureHeight_ = 0;
 };
 
 BMMQ::ISdlFrontendPlugin* createSdlFrontendPlugin(const BMMQ::SdlFrontendConfig* config)

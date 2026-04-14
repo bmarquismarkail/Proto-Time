@@ -1,0 +1,54 @@
+#ifndef BMMQ_SDL_VIDEO_PRESENTER_HPP
+#define BMMQ_SDL_VIDEO_PRESENTER_HPP
+
+#include <cstdint>
+#include <string>
+#include <string_view>
+
+#include "../VideoPlugin.hpp"
+
+#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
+struct SDL_Window;
+struct SDL_Renderer;
+struct SDL_Texture;
+#endif
+
+namespace BMMQ {
+
+class SdlVideoPresenter final : public IVideoPresenterPlugin {
+public:
+    SdlVideoPresenter() = default;
+    ~SdlVideoPresenter() override;
+    SdlVideoPresenter(const SdlVideoPresenter&) = delete;
+    SdlVideoPresenter& operator=(const SdlVideoPresenter&) = delete;
+
+    [[nodiscard]] std::string_view name() const noexcept override;
+    [[nodiscard]] VideoPluginCapabilities capabilities() const noexcept override;
+    bool open(const VideoPresenterConfig& config) override;
+    void close() noexcept override;
+    [[nodiscard]] bool ready() const noexcept override;
+    bool present(const VideoFramePacket& frame) noexcept override;
+    [[nodiscard]] std::string_view lastError() const noexcept override;
+    [[nodiscard]] bool windowVisible() const noexcept;
+    void requestWindowVisibility(bool visible) noexcept;
+    [[nodiscard]] bool windowVisibilityRequested() const noexcept;
+
+private:
+    VideoPresenterConfig config_{};
+    std::string lastError_{};
+    bool ready_ = false;
+    bool windowVisible_ = false;
+    bool windowVisibilityRequested_ = false;
+    uint32_t initializedBackendFlags_ = 0;
+    int textureWidth_ = 0;
+    int textureHeight_ = 0;
+#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
+    ::SDL_Window* window_ = nullptr;
+    ::SDL_Renderer* renderer_ = nullptr;
+    ::SDL_Texture* texture_ = nullptr;
+#endif
+};
+
+} // namespace BMMQ
+
+#endif // BMMQ_SDL_VIDEO_PRESENTER_HPP

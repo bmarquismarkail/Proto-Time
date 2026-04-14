@@ -13,10 +13,13 @@ namespace BMMQ {
 
 class Machine;
 class AudioService;
+class VideoService;
 struct CpuFeedback;
 std::optional<uint32_t> queryDigitalInputMask(const Machine& machine);
 AudioService& queryAudioService(Machine& machine);
 const AudioService& queryAudioService(const Machine& machine);
+VideoService& queryVideoService(Machine& machine);
+const VideoService& queryVideoService(const Machine& machine);
 std::vector<int16_t> queryRecentAudioSamples(const Machine& machine);
 uint32_t queryAudioSampleRate(const Machine& machine);
 uint64_t queryAudioFrameCounter(const Machine& machine);
@@ -190,6 +193,16 @@ struct MachineView {
 
     [[nodiscard]] const AudioService& audioService() const {
         return queryAudioService(machine);
+    }
+
+    [[nodiscard]] VideoService& videoService() {
+        // Precondition: underlying Machine is non-const; using this on a view
+        // sourced from const Machine is undefined behavior.
+        return queryVideoService(const_cast<Machine&>(machine));
+    }
+
+    [[nodiscard]] const VideoService& videoService() const {
+        return queryVideoService(machine);
     }
 
     [[nodiscard]] uint8_t read8(uint16_t address) const {
