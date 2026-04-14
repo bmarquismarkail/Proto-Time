@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -41,13 +40,18 @@ public:
         service_ = config.audioService;
         engine_ = &engine;
         service_->setBackendPausedOrClosed(true);
-        deviceInfo_.sampleRate = config.testForcedDeviceSampleRate > 0
+        AudioOutputDeviceInfo deviceInfo{};
+        deviceInfo.sampleRate = config.testForcedDeviceSampleRate > 0
             ? config.testForcedDeviceSampleRate
             : std::max(config.requestedSampleRate, 1);
-        deviceInfo_.callbackChunkSamples = std::max<std::size_t>(config.callbackChunkSamples, 1u);
-        deviceInfo_.channels = 1;
-        engine_->setDeviceSampleRate(deviceInfo_.sampleRate);
-        if (!service_->configureFixedCallbackCapacity(deviceInfo_.callbackChunkSamples)) {
+        deviceInfo.callbackChunkSamples = std::max<std::size_t>(config.callbackChunkSamples, 1u);
+        deviceInfo.channels = 1;
+        {
+            std::lock_guard<std::mutex> lock(deviceInfoMutex_);
+            deviceInfo_ = deviceInfo;
+        }
+        engine_->setDeviceSampleRate(deviceInfo.sampleRate);
+        if (!service_->configureFixedCallbackCapacity(deviceInfo.callbackChunkSamples)) {
             setError(AudioOutputErrorCode::InvalidConfig, "Failed to configure callback buffer capacity");
             engine_ = nullptr;
             service_ = nullptr;
@@ -63,6 +67,7 @@ public:
 
     void close() noexcept
     {
+        ready_.store(false, std::memory_order_release);
         if (service_ != nullptr) {
             service_->setBackendPausedOrClosed(true);
         }
@@ -70,7 +75,6 @@ public:
         if (worker_.joinable()) {
             worker_.join();
         }
-        ready_.store(false, std::memory_order_release);
         engine_ = nullptr;
         service_ = nullptr;
     }
@@ -80,12 +84,10 @@ public:
         return ready_.load(std::memory_order_acquire);
     }
 
-    [[nodiscard]] std::string_view lastError() const noexcept
+    [[nodiscard]] std::string lastError() const noexcept
     {
         std::lock_guard<std::mutex> lock(errorMutex_);
-        thread_local std::shared_ptr<const std::string> threadLocalLastError;
-        threadLocalLastError = lastError_;
-        return threadLocalLastError != nullptr ? std::string_view(*threadLocalLastError) : std::string_view{};
+        return lastError_;
     }
 
     [[nodiscard]] AudioOutputErrorCode lastErrorCode() const noexcept
@@ -96,6 +98,7 @@ public:
 
     [[nodiscard]] AudioOutputDeviceInfo deviceInfo() const noexcept
     {
+        std::lock_guard<std::mutex> lock(deviceInfoMutex_);
         return deviceInfo_;
     }
 
@@ -103,21 +106,15 @@ private:
     void clearError() noexcept
     {
         std::lock_guard<std::mutex> lock(errorMutex_);
-        lastError_ = emptyErrorMessage();
+        lastError_.clear();
         lastErrorCode_ = AudioOutputErrorCode::None;
     }
 
     void setError(AudioOutputErrorCode code, std::string_view message)
     {
         std::lock_guard<std::mutex> lock(errorMutex_);
-        lastError_ = std::make_shared<const std::string>(message);
+        lastError_ = std::string(message);
         lastErrorCode_ = code;
-    }
-
-    [[nodiscard]] static const std::shared_ptr<const std::string>& emptyErrorMessage() noexcept
-    {
-        static const auto empty = std::make_shared<const std::string>();
-        return empty;
     }
 
     void run()
@@ -137,10 +134,14 @@ private:
             try {
                 service_->renderForOutput(buffer);
                 std::this_thread::sleep_for(sleepDuration);
-            } catch (const std::exception&) {
+            } catch (const std::exception& ex) {
+                setError(AudioOutputErrorCode::RuntimeError, ex.what());
+                ready_.store(false, std::memory_order_release);
                 running_.store(false, std::memory_order_release);
                 break;
             } catch (...) {
+                setError(AudioOutputErrorCode::RuntimeError, "Unknown audio output runtime error");
+                ready_.store(false, std::memory_order_release);
                 running_.store(false, std::memory_order_release);
                 break;
             }
@@ -150,8 +151,9 @@ private:
     AudioEngine* engine_ = nullptr;
     AudioService* service_ = nullptr;
     AudioOutputDeviceInfo deviceInfo_{};
+    mutable std::mutex deviceInfoMutex_;
     mutable std::mutex errorMutex_;
-    std::shared_ptr<const std::string> lastError_{emptyErrorMessage()};
+    std::string lastError_;
     AudioOutputErrorCode lastErrorCode_{AudioOutputErrorCode::None};
     std::atomic<bool> running_{false};
     std::atomic<bool> ready_{false};
@@ -186,9 +188,9 @@ bool DummyAudioOutputBackend::ready() const noexcept
     return impl_ != nullptr && impl_->ready();
 }
 
-std::string_view DummyAudioOutputBackend::lastError() const noexcept
+std::string DummyAudioOutputBackend::lastError() const noexcept
 {
-    return impl_ != nullptr ? impl_->lastError() : std::string_view{};
+    return impl_ != nullptr ? impl_->lastError() : std::string{};
 }
 
 AudioOutputErrorCode DummyAudioOutputBackend::lastErrorCode() const noexcept

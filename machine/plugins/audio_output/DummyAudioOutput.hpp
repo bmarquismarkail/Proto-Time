@@ -22,7 +22,7 @@ public:
     [[nodiscard]] bool open(AudioEngine& engine, const AudioOutputOpenConfig& config) override;
     void close() noexcept override;
     [[nodiscard]] bool ready() const noexcept override;
-    [[nodiscard]] std::string_view lastError() const noexcept override;
+    [[nodiscard]] std::string lastError() const noexcept override;
     [[nodiscard]] AudioOutputErrorCode lastErrorCode() const noexcept override;
     [[nodiscard]] AudioOutputDeviceInfo deviceInfo() const noexcept override;
 

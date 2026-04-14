@@ -19,6 +19,7 @@ enum class AudioOutputErrorCode {
     DiskFull,
     UnsupportedConfig,
     WriteFailed,
+    RuntimeError,
     BackendUnavailable,
     DeviceOpenFailed,
 };
@@ -48,7 +49,7 @@ public:
     [[nodiscard]] virtual bool open(AudioEngine& engine, const AudioOutputOpenConfig& config) = 0;
     virtual void close() noexcept = 0;
     [[nodiscard]] virtual bool ready() const noexcept = 0;
-    [[nodiscard]] virtual std::string_view lastError() const noexcept = 0;
+    [[nodiscard]] virtual std::string lastError() const noexcept = 0;
     [[nodiscard]] virtual AudioOutputErrorCode lastErrorCode() const noexcept = 0;
     [[nodiscard]] virtual AudioOutputDeviceInfo deviceInfo() const noexcept = 0;
 };

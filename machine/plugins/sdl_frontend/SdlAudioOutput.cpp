@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <span>
 #include <string>
@@ -57,7 +58,12 @@ public:
         desired.freq = std::max(config.requestedSampleRate, 1);
         desired.format = AUDIO_S16SYS;
         desired.channels = static_cast<Uint8>(config.channels);
-        desired.samples = static_cast<Uint16>(std::max<std::size_t>(config.callbackChunkSamples, 1u));
+        const auto callbackChunkSamples = std::max<std::size_t>(config.callbackChunkSamples, 1u);
+        const auto clampedSamples = std::min(
+            callbackChunkSamples,
+            static_cast<std::size_t>(std::numeric_limits<Uint16>::max())
+        );
+        desired.samples = static_cast<Uint16>(clampedSamples);
         desired.callback = &Impl::sdlAudioCallback;
         desired.userdata = this;
 
@@ -124,7 +130,7 @@ public:
 #endif
     }
 
-    [[nodiscard]] std::string_view lastError() const noexcept
+    [[nodiscard]] std::string lastError() const noexcept
     {
         return lastError_;
     }
@@ -153,6 +159,7 @@ private:
     void drainAudioCallback(Uint8* stream, int len) noexcept
     {
         if (engine_ == nullptr || service_ == nullptr) {
+            std::fill_n(stream, static_cast<std::size_t>(len), Uint8{0});
             return;
         }
 
@@ -198,9 +205,9 @@ bool SdlAudioOutputBackend::ready() const noexcept
     return impl_ != nullptr && impl_->ready();
 }
 
-std::string_view SdlAudioOutputBackend::lastError() const noexcept
+std::string SdlAudioOutputBackend::lastError() const noexcept
 {
-    return impl_ != nullptr ? impl_->lastError() : std::string_view{};
+    return impl_ != nullptr ? impl_->lastError() : std::string{};
 }
 
 AudioOutputErrorCode SdlAudioOutputBackend::lastErrorCode() const noexcept

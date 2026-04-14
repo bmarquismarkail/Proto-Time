@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -17,11 +18,6 @@ namespace BMMQ {
 
 class FileAudioOutputBackend::Impl {
 public:
-    enum class RuntimeError : std::uint8_t {
-        None = 0,
-        WriteFailed,
-    };
-
     ~Impl()
     {
         close();
@@ -35,23 +31,18 @@ public:
     [[nodiscard]] bool open(AudioEngine& engine, const AudioOutputOpenConfig& config)
     {
         close();
-        lastError_.clear();
-        runtimeError_.store(RuntimeError::None, std::memory_order_release);
-        lastErrorCode_.store(AudioOutputErrorCode::None, std::memory_order_release);
+        clearError();
 
         if (config.audioService == nullptr) {
-            lastError_ = "Audio service is required";
-            lastErrorCode_.store(AudioOutputErrorCode::InvalidConfig, std::memory_order_release);
+            setError(AudioOutputErrorCode::InvalidConfig, "Audio service is required");
             return false;
         }
         if (config.filePath.empty()) {
-            lastError_ = "File path is required";
-            lastErrorCode_.store(AudioOutputErrorCode::InvalidPath, std::memory_order_release);
+            setError(AudioOutputErrorCode::InvalidPath, "File path is required");
             return false;
         }
         if (config.channels != 1) {
-            lastError_ = "Only mono output is supported";
-            lastErrorCode_.store(AudioOutputErrorCode::UnsupportedConfig, std::memory_order_release);
+            setError(AudioOutputErrorCode::UnsupportedConfig, "Only mono output is supported");
             return false;
         }
 
@@ -61,12 +52,10 @@ public:
             : (std::ios::binary | std::ios::out | std::ios::trunc);
         output_.open(config.filePath, openMode);
         if (!output_.is_open()) {
-            if (errno == EACCES || errno == EPERM) {
-                lastErrorCode_.store(AudioOutputErrorCode::PermissionDenied, std::memory_order_release);
-            } else {
-                lastErrorCode_.store(AudioOutputErrorCode::InvalidPath, std::memory_order_release);
-            }
-            lastError_ = "Failed to open output file";
+            const auto errorCode = (errno == EACCES || errno == EPERM)
+                ? AudioOutputErrorCode::PermissionDenied
+                : AudioOutputErrorCode::InvalidPath;
+            setError(errorCode, "Failed to open output file");
             return false;
         }
 
@@ -80,8 +69,7 @@ public:
         deviceInfo_.channels = 1;
         engine_->setDeviceSampleRate(deviceInfo_.sampleRate);
         if (!service_->configureFixedCallbackCapacity(deviceInfo_.callbackChunkSamples)) {
-            lastError_ = "Failed to configure callback buffer capacity";
-            lastErrorCode_.store(AudioOutputErrorCode::InvalidConfig, std::memory_order_release);
+            setError(AudioOutputErrorCode::InvalidConfig, "Failed to configure callback buffer capacity");
             engine_ = nullptr;
             service_ = nullptr;
             output_.close();
@@ -118,14 +106,9 @@ public:
         return ready_.load(std::memory_order_acquire);
     }
 
-    [[nodiscard]] std::string_view lastError() const noexcept
+    [[nodiscard]] std::string lastError() const noexcept
     {
-        switch (runtimeError_.load(std::memory_order_acquire)) {
-        case RuntimeError::WriteFailed:
-            return "File write failed";
-        case RuntimeError::None:
-            break;
-        }
+        std::lock_guard<std::mutex> lock(errorMutex_);
         return lastError_;
     }
 
@@ -140,6 +123,20 @@ public:
     }
 
 private:
+    void clearError() noexcept
+    {
+        std::lock_guard<std::mutex> lock(errorMutex_);
+        lastError_.clear();
+        lastErrorCode_.store(AudioOutputErrorCode::None, std::memory_order_release);
+    }
+
+    void setError(AudioOutputErrorCode code, std::string_view message)
+    {
+        std::lock_guard<std::mutex> lock(errorMutex_);
+        lastError_ = std::string(message);
+        lastErrorCode_.store(code, std::memory_order_release);
+    }
+
     void run()
     {
         if (service_ == nullptr || !output_.is_open()) {
@@ -156,26 +153,30 @@ private:
         while (running_.load(std::memory_order_acquire)) {
             try {
                 service_->renderForOutput(buffer);
+                errno = 0;
                 output_.write(reinterpret_cast<const char*>(buffer.data()),
                               static_cast<std::streamsize>(buffer.size() * sizeof(int16_t)));
-                if (!output_) {
+                if (output_.fail() || output_.bad()) {
+                    AudioOutputErrorCode errorCode = AudioOutputErrorCode::WriteFailed;
                     if (errno == ENOSPC) {
-                        lastErrorCode_.store(AudioOutputErrorCode::DiskFull, std::memory_order_release);
+                        errorCode = AudioOutputErrorCode::DiskFull;
                     } else if (errno == EACCES || errno == EPERM) {
-                        lastErrorCode_.store(AudioOutputErrorCode::PermissionDenied, std::memory_order_release);
-                    } else {
-                        lastErrorCode_.store(AudioOutputErrorCode::WriteFailed, std::memory_order_release);
+                        errorCode = AudioOutputErrorCode::PermissionDenied;
                     }
-                    runtimeError_.store(RuntimeError::WriteFailed, std::memory_order_release);
+                    setError(errorCode, "File write failed");
                     ready_.store(false, std::memory_order_release);
                     running_.store(false, std::memory_order_release);
                     break;
                 }
                 std::this_thread::sleep_for(sleepDuration);
-            } catch (const std::exception&) {
+            } catch (const std::exception& ex) {
+                setError(AudioOutputErrorCode::RuntimeError, ex.what());
+                ready_.store(false, std::memory_order_release);
                 running_.store(false, std::memory_order_release);
                 break;
             } catch (...) {
+                setError(AudioOutputErrorCode::RuntimeError, "Unknown file audio output runtime error");
+                ready_.store(false, std::memory_order_release);
                 running_.store(false, std::memory_order_release);
                 break;
             }
@@ -185,9 +186,9 @@ private:
     AudioEngine* engine_ = nullptr;
     AudioService* service_ = nullptr;
     AudioOutputDeviceInfo deviceInfo_{};
+    mutable std::mutex errorMutex_;
     std::string lastError_;
     std::atomic<AudioOutputErrorCode> lastErrorCode_{AudioOutputErrorCode::None};
-    std::atomic<RuntimeError> runtimeError_{RuntimeError::None};
     std::atomic<bool> running_{false};
     std::atomic<bool> ready_{false};
     std::thread worker_{};
@@ -222,9 +223,9 @@ bool FileAudioOutputBackend::ready() const noexcept
     return impl_ != nullptr && impl_->ready();
 }
 
-std::string_view FileAudioOutputBackend::lastError() const noexcept
+std::string FileAudioOutputBackend::lastError() const noexcept
 {
-    return impl_ != nullptr ? impl_->lastError() : std::string_view{};
+    return impl_ != nullptr ? impl_->lastError() : std::string{};
 }
 
 AudioOutputErrorCode FileAudioOutputBackend::lastErrorCode() const noexcept
