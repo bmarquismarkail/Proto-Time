@@ -84,7 +84,7 @@ void TimingEngine::charge(double retiredCycles) noexcept
 }
 
 std::chrono::steady_clock::time_point TimingEngine::nextWakeTime(
-    std::chrono::steady_clock::time_point now) const noexcept
+    std::chrono::steady_clock::time_point now) noexcept
 {
     if (!control_.throttled || control_.paused || stats_.effectiveClockHz <= 0.0) {
         return now;
@@ -96,7 +96,32 @@ std::chrono::steady_clock::time_point TimingEngine::nextWakeTime(
     const double secondsUntil = cyclesUntil / stats_.effectiveClockHz;
     using namespace std::chrono;
     const auto dur = duration_cast<steady_clock::duration>(duration<double>(secondsUntil));
+
+    // If the computed wait is smaller than the configured host sleep
+    // quantum, return `now` to indicate we should not call
+    // `sleep_until()` for tiny deficits.
+    if (dur < config_.minSleepQuantum) {
+        ++stats_.sleepSkippedForSmallDeficit;
+        return now;
+    }
+    ++stats_.sleepDecisions;
     return now + dur;
+}
+
+bool TimingEngine::shouldSleep(std::chrono::steady_clock::time_point now) noexcept
+{
+    (void)now;
+    if (!control_.throttled || control_.paused || stats_.effectiveClockHz <= 0.0) {
+        return false;
+    }
+    if (stats_.cycleBudget >= config_.minInstructionCycles) {
+        return false;
+    }
+    const double cyclesUntil = std::max(0.0, config_.minInstructionCycles - stats_.cycleBudget);
+    const double secondsUntil = cyclesUntil / stats_.effectiveClockHz;
+    using namespace std::chrono;
+    const auto dur = duration_cast<steady_clock::duration>(duration<double>(secondsUntil));
+    return dur >= config_.minSleepQuantum;
 }
 
 void TimingService::configure(const TimingConfig& config)
@@ -110,6 +135,8 @@ void TimingService::configure(const TimingConfig& config)
     engine_.configure(config_);
     engine_.applyControl(control_);
     stats_ = engine_.stats();
+    // Propagate configured min sleep quantum into service-level stats snapshot
+    stats_.configuredMinSleepQuantum = config_.minSleepQuantum;
 }
 
 void TimingService::setThrottled(bool throttled) noexcept
@@ -154,6 +181,7 @@ void TimingService::start(std::chrono::steady_clock::time_point now) noexcept
     std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
     engine_.start(now);
     stats_ = engine_.stats();
+    stats_.configuredMinSleepQuantum = config_.minSleepQuantum;
 }
 
 void TimingService::update(std::chrono::steady_clock::time_point now) noexcept
@@ -162,6 +190,7 @@ void TimingService::update(std::chrono::steady_clock::time_point now) noexcept
     engine_.applyControl(control_);
     engine_.update(now);
     stats_ = engine_.stats();
+    stats_.configuredMinSleepQuantum = config_.minSleepQuantum;
 }
 
 bool TimingService::canExecute() const noexcept
@@ -194,10 +223,14 @@ void TimingService::charge(double retiredCycles) noexcept
 }
 
 std::chrono::steady_clock::time_point TimingService::nextWakeTime(
-    std::chrono::steady_clock::time_point now) const noexcept
+    std::chrono::steady_clock::time_point now) noexcept
 {
     std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
-    return engine_.nextWakeTime(now);
+    // Ensure service-level stats mirror engine diagnostics after the call
+    const auto nt = engine_.nextWakeTime(now);
+    stats_ = engine_.stats();
+    stats_.configuredMinSleepQuantum = config_.minSleepQuantum;
+    return nt;
 }
 
 TimingControlState TimingService::takeControlSnapshot() noexcept

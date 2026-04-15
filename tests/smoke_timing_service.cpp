@@ -22,6 +22,8 @@ int main()
     cfg.baseClockHz = 1000000.0; // 1 MHz
     cfg.minInstructionCycles = 4.0;
     cfg.maxCatchUp = std::chrono::milliseconds(8);
+    // Use a small sleep quantum for deterministic unit test behavior
+    cfg.minSleepQuantum = std::chrono::microseconds(1);
     cfg.throttled = true;
     svc.configure(cfg);
 

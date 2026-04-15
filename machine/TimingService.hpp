@@ -12,6 +12,9 @@ struct TimingConfig {
     double speedMultiplier = 1.0;
     double minInstructionCycles = 4.0;
     std::chrono::nanoseconds maxCatchUp = std::chrono::milliseconds(8);
+    // Minimum host sleep quantum; deficits smaller than this should
+    // not trigger a `sleep_until()` call in the emulator idle loop.
+    std::chrono::nanoseconds minSleepQuantum = std::chrono::milliseconds(1);
     bool throttled = true;
 };
 
@@ -26,6 +29,10 @@ struct TimingStats {
     bool paused = false;
     bool throttled = true;
     double speedMultiplier = 1.0;
+    // Host-sleep diagnostics
+    std::uint64_t sleepDecisions = 0;
+    std::uint64_t sleepSkippedForSmallDeficit = 0;
+    std::chrono::nanoseconds configuredMinSleepQuantum = std::chrono::milliseconds(1);
 };
 
 struct TimingControlState {
@@ -51,7 +58,8 @@ public:
     void charge(double retiredCycles) noexcept;
 
     [[nodiscard]] std::chrono::steady_clock::time_point nextWakeTime(
-        std::chrono::steady_clock::time_point now) const noexcept;
+        std::chrono::steady_clock::time_point now) noexcept;
+    [[nodiscard]] bool shouldSleep(std::chrono::steady_clock::time_point now) noexcept;
 
     [[nodiscard]] const TimingStats& stats() const noexcept { return stats_; }
 
@@ -80,7 +88,7 @@ public:
     void charge(double retiredCycles) noexcept;
 
     [[nodiscard]] std::chrono::steady_clock::time_point nextWakeTime(
-        std::chrono::steady_clock::time_point now) const noexcept;
+        std::chrono::steady_clock::time_point now) noexcept;
 
     [[nodiscard]] TimingControlState takeControlSnapshot() noexcept;
     void publishEngineStats(const TimingStats& stats) noexcept;
