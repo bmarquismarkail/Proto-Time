@@ -47,6 +47,9 @@ struct EmulatorOptions {
     std::optional<std::uint64_t> stepLimit;
     int windowScale = 3;
     bool headless = false;
+    bool unthrottled = false;
+    double speedMultiplier = 1.0;
+    bool startPaused = false;
 };
 
 void printUsage(std::string_view program)
@@ -59,6 +62,9 @@ void printUsage(std::string_view program)
               << "  --plugin <path>    Optional SDL frontend shared object override\n"
               << "  --steps <count>    Stop after a fixed number of instruction steps\n"
               << "  --scale <n>        SDL window scale factor (default: 3)\n"
+              << "  --unthrottled      Run unthrottled (no wall-clock pacing)\n"
+              << "  --speed <mult>     Start with speed multiplier (e.g. 2.0)\n"
+              << "  --pause            Start paused (use single-step to advance)\n"
               << "  --headless         Run without the SDL frontend plugin\n"
               << "  -h, --help         Show this help text\n\n"
               << "Controls:\n"
@@ -118,6 +124,19 @@ EmulatorOptions parseArguments(int argc, char** argv)
                 throw std::invalid_argument("--scale requires a positive integer");
             }
             options.windowScale = static_cast<int>(std::max<std::uint64_t>(1u, parseUnsignedArgument(argv[++i], "--scale")));
+        } else if (arg == "--unthrottled") {
+            options.unthrottled = true;
+        } else if (arg == "--speed") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--speed requires a numeric multiplier");
+            }
+            try {
+                options.speedMultiplier = std::stod(argv[++i]);
+            } catch (...) {
+                throw std::invalid_argument("Invalid value for --speed: " + std::string(argv[i]));
+            }
+        } else if (arg == "--pause") {
+            options.startPaused = true;
         } else if (arg == "--headless") {
             options.headless = true;
         } else if (arg == "-h" || arg == "--help") {
@@ -225,15 +244,18 @@ int main(int argc, char** argv)
         BMMQ::TimingService timingService;
         BMMQ::TimingConfig timingConfig;
         timingConfig.baseClockHz = static_cast<double>(cpuClockHz);
-        timingConfig.speedMultiplier = 1.0;
+        timingConfig.speedMultiplier = options.speedMultiplier;
         timingConfig.minInstructionCycles = kMinInstructionCycles;
         timingConfig.maxCatchUp = kMaxCatchUpWindow;
-        timingConfig.throttled = true;
+        timingConfig.throttled = !options.unthrottled;
         timingService.configure(timingConfig);
 
         auto initialNow = SteadyClock::now();
         auto nextFrontendService = initialNow + kFrontendServicePeriod;
         timingService.start(initialNow);
+        if (options.startPaused) {
+            timingService.setPaused(true);
+        }
 
         auto serviceFrontend = [&]() -> bool {
             if (frontend == nullptr) {

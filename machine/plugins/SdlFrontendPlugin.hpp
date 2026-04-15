@@ -103,6 +103,11 @@ enum class SdlFrontendHostKey : uint8_t {
     X,
     Backspace,
     Return,
+    Pause,
+    ThrottleToggle,
+    SingleStep,
+    SpeedUp,
+    SpeedDown,
 };
 
 struct SdlFrontendHostEvent {

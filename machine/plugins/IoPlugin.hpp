@@ -15,6 +15,7 @@ class Machine;
 class AudioService;
 class InputService;
 class VideoService;
+class TimingService;
 struct CpuFeedback;
 std::optional<uint32_t> queryDigitalInputMask(const Machine& machine);
 AudioService& queryAudioService(Machine& machine);
@@ -26,6 +27,8 @@ const VideoService& queryVideoService(const Machine& machine);
 std::vector<int16_t> queryRecentAudioSamples(const Machine& machine);
 uint32_t queryAudioSampleRate(const Machine& machine);
 uint64_t queryAudioFrameCounter(const Machine& machine);
+TimingService& queryTimingService(Machine& machine);
+const TimingService& queryTimingService(const Machine& machine);
 
 enum class PluginCategory : uint8_t {
     System = 0,
@@ -198,6 +201,10 @@ struct MachineView {
 
     [[nodiscard]] const VideoService& videoService() const {
         return queryVideoService(machine);
+    }
+
+    [[nodiscard]] const TimingService& timingService() const {
+        return queryTimingService(machine);
     }
 
     [[nodiscard]] uint8_t read8(uint16_t address) const {
@@ -381,6 +388,10 @@ struct MutableMachineView : MachineView {
 
     [[nodiscard]] const InputService& inputService() const {
         return queryInputService(mutableMachine);
+    }
+
+    [[nodiscard]] TimingService& timingService() {
+        return queryTimingService(mutableMachine);
     }
 };
 

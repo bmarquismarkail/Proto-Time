@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <cstdio>
 #include <utility>
 
 #include "plugins/input/InputEngine.hpp"
@@ -95,6 +96,15 @@ public:
     {
         std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
         syncDiagnostics();
+        // If an adapter is currently attached, prefer its lastError() value
+        // for the reported diagnostics so that recent adapter open failures
+        // are reflected immediately in `diagnostics().lastBackendError`.
+        if (adapter_ != nullptr) {
+            const auto err = std::string(adapter_->lastError());
+            if (!err.empty()) {
+                diagnostics_.lastBackendError = err;
+            }
+        }
         return diagnostics_;
     }
 
@@ -147,10 +157,22 @@ public:
         if (state_ == InputLifecycleState::Detached) {
             return false;
         }
+        // Debug: print diagnostics and adapter info before detaching
+        {
+            const std::string adapterErr = (adapter_ != nullptr) ? std::string(adapter_->lastError()) : std::string();
+            fprintf(stderr, "DETACH DBG - before detach state=%d adapter=%p adapterLastError='%s' diagnostics.lastBackendError(before)='%s'\n",
+                    static_cast<int>(state_), static_cast<const void*>(adapter_), adapterErr.c_str(), diagnostics_.lastBackendError.c_str());
+        }
+
         detachCurrentAdapterLocked();
         engine_.applyNeutralFallback(generation);
         diagnostics_.activeAdapterSummary.clear();
         diagnostics_.lastBackendError.clear();
+
+        // Debug: print diagnostics after clearing
+        fprintf(stderr, "DETACH DBG - after clearing diagnostics.lastBackendError='%s' state about to set Detached\n",
+                diagnostics_.lastBackendError.c_str());
+
         setState(InputLifecycleState::Detached);
         syncDiagnostics();
         return true;
@@ -253,6 +275,7 @@ private:
                                                    const InputPluginCapabilities& caps,
                                                    AttachFn&& attachFn)
     {
+        (void)adapter; (void)caps; (void)attachFn; // keep parameters used
         if (state_ == InputLifecycleState::Active) {
             if (adapter_ == nullptr) {
                 return false;

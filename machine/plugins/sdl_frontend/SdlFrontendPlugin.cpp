@@ -8,6 +8,32 @@
 
 #include <algorithm>
 #include <cstddef>
+
+    enum class ControlAction : uint8_t {
+        PauseToggle = 0,
+        ThrottleToggle,
+        SingleStep,
+        SpeedUp,
+        SpeedDown,
+    };
+
+    [[nodiscard]] static constexpr std::optional<ControlAction> mapControlKey(BMMQ::SdlFrontendHostKey key) noexcept
+    {
+        switch (key) {
+        case BMMQ::SdlFrontendHostKey::Pause:
+            return ControlAction::PauseToggle;
+        case BMMQ::SdlFrontendHostKey::ThrottleToggle:
+            return ControlAction::ThrottleToggle;
+        case BMMQ::SdlFrontendHostKey::SingleStep:
+            return ControlAction::SingleStep;
+        case BMMQ::SdlFrontendHostKey::SpeedUp:
+            return ControlAction::SpeedUp;
+        case BMMQ::SdlFrontendHostKey::SpeedDown:
+            return ControlAction::SpeedDown;
+        default:
+            return std::nullopt;
+        }
+    }
 #include <cstdint>
 #include <cctype>
 #include <memory>
@@ -229,17 +255,68 @@ public:
             }
 
             const auto mapped = mapHostKey(event.key);
-            if (!mapped.has_value()) {
-                lastHostEventSummary_ = "Unmapped host key";
-                appendLog("sdl: unmapped host key ignored");
-                return false;
+            if (mapped.has_value()) {
+                ++stats_.keyEventsHandled;
+                const bool pressed = event.type == BMMQ::SdlFrontendHostEventType::KeyDown;
+                setButtonState(*mapped, pressed);
+                lastHostEventSummary_ = std::string(buttonName(*mapped)) + (pressed ? " pressed from host" : " released from host");
+                return true;
             }
 
-            ++stats_.keyEventsHandled;
-            const bool pressed = event.type == BMMQ::SdlFrontendHostEventType::KeyDown;
-            setButtonState(*mapped, pressed);
-            lastHostEventSummary_ = std::string(buttonName(*mapped)) + (pressed ? " pressed from host" : " released from host");
-            return true;
+            // Check for control keys (timing/frontend controls)
+            const auto control = mapControlKey(event.key);
+            if (control.has_value() && event.type == BMMQ::SdlFrontendHostEventType::KeyDown) {
+                switch (*control) {
+                case ControlAction::PauseToggle:
+                    if (timingService_ != nullptr) {
+                        const auto s = timingService_->stats();
+                        timingService_->setPaused(!s.paused);
+                        appendLog(std::string("sdl: timing paused=") + (s.paused ? "false" : "true"));
+                        lastHostEventSummary_ = "Timing pause toggled";
+                        return true;
+                    }
+                    break;
+                case ControlAction::ThrottleToggle:
+                    if (timingService_ != nullptr) {
+                        const auto s = timingService_->stats();
+                        timingService_->setThrottled(!s.throttled);
+                        appendLog(std::string("sdl: timing throttled=") + (s.throttled ? "false" : "true"));
+                        lastHostEventSummary_ = "Timing throttle toggled";
+                        return true;
+                    }
+                    break;
+                case ControlAction::SingleStep:
+                    if (timingService_ != nullptr) {
+                        timingService_->requestSingleStep();
+                        appendLog("sdl: timing single-step requested");
+                        lastHostEventSummary_ = "Timing single-step requested";
+                        return true;
+                    }
+                    break;
+                case ControlAction::SpeedUp:
+                    if (timingService_ != nullptr) {
+                        const auto s = timingService_->stats();
+                        timingService_->setSpeedMultiplier(s.speedMultiplier * 2.0);
+                        appendLog("sdl: timing speed x2");
+                        lastHostEventSummary_ = "Timing speed increased";
+                        return true;
+                    }
+                    break;
+                case ControlAction::SpeedDown:
+                    if (timingService_ != nullptr) {
+                        const auto s = timingService_->stats();
+                        timingService_->setSpeedMultiplier(std::max(0.125, s.speedMultiplier / 2.0));
+                        appendLog("sdl: timing speed /2");
+                        lastHostEventSummary_ = "Timing speed decreased";
+                        return true;
+                    }
+                    break;
+                }
+            }
+
+            lastHostEventSummary_ = "Unmapped host key";
+            appendLog("sdl: unmapped host key ignored");
+            return false;
         }
         case BMMQ::SdlFrontendHostEventType::None:
             break;
@@ -363,6 +440,7 @@ public:
             (void)inputService_->resume();
         }
         videoService_ = &view.videoService();
+        timingService_ = &view.timingService();
         configureVideoService();
         appendLog("sdl: attached");
         if (config_.autoInitializeBackend) {
@@ -380,6 +458,7 @@ public:
         }
         inputService_ = nullptr;
         videoService_ = nullptr;
+        timingService_ = nullptr;
         videoPresenter_ = nullptr;
         windowVisible_ = false;
         appendLog("sdl: detached");
@@ -610,6 +689,16 @@ private:
             return BMMQ::SdlFrontendHostKey::Backspace;
         case SDLK_RETURN:
             return BMMQ::SdlFrontendHostKey::Return;
+        case SDLK_p:
+            return BMMQ::SdlFrontendHostKey::Pause;
+        case SDLK_o:
+            return BMMQ::SdlFrontendHostKey::ThrottleToggle;
+        case SDLK_n:
+            return BMMQ::SdlFrontendHostKey::SingleStep;
+        case SDLK_RIGHTBRACKET:
+            return BMMQ::SdlFrontendHostKey::SpeedUp;
+        case SDLK_LEFTBRACKET:
+            return BMMQ::SdlFrontendHostKey::SpeedDown;
         default:
             return std::nullopt;
         }
@@ -1066,6 +1155,7 @@ private:
     BMMQ::AudioService* audioService_ = nullptr;
     BMMQ::InputService* inputService_ = nullptr;
     BMMQ::VideoService* videoService_ = nullptr;
+    BMMQ::TimingService* timingService_ = nullptr;
     BMMQ::SdlVideoPresenter* videoPresenter_ = nullptr;
     std::unique_ptr<BMMQ::IAudioOutputBackend> audioOutput_ = std::make_unique<BMMQ::SdlAudioOutputBackend>();
     std::string selectedAudioBackend_ = "sdl";

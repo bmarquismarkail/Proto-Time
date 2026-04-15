@@ -250,6 +250,25 @@ The host loop should remain the orchestrator. The Timing Service should be the c
 - clear the single-step request after execution is granted
 - record a diagnostic count for granted single steps
 
+## Frontend controls (SDL)
+
+The SDL frontend exposes simple keyboard controls for timing during interactive runs:
+- `p`: toggle pause/resume
+- `o`: toggle throttled (wall-clock) vs unthrottled execution
+- `n`: request a single-step while paused
+- `]`: multiply speed by 2
+- `[`: divide speed by 2 (clamped at 1/8x)
+
+These keys are implemented in the SDL frontend plugin and operate on the `TimingService` attached to the `Machine`.
+
+## CLI flags
+
+The emulator executable supports a few command-line options for initial timing configuration (useful for headless runs and benchmarks):
+- `--unthrottled` : start the emulator in unthrottled mode (no wall-clock pacing)
+- `--speed <mult>` : start with an initial speed multiplier (e.g. `--speed 2.0`)
+- `--pause`       : start the emulator in paused state (use `n` to single-step)
+
+
 ## Catch-Up and Sleep Policy
 
 The Timing Service should always bound host drift correction.

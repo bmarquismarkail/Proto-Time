@@ -62,6 +62,7 @@ set_target_properties(time-sdl-video-adapter PROPERTIES POSITION_INDEPENDENT_COD
 add_library(time-sdl-frontend-plugin SHARED
     machine/plugins/sdl_frontend/SdlFrontendPlugin.cpp
 )
+target_link_libraries(time-sdl-frontend-plugin PRIVATE time-gameboy-interpreter-core)
 add_executable(timeEmulator emulator.cpp)
 target_link_libraries(timeEmulator time-gameboy-interpreter-core time-sdl-frontend-loader)
 if (TARGET SDL2::SDL2)

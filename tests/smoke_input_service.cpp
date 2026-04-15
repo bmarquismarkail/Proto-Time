@@ -103,6 +103,11 @@ private:
 
 int main()
 {
+    #ifdef NDEBUG
+    std::cerr << "DBG: NDEBUG defined" << '\n';
+    #else
+    std::cerr << "DBG: NDEBUG not defined" << '\n';
+    #endif
     BMMQ::InputService service({
         .stagingCapacity = 2,
     });
@@ -151,14 +156,18 @@ int main()
 
     service.recordBackendLoss("input backend detached", 2u);
     assert(service.state() == BMMQ::InputLifecycleState::Faulted);
+    std::cerr << "DBG: after recordBackendLoss diagnostics.lastBackendError='" << service.diagnostics().lastBackendError << "' state=" << static_cast<int>(service.state()) << '\n';
     assert(service.diagnostics().neutralFallbackCount == 1u);
     assert(service.committedDigitalMask().has_value());
     assert(*service.committedDigitalMask() == 0u);
 
     assert(service.pause());
+    std::cerr << "DBG: after pause diagnostics.lastBackendError='" << service.diagnostics().lastBackendError << "' state=" << static_cast<int>(service.state()) << '\n';
     assert(service.configureMappingProfile("paused-remap"));
     assert(service.diagnostics().activeMappingProfile == "paused-remap");
+    std::cerr << "DBG: before detach state=" << static_cast<int>(service.state()) << '\n';
     assert(service.detachAdapter(3u));
+    std::cerr << "DBG: after detach diagnostics.lastBackendError='" << service.diagnostics().lastBackendError << "' state=" << static_cast<int>(service.state()) << '\n';
     assert(service.state() == BMMQ::InputLifecycleState::Detached);
     assert(service.diagnostics().activeAdapterSummary.empty());
     assert(service.diagnostics().lastCommittedGeneration == 3u);
@@ -167,7 +176,9 @@ int main()
     auto failingAdapter = std::make_unique<TestInputAdapter>(safeCaps, 0x01u);
     failingAdapter->setOpenSucceeds(false, "open failed");
     assert(service.attachAdapter(std::move(failingAdapter)));
+    std::cerr << "DBG: after attach diagnostics.lastBackendError='" << service.diagnostics().lastBackendError << "' state=" << static_cast<int>(service.state()) << '\n';
     assert(!service.resume());
+    std::cerr << "DBG: after resume diagnostics.lastBackendError='" << service.diagnostics().lastBackendError << "' state=" << static_cast<int>(service.state()) << '\n';
     assert(service.state() == BMMQ::InputLifecycleState::Faulted);
     ASSERT_DIAG_EQ("open failed", service.diagnostics().lastBackendError);
 

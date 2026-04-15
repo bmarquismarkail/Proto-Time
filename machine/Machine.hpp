@@ -12,6 +12,7 @@
 #include "RegisterId.hpp"
 #include "RuntimeContext.hpp"
 #include "VideoService.hpp"
+#include "TimingService.hpp"
 #include "plugins/IoPlugin.hpp"
 #include "plugins/PluginManager.hpp"
 
@@ -27,7 +28,8 @@ public:
     Machine()
         : audioService_(std::make_unique<AudioService>()),
           inputService_(std::make_unique<InputService>()),
-          videoService_(std::make_unique<VideoService>()) {}
+                    videoService_(std::make_unique<VideoService>()),
+                    timingService_(std::make_unique<TimingService>()) {}
     Machine(const Machine&) = delete;
     Machine& operator=(const Machine&) = delete;
     Machine(Machine&&) = delete;
@@ -85,6 +87,24 @@ public:
         inputService_ = std::move(service);
         return true;
     }
+    [[nodiscard]] TimingService& timingService() {
+        return *timingService_;
+    }
+
+    [[nodiscard]] const TimingService& timingService() const {
+        return *timingService_;
+    }
+
+    [[nodiscard]] bool setTimingService(std::unique_ptr<TimingService> service) {
+        if (!service) {
+            return false;
+        }
+        if (pluginManager().initialized()) {
+            return false;
+        }
+        timingService_ = std::move(service);
+        return true;
+    }
     virtual std::span<const IoRegionDescriptor> describeIoRegions() const = 0;
     virtual void attachExecutorPolicy(Plugin::IExecutorPolicyPlugin& policy) = 0;
     virtual const Plugin::IExecutorPolicyPlugin& attachedExecutorPolicy() const = 0;
@@ -127,6 +147,7 @@ private:
     std::unique_ptr<AudioService> audioService_;
     std::unique_ptr<InputService> inputService_;
     std::unique_ptr<VideoService> videoService_;
+    std::unique_ptr<TimingService> timingService_;
 };
 
 inline std::optional<uint32_t> queryDigitalInputMask(const Machine& machine) {
@@ -155,6 +176,14 @@ inline VideoService& queryVideoService(Machine& machine) {
 
 inline const VideoService& queryVideoService(const Machine& machine) {
     return machine.videoService();
+}
+
+inline TimingService& queryTimingService(Machine& machine) {
+    return machine.timingService();
+}
+
+inline const TimingService& queryTimingService(const Machine& machine) {
+    return machine.timingService();
 }
 
 inline std::vector<int16_t> queryRecentAudioSamples(const Machine& machine) {
