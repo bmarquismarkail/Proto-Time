@@ -363,9 +363,8 @@ public:
             return false;
         }
 
-        const auto callbackChunk = static_cast<std::size_t>(std::max(config_.audioCallbackChunkSamples, 1));
-        const auto reserve = std::max<std::size_t>(callbackChunk * 2u, kApuFrameSamples);
-        const auto highWater = capacity > reserve ? capacity - reserve : capacity;
+        const auto safetyMarginSamples = computeAudioSafetyMarginSamples();
+        const auto highWater = capacity > safetyMarginSamples ? capacity - safetyMarginSamples : capacity;
         return audioService_->engine().bufferedSamples() >= highWater;
     }
 
@@ -638,6 +637,13 @@ public:
     }
 
 private:
+    [[nodiscard]] std::size_t computeAudioSafetyMarginSamples() const noexcept
+    {
+        const auto callbackChunk =
+            static_cast<std::size_t>(std::max(config_.audioCallbackChunkSamples, 1));
+        return std::max<std::size_t>(callbackChunk * 2u, kApuFrameSamples);
+    }
+
     [[nodiscard]] static constexpr uint8_t buttonMask(BMMQ::InputButton button) noexcept
     {
         return BMMQ::inputButtonMask(button);
@@ -837,9 +843,8 @@ private:
             return false;
         }
 
-        const auto callbackChunk = static_cast<std::size_t>(std::max(config_.audioCallbackChunkSamples, 1));
-        const auto lowWaterSamples = std::max<std::size_t>(callbackChunk * 2u, kApuFrameSamples);
-        return audioService_->engine().bufferedSamples() < lowWaterSamples;
+        const auto safetyMarginSamples = computeAudioSafetyMarginSamples();
+        return audioService_->engine().bufferedSamples() < safetyMarginSamples;
     }
 
     void configureVideoService()

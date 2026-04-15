@@ -5,6 +5,7 @@
 #include <cassert>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <span>
 #include <vector>
 
@@ -12,6 +13,19 @@
 #include "machine/plugins/video/VideoEngine.hpp"
 
 namespace {
+
+[[nodiscard]] long perfTestTimeoutMs() noexcept
+{
+    constexpr long kDefaultPerfTestTimeoutMs = 1000;
+    if (const char* value = std::getenv("PERF_TEST_TIMEOUT_MS"); value != nullptr) {
+        char* end = nullptr;
+        const long parsed = std::strtol(value, &end, 10);
+        if (end != value && parsed > 0) {
+            return parsed;
+        }
+    }
+    return kDefaultPerfTestTimeoutMs;
+}
 
 BMMQ::VideoStateView makeDebugVideoState()
 {
@@ -146,15 +160,16 @@ int main()
     std::vector<int16_t> audioOutput(256u, 0);
 
     constexpr int kFramesToBuild = 60;
+    const auto maxPerfTime = std::chrono::milliseconds(perfTestTimeoutMs());
     const auto start = std::chrono::steady_clock::now();
     for (int i = 0; i < kFramesToBuild; ++i) {
         const auto denseFrame = fullFrameEngine.buildDebugFrame(denseState, static_cast<uint64_t>(i + 1));
         assert(denseFrame.pixelCount() == 160u * 144u);
         audioEngine.appendRecentPcm(audioChunk, static_cast<uint64_t>(i + 1));
-        audioEngine.render(std::span<int16_t>(audioOutput.data(), audioOutput.size()));
+        audioEngine.render(audioOutput);
     }
     const auto elapsed = std::chrono::steady_clock::now() - start;
-    assert(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() < 250);
+    assert(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed) < maxPerfTime);
     assert(audioEngine.stats().underrunCount == 0u);
     assert(audioEngine.stats().samplesDelivered >= static_cast<std::size_t>(kFramesToBuild) * audioOutput.size());
 

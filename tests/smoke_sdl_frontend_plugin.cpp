@@ -167,7 +167,7 @@ int main(int argc, char** argv)
         assert(stats.audioQueueRecoveryClears == 0u);
 
         std::vector<int16_t> drain(stats.audioRingBufferCapacitySamples + stats.audioCallbackChunkSamples, 0);
-        machine.audioService().renderForOutput(std::span<int16_t>(drain.data(), drain.size()));
+        machine.audioService().renderForOutput(drain);
         assert(frontend->bufferedAudioSamples() == 0u);
         assert(!frontend->audioQueueBackpressureActive());
 
@@ -192,8 +192,8 @@ int main(int argc, char** argv)
         assert(frontend->bufferedAudioSamples() > 0u);
 
         const auto highWaterStartFrame = machine.audioFrameCounter() + 1u;
+        std::vector<int16_t> highWaterChunk(256u, 700);
         for (uint64_t frame = highWaterStartFrame; frame < highWaterStartFrame + 32u; ++frame) {
-            std::vector<int16_t> highWaterChunk(256u, 700);
             machine.audioService().engine().appendRecentPcm(highWaterChunk, frame);
         }
         assert(frontend->audioQueueBackpressureActive());

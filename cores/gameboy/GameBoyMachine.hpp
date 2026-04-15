@@ -461,6 +461,7 @@ private:
     }
 
     [[nodiscard]] static bool isSuppressedVideoWriteAddress(uint16_t address) noexcept {
+        // Keep LCDC at 0xFF40 observable here even though classifyIoAddress treats it as video.
         return (address >= 0x8000u && address < 0xA000u) ||
                (address >= 0xFE00u && address < 0xFEA0u) ||
                (address >= 0xFF41u && address <= 0xFF4Bu);

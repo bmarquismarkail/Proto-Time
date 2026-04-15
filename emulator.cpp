@@ -238,6 +238,7 @@ int main(int argc, char** argv)
         const auto cpuClockHz = machine.clockHz();
         using SteadyClock = std::chrono::steady_clock;
         constexpr auto kFrontendServicePeriod = std::chrono::milliseconds(1);
+        constexpr auto kAudioBackpressurePollInterval = std::chrono::milliseconds(1);
         constexpr auto kMaxCatchUpWindow = std::chrono::milliseconds(8);
         constexpr auto kMinSleepQuantum = std::chrono::milliseconds(1);
         const double kMinInstructionCycles = 4.0;
@@ -354,9 +355,10 @@ int main(int argc, char** argv)
             if (!executedInstruction) {
                 const auto nextStepTime = timingEngine.nextWakeTime(idleNow);
                 const auto audioBackpressureWakeTime = audioBackpressureActive()
-                    ? idleNow + std::chrono::milliseconds(1)
+                    ? idleNow + kAudioBackpressurePollInterval
                     : idleNow;
                 const auto frontendWakeTime = (frontend != nullptr) ? nextFrontendService : idleNow;
+                // nextWakeTime picks the earliest wake-up among frontend/nextFrontendService, nextStepTime, and audioBackpressureWakeTime.
                 auto nextWakeTime = (frontend != nullptr)
                     ? std::min(frontendWakeTime, nextStepTime)
                     : nextStepTime;

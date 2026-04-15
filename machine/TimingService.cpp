@@ -3,6 +3,19 @@
 #include <algorithm>
 
 namespace BMMQ {
+namespace {
+constexpr double kMinTimingSliceSeconds = 1e-6;
+
+void sanitizeTimingConfig(TimingConfig& config) noexcept
+{
+    if (config.executionSliceSeconds <= 0.0) {
+        config.executionSliceSeconds = kMinTimingSliceSeconds;
+    }
+    if (config.frontendServiceSliceSeconds <= 0.0) {
+        config.frontendServiceSliceSeconds = config.executionSliceSeconds;
+    }
+}
+} // namespace
 
 TimingEngine::TimingEngine(const TimingConfig& config) noexcept
 {
@@ -12,12 +25,7 @@ TimingEngine::TimingEngine(const TimingConfig& config) noexcept
 void TimingEngine::configure(const TimingConfig& config) noexcept
 {
     config_ = config;
-    if (config_.executionSliceSeconds <= 0.0) {
-        config_.executionSliceSeconds = 0.001;
-    }
-    if (config_.frontendServiceSliceSeconds <= 0.0) {
-        config_.frontendServiceSliceSeconds = config_.executionSliceSeconds;
-    }
+    sanitizeTimingConfig(config_);
     control_.throttled = config_.throttled;
     control_.speedMultiplier = config_.speedMultiplier;
     stats_.throttled = control_.throttled;
@@ -109,12 +117,12 @@ TimingSliceDecision TimingEngine::recordExecutionSliceCycles(double chargedCycle
     const double maxExecutionSliceCycles = std::max(
         config_.minInstructionCycles,
         config_.baseClockHz * config_.executionSliceSeconds);
-    const double frontendServiceSliceCycles = std::max(
+    const double maxFrontendServiceSliceCycles = std::max(
         config_.minInstructionCycles,
         config_.baseClockHz * config_.frontendServiceSliceSeconds);
 
     TimingSliceDecision decision;
-    if (frontendServiceSliceCycles_ >= frontendServiceSliceCycles) {
+    if (frontendServiceSliceCycles_ >= maxFrontendServiceSliceCycles) {
         frontendServiceSliceCycles_ = 0.0;
         decision.frontendServiceDue = true;
         ++stats_.frontendServiceChecks;
@@ -172,6 +180,7 @@ void TimingService::configure(const TimingConfig& config)
 {
     std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
     config_ = config;
+    sanitizeTimingConfig(config_);
     control_.throttled = config_.throttled;
     control_.speedMultiplier = config_.speedMultiplier;
     control_.paused = false;

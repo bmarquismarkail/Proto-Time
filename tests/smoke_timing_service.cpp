@@ -68,6 +68,17 @@ int main()
         CHECK_TRUE(s2.singleStepsGranted >= 1);
     }
 
+    {
+        BMMQ::TimingService invalidSliceSvc;
+        BMMQ::TimingConfig invalidSliceCfg;
+        invalidSliceCfg.baseClockHz = 1000000.0;
+        invalidSliceCfg.executionSliceSeconds = 0.0;
+        invalidSliceCfg.frontendServiceSliceSeconds = -1.0;
+        invalidSliceSvc.configure(invalidSliceCfg);
+        CHECK_TRUE(invalidSliceSvc.config().executionSliceSeconds > 0.0);
+        CHECK_TRUE(invalidSliceSvc.config().frontendServiceSliceSeconds > 0.0);
+    }
+
     // Catch-up clamping on large host delay.
     svc.setPaused(false);
     svc.setSpeedMultiplier(1.0);

@@ -324,6 +324,7 @@ int main()
     assert(reenabled);
     assert(!machine.pluginManager().statusFor("test.plugin.throwing")->disabled);
 
+    // Intentionally uses NetworkActivity with System to route a generic machine event through ThrowingPlugin.
     machine.pluginManager().emit(machine.view(), BMMQ::MachineEvent{
         BMMQ::MachineEventType::NetworkActivity,
         BMMQ::PluginCategory::System,
