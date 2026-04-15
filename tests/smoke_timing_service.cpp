@@ -41,6 +41,11 @@ int main()
     auto now1 = SteadyClock::now();
     CHECK_TRUE(svc.nextWakeTime(now1) <= now1);
 
+    {
+        const auto unthrottledStats = svc.stats();
+        CHECK_TRUE(unthrottledStats.configuredMinSleepQuantum == cfg.minSleepQuantum);
+    }
+
     // Speed multiplier affects effective clock rate.
     svc.setSpeedMultiplier(2.0);
     {
@@ -82,6 +87,27 @@ int main()
     const auto now2 = SteadyClock::now();
     const auto nw = svc.nextWakeTime(now2);
     CHECK_TRUE(nw > now2);
+
+    {
+        const auto s5 = svc.stats();
+        CHECK_TRUE(s5.sleepDecisions >= 1u);
+    }
+
+    // With a larger sleep quantum than the remaining timing deficit, wake should be immediate.
+    BMMQ::TimingService subQuantumSvc;
+    BMMQ::TimingConfig subQuantumCfg;
+    subQuantumCfg.baseClockHz = 1000000.0;
+    subQuantumCfg.minInstructionCycles = 4.0;
+    subQuantumCfg.maxCatchUp = std::chrono::milliseconds(8);
+    subQuantumCfg.minSleepQuantum = std::chrono::milliseconds(1);
+    subQuantumCfg.throttled = true;
+    subQuantumSvc.configure(subQuantumCfg);
+    subQuantumSvc.start(t0);
+    subQuantumSvc.update(t0 + std::chrono::microseconds(1));
+    subQuantumSvc.charge(1.0);
+    const auto subNow = t0 + std::chrono::microseconds(1);
+    CHECK_TRUE(subQuantumSvc.nextWakeTime(subNow) <= subNow);
+    CHECK_TRUE(subQuantumSvc.stats().sleepSkippedForSmallDeficit >= 1u);
 
     return 0;
 }

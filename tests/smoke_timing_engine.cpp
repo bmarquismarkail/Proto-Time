@@ -20,6 +20,7 @@ int main()
     cfg.baseClockHz = 1000000.0; // 1 MHz synthetic
     cfg.minInstructionCycles = 4.0;
     cfg.maxCatchUp = std::chrono::milliseconds(8);
+    cfg.minSleepQuantum = std::chrono::microseconds(10);
     cfg.throttled = true;
 
     BMMQ::TimingEngine engine(cfg);
@@ -47,6 +48,34 @@ int main()
         CHECK_TRUE(s.cycleBudget <= std::max(4.0, cfg.baseClockHz * std::chrono::duration<double>(cfg.maxCatchUp).count()) + 1.0);
     }
 
+    // Sub-quantum deficits should not trigger sleeping.
+    BMMQ::TimingConfig tinySleepCfg;
+    tinySleepCfg.baseClockHz = 1000000.0;
+    tinySleepCfg.minInstructionCycles = 4.0;
+    tinySleepCfg.minSleepQuantum = std::chrono::microseconds(10);
+    tinySleepCfg.throttled = true;
+    BMMQ::TimingEngine tinySleepEngine(tinySleepCfg);
+    tinySleepEngine.start(t0);
+    tinySleepEngine.update(t0 + std::chrono::microseconds(1));
+    tinySleepEngine.charge(1.0);
+    const auto subQuantumNow = t0 + std::chrono::microseconds(1);
+    CHECK_TRUE(!tinySleepEngine.shouldSleep(subQuantumNow));
+    CHECK_TRUE(tinySleepEngine.nextWakeTime(subQuantumNow) <= subQuantumNow);
+    CHECK_TRUE(tinySleepEngine.stats().sleepSkippedForSmallDeficit >= 1u);
+
+    // Scheduler-sized deficits should allow sleeping.
+    BMMQ::TimingConfig sleepCfg;
+    sleepCfg.baseClockHz = 1000.0;
+    sleepCfg.minInstructionCycles = 4.0;
+    sleepCfg.minSleepQuantum = std::chrono::microseconds(10);
+    sleepCfg.throttled = true;
+    BMMQ::TimingEngine sleepEngine(sleepCfg);
+    sleepEngine.start(t0);
+    const auto sleepyNow = t0 + std::chrono::microseconds(1);
+    CHECK_TRUE(sleepEngine.shouldSleep(sleepyNow));
+    CHECK_TRUE(sleepEngine.nextWakeTime(sleepyNow) > sleepyNow);
+    CHECK_TRUE(sleepEngine.stats().sleepDecisions >= 1u);
+
     // Paused mode is applied as an outer-loop control snapshot, not by service calls
     // inside the instruction loop.
     BMMQ::TimingControlState paused;
@@ -54,6 +83,7 @@ int main()
     engine.applyControl(paused);
     engine.update(t0 + std::chrono::milliseconds(300));
     CHECK_TRUE(!engine.canExecute());
+    CHECK_TRUE(!engine.shouldSleep(t0 + std::chrono::milliseconds(300)));
     paused.singleStepRequested = true;
     engine.applyControl(paused);
     CHECK_TRUE(engine.canExecute());

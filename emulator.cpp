@@ -239,6 +239,7 @@ int main(int argc, char** argv)
         using SteadyClock = std::chrono::steady_clock;
         constexpr auto kFrontendServicePeriod = std::chrono::milliseconds(1);
         constexpr auto kMaxCatchUpWindow = std::chrono::milliseconds(8);
+        constexpr auto kMinSleepQuantum = std::chrono::milliseconds(1);
         const double kMinInstructionCycles = 4.0;
 
         BMMQ::TimingService timingService;
@@ -247,6 +248,7 @@ int main(int argc, char** argv)
         timingConfig.speedMultiplier = options.speedMultiplier;
         timingConfig.minInstructionCycles = kMinInstructionCycles;
         timingConfig.maxCatchUp = kMaxCatchUpWindow;
+        timingConfig.minSleepQuantum = kMinSleepQuantum;
         timingConfig.throttled = !options.unthrottled;
         timingService.configure(timingConfig);
         BMMQ::TimingEngine timingEngine(timingConfig);
@@ -332,11 +334,18 @@ int main(int argc, char** argv)
 
             if (!executedInstruction) {
                 const auto nextStepTime = timingEngine.nextWakeTime(idleNow);
+                const auto frontendWakeTime = (frontend != nullptr) ? nextFrontendService : idleNow;
                 const auto nextWakeTime = (frontend != nullptr)
-                    ? std::min(nextFrontendService, nextStepTime)
+                    ? std::min(frontendWakeTime, nextStepTime)
                     : nextStepTime;
-                if (nextWakeTime > idleNow) {
-                    std::this_thread::sleep_until(nextWakeTime);
+
+                const bool frontendSleepDue = (frontend != nullptr) && (frontendWakeTime > idleNow);
+                const bool timingSleepDue = timingEngine.shouldSleep(idleNow) && (nextStepTime > idleNow);
+
+                if (timingSleepDue || frontendSleepDue) {
+                    if (nextWakeTime > idleNow) {
+                        std::this_thread::sleep_until(nextWakeTime);
+                    }
                 }
             }
         }
