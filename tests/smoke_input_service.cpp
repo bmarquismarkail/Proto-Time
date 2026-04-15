@@ -1,10 +1,17 @@
-#include <cassert>
 #include <iostream>
 #include <memory>
 #include <optional>
 #include <string>
 
 #include "machine/InputService.hpp"
+
+#define CHECK_TRUE(expr) \
+    do { \
+        if (!(expr)) { \
+            std::cerr << "check failed: " << #expr << '\n'; \
+            return 1; \
+        } \
+    } while (false)
 
 #define ASSERT_DIAG_EQ(expected, actualExpr) \
     do { \
@@ -13,7 +20,6 @@
         if (actualValue != expectedValue) { \
             std::cerr << "expected diagnostic '" << expectedValue \
                       << "' but got '" << actualValue << "'" << '\n'; \
-            assert(actualValue == expectedValue); \
             return 1; \
         } \
     } while (false)
@@ -103,18 +109,13 @@ private:
 
 int main()
 {
-    #ifdef NDEBUG
-    std::cerr << "DBG: NDEBUG defined" << '\n';
-    #else
-    std::cerr << "DBG: NDEBUG not defined" << '\n';
-    #endif
     BMMQ::InputService service({
         .stagingCapacity = 2,
     });
 
-    assert(service.state() == BMMQ::InputLifecycleState::Detached);
-    assert(service.configureMappingProfile("default-gameboy"));
-    assert(service.diagnostics().activeMappingProfile == "default-gameboy");
+    CHECK_TRUE(service.state() == BMMQ::InputLifecycleState::Detached);
+    CHECK_TRUE(service.configureMappingProfile("default-gameboy"));
+    CHECK_TRUE(service.diagnostics().activeMappingProfile == "default-gameboy");
 
     auto safeCaps = BMMQ::InputPluginCapabilities{
         .pollingSafe = true,
@@ -131,58 +132,53 @@ int main()
     BMMQ::InputAnalogState analog{};
     analog.channels[1] = 77;
     auto safeAdapter = std::make_unique<TestInputAdapter>(safeCaps, 0x10u, analog);
-    assert(service.attachAdapter(std::move(safeAdapter)));
-    assert(service.state() == BMMQ::InputLifecycleState::Paused);
-    assert(service.resume());
-    assert(service.state() == BMMQ::InputLifecycleState::Active);
-    assert(service.pollActiveAdapter(1u));
-    assert(service.committedDigitalMask().has_value());
-    assert(*service.committedDigitalMask() == 0x10u);
-    assert(service.committedAnalogState().has_value());
-    assert(service.committedAnalogState()->channels[1] == 77);
-    assert(service.diagnostics().lastCommittedGeneration == 1u);
-    assert(!service.configureMappingProfile("active-remap"));
+    CHECK_TRUE(service.attachAdapter(std::move(safeAdapter)));
+    CHECK_TRUE(service.state() == BMMQ::InputLifecycleState::Paused);
+    CHECK_TRUE(service.resume());
+    CHECK_TRUE(service.state() == BMMQ::InputLifecycleState::Active);
+    CHECK_TRUE(service.pollActiveAdapter(1u));
+    CHECK_TRUE(service.committedDigitalMask().has_value());
+    CHECK_TRUE(*service.committedDigitalMask() == 0x10u);
+    CHECK_TRUE(service.committedAnalogState().has_value());
+    CHECK_TRUE(service.committedAnalogState()->channels[1] == 77);
+    CHECK_TRUE(service.diagnostics().lastCommittedGeneration == 1u);
+    CHECK_TRUE(!service.configureMappingProfile("active-remap"));
 
     auto unsafeCaps = safeCaps;
     unsafeCaps.pollingSafe = false;
     auto unsafeAdapter = std::make_unique<TestInputAdapter>(unsafeCaps, 0x20u);
-    assert(!service.attachAdapter(std::move(unsafeAdapter)));
-    assert(service.state() == BMMQ::InputLifecycleState::Active);
+    CHECK_TRUE(!service.attachAdapter(std::move(unsafeAdapter)));
+    CHECK_TRUE(service.state() == BMMQ::InputLifecycleState::Active);
 
     service.recordPollFailure("temporary poll failure");
-    assert(service.diagnostics().pollFailureCount == 1u);
-    assert(service.committedDigitalMask().has_value());
-    assert(*service.committedDigitalMask() == 0x10u);
+    CHECK_TRUE(service.diagnostics().pollFailureCount == 1u);
+    CHECK_TRUE(service.committedDigitalMask().has_value());
+    CHECK_TRUE(*service.committedDigitalMask() == 0x10u);
 
     service.recordBackendLoss("input backend detached", 2u);
-    assert(service.state() == BMMQ::InputLifecycleState::Faulted);
-    std::cerr << "DBG: after recordBackendLoss diagnostics.lastBackendError='" << service.diagnostics().lastBackendError << "' state=" << static_cast<int>(service.state()) << '\n';
-    assert(service.diagnostics().neutralFallbackCount == 1u);
-    assert(service.committedDigitalMask().has_value());
-    assert(*service.committedDigitalMask() == 0u);
+    CHECK_TRUE(service.state() == BMMQ::InputLifecycleState::Faulted);
+    CHECK_TRUE(service.diagnostics().neutralFallbackCount == 1u);
+    CHECK_TRUE(service.committedDigitalMask().has_value());
+    CHECK_TRUE(*service.committedDigitalMask() == 0u);
 
-    assert(service.pause());
-    std::cerr << "DBG: after pause diagnostics.lastBackendError='" << service.diagnostics().lastBackendError << "' state=" << static_cast<int>(service.state()) << '\n';
-    assert(service.configureMappingProfile("paused-remap"));
-    assert(service.diagnostics().activeMappingProfile == "paused-remap");
-    std::cerr << "DBG: before detach state=" << static_cast<int>(service.state()) << '\n';
-    assert(service.detachAdapter(3u));
-    std::cerr << "DBG: after detach diagnostics.lastBackendError='" << service.diagnostics().lastBackendError << "' state=" << static_cast<int>(service.state()) << '\n';
-    assert(service.state() == BMMQ::InputLifecycleState::Detached);
-    assert(service.diagnostics().activeAdapterSummary.empty());
-    assert(service.diagnostics().lastCommittedGeneration == 3u);
-    assert(!service.detachAdapter(4u));
+    CHECK_TRUE(service.pause());
+    CHECK_TRUE(service.configureMappingProfile("paused-remap"));
+    CHECK_TRUE(service.diagnostics().activeMappingProfile == "paused-remap");
+    CHECK_TRUE(service.detachAdapter(3u));
+    CHECK_TRUE(service.state() == BMMQ::InputLifecycleState::Detached);
+    CHECK_TRUE(service.diagnostics().activeAdapterSummary.empty());
+    CHECK_TRUE(service.diagnostics().lastCommittedGeneration == 3u);
+    CHECK_TRUE(!service.detachAdapter(4u));
 
     auto failingAdapter = std::make_unique<TestInputAdapter>(safeCaps, 0x01u);
     failingAdapter->setOpenSucceeds(false, "open failed");
-    assert(service.attachAdapter(std::move(failingAdapter)));
-    std::cerr << "DBG: after attach diagnostics.lastBackendError='" << service.diagnostics().lastBackendError << "' state=" << static_cast<int>(service.state()) << '\n';
-    assert(!service.resume());
-    std::cerr << "DBG: after resume diagnostics.lastBackendError='" << service.diagnostics().lastBackendError << "' state=" << static_cast<int>(service.state()) << '\n';
-    assert(service.state() == BMMQ::InputLifecycleState::Faulted);
+    CHECK_TRUE(service.attachAdapter(std::move(failingAdapter)));
+    CHECK_TRUE(!service.resume());
+    CHECK_TRUE(service.state() == BMMQ::InputLifecycleState::Faulted);
     ASSERT_DIAG_EQ("open failed", service.diagnostics().lastBackendError);
 
     return 0;
 }
 
 #undef ASSERT_DIAG_EQ
+#undef CHECK_TRUE

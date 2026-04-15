@@ -1,7 +1,16 @@
-#include <cassert>
+#include <algorithm>
 #include <chrono>
+#include <iostream>
 
 #include "machine/TimingService.hpp"
+
+#define CHECK_TRUE(expr) \
+    do { \
+        if (!(expr)) { \
+            std::cerr << "check failed: " << #expr << '\n'; \
+            return 1; \
+        } \
+    } while (false)
 
 using SteadyClock = std::chrono::steady_clock;
 
@@ -20,14 +29,14 @@ int main()
 
     // Advance by 1ms -> should accumulate ~1000 cycles and be eligible to run
     svc.update(t0 + std::chrono::milliseconds(1));
-    assert(svc.canExecute());
+    CHECK_TRUE(svc.canExecute());
 
     // Charge a small retired cycle count; service should charge at least minInstructionCycles
     svc.charge(1.0);
     // After charging minInstructionCycles, budget remains non-negative
     {
         const auto s = svc.stats();
-        assert(s.cycleBudget >= 0.0);
+        CHECK_TRUE(s.cycleBudget >= 0.0);
     }
 
     // Large update should clamp to maxCatchUp window
@@ -35,17 +44,19 @@ int main()
     {
         const auto s = svc.stats();
         // With 1MHz and 8ms catch-up, max budget should be >= 8000 cycles
-        assert(s.cycleBudget <= std::max(4.0, cfg.baseClockHz * std::chrono::duration<double>(cfg.maxCatchUp).count()) + 1.0);
+        CHECK_TRUE(s.cycleBudget <= std::max(4.0, cfg.baseClockHz * std::chrono::duration<double>(cfg.maxCatchUp).count()) + 1.0);
     }
 
     // Paused mode prevents execution unless single-step requested
     svc.setPaused(true);
     svc.update(SteadyClock::now() + std::chrono::milliseconds(1));
-    assert(!svc.canExecute());
+    CHECK_TRUE(!svc.canExecute());
     svc.requestSingleStep();
-    assert(svc.canExecute());
+    CHECK_TRUE(svc.canExecute());
     svc.charge(4.0); // consume single step
-    assert(!svc.canExecute());
+    CHECK_TRUE(!svc.canExecute());
 
     return 0;
 }
+
+#undef CHECK_TRUE

@@ -663,6 +663,11 @@ private:
             return BMMQ::InputButton::Meta1;
         case BMMQ::SdlFrontendHostKey::Return:
             return BMMQ::InputButton::Meta2;
+        case BMMQ::SdlFrontendHostKey::Pause:
+        case BMMQ::SdlFrontendHostKey::ThrottleToggle:
+        case BMMQ::SdlFrontendHostKey::SingleStep:
+        case BMMQ::SdlFrontendHostKey::SpeedUp:
+        case BMMQ::SdlFrontendHostKey::SpeedDown:
         case BMMQ::SdlFrontendHostKey::Unknown:
             break;
         }

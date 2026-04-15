@@ -1,8 +1,17 @@
-#include <cassert>
+#include <algorithm>
 #include <cmath>
 #include <chrono>
+#include <iostream>
 
 #include "machine/TimingService.hpp"
+
+#define CHECK_TRUE(expr) \
+    do { \
+        if (!(expr)) { \
+            std::cerr << "check failed: " << #expr << '\n'; \
+            return 1; \
+        } \
+    } while (false)
 
 int main()
 {
@@ -21,35 +30,35 @@ int main()
 
     // Accumulate a little time and ensure execution is permitted.
     svc.update(t0 + std::chrono::milliseconds(1));
-    assert(svc.canExecute());
+    CHECK_TRUE(svc.canExecute());
 
     // Unthrottled mode allows execution regardless of budget.
     svc.setThrottled(false);
     svc.update(t0 + std::chrono::milliseconds(1));
-    assert(svc.canExecute());
+    CHECK_TRUE(svc.canExecute());
     auto now1 = SteadyClock::now();
-    assert(svc.nextWakeTime(now1) <= now1);
+    CHECK_TRUE(svc.nextWakeTime(now1) <= now1);
 
     // Speed multiplier affects effective clock rate.
     svc.setSpeedMultiplier(2.0);
     {
         const auto s = svc.stats();
-        assert(std::fabs(s.speedMultiplier - 2.0) < 1e-9);
-        assert(std::fabs(s.effectiveClockHz - cfg.baseClockHz * 2.0) < 1e-3);
+        CHECK_TRUE(std::fabs(s.speedMultiplier - 2.0) < 1e-9);
+        CHECK_TRUE(std::fabs(s.effectiveClockHz - cfg.baseClockHz * 2.0) < 1e-3);
     }
 
     // Pause + single-step semantics.
     svc.setThrottled(true);
     svc.setPaused(true);
     svc.update(now1 + std::chrono::milliseconds(1));
-    assert(!svc.canExecute());
+    CHECK_TRUE(!svc.canExecute());
     svc.requestSingleStep();
-    assert(svc.canExecute());
+    CHECK_TRUE(svc.canExecute());
     svc.charge(4.0);
-    assert(!svc.canExecute());
+    CHECK_TRUE(!svc.canExecute());
     {
         const auto s2 = svc.stats();
-        assert(s2.singleStepsGranted >= 1);
+        CHECK_TRUE(s2.singleStepsGranted >= 1);
     }
 
     // Catch-up clamping on large host delay.
@@ -61,8 +70,8 @@ int main()
         const auto s3 = svc.stats();
         const double maxBudget = std::max(cfg.minInstructionCycles,
                                           cfg.baseClockHz * std::chrono::duration<double>(cfg.maxCatchUp).count());
-        assert(s3.cycleBudget <= maxBudget + 1.0);
-        assert(s3.catchUpClampCount >= 1);
+        CHECK_TRUE(s3.cycleBudget <= maxBudget + 1.0);
+        CHECK_TRUE(s3.catchUpClampCount >= 1);
     }
 
     // When budget is exhausted and throttled, nextWakeTime should be in the future.
@@ -70,7 +79,9 @@ int main()
     svc.charge(s4.cycleBudget);
     const auto now2 = SteadyClock::now();
     const auto nw = svc.nextWakeTime(now2);
-    assert(nw > now2);
+    CHECK_TRUE(nw > now2);
 
     return 0;
 }
+
+#undef CHECK_TRUE
