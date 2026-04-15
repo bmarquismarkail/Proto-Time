@@ -28,6 +28,40 @@ struct TimingStats {
     double speedMultiplier = 1.0;
 };
 
+struct TimingControlState {
+    bool paused = false;
+    bool throttled = true;
+    double speedMultiplier = 1.0;
+    bool singleStepRequested = false;
+};
+
+class TimingEngine {
+public:
+    TimingEngine() noexcept = default;
+    explicit TimingEngine(const TimingConfig& config) noexcept;
+
+    void configure(const TimingConfig& config) noexcept;
+    [[nodiscard]] const TimingConfig& config() const noexcept { return config_; }
+
+    void applyControl(const TimingControlState& control) noexcept;
+    void start(std::chrono::steady_clock::time_point now) noexcept;
+    void update(std::chrono::steady_clock::time_point now) noexcept;
+
+    [[nodiscard]] bool canExecute() const noexcept;
+    void charge(double retiredCycles) noexcept;
+
+    [[nodiscard]] std::chrono::steady_clock::time_point nextWakeTime(
+        std::chrono::steady_clock::time_point now) const noexcept;
+
+    [[nodiscard]] const TimingStats& stats() const noexcept { return stats_; }
+
+private:
+    TimingConfig config_{};
+    TimingControlState control_{};
+    TimingStats stats_{};
+    std::chrono::steady_clock::time_point lastTick_{};
+};
+
 class TimingService {
 public:
     TimingService() noexcept = default;
@@ -48,15 +82,29 @@ public:
     [[nodiscard]] std::chrono::steady_clock::time_point nextWakeTime(
         std::chrono::steady_clock::time_point now) const noexcept;
 
+    [[nodiscard]] TimingControlState takeControlSnapshot() noexcept;
+    void publishEngineStats(const TimingStats& stats) noexcept;
+
     [[nodiscard]] const TimingConfig& config() const noexcept { return config_; }
     [[nodiscard]] TimingStats stats() const noexcept;
 
 private:
+    // Protects access to the service-level configuration and the
+    // internal engine state (`engine_`, `control_`, `stats_`). Public
+    // mutators and reader methods (for example `configure()`,
+    // `update()`, `charge()`, `canExecute()`, `nextWakeTime()`, and
+    // `stats()`) acquire this mutex internally before accessing or
+    // modifying these members. External callers MUST NOT attempt to
+    // lock `nonRealTimeMutex_` directly — the class manages locking
+    // internally. If external synchronization is required, prefer
+    // using the public snapshot APIs such as `takeControlSnapshot()`
+    // or `stats()` or add a dedicated public synchronization API.
     mutable std::mutex nonRealTimeMutex_;
+
     TimingConfig config_{};
+    TimingEngine engine_{};
+    TimingControlState control_{};
     TimingStats stats_{};
-    std::chrono::steady_clock::time_point lastTick_{};
-    bool singleStepRequested_ = false;
 };
 
 } // namespace BMMQ

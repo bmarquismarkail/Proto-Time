@@ -249,10 +249,12 @@ int main(int argc, char** argv)
         timingConfig.maxCatchUp = kMaxCatchUpWindow;
         timingConfig.throttled = !options.unthrottled;
         timingService.configure(timingConfig);
+        BMMQ::TimingEngine timingEngine(timingConfig);
 
         auto initialNow = SteadyClock::now();
         auto nextFrontendService = initialNow + kFrontendServicePeriod;
         timingService.start(initialNow);
+        timingEngine.start(initialNow);
         if (options.startPaused) {
             timingService.setPaused(true);
         }
@@ -266,6 +268,7 @@ int main(int argc, char** argv)
         };
 
         auto serviceFrontendUntil = [&](SteadyClock::time_point now) -> bool {
+            bool servicedFrontend = false;
             if (frontend == nullptr || now < nextFrontendService) {
                 return false;
             }
@@ -273,11 +276,15 @@ int main(int argc, char** argv)
                 nextFrontendService = now;
             }
             do {
+                servicedFrontend = true;
                 if (serviceFrontend()) {
                     return true;
                 }
                 nextFrontendService += kFrontendServicePeriod;
             } while (nextFrontendService <= now);
+            if (servicedFrontend) {
+                timingEngine.applyControl(timingService.takeControlSnapshot());
+            }
             return false;
         };
 
@@ -291,10 +298,11 @@ int main(int argc, char** argv)
                 break;
             }
 
-            timingService.update(now);
+            timingEngine.applyControl(timingService.takeControlSnapshot());
+            timingEngine.update(now);
 
             bool executedInstruction = false;
-            while (timingService.canExecute() && gStopRequested == 0) {
+            while (timingEngine.canExecute() && gStopRequested == 0) {
                 if (options.stepLimit.has_value() && steps >= *options.stepLimit) {
                     break;
                 }
@@ -304,13 +312,14 @@ int main(int argc, char** argv)
                 executedInstruction = true;
 
                 const auto retiredCycles = static_cast<double>(machine.runtimeContext().getLastFeedback().retiredCycles);
-                timingService.charge(retiredCycles);
+                timingEngine.charge(retiredCycles);
 
                 if (serviceFrontendUntil(SteadyClock::now())) {
                     gStopRequested = 1;
                     break;
                 }
             }
+            timingService.publishEngineStats(timingEngine.stats());
 
             if (gStopRequested != 0) {
                 break;
@@ -322,7 +331,7 @@ int main(int argc, char** argv)
             }
 
             if (!executedInstruction) {
-                const auto nextStepTime = timingService.nextWakeTime(idleNow);
+                const auto nextStepTime = timingEngine.nextWakeTime(idleNow);
                 const auto nextWakeTime = (frontend != nullptr)
                     ? std::min(nextFrontendService, nextStepTime)
                     : nextStepTime;
