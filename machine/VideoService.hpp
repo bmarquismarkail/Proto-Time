@@ -75,6 +75,7 @@ public:
             return false;
         }
         engine_.configure(config);
+        resetScanlineCapture();
         presenterConfig_.frameWidth = engine_.config().frameWidth;
         presenterConfig_.frameHeight = engine_.config().frameHeight;
         syncEngineDiagnostics();
@@ -193,7 +194,14 @@ public:
     {
         if (event.type == MachineEventType::RomLoaded) {
             engine_.advanceGeneration();
+            resetScanlineCapture();
             return true;
+        }
+
+        if (event.type == MachineEventType::VideoScanlineReady) {
+            captureScanline(state);
+            syncEngineDiagnostics();
+            return false;
         }
 
         const bool lcdControlWrite = event.type == MachineEventType::MemoryWriteObserved && event.address == 0xFF40u;
@@ -208,6 +216,13 @@ public:
         }
 
         const auto generation = engine_.currentGeneration();
+        if (event.type == MachineEventType::VBlank && hasCompleteScanlineFrame()) {
+            auto frame = *scanlineFrame_;
+            resetScanlineCapture();
+            return submitFrame(frame);
+        }
+
+        resetScanlineCapture();
         return submitFrame(engine_.buildDebugFrame(state, generation));
     }
 
@@ -271,7 +286,14 @@ public:
     void advanceGeneration() noexcept
     {
         engine_.advanceGeneration();
+        resetScanlineCapture();
         syncEngineDiagnostics();
+    }
+
+    [[nodiscard]] bool hasCompleteScanlineFrame() const noexcept
+    {
+        return scanlineFrame_.has_value() &&
+               scanlineCaptureCount_ >= static_cast<std::size_t>(engine_.config().frameHeight);
     }
 
 private:
@@ -308,6 +330,59 @@ private:
         diagnostics_.headlessModeActive = state_ == VideoLifecycleState::Headless || presenter_ == nullptr;
     }
 
+    void resetScanlineCapture()
+    {
+        scanlineFrame_.reset();
+        scanlinesCaptured_.clear();
+        scanlineBackgroundColorIndices_.clear();
+        scanlineCaptureCount_ = 0;
+    }
+
+    void captureScanline(const VideoStateView& state)
+    {
+        if (!state.lcdEnabled() || state.ly >= 144u) {
+            resetScanlineCapture();
+            return;
+        }
+
+        const int screenY = static_cast<int>(state.ly);
+        if (screenY < 0 || screenY >= engine_.config().frameHeight) {
+            return;
+        }
+
+        ensureScanlineFrame();
+        if (!scanlineFrame_.has_value() || scanlinesCaptured_.empty()) {
+            return;
+        }
+
+        engine_.renderScanline(*scanlineFrame_, state, screenY, scanlineBackgroundColorIndices_);
+        const auto lineIndex = static_cast<std::size_t>(screenY);
+        if (lineIndex < scanlinesCaptured_.size() && !scanlinesCaptured_[lineIndex]) {
+            scanlinesCaptured_[lineIndex] = true;
+            ++scanlineCaptureCount_;
+        }
+    }
+
+    void ensureScanlineFrame()
+    {
+        const auto width = engine_.config().frameWidth;
+        const auto height = engine_.config().frameHeight;
+        const auto generation = engine_.currentGeneration();
+        if (scanlineFrame_.has_value() &&
+            scanlineFrame_->width == width &&
+            scanlineFrame_->height == height &&
+            scanlineFrame_->generation == generation &&
+            scanlinesCaptured_.size() == static_cast<std::size_t>(height)) {
+            return;
+        }
+
+        scanlineFrame_ = makeBlankVideoFrame(width, height, generation);
+        scanlineFrame_->source = VideoFrameSource::MachineSnapshot;
+        scanlineFrame_->pixels.assign(static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0xFFE0F8D0u);
+        scanlinesCaptured_.assign(static_cast<std::size_t>(height), false);
+        scanlineCaptureCount_ = 0;
+    }
+
     VideoEngine engine_{};
     VideoPresenterConfig presenterConfig_{};
     std::unique_ptr<IVideoPresenterPlugin> presenter_{};
@@ -316,6 +391,10 @@ private:
     mutable VideoServiceDiagnostics diagnostics_{};
     VideoLifecycleState state_ = VideoLifecycleState::Headless;
     mutable std::mutex nonRealTimeMutex_;
+    std::optional<VideoFramePacket> scanlineFrame_{};
+    std::vector<bool> scanlinesCaptured_{};
+    std::vector<uint8_t> scanlineBackgroundColorIndices_{};
+    std::size_t scanlineCaptureCount_ = 0;
 };
 
 } // namespace BMMQ

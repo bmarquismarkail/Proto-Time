@@ -55,6 +55,7 @@ enum class MachineEventType : uint8_t {
     MemoryWriteObserved = 10,
     BootRomVisibilityChanged = 11,
     RomLoaded = 12,
+    VideoScanlineReady = 13,
 };
 
 struct IoRegionDescriptor {

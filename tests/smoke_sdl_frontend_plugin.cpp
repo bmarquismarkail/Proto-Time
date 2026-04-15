@@ -21,6 +21,40 @@ bool stepUntilAudioFrames(GameBoyMachine& machine, uint64_t targetFrameCounter)
     return false;
 }
 
+bool frameHasVisiblePixels(const BMMQ::SdlFrameBuffer& frame)
+{
+    for (const auto pixel : frame.pixels) {
+        if (pixel != 0xFF000000u) {
+            return true;
+        }
+    }
+    return false;
+}
+
+BMMQ::VideoStateView makeFrontendScanlineState(uint8_t ly, uint8_t scx)
+{
+    BMMQ::VideoStateView state;
+    state.vram.resize(0x2000u, 0);
+    state.oam.resize(0x00A0u, 0);
+    state.lcdc = 0x91u;
+    state.ly = ly;
+    state.scx = scx;
+    state.bgp = 0xE4u;
+
+    for (std::size_t row = 0; row < 8u; ++row) {
+        const auto tile0 = row * 2u;
+        state.vram[tile0] = 0xFFu;
+        state.vram[tile0 + 1u] = 0x00u;
+
+        const auto tile1 = 0x10u + row * 2u;
+        state.vram[tile1] = 0xFFu;
+        state.vram[tile1 + 1u] = 0xFFu;
+    }
+    state.vram[0x1800u] = 0x00u;
+    state.vram[0x1801u] = 0x01u;
+    return state;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -146,6 +180,7 @@ int main(int argc, char** argv)
     assert(stats.inputSamplesProvided >= 1);
     assert(stats.framesPrepared >= 1);
     assert(stats.renderAttempts >= 1);
+    assert(stats.videoStateSnapshots <= stats.framesPrepared + 10u);
     assert(stats.audioPreviewsBuilt >= 1);
     assert(stats.buttonTransitions >= 3);
     assert(stats.eventPumpCalls >= 2);
@@ -153,6 +188,18 @@ int main(int argc, char** argv)
     assert(!frontend->diagnostics().empty());
     assert(frontend->lastVideoState().has_value());
     assert(frontend->lastVideoState()->lcdc == 0x93u);
+    assert(frontend->lastFrame().has_value());
+    assert(frameHasVisiblePixels(*frontend->lastFrame()));
+    const auto shade1 = 0xFF88C070u;
+    const auto shade3 = 0xFF081820u;
+    (void)shade1;
+    (void)shade3;
+    assert(frontend->lastFrame()->pixels[0] == shade1);
+    assert(frontend->lastFrame()->pixels[1] == shade1);
+    assert(frontend->lastFrame()->pixels[7] == shade1);
+    assert(frontend->lastFrame()->pixels[8] == shade1);
+    assert(frontend->lastFrame()->pixels[16 * 32 + 8] == shade3);
+    assert(frontend->lastFrame()->pixels[16 * 32 + 15] == shade3);
     assert(frontend->lastAudioPreview().has_value());
     assert(frontend->lastAudioPreview()->sampleCount() == 64u);
     if (initResult && frontend->audioOutputReady()) {
@@ -186,6 +233,35 @@ int main(int argc, char** argv)
         assert(frontend->stats().audioQueueLowWaterHits == lowWaterBefore + 1u);
         assert(frontend->stats().framesPrepared == framesPreparedBefore);
 
+        for (uint8_t y = 0; y < 24u; ++y) {
+            auto scanlineState = makeFrontendScanlineState(y, y == 0u ? 0u : 8u);
+            assert(!machine.videoService().submitVideoState(BMMQ::MachineEvent{
+                BMMQ::MachineEventType::VideoScanlineReady,
+                BMMQ::PluginCategory::Video,
+                0,
+                0xFF44u,
+                y,
+                nullptr,
+                "pending scanline low-water regression"
+            }, scanlineState));
+        }
+        assert(machine.videoService().hasCompleteScanlineFrame());
+        const auto lowWaterBeforePendingScanline = frontend->stats().audioQueueLowWaterHits;
+        const auto framesPreparedBeforePendingScanline = frontend->stats().framesPrepared;
+        const auto videoStateSnapshotsBeforePendingScanline = frontend->stats().videoStateSnapshots;
+        frontend->onVideoEvent(BMMQ::MachineEvent{
+            BMMQ::MachineEventType::VBlank,
+            BMMQ::PluginCategory::Video,
+            0,
+            0xFF44u,
+            machine.runtimeContext().read8(0xFF44u),
+            nullptr,
+            "pending scanline low-water regression"
+        }, machine.view());
+        assert(frontend->stats().audioQueueLowWaterHits == lowWaterBeforePendingScanline);
+        assert(frontend->stats().framesPrepared == framesPreparedBeforePendingScanline + 1u);
+        assert(frontend->stats().videoStateSnapshots <= videoStateSnapshotsBeforePendingScanline + 2u);
+
         const auto nextAudioFrame = machine.audioFrameCounter() + 1u;
         assert(stepUntilAudioFrames(machine, nextAudioFrame));
         assert(frontend->stats().audioEvents >= audioEventsBeforeLowWater + 1u);
@@ -204,16 +280,6 @@ int main(int argc, char** argv)
     assert(frontend->lastFrame()->width == 32);
     assert(frontend->lastFrame()->height == 24);
     assert(frontend->lastFrame()->pixelCount() == 32u * 24u);
-    const auto shade1 = 0xFF88C070u;
-    const auto shade3 = 0xFF081820u;
-    (void)shade1;
-    (void)shade3;
-    assert(frontend->lastFrame()->pixels[0] == shade1);
-    assert(frontend->lastFrame()->pixels[1] == shade1);
-    assert(frontend->lastFrame()->pixels[7] == shade1);
-    assert(frontend->lastFrame()->pixels[8] == shade1);
-    assert(frontend->lastFrame()->pixels[16 * 32 + 8] == shade3);
-    assert(frontend->lastFrame()->pixels[16 * 32 + 15] == shade3);
     assert(!frontend->lastRenderSummary().empty());
     assert(frontend->windowVisible());
 

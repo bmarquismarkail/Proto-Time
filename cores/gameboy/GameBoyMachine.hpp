@@ -267,6 +267,7 @@ public:
         lastDigitalInputMask_.reset();
         lastPolledDigitalInput_.reset();
         lastLy_ = context_.read8(0xFF44);
+        lastPpuMode_ = static_cast<uint8_t>(context_.read8(0xFF41) & 0x03u);
         emitMachineEvent(BMMQ::MachineEvent{
             BMMQ::MachineEventType::RomLoaded,
             BMMQ::PluginCategory::System,
@@ -318,6 +319,19 @@ public:
         const auto& feedback = context_.getLastFeedback();
 
         const auto ly = context_.read8(0xFF44);
+        const auto ppuMode = static_cast<uint8_t>(context_.read8(0xFF41) & 0x03u);
+        if (lastLy_ < 144u && ly < 144u && lastPpuMode_ == 3u && ppuMode == 0u) {
+            emitMachineEvent(BMMQ::MachineEvent{
+                BMMQ::MachineEventType::VideoScanlineReady,
+                BMMQ::PluginCategory::Video,
+                stepCounter_,
+                0xFF44,
+                ly,
+                &feedback,
+                "visible scanline ready"
+            });
+        }
+
         if (lastLy_ < 144u && ly >= 144u) {
             emitMachineEvent(BMMQ::MachineEvent{
                 BMMQ::MachineEventType::VBlank,
@@ -345,6 +359,7 @@ public:
         }
 
         lastLy_ = ly;
+        lastPpuMode_ = ppuMode;
     }
 
     uint16_t readRegisterPair(std::string_view id) const override {
@@ -1067,6 +1082,7 @@ private:
     uint64_t stepCounter_ = 0;
     uint64_t inputGeneration_ = 1;
     uint8_t lastLy_ = 0;
+    uint8_t lastPpuMode_ = 0;
     uint64_t lastAudioFrameCounter_ = 0;
     std::optional<uint8_t> lastDigitalInputMask_;
     std::optional<uint8_t> lastPolledDigitalInput_;

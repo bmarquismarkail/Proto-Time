@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
 #include "machine/VideoService.hpp"
@@ -82,6 +83,30 @@ public:
     std::uint64_t lastGeneration = 0;
 };
 
+BMMQ::VideoStateView makeSplitScrollState(uint8_t ly, uint8_t scx)
+{
+    BMMQ::VideoStateView state;
+    state.vram.resize(0x2000u, 0);
+    state.oam.resize(0x00A0u, 0);
+    state.lcdc = 0x91u;
+    state.ly = ly;
+    state.scx = scx;
+    state.bgp = 0xE4u;
+
+    for (std::size_t row = 0; row < 8u; ++row) {
+        const auto tile0 = row * 2u;
+        state.vram[tile0] = 0xFFu;
+        state.vram[tile0 + 1u] = 0x00u;
+
+        const auto tile1 = 0x10u + row * 2u;
+        state.vram[tile1] = 0xFFu;
+        state.vram[tile1 + 1u] = 0xFFu;
+    }
+    state.vram[0x1800u] = 0x00u;
+    state.vram[0x1801u] = 0x01u;
+    return state;
+}
+
 } // namespace
 
 int main()
@@ -120,6 +145,43 @@ int main()
     assert(capturePtr->captureCount == 1u);
     assert(capturePtr->lastGeneration == 3u);
     assert(service.diagnostics().lastPresentedGeneration == 3u);
+
+    BMMQ::VideoService scanlineService(BMMQ::VideoEngineConfig{
+        .frameWidth = 8,
+        .frameHeight = 2,
+        .queueCapacityFrames = 1,
+    });
+    auto line0 = makeSplitScrollState(0u, 0u);
+    auto line1 = makeSplitScrollState(1u, 8u);
+    auto vblank = makeSplitScrollState(144u, 8u);
+
+    assert(!scanlineService.submitVideoState(BMMQ::MachineEvent{
+        .type = BMMQ::MachineEventType::VideoScanlineReady,
+        .category = BMMQ::PluginCategory::Video,
+        .address = 0xFF44u,
+        .value = 0u,
+    }, line0));
+    assert(scanlineService.engine().queuedFrameCount() == 0u);
+    assert(!scanlineService.submitVideoState(BMMQ::MachineEvent{
+        .type = BMMQ::MachineEventType::VideoScanlineReady,
+        .category = BMMQ::PluginCategory::Video,
+        .address = 0xFF44u,
+        .value = 1u,
+    }, line1));
+    assert(scanlineService.engine().queuedFrameCount() == 0u);
+    assert(scanlineService.submitVideoState(BMMQ::MachineEvent{
+        .type = BMMQ::MachineEventType::VBlank,
+        .category = BMMQ::PluginCategory::Video,
+        .address = 0xFF44u,
+        .value = 144u,
+    }, vblank));
+
+    auto splitFrame = scanlineService.engine().tryConsumeFrame();
+    assert(splitFrame.has_value());
+    assert(splitFrame->width == 8);
+    assert(splitFrame->height == 2);
+    assert(splitFrame->pixels[0] == 0xFF88C070u);
+    assert(splitFrame->pixels[8] == 0xFF081820u);
 
     assert(!machine.setVideoService(nullptr));
     auto replacement = std::make_unique<BMMQ::VideoService>(BMMQ::VideoEngineConfig{

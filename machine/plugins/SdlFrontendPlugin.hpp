@@ -49,6 +49,7 @@ struct SdlFrontendStats {
     std::size_t framesPrepared = 0;
     std::size_t framesPresented = 0;
     std::size_t renderAttempts = 0;
+    std::size_t videoStateSnapshots = 0;
     std::size_t audioPreviewsBuilt = 0;
     // Audio metrics are read from the shared AudioService/AudioEngine and are global
     // to the machine's audio pipeline rather than frontend-local.

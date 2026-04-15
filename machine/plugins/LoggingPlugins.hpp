@@ -46,6 +46,8 @@ inline const char* machineEventTypeName(MachineEventType type)
         return "BootRomVisibilityChanged";
     case MachineEventType::RomLoaded:
         return "RomLoaded";
+    case MachineEventType::VideoScanlineReady:
+        return "VideoScanlineReady";
     }
     return "Unknown";
 }

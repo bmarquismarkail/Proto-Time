@@ -489,18 +489,27 @@ public:
         const bool lcdControlWrite = event.type == BMMQ::MachineEventType::MemoryWriteObserved && event.address == 0xFF40u;
         const bool shouldSampleVideoState =
             event.type == BMMQ::MachineEventType::VBlank ||
+            event.type == BMMQ::MachineEventType::VideoScanlineReady ||
             !lastFrame_.has_value() ||
             lcdControlWrite;
 
+        bool submittedVideoFrame = false;
         if (shouldSampleVideoState) {
             if (event.type == BMMQ::MachineEventType::VBlank && shouldDeferVideoFrameForAudioLowWater()) {
                 ++stats_.audioQueueLowWaterHits;
                 appendLog("sdl: skipped video frame preparation while audio buffer was low");
                 return;
             }
-            lastVideoState_ = view.videoState();
-            if (lastVideoState_.has_value()) {
-                if (videoService_ != nullptr && videoService_->submitVideoState(event, *lastVideoState_)) {
+            BMMQ::VideoStateView* videoState = stateForVideoEvent(event, view);
+            if (videoState != nullptr) {
+                if (videoService_ != nullptr && videoService_->submitVideoState(event, *videoState)) {
+                    submittedVideoFrame = true;
+                    if (event.type == BMMQ::MachineEventType::VBlank) {
+                        lastVideoState_ = *videoState;
+                    }
+                    if (event.type == BMMQ::MachineEventType::VBlank) {
+                        scanlineVideoState_.reset();
+                    }
                     syncVideoTransportStats();
                     ++stats_.framesPrepared;
                     frameDirty_ = true;
@@ -511,10 +520,12 @@ public:
             } else {
                 lastFrame_.reset();
                 frameDirty_ = false;
+                scanlineVideoState_.reset();
             }
         }
 
-        if (event.type != BMMQ::MachineEventType::MemoryWriteObserved || shouldSampleVideoState) {
+        if (event.type != BMMQ::MachineEventType::MemoryWriteObserved &&
+            event.type != BMMQ::MachineEventType::VideoScanlineReady) {
             std::string message = std::string("sdl: video event=") + BMMQ::detail::machineEventTypeName(event.type);
             if (lastVideoState_.has_value()) {
                 message += " lcdc=" + BMMQ::detail::hexByte(lastVideoState_->lcdc);
@@ -523,6 +534,8 @@ public:
                 message += " frame=" + std::to_string(lastFrame_->width) + "x" + std::to_string(lastFrame_->height);
             }
             appendLog(std::move(message));
+        } else if (submittedVideoFrame) {
+            appendLog("sdl: scanline frame prepared");
         }
     }
 
@@ -842,9 +855,71 @@ private:
         if (!config_.enableAudio || audioService_ == nullptr || !audioOutputReady() || !lastFrame_.has_value()) {
             return false;
         }
+        if (videoService_ != nullptr && videoService_->hasCompleteScanlineFrame()) {
+            return false;
+        }
 
         const auto safetyMarginSamples = computeAudioSafetyMarginSamples();
         return audioService_->engine().bufferedSamples() < safetyMarginSamples;
+    }
+
+    std::optional<BMMQ::VideoStateView> snapshotVideoState(const BMMQ::MachineView& view)
+    {
+        ++stats_.videoStateSnapshots;
+        return view.videoState();
+    }
+
+    BMMQ::VideoStateView* stateForVideoEvent(const BMMQ::MachineEvent& event,
+                                             const BMMQ::MachineView& view)
+    {
+        if (event.type == BMMQ::MachineEventType::VideoScanlineReady) {
+            return stateForScanlineEvent(view);
+        }
+
+        if (event.type == BMMQ::MachineEventType::VBlank &&
+            videoService_ != nullptr &&
+            videoService_->hasCompleteScanlineFrame() &&
+            scanlineVideoState_.has_value()) {
+            refreshVideoRegisters(*scanlineVideoState_, view);
+            return &*scanlineVideoState_;
+        }
+
+        scanlineVideoState_.reset();
+        lastVideoState_ = snapshotVideoState(view);
+        if (!lastVideoState_.has_value()) {
+            return nullptr;
+        }
+        return &*lastVideoState_;
+    }
+
+    BMMQ::VideoStateView* stateForScanlineEvent(const BMMQ::MachineView& view)
+    {
+        const auto ly = view.read8(0xFF44u);
+        if (!scanlineVideoState_.has_value() || ly == 0u || ly < scanlineVideoState_->ly) {
+            scanlineVideoState_ = snapshotVideoState(view);
+            if (!scanlineVideoState_.has_value()) {
+                return nullptr;
+            }
+            return &*scanlineVideoState_;
+        }
+
+        refreshVideoRegisters(*scanlineVideoState_, view);
+        return &*scanlineVideoState_;
+    }
+
+    static void refreshVideoRegisters(BMMQ::VideoStateView& state, const BMMQ::MachineView& view)
+    {
+        state.lcdc = view.read8(0xFF40u);
+        state.stat = view.read8(0xFF41u);
+        state.scy = view.read8(0xFF42u);
+        state.scx = view.read8(0xFF43u);
+        state.ly = view.read8(0xFF44u);
+        state.lyc = view.read8(0xFF45u);
+        state.bgp = view.read8(0xFF47u);
+        state.obp0 = view.read8(0xFF48u);
+        state.obp1 = view.read8(0xFF49u);
+        state.wy = view.read8(0xFF4Au);
+        state.wx = view.read8(0xFF4Bu);
     }
 
     void configureVideoService()
@@ -1180,6 +1255,7 @@ private:
     mutable BMMQ::SdlFrontendStats stats_;
     bool backendReady_ = false;
     std::optional<BMMQ::VideoStateView> lastVideoState_;
+    std::optional<BMMQ::VideoStateView> scanlineVideoState_;
     std::optional<BMMQ::AudioStateView> lastAudioState_;
     std::optional<BMMQ::SdlAudioPreviewBuffer> lastAudioPreview_;
     std::optional<BMMQ::DigitalInputStateView> lastInputState_;
