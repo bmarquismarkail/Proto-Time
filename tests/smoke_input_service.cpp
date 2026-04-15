@@ -31,10 +31,12 @@ class TestInputAdapter final : public BMMQ::IDigitalInputSourcePlugin,
 public:
     explicit TestInputAdapter(BMMQ::InputPluginCapabilities capabilities,
                               BMMQ::InputButtonMask digitalMask = 0u,
-                              BMMQ::InputAnalogState analogState = {})
+                              BMMQ::InputAnalogState analogState = {},
+                              std::string name = "test-input-adapter")
         : capabilities_(capabilities),
           digitalMask_(digitalMask),
-          analogState_(analogState) {}
+          analogState_(analogState),
+          name_(std::move(name)) {}
 
     [[nodiscard]] BMMQ::InputPluginCapabilities capabilities() const noexcept override
     {
@@ -102,7 +104,7 @@ private:
     int openCount_ = 0;
     int closeCount_ = 0;
     std::string lastError_{};
-    std::string name_ = "test-input-adapter";
+    std::string name_{};
 };
 
 } // namespace
@@ -143,6 +145,31 @@ int main()
     CHECK_TRUE(service.committedAnalogState()->channels[1] == 77);
     CHECK_TRUE(service.diagnostics().lastCommittedGeneration == 1u);
     CHECK_TRUE(!service.configureMappingProfile("active-remap"));
+
+    auto hotSwapCaps = safeCaps;
+    hotSwapCaps.hotSwapSafe = true;
+    TestInputAdapter firstHotSwapAdapter(hotSwapCaps, 0x20u, {}, "hot-swap-first");
+    TestInputAdapter secondHotSwapAdapter(hotSwapCaps, 0x40u, {}, "hot-swap-second");
+    BMMQ::InputService hotSwapService({
+        .stagingCapacity = 2,
+    });
+    CHECK_TRUE(hotSwapService.attachExternalAdapter(firstHotSwapAdapter));
+    CHECK_TRUE(hotSwapService.resume());
+    CHECK_TRUE(firstHotSwapAdapter.openCount() == 1);
+    CHECK_TRUE(firstHotSwapAdapter.closeCount() == 0);
+    CHECK_TRUE(hotSwapService.attachExternalAdapter(firstHotSwapAdapter));
+    CHECK_TRUE(firstHotSwapAdapter.openCount() == 1);
+    CHECK_TRUE(firstHotSwapAdapter.closeCount() == 0);
+
+    CHECK_TRUE(hotSwapService.attachExternalAdapter(secondHotSwapAdapter));
+    CHECK_TRUE(hotSwapService.state() == BMMQ::InputLifecycleState::Active);
+    CHECK_TRUE(firstHotSwapAdapter.closeCount() == 1);
+    CHECK_TRUE(secondHotSwapAdapter.openCount() == 1);
+    CHECK_TRUE(secondHotSwapAdapter.closeCount() == 0);
+    ASSERT_DIAG_EQ("hot-swap-second", hotSwapService.diagnostics().activeAdapterSummary);
+    CHECK_TRUE(hotSwapService.pollActiveAdapter(5u));
+    CHECK_TRUE(hotSwapService.committedDigitalMask().has_value());
+    CHECK_TRUE(*hotSwapService.committedDigitalMask() == 0x40u);
 
     auto unsafeCaps = safeCaps;
     unsafeCaps.pollingSafe = false;

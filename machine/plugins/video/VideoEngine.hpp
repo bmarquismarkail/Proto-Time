@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <optional>
 #include <span>
 #include <vector>
@@ -24,6 +25,11 @@ struct VideoEngineStats {
     std::size_t frameQueueHighWaterMark = 0;
     std::size_t framesSubmitted = 0;
     std::size_t framesConsumed = 0;
+};
+
+struct VideoSubmitResult {
+    bool accepted = false;
+    bool droppedOldest = false;
 };
 
 class VideoEngine {
@@ -101,20 +107,28 @@ public:
         return frame;
     }
 
-    [[nodiscard]] bool submitFrame(const VideoFramePacket& frame)
+    // Queue policy: queuedFrames_ always keeps the newest config_.queueCapacityFrames frames.
+    // When the queue is full, the oldest frame is evicted, stats_.droppedFrameCount still
+    // increments, the new frame is accepted, stats_.framesSubmitted still increments, and
+    // stats_.frameQueueHighWaterMark reflects the capped queue size. A successful submission
+    // therefore means the newest frame was queued, not that no drop occurred.
+    [[nodiscard]] VideoSubmitResult submitFrame(const VideoFramePacket& frame)
     {
         if (frame.empty()) {
-            return false;
+            return {};
         }
+
+        bool droppedOldest = false;
         lastValidFrame_ = frame;
         if (queuedFrames_.size() >= config_.queueCapacityFrames) {
             ++stats_.droppedFrameCount;
-            return false;
+            queuedFrames_.pop_front();
+            droppedOldest = true;
         }
         queuedFrames_.push_back(frame);
         ++stats_.framesSubmitted;
         stats_.frameQueueHighWaterMark = std::max(stats_.frameQueueHighWaterMark, queuedFrames_.size());
-        return true;
+        return VideoSubmitResult{.accepted = true, .droppedOldest = droppedOldest};
     }
 
     [[nodiscard]] std::optional<VideoFramePacket> tryConsumeFrame()
@@ -123,7 +137,7 @@ public:
             return std::nullopt;
         }
         auto frame = queuedFrames_.front();
-        queuedFrames_.erase(queuedFrames_.begin());
+        queuedFrames_.pop_front();
         ++stats_.framesConsumed;
         return frame;
     }
@@ -165,7 +179,6 @@ private:
     void initializeQueue()
     {
         queuedFrames_.clear();
-        queuedFrames_.reserve(config_.queueCapacityFrames);
     }
 
     void clearQueue() noexcept
@@ -334,7 +347,7 @@ private:
     }
 
     VideoEngineConfig config_{};
-    std::vector<VideoFramePacket> queuedFrames_{};
+    std::deque<VideoFramePacket> queuedFrames_{};
     std::optional<VideoFramePacket> lastValidFrame_{};
     VideoEngineStats stats_{};
     uint64_t currentGeneration_ = 0;

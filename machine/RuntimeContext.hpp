@@ -54,6 +54,12 @@ public:
     using ExecutionBlock = BMMQ::executionBlock<AddressType, DataType, RegType>;
 
     virtual ~RuntimeContext() = default;
+    RuntimeContext() = default;
+    RuntimeContext(const RuntimeContext&) = delete;
+    RuntimeContext& operator=(const RuntimeContext&) = delete;
+    RuntimeContext(RuntimeContext&&) = delete;
+    RuntimeContext& operator=(RuntimeContext&&) = delete;
+
     virtual FetchBlock fetch() = 0;
     virtual ExecutionBlock decode(FetchBlock& fetchBlock) = 0;
     virtual void execute(const ExecutionBlock& block, FetchBlock& fetchBlock) = 0;

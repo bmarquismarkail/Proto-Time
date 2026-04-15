@@ -1,11 +1,21 @@
 #include "gb_interpreter.hpp"
 #include "gb_opcode_decode.hpp"
 
+#include <stdexcept>
+
+BMMQ::MemorySnapshot<AddressType, DataType, AddressType>& LR3592_Interpreter_Decode::snapshot()
+{
+	if (snap == nullptr) {
+		throw std::logic_error("LR3592 interpreter snapshot is not set");
+	}
+	return *snap;
+}
+
 DataType* LR3592_Interpreter_Decode::readTempByte(AddressType address)
 {
 	scratchToggle = !scratchToggle;
 	DataType* target = scratchToggle ? &scratchReadA : &scratchReadB;
-	snap->mem.read(target, address, 1);
+	snapshot().mem.read(target, address, 1);
 	return target;
 }
 
@@ -13,7 +23,7 @@ DataType LR3592_Interpreter_Decode::readImmediate8()
 {
 	const auto* pc = GetRegister("PC");
 	DataType value = 0;
-	snap->mem.read(&value, static_cast<AddressType>(pc->value + 1), 1);
+	snapshot().mem.read(&value, static_cast<AddressType>(pc->value + 1), 1);
 	return value;
 }
 
@@ -21,7 +31,7 @@ AddressType LR3592_Interpreter_Decode::readImmediate16()
 {
 	AddressType value = 0;
 	const auto* pc = GetRegister("PC");
-	snap->mem.read(reinterpret_cast<DataType*>(&value), static_cast<AddressType>(pc->value + 1), 2);
+	snapshot().mem.read(reinterpret_cast<DataType*>(&value), static_cast<AddressType>(pc->value + 1), 2);
 	return value;
 }
 
@@ -34,8 +44,9 @@ void LR3592_Interpreter_Decode::setSnapshot(BMMQ::MemorySnapshot<AddressType, Da
 LR3592_Register* LR3592_Interpreter_Decode::GetRegister(std::string_view id)
 {
 	auto& regfile = cpu->getMemory().file;
-	snap->copyRegisterFromMainFile(id, regfile);
-	auto* entry = snap->file.findRegister(id);
+	auto& activeSnapshot = snapshot();
+	activeSnapshot.copyRegisterFromMainFile(id, regfile);
+	auto* entry = activeSnapshot.file.findRegister(id);
 	if (entry == nullptr || entry->reg == nullptr) {
 		throw std::invalid_argument("register not found");
 	}
@@ -312,7 +323,7 @@ void LR3592_Interpreter_Decode::ret()
 	auto SP = GetRegister("SP");
 	auto memMap = cpu->getMemory();
 	constexpr AddressType pcByteCount = static_cast<AddressType>(sizeof(PC->value) / sizeof(DataType));
-	snap->mem.read((DataType*)&PC->value, static_cast<AddressType>(SP->value), pcByteCount);
+	snapshot().mem.read((DataType*)&PC->value, static_cast<AddressType>(SP->value), pcByteCount);
 	SP->value += 2;
 }
 
@@ -343,7 +354,7 @@ void LR3592_Interpreter_Decode::pop(DataType opcode)
 	AddressType *reg =	push_pop_GetRegister(opcode);
 	auto SP = GetRegister("SP");
 	auto memMap = cpu->getMemory();
-	snap->mem.read( (DataType*)reg, ((std::size_t)SP->value), 1);
+	snapshot().mem.read( (DataType*)reg, ((std::size_t)SP->value), 1);
 	SP->value += 2;
 }
 
@@ -351,7 +362,7 @@ void LR3592_Interpreter_Decode::push(DataType opcode)
 {
 	AddressType *reg = push_pop_GetRegister(opcode);
 	auto SP = GetRegister("SP");
-	snap->mem.write((DataType*)reg, SP->value, 2);
+	snapshot().mem.write((DataType*)reg, SP->value, 2);
 	SP->value += 2;
 }
 
@@ -359,7 +370,7 @@ void LR3592_Interpreter_Decode::call()
 {
 	auto SP = GetRegister("SP");
 	auto PC = GetRegister("PC");
-	snap->mem.write((DataType*)PC, SP->value, 2);
+	snapshot().mem.write((DataType*)PC, SP->value, 2);
 	PC->value = readImmediate16();
 	SP->value -=2;
 }
@@ -376,7 +387,7 @@ void LR3592_Interpreter_Decode::rst(DataType opcode)
 	auto SP = GetRegister("SP");
 	auto PC = GetRegister("PC");
 	DataType rstPos = (opcode & 0x38);
-	snap->mem.write((DataType*)PC, SP->value, 2);
+	snapshot().mem.write((DataType*)PC, SP->value, 2);
 	BMMQ::CML::jr( &PC->value, rstPos, true );
 }
 
@@ -396,13 +407,13 @@ void LR3592_Interpreter_Decode::ldh(DataType opcode)
 		DataType temp = 0;
 		dest = &temp;
 		BMMQ::CML::loadtmp(dest, *src);
-		snap->mem.write(dest, static_cast<AddressType>(immediate + 0xFF00), 1);
+		snapshot().mem.write(dest, static_cast<AddressType>(immediate + 0xFF00), 1);
 	}
 	else {
 		dest = &A->hi;
 		DataType temp = 0;
 		src = &temp;
-		snap->mem.read(src, static_cast<AddressType>(immediate + 0xFF00), 1);
+		snapshot().mem.read(src, static_cast<AddressType>(immediate + 0xFF00), 1);
 		BMMQ::CML::loadtmp(dest, *src);
 	}
 }
@@ -424,13 +435,13 @@ void LR3592_Interpreter_Decode::ld_ir16_r8(DataType opcode)
 		DataType temp = 0;
 		dest = &temp;
 		BMMQ::CML::loadtmp(dest, src);
-		snap->mem.write(dest, regSet ? static_cast<AddressType>(C->lo + 0xFF00) : immediate, 1);
+		snapshot().mem.write(dest, regSet ? static_cast<AddressType>(C->lo + 0xFF00) : immediate, 1);
 		break;
 	}
 	case 1: {
 		DataType temp = 0;
 		src = &temp;
-		snap->mem.read(src, regSet ? static_cast<AddressType>(C->lo + 0xFF00) : immediate, 1);
+		snapshot().mem.read(src, regSet ? static_cast<AddressType>(C->lo + 0xFF00) : immediate, 1);
 		dest = &A->hi;
 		BMMQ::CML::loadtmp(dest, src);
 		break;

@@ -107,8 +107,10 @@ int main()
     assert(service.diagnostics().lastPresentedGeneration == 9u);
 
     assert(service.submitFrame(BMMQ::makeBlankVideoFrame(4, 4, 10u)));
-    assert(!service.submitFrame(BMMQ::makeBlankVideoFrame(4, 4, 11u)));
+    assert(service.submitFrame(BMMQ::makeBlankVideoFrame(4, 4, 11u)));
     assert(service.diagnostics().droppedFrameCount == 1u);
+    assert(!service.presentOneFrame());
+    assert(presenterPtr->lastAttemptGeneration == 11u);
 
     BMMQ::VideoService blankFallback(BMMQ::VideoEngineConfig{
         .frameWidth = 2,

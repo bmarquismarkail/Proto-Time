@@ -213,9 +213,9 @@ public:
 
     [[nodiscard]] bool submitFrame(const VideoFramePacket& frame)
     {
-        const bool submitted = engine_.submitFrame(frame);
+        const auto submitResult = engine_.submitFrame(frame);
         syncEngineDiagnostics();
-        return submitted;
+        return submitResult.accepted;
     }
 
     [[nodiscard]] bool presentOneFrame()

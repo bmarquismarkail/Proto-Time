@@ -263,7 +263,6 @@ private:
                                                    const InputPluginCapabilities& caps,
                                                    AttachFn&& attachFn)
     {
-        (void)adapter; (void)caps; (void)attachFn; // keep parameters used
         if (state_ == InputLifecycleState::Active) {
             if (adapter_ == nullptr) {
                 return false;
@@ -272,11 +271,16 @@ private:
             if (!currentCaps.hotSwapSafe || !caps.hotSwapSafe || !isLiveCompatible(caps)) {
                 return false;
             }
+            if (&adapter == adapter_) {
+                diagnostics_.activeAdapterSummary = std::string(adapter.name());
+                diagnostics_.lastBackendError.clear();
+                return true;
+            }
             if (!adapter.open()) {
                 diagnostics_.lastBackendError = std::string(adapter.lastError());
                 return false;
             }
-            adapter.close();
+            adapter_->close();
             std::forward<AttachFn>(attachFn)();
             diagnostics_.activeAdapterSummary = std::string(adapter.name());
             diagnostics_.lastBackendError.clear();

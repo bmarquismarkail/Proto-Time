@@ -116,22 +116,36 @@ int main()
     assert(frame.pixels[16 * 32 + 8] == shade3);
     assert(frame.pixels[16 * 32 + 15] == shade3);
 
-    assert(engine.submitFrame(frame));
-    assert(engine.submitFrame(frame));
-    assert(!engine.submitFrame(frame));
+    auto frameA = frame;
+    auto frameB = frame;
+    frameB.generation = 8u;
+    auto frameC = frame;
+    frameC.generation = 9u;
+
+    const auto submitA = engine.submitFrame(frameA);
+    assert(submitA.accepted);
+    assert(!submitA.droppedOldest);
+    const auto submitB = engine.submitFrame(frameB);
+    assert(submitB.accepted);
+    assert(!submitB.droppedOldest);
+    const auto submitC = engine.submitFrame(frameC);
+    assert(submitC.accepted);
+    assert(submitC.droppedOldest);
     assert(engine.stats().droppedFrameCount == 1u);
     assert(engine.stats().frameQueueHighWaterMark == 2u);
 
     auto consumed = engine.tryConsumeFrame();
     assert(consumed.has_value());
-    assert(consumed->generation == 7u);
-    assert(engine.tryConsumeFrame().has_value());
+    assert(consumed->generation == 8u);
+    consumed = engine.tryConsumeFrame();
+    assert(consumed.has_value());
+    assert(consumed->generation == 9u);
     assert(!engine.tryConsumeFrame().has_value());
 
     engine.advanceGeneration();
     assert(engine.currentGeneration() == 1u);
     assert(engine.lastValidFrame().has_value());
-    assert(engine.fallbackFrame().generation == 7u);
+    assert(engine.fallbackFrame().generation == 9u);
 
     BMMQ::VideoEngine blankEngine({
         .frameWidth = 4,
