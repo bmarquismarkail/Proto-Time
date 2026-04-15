@@ -31,7 +31,8 @@ endif()
 add_library(time-gameboy-interpreter-core
 	cores/gameboy/decode/gb_decoder.cpp
 	cores/gameboy/decode/gb_interpreter.cpp
-	cores/gameboy/gameboy.cpp
+    cores/gameboy/gameboy.cpp
+    machine/TimingService.cpp
 )
 add_library(time-sdl-frontend-loader
     machine/plugins/SdlFrontendPluginLoader.cpp
@@ -176,3 +177,12 @@ add_test(NAME smoke_interpreter_math_i8 COMMAND time-smoke-interpreter-math-i8)
 add_executable(time-smoke-trace-executor tests/smoke_trace_executor.cpp)
 target_link_libraries(time-smoke-trace-executor time-gameboy-interpreter-core)
 add_test(NAME smoke_trace_executor COMMAND time-smoke-trace-executor)
+
+# Timing engine smoke test
+add_executable(time-smoke-timing-engine tests/smoke_timing_engine.cpp)
+target_link_libraries(time-smoke-timing-engine time-gameboy-interpreter-core)
+add_test(NAME smoke_timing_engine COMMAND time-smoke-timing-engine)
+
+add_executable(time-smoke-timing-service tests/smoke_timing_service.cpp)
+target_link_libraries(time-smoke-timing-service time-gameboy-interpreter-core)
+add_test(NAME smoke_timing_service COMMAND time-smoke-timing-service)

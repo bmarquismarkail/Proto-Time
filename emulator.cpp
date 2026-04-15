@@ -29,6 +29,7 @@
 
 #include "cores/gameboy/GameBoyMachine.hpp"
 #include "machine/plugins/SdlFrontendPluginLoader.hpp"
+#include "machine/TimingService.hpp"
 
 namespace {
 
@@ -220,13 +221,19 @@ int main(int argc, char** argv)
         constexpr auto kFrontendServicePeriod = std::chrono::milliseconds(1);
         constexpr auto kMaxCatchUpWindow = std::chrono::milliseconds(8);
         const double kMinInstructionCycles = 4.0;
-        const double kMaxCycleBudget = std::max(
-            kMinInstructionCycles,
-            static_cast<double>(cpuClockHz) * std::chrono::duration<double>(kMaxCatchUpWindow).count());
 
-        auto lastTick = SteadyClock::now();
-        auto nextFrontendService = lastTick + kFrontendServicePeriod;
-        double cycleBudget = 0.0;
+        BMMQ::TimingService timingService;
+        BMMQ::TimingConfig timingConfig;
+        timingConfig.baseClockHz = static_cast<double>(cpuClockHz);
+        timingConfig.speedMultiplier = 1.0;
+        timingConfig.minInstructionCycles = kMinInstructionCycles;
+        timingConfig.maxCatchUp = kMaxCatchUpWindow;
+        timingConfig.throttled = true;
+        timingService.configure(timingConfig);
+
+        auto initialNow = SteadyClock::now();
+        auto nextFrontendService = initialNow + kFrontendServicePeriod;
+        timingService.start(initialNow);
 
         auto serviceFrontend = [&]() -> bool {
             if (frontend == nullptr) {
@@ -262,13 +269,10 @@ int main(int argc, char** argv)
                 break;
             }
 
-            const auto elapsed = std::chrono::duration<double>(now - lastTick).count();
-            lastTick = now;
-            cycleBudget = std::min(kMaxCycleBudget,
-                                   cycleBudget + (elapsed * static_cast<double>(cpuClockHz)));
+            timingService.update(now);
 
             bool executedInstruction = false;
-            while (cycleBudget >= kMinInstructionCycles && gStopRequested == 0) {
+            while (timingService.canExecute() && gStopRequested == 0) {
                 if (options.stepLimit.has_value() && steps >= *options.stepLimit) {
                     break;
                 }
@@ -278,8 +282,7 @@ int main(int argc, char** argv)
                 executedInstruction = true;
 
                 const auto retiredCycles = static_cast<double>(machine.runtimeContext().getLastFeedback().retiredCycles);
-                const auto chargedCycles = std::max(kMinInstructionCycles, retiredCycles);
-                cycleBudget = std::max(0.0, cycleBudget - chargedCycles);
+                timingService.charge(retiredCycles);
 
                 if (serviceFrontendUntil(SteadyClock::now())) {
                     gStopRequested = 1;
@@ -297,10 +300,7 @@ int main(int argc, char** argv)
             }
 
             if (!executedInstruction) {
-                const auto cyclesUntilNextStep = std::max(0.0, kMinInstructionCycles - cycleBudget);
-                const auto secondsUntilNextStep = cyclesUntilNextStep / static_cast<double>(cpuClockHz);
-                const auto nextStepTime = idleNow +
-                    std::chrono::duration_cast<SteadyClock::duration>(std::chrono::duration<double>(secondsUntilNextStep));
+                const auto nextStepTime = timingService.nextWakeTime(idleNow);
                 const auto nextWakeTime = (frontend != nullptr)
                     ? std::min(nextFrontendService, nextStepTime)
                     : nextStepTime;
