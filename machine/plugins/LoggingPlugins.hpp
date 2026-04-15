@@ -115,9 +115,16 @@ public:
     }
 
 protected:
+    void setMaxEntryCount(std::size_t maxEntryCount) noexcept
+    {
+        maxEntryCount_ = maxEntryCount;
+        trimEntries();
+    }
+
     void appendLog(std::string entry)
     {
         entries_.push_back(entry);
+        trimEntries();
         if (sink_) {
             sink_(entry);
         }
@@ -128,9 +135,19 @@ protected:
     }
 
 private:
+    void trimEntries()
+    {
+        if (maxEntryCount_ == 0u || entries_.size() <= maxEntryCount_) {
+            return;
+        }
+        const auto overflow = entries_.size() - maxEntryCount_;
+        entries_.erase(entries_.begin(), entries_.begin() + static_cast<std::ptrdiff_t>(overflow));
+    }
+
     std::vector<std::string> entries_;
     LogSink sink_;
     std::string logFilePath_;
+    std::size_t maxEntryCount_ = 0;
 };
 
 class LoggingVideoPlugin final : public IVideoPlugin, public LoggingPluginSupport {

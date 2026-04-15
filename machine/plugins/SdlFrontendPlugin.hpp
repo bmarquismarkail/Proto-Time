@@ -120,6 +120,7 @@ struct SdlFrontendHostEvent {
 struct SdlFrameBuffer {
     int width = 160;
     int height = 144;
+    std::uint64_t generation = 0;
     std::vector<uint32_t> pixels;
 
     [[nodiscard]] bool empty() const noexcept

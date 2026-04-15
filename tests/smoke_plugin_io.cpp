@@ -255,6 +255,26 @@ int main()
     assert(loggingVideo->entryCount() >= 2);
     assert(!sinkEntries.empty());
 
+    GameBoyMachine scanlineMachine;
+    scanlineMachine.loadRom(cartridgeRom);
+    auto scanlinePlugin = std::make_unique<RecordingVideoPlugin>();
+    auto* scanlineVideo = scanlinePlugin.get();
+    scanlineMachine.pluginManager().add(std::move(scanlinePlugin));
+    scanlineMachine.pluginManager().initialize(scanlineMachine.mutableView());
+    scanlineMachine.runtimeContext().write8(0xFF44u, 0x00u);
+    scanlineMachine.runtimeContext().write8(0xFF43u, 0x08u);
+
+    bool observedLineZeroScanline = false;
+    for (int i = 0; i < 10000; ++i) {
+        scanlineMachine.step();
+        if (scanlineVideo->lastVideoEvent.type == BMMQ::MachineEventType::VideoScanlineReady) {
+            observedLineZeroScanline = scanlineVideo->lastVideoEvent.value == 0u;
+            break;
+        }
+        assert(scanlineMachine.runtimeContext().read8(0xFF44u) < 144u);
+    }
+    assert(observedLineZeroScanline);
+
     machine.runtimeContext().write8(0xFF12, 0xF3u);
     assert(audio->audioEventCount >= 1);
     assert(audio->lastAudioState.has_value());

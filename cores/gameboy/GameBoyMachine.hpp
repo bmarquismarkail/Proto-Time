@@ -268,6 +268,8 @@ public:
         lastPolledDigitalInput_.reset();
         lastLy_ = context_.read8(0xFF44);
         lastPpuMode_ = static_cast<uint8_t>(context_.read8(0xFF41) & 0x03u);
+        scanlineVideoCaptureActive_ = false;
+        lastScanlineVideoSignature_ = currentScanlineVideoSignature();
         emitMachineEvent(BMMQ::MachineEvent{
             BMMQ::MachineEventType::RomLoaded,
             BMMQ::PluginCategory::System,
@@ -321,18 +323,28 @@ public:
         const auto ly = context_.read8(0xFF44);
         const auto ppuMode = static_cast<uint8_t>(context_.read8(0xFF41) & 0x03u);
         if (lastLy_ < 144u && ly < 144u && lastPpuMode_ == 3u && ppuMode == 0u) {
-            emitMachineEvent(BMMQ::MachineEvent{
-                BMMQ::MachineEventType::VideoScanlineReady,
-                BMMQ::PluginCategory::Video,
-                stepCounter_,
-                0xFF44,
-                ly,
-                &feedback,
-                "visible scanline ready"
-            });
+            const auto videoSignature = currentScanlineVideoSignature();
+            if (ly == 0u) {
+                scanlineVideoCaptureActive_ = videoSignature != lastScanlineVideoSignature_;
+            } else if (videoSignature != lastScanlineVideoSignature_) {
+                scanlineVideoCaptureActive_ = true;
+            }
+            if (scanlineVideoCaptureActive_) {
+                emitMachineEvent(BMMQ::MachineEvent{
+                    BMMQ::MachineEventType::VideoScanlineReady,
+                    BMMQ::PluginCategory::Video,
+                    stepCounter_,
+                    0xFF44,
+                    ly,
+                    &feedback,
+                    "visible scanline ready"
+                });
+            }
+            lastScanlineVideoSignature_ = videoSignature;
         }
 
         if (lastLy_ < 144u && ly >= 144u) {
+            scanlineVideoCaptureActive_ = false;
             emitMachineEvent(BMMQ::MachineEvent{
                 BMMQ::MachineEventType::VBlank,
                 BMMQ::PluginCategory::Video,
@@ -1059,6 +1071,19 @@ private:
         memoryMap_.storage().load(std::span<const uint8_t>(&bootControl, 1), 0xFF50);
     }
 
+    [[nodiscard]] uint64_t currentScanlineVideoSignature() const {
+        uint64_t signature = 0;
+        signature |= static_cast<uint64_t>(context_.read8(0xFF40u));
+        signature |= static_cast<uint64_t>(context_.read8(0xFF42u)) << 8u;
+        signature |= static_cast<uint64_t>(context_.read8(0xFF43u)) << 16u;
+        signature |= static_cast<uint64_t>(context_.read8(0xFF47u)) << 24u;
+        signature |= static_cast<uint64_t>(context_.read8(0xFF48u)) << 32u;
+        signature |= static_cast<uint64_t>(context_.read8(0xFF49u)) << 40u;
+        signature |= static_cast<uint64_t>(context_.read8(0xFF4Au)) << 48u;
+        signature |= static_cast<uint64_t>(context_.read8(0xFF4Bu)) << 56u;
+        return signature;
+    }
+
     BMMQ::RomImage rom_;
     BMMQ::MemoryMap memoryMap_;
     bool romLoaded_ = false;
@@ -1083,6 +1108,8 @@ private:
     uint64_t inputGeneration_ = 1;
     uint8_t lastLy_ = 0;
     uint8_t lastPpuMode_ = 0;
+    uint64_t lastScanlineVideoSignature_ = 0;
+    bool scanlineVideoCaptureActive_ = false;
     uint64_t lastAudioFrameCounter_ = 0;
     std::optional<uint8_t> lastDigitalInputMask_;
     std::optional<uint8_t> lastPolledDigitalInput_;

@@ -67,7 +67,10 @@ class SdlFrontendPluginImpl final : public BMMQ::ISdlFrontendPlugin,
                                     public BMMQ::LoggingPluginSupport {
 public:
     explicit SdlFrontendPluginImpl(BMMQ::SdlFrontendConfig config = {})
-        : config_(std::move(config)) {}
+        : config_(std::move(config))
+    {
+        setMaxEntryCount(256u);
+    }
 
     [[nodiscard]] const BMMQ::SdlFrontendConfig& config() const noexcept override
     {
@@ -525,7 +528,8 @@ public:
         }
 
         if (event.type != BMMQ::MachineEventType::MemoryWriteObserved &&
-            event.type != BMMQ::MachineEventType::VideoScanlineReady) {
+            event.type != BMMQ::MachineEventType::VideoScanlineReady &&
+            event.type != BMMQ::MachineEventType::VBlank) {
             std::string message = std::string("sdl: video event=") + BMMQ::detail::machineEventTypeName(event.type);
             if (lastVideoState_.has_value()) {
                 message += " lcdc=" + BMMQ::detail::hexByte(lastVideoState_->lcdc);
@@ -561,16 +565,7 @@ public:
             }
         }
 
-        std::string message = std::string("sdl: audio event=") + BMMQ::detail::machineEventTypeName(event.type);
-        if (lastAudioState_.has_value()) {
-            message += " nr12=" + BMMQ::detail::hexByte(lastAudioState_->nr12);
-            message += " nr52=" + BMMQ::detail::hexByte(lastAudioState_->nr52);
-        }
-        if (lastAudioPreview_.has_value()) {
-            message += " samples=" + std::to_string(lastAudioPreview_->sampleCount());
-        }
-        message += " buffered=" + std::to_string(bufferedAudioSamples()) + " samples";
-        appendLog(std::move(message));
+        (void)event;
     }
 
     std::optional<uint32_t> sampleDigitalInput(const BMMQ::MachineView&) override
@@ -855,7 +850,8 @@ private:
         if (!config_.enableAudio || audioService_ == nullptr || !audioOutputReady() || !lastFrame_.has_value()) {
             return false;
         }
-        if (videoService_ != nullptr && videoService_->hasCompleteScanlineFrame()) {
+        if (videoService_ != nullptr &&
+            (videoService_->hasCompleteScanlineFrame() || videoService_->hasPartialScanlineFrame())) {
             return false;
         }
 
@@ -878,7 +874,7 @@ private:
 
         if (event.type == BMMQ::MachineEventType::VBlank &&
             videoService_ != nullptr &&
-            videoService_->hasCompleteScanlineFrame() &&
+            (videoService_->hasCompleteScanlineFrame() || videoService_->hasPartialScanlineFrame()) &&
             scanlineVideoState_.has_value()) {
             refreshVideoRegisters(*scanlineVideoState_, view);
             return &*scanlineVideoState_;
@@ -976,11 +972,21 @@ private:
             return;
         }
         if (const auto& frame = videoService_->engine().lastValidFrame(); frame.has_value()) {
-            BMMQ::SdlFrameBuffer compatFrame;
-            compatFrame.width = frame->width;
-            compatFrame.height = frame->height;
-            compatFrame.pixels = frame->pixels;
-            lastFrame_ = std::move(compatFrame);
+            const auto framesSubmitted = videoService_->engine().stats().framesSubmitted;
+            const bool frameChanged = !lastFrame_.has_value() ||
+                                      lastSyncedVideoFrameSubmission_ != framesSubmitted ||
+                                      lastFrame_->width != frame->width ||
+                                      lastFrame_->height != frame->height ||
+                                      lastFrame_->pixelCount() != frame->pixelCount();
+            if (frameChanged) {
+                BMMQ::SdlFrameBuffer compatFrame;
+                compatFrame.width = frame->width;
+                compatFrame.height = frame->height;
+                compatFrame.generation = frame->generation;
+                compatFrame.pixels = frame->pixels;
+                lastFrame_ = std::move(compatFrame);
+                lastSyncedVideoFrameSubmission_ = framesSubmitted;
+            }
         }
         if (videoPresenter_ != nullptr) {
             windowVisible_ = videoPresenter_->windowVisible();
@@ -1260,6 +1266,7 @@ private:
     std::optional<BMMQ::SdlAudioPreviewBuffer> lastAudioPreview_;
     std::optional<BMMQ::DigitalInputStateView> lastInputState_;
     std::optional<BMMQ::SdlFrameBuffer> lastFrame_;
+    std::size_t lastSyncedVideoFrameSubmission_ = 0;
     bool frameDirty_ = false;
     std::optional<uint32_t> queuedDigitalInputMask_;
     bool quitRequested_ = false;

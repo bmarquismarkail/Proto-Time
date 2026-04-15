@@ -221,6 +221,12 @@ public:
             resetScanlineCapture();
             return submitFrame(frame);
         }
+        if (event.type == MachineEventType::VBlank && hasPartialScanlineFrame()) {
+            auto frame = engine_.buildDebugFrame(state, generation);
+            overlayCapturedScanlines(frame);
+            resetScanlineCapture();
+            return submitFrame(frame);
+        }
 
         resetScanlineCapture();
         return submitFrame(engine_.buildDebugFrame(state, generation));
@@ -294,6 +300,11 @@ public:
     {
         return scanlineFrame_.has_value() &&
                scanlineCaptureCount_ >= static_cast<std::size_t>(engine_.config().frameHeight);
+    }
+
+    [[nodiscard]] bool hasPartialScanlineFrame() const noexcept
+    {
+        return scanlineFrame_.has_value() && scanlineCaptureCount_ != 0u;
     }
 
 private:
@@ -381,6 +392,27 @@ private:
         scanlineFrame_->pixels.assign(static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0xFFE0F8D0u);
         scanlinesCaptured_.assign(static_cast<std::size_t>(height), false);
         scanlineCaptureCount_ = 0;
+    }
+
+    void overlayCapturedScanlines(VideoFramePacket& frame) const
+    {
+        if (!scanlineFrame_.has_value() ||
+            scanlineFrame_->width != frame.width ||
+            scanlineFrame_->height != frame.height ||
+            scanlineFrame_->pixelCount() != frame.pixelCount()) {
+            return;
+        }
+
+        const auto width = static_cast<std::size_t>(frame.width);
+        for (std::size_t y = 0; y < scanlinesCaptured_.size(); ++y) {
+            if (!scanlinesCaptured_[y]) {
+                continue;
+            }
+            const auto lineStart = y * width;
+            std::copy_n(scanlineFrame_->pixels.begin() + static_cast<std::ptrdiff_t>(lineStart),
+                        width,
+                        frame.pixels.begin() + static_cast<std::ptrdiff_t>(lineStart));
+        }
     }
 
     VideoEngine engine_{};
