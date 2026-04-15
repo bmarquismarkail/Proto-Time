@@ -238,7 +238,6 @@ int main(int argc, char** argv)
         const auto cpuClockHz = machine.clockHz();
         using SteadyClock = std::chrono::steady_clock;
         constexpr auto kFrontendServicePeriod = std::chrono::milliseconds(1);
-        constexpr auto kAudioBackpressurePollInterval = std::chrono::milliseconds(1);
         constexpr auto kMaxCatchUpWindow = std::chrono::milliseconds(8);
         constexpr auto kMinSleepQuantum = std::chrono::milliseconds(1);
         const double kMinInstructionCycles = 4.0;
@@ -295,10 +294,6 @@ int main(int argc, char** argv)
             return false;
         };
 
-        auto audioBackpressureActive = [&]() -> bool {
-            return frontend != nullptr && frontend->audioQueueBackpressureActive();
-        };
-
         while (gStopRequested == 0) {
             if (options.stepLimit.has_value() && steps >= *options.stepLimit) {
                 break;
@@ -314,7 +309,7 @@ int main(int argc, char** argv)
 
             bool executedInstruction = false;
             bool executionSliceActive = false;
-            while (!audioBackpressureActive() && timingEngine.canExecute() && gStopRequested == 0) {
+            while (timingEngine.canExecute() && gStopRequested == 0) {
                 if (options.stepLimit.has_value() && steps >= *options.stepLimit) {
                     break;
                 }
@@ -354,25 +349,15 @@ int main(int argc, char** argv)
 
             if (!executedInstruction) {
                 const auto nextStepTime = timingEngine.nextWakeTime(idleNow);
-                const auto audioBackpressureWakeTime = audioBackpressureActive()
-                    ? idleNow + kAudioBackpressurePollInterval
-                    : idleNow;
                 const auto frontendWakeTime = (frontend != nullptr) ? nextFrontendService : idleNow;
-                // nextWakeTime picks the earliest wake-up among frontend/nextFrontendService, nextStepTime, and audioBackpressureWakeTime.
-                auto nextWakeTime = (frontend != nullptr)
+                const auto nextWakeTime = (frontend != nullptr)
                     ? std::min(frontendWakeTime, nextStepTime)
                     : nextStepTime;
-                if (audioBackpressureWakeTime > idleNow) {
-                    nextWakeTime = (nextWakeTime > idleNow)
-                        ? std::min(nextWakeTime, audioBackpressureWakeTime)
-                        : audioBackpressureWakeTime;
-                }
 
                 const bool frontendSleepDue = (frontend != nullptr) && (frontendWakeTime > idleNow);
-                const bool audioBackpressureSleepDue = audioBackpressureWakeTime > idleNow;
                 const bool timingSleepDue = timingEngine.shouldSleep(idleNow) && (nextStepTime > idleNow);
 
-                if (timingSleepDue || frontendSleepDue || audioBackpressureSleepDue) {
+                if (timingSleepDue || frontendSleepDue) {
                     if (nextWakeTime > idleNow) {
                         std::this_thread::sleep_until(nextWakeTime);
                     }
