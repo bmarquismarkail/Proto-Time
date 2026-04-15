@@ -3,9 +3,12 @@
 #endif
 
 #include <cassert>
+#include <chrono>
 #include <cstdint>
+#include <span>
 #include <vector>
 
+#include "machine/plugins/AudioEngine.hpp"
 #include "machine/plugins/video/VideoEngine.hpp"
 
 namespace {
@@ -39,6 +42,36 @@ BMMQ::VideoStateView makeDebugVideoState()
     state.oam[1] = 16u;
     state.oam[2] = 0x01u;
     state.oam[3] = 0x00u;
+    return state;
+}
+
+BMMQ::VideoStateView makeDenseVideoState()
+{
+    BMMQ::VideoStateView state;
+    state.vram.resize(0x2000u, 0);
+    state.oam.resize(0x00A0u, 0);
+    state.lcdc = 0xF3u;
+    state.bgp = 0xE4u;
+    state.obp0 = 0xE4u;
+    state.obp1 = 0x1Bu;
+
+    for (std::size_t tile = 0; tile < 384u; ++tile) {
+        for (std::size_t row = 0; row < 8u; ++row) {
+            const auto base = tile * 16u + row * 2u;
+            state.vram[base] = static_cast<uint8_t>(0xA5u ^ static_cast<uint8_t>(tile + row));
+            state.vram[base + 1u] = static_cast<uint8_t>(0x5Au ^ static_cast<uint8_t>(tile * 3u + row));
+        }
+    }
+    for (std::size_t i = 0; i < 0x800u; ++i) {
+        state.vram[0x1800u + i] = static_cast<uint8_t>(i & 0xFFu);
+    }
+    for (std::size_t sprite = 0; sprite < 40u; ++sprite) {
+        const auto base = sprite * 4u;
+        state.oam[base] = static_cast<uint8_t>(16u + (sprite * 4u) % 144u);
+        state.oam[base + 1u] = static_cast<uint8_t>(8u + (sprite * 7u) % 160u);
+        state.oam[base + 2u] = static_cast<uint8_t>(sprite & 0xFFu);
+        state.oam[base + 3u] = static_cast<uint8_t>((sprite & 1u) != 0u ? 0x20u : 0x00u);
+    }
     return state;
 }
 
@@ -96,6 +129,34 @@ int main()
     assert(blank.height == 3);
     assert(blank.pixelCount() == 12u);
     assert(blank.pixels[0] == 0xFF000000u);
+
+    BMMQ::VideoEngine fullFrameEngine({
+        .frameWidth = 160,
+        .frameHeight = 144,
+        .queueCapacityFrames = 2,
+    });
+    BMMQ::AudioEngine audioEngine({
+        .sourceSampleRate = 48000,
+        .deviceSampleRate = 48000,
+        .ringBufferCapacitySamples = 4096,
+        .frameChunkSamples = 256,
+    });
+    const auto denseState = makeDenseVideoState();
+    std::vector<int16_t> audioChunk(256u, 1200);
+    std::vector<int16_t> audioOutput(256u, 0);
+
+    constexpr int kFramesToBuild = 60;
+    const auto start = std::chrono::steady_clock::now();
+    for (int i = 0; i < kFramesToBuild; ++i) {
+        const auto denseFrame = fullFrameEngine.buildDebugFrame(denseState, static_cast<uint64_t>(i + 1));
+        assert(denseFrame.pixelCount() == 160u * 144u);
+        audioEngine.appendRecentPcm(audioChunk, static_cast<uint64_t>(i + 1));
+        audioEngine.render(std::span<int16_t>(audioOutput.data(), audioOutput.size()));
+    }
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    assert(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() < 250);
+    assert(audioEngine.stats().underrunCount == 0u);
+    assert(audioEngine.stats().samplesDelivered >= static_cast<std::size_t>(kFramesToBuild) * audioOutput.size());
 
     return 0;
 }

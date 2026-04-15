@@ -316,15 +316,6 @@ public:
         context_.step();
         ++stepCounter_;
         const auto& feedback = context_.getLastFeedback();
-        emitMachineEvent(BMMQ::MachineEvent{
-            BMMQ::MachineEventType::StepCompleted,
-            BMMQ::PluginCategory::System,
-            stepCounter_,
-            0,
-            0,
-            &feedback,
-            "instruction step completed"
-        });
 
         const auto ly = context_.read8(0xFF44);
         if (lastLy_ < 144u && ly >= 144u) {
@@ -459,6 +450,20 @@ private:
             nullptr,
             detail,
         });
+    }
+
+    void emitIoWriteEventIfObservable(uint16_t address, std::span<const uint8_t> value,
+                                      std::string_view detail = "memory-mapped I/O write") {
+        if (isSuppressedVideoWriteAddress(address)) {
+            return;
+        }
+        emitIoWriteEvent(address, value, detail);
+    }
+
+    [[nodiscard]] static bool isSuppressedVideoWriteAddress(uint16_t address) noexcept {
+        return (address >= 0x8000u && address < 0xA000u) ||
+               (address >= 0xFE00u && address < 0xFEA0u) ||
+               (address >= 0xFF41u && address <= 0xFF4Bu);
     }
 
     [[nodiscard]] static std::optional<BMMQ::PluginCategory> classifyIoAddress(uint16_t address) {
@@ -869,7 +874,7 @@ private:
 
     bool handleSpecialWrite(uint16_t address, std::span<const uint8_t> value) {
         if (cpu_.cpu().handleMemoryWrite(address, value)) {
-            emitIoWriteEvent(address, value);
+            emitIoWriteEventIfObservable(address, value);
             return true;
         }
         if (value.size() == 1 && address == 0xFF50) {
@@ -896,7 +901,7 @@ private:
             return true;
         }
         if (handleCartridgeWrite(address, value)) {
-            emitIoWriteEvent(address, value, "cartridge or mapped I/O write");
+            emitIoWriteEventIfObservable(address, value, "cartridge or mapped I/O write");
             return true;
         }
         if (classifyIoAddress(address).has_value()) {
@@ -905,7 +910,7 @@ private:
                 memoryMap_.storage().load(std::span<const uint8_t>(&value[i], 1), currentAddress);
                 syncHardwareRegisterMirror(currentAddress, std::span<const uint8_t>(&value[i], 1));
             }
-            emitIoWriteEvent(address, value);
+            emitIoWriteEventIfObservable(address, value);
             return true;
         }
         syncHardwareRegisterMirror(address, value);

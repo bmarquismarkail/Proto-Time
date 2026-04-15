@@ -1,11 +1,27 @@
 #include <cassert>
 #include <cstdlib>
 #include <filesystem>
+#include <span>
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
 #include "machine/plugins/SdlFrontendPlugin.hpp"
 #include "machine/plugins/SdlFrontendPluginLoader.hpp"
+
+namespace {
+
+bool stepUntilAudioFrames(GameBoyMachine& machine, uint64_t targetFrameCounter)
+{
+    for (int i = 0; i < 200000; ++i) {
+        machine.step();
+        if (machine.audioFrameCounter() >= targetFrameCounter) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
 
 int main(int argc, char** argv)
 {
@@ -149,6 +165,38 @@ int main(int argc, char** argv)
         assert(frontend->bufferedAudioSamples() <= stats.audioRingBufferCapacitySamples);
         assert(stats.audioOverrunDropCount == 0u);
         assert(stats.audioQueueRecoveryClears == 0u);
+
+        std::vector<int16_t> drain(stats.audioRingBufferCapacitySamples + stats.audioCallbackChunkSamples, 0);
+        machine.audioService().renderForOutput(std::span<int16_t>(drain.data(), drain.size()));
+        assert(frontend->bufferedAudioSamples() == 0u);
+        assert(!frontend->audioQueueBackpressureActive());
+
+        const auto lowWaterBefore = frontend->stats().audioQueueLowWaterHits;
+        const auto framesPreparedBefore = frontend->stats().framesPrepared;
+        const auto audioEventsBeforeLowWater = frontend->stats().audioEvents;
+        frontend->onVideoEvent(BMMQ::MachineEvent{
+            BMMQ::MachineEventType::VBlank,
+            BMMQ::PluginCategory::Video,
+            0,
+            0xFF44u,
+            machine.runtimeContext().read8(0xFF44u),
+            nullptr,
+            "audio-low-water video pressure regression"
+        }, machine.view());
+        assert(frontend->stats().audioQueueLowWaterHits == lowWaterBefore + 1u);
+        assert(frontend->stats().framesPrepared == framesPreparedBefore);
+
+        const auto nextAudioFrame = machine.audioFrameCounter() + 1u;
+        assert(stepUntilAudioFrames(machine, nextAudioFrame));
+        assert(frontend->stats().audioEvents >= audioEventsBeforeLowWater + 1u);
+        assert(frontend->bufferedAudioSamples() > 0u);
+
+        const auto highWaterStartFrame = machine.audioFrameCounter() + 1u;
+        for (uint64_t frame = highWaterStartFrame; frame < highWaterStartFrame + 32u; ++frame) {
+            std::vector<int16_t> highWaterChunk(256u, 700);
+            machine.audioService().engine().appendRecentPcm(highWaterChunk, frame);
+        }
+        assert(frontend->audioQueueBackpressureActive());
     }
     assert(frontend->lastInputState().has_value());
     assert(frontend->lastInputState()->pressedMask == 0x15u);

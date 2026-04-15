@@ -11,6 +11,8 @@ struct TimingConfig {
     double baseClockHz = 0.0;
     double speedMultiplier = 1.0;
     double minInstructionCycles = 4.0;
+    double executionSliceSeconds = 0.001;
+    double frontendServiceSliceSeconds = 0.001;
     std::chrono::nanoseconds maxCatchUp = std::chrono::milliseconds(8);
     // Minimum host sleep quantum; deficits smaller than this should
     // not trigger a `sleep_until()` call in the emulator idle loop.
@@ -33,6 +35,11 @@ struct TimingStats {
     std::uint64_t sleepDecisions = 0;
     std::uint64_t sleepSkippedForSmallDeficit = 0;
     std::chrono::nanoseconds configuredMinSleepQuantum = std::chrono::milliseconds(1);
+    std::uint64_t executionSlicesEntered = 0;
+    std::uint64_t executionSlicesCompleted = 0;
+    std::uint64_t frontendServiceChecks = 0;
+    double lastExecutionSliceCycles = 0.0;
+    double currentExecutionSliceCycles = 0.0;
 };
 
 struct TimingControlState {
@@ -40,6 +47,11 @@ struct TimingControlState {
     bool throttled = true;
     double speedMultiplier = 1.0;
     bool singleStepRequested = false;
+};
+
+struct TimingSliceDecision {
+    bool executionSliceComplete = false;
+    bool frontendServiceDue = false;
 };
 
 class TimingEngine {
@@ -56,6 +68,8 @@ public:
 
     [[nodiscard]] bool canExecute() const noexcept;
     void charge(double retiredCycles) noexcept;
+    void beginExecutionSlice() noexcept;
+    [[nodiscard]] TimingSliceDecision recordExecutionSliceCycles(double chargedCycles) noexcept;
 
     [[nodiscard]] std::chrono::steady_clock::time_point nextWakeTime(
         std::chrono::steady_clock::time_point now) noexcept;
@@ -68,6 +82,8 @@ private:
     TimingControlState control_{};
     TimingStats stats_{};
     std::chrono::steady_clock::time_point lastTick_{};
+    double executionSliceCycles_ = 0.0;
+    double frontendServiceSliceCycles_ = 0.0;
 };
 
 class TimingService {
@@ -86,6 +102,8 @@ public:
 
     [[nodiscard]] bool canExecute() const noexcept;
     void charge(double retiredCycles) noexcept;
+    void beginExecutionSlice() noexcept;
+    [[nodiscard]] TimingSliceDecision recordExecutionSliceCycles(double chargedCycles) noexcept;
 
     [[nodiscard]] std::chrono::steady_clock::time_point nextWakeTime(
         std::chrono::steady_clock::time_point now) noexcept;

@@ -199,6 +199,7 @@ public:
     [[nodiscard]] virtual bool backendReady() const noexcept = 0;
     [[nodiscard]] virtual bool audioOutputReady() const noexcept = 0;
     [[nodiscard]] virtual std::size_t bufferedAudioSamples() const noexcept = 0;
+    [[nodiscard]] virtual bool audioQueueBackpressureActive() const noexcept = 0;
     [[nodiscard]] virtual uint32_t queuedAudioBytes() const noexcept = 0;
     [[nodiscard]] virtual bool tryInitializeBackend() = 0;
     [[nodiscard]] virtual std::size_t pumpBackendEvents() = 0;

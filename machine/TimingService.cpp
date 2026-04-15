@@ -12,6 +12,12 @@ TimingEngine::TimingEngine(const TimingConfig& config) noexcept
 void TimingEngine::configure(const TimingConfig& config) noexcept
 {
     config_ = config;
+    if (config_.executionSliceSeconds <= 0.0) {
+        config_.executionSliceSeconds = 0.001;
+    }
+    if (config_.frontendServiceSliceSeconds <= 0.0) {
+        config_.frontendServiceSliceSeconds = config_.executionSliceSeconds;
+    }
     control_.throttled = config_.throttled;
     control_.speedMultiplier = config_.speedMultiplier;
     stats_.throttled = control_.throttled;
@@ -39,6 +45,9 @@ void TimingEngine::start(std::chrono::steady_clock::time_point now) noexcept
     stats_.cycleBudget = 0.0;
     stats_.cycleDebt = 0.0;
     stats_.effectiveClockHz = config_.baseClockHz * control_.speedMultiplier;
+    executionSliceCycles_ = 0.0;
+    frontendServiceSliceCycles_ = 0.0;
+    stats_.currentExecutionSliceCycles = 0.0;
 }
 
 void TimingEngine::update(std::chrono::steady_clock::time_point now) noexcept
@@ -81,6 +90,41 @@ void TimingEngine::charge(double retiredCycles) noexcept
         control_.singleStepRequested = false;
         ++stats_.singleStepsGranted;
     }
+}
+
+void TimingEngine::beginExecutionSlice() noexcept
+{
+    executionSliceCycles_ = 0.0;
+    stats_.currentExecutionSliceCycles = 0.0;
+    ++stats_.executionSlicesEntered;
+}
+
+TimingSliceDecision TimingEngine::recordExecutionSliceCycles(double chargedCycles) noexcept
+{
+    const double charged = std::max(0.0, chargedCycles);
+    executionSliceCycles_ += charged;
+    frontendServiceSliceCycles_ += charged;
+    stats_.currentExecutionSliceCycles = executionSliceCycles_;
+
+    const double maxExecutionSliceCycles = std::max(
+        config_.minInstructionCycles,
+        config_.baseClockHz * config_.executionSliceSeconds);
+    const double frontendServiceSliceCycles = std::max(
+        config_.minInstructionCycles,
+        config_.baseClockHz * config_.frontendServiceSliceSeconds);
+
+    TimingSliceDecision decision;
+    if (frontendServiceSliceCycles_ >= frontendServiceSliceCycles) {
+        frontendServiceSliceCycles_ = 0.0;
+        decision.frontendServiceDue = true;
+        ++stats_.frontendServiceChecks;
+    }
+    if (executionSliceCycles_ >= maxExecutionSliceCycles) {
+        decision.executionSliceComplete = true;
+        ++stats_.executionSlicesCompleted;
+        stats_.lastExecutionSliceCycles = executionSliceCycles_;
+    }
+    return decision;
 }
 
 std::chrono::steady_clock::time_point TimingEngine::nextWakeTime(
@@ -222,6 +266,23 @@ void TimingService::charge(double retiredCycles) noexcept
     stats_ = newStats;
 }
 
+void TimingService::beginExecutionSlice() noexcept
+{
+    std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
+    engine_.beginExecutionSlice();
+    stats_ = engine_.stats();
+    stats_.configuredMinSleepQuantum = config_.minSleepQuantum;
+}
+
+TimingSliceDecision TimingService::recordExecutionSliceCycles(double chargedCycles) noexcept
+{
+    std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
+    const auto decision = engine_.recordExecutionSliceCycles(chargedCycles);
+    stats_ = engine_.stats();
+    stats_.configuredMinSleepQuantum = config_.minSleepQuantum;
+    return decision;
+}
+
 std::chrono::steady_clock::time_point TimingService::nextWakeTime(
     std::chrono::steady_clock::time_point now) noexcept
 {
@@ -253,6 +314,7 @@ void TimingService::publishEngineStats(const TimingStats& stats) noexcept
     stats_.throttled = control_.throttled;
     stats_.speedMultiplier = control_.speedMultiplier;
     stats_.effectiveClockHz = config_.baseClockHz * control_.speedMultiplier;
+    stats_.configuredMinSleepQuantum = config_.minSleepQuantum;
 }
 
 TimingStats TimingService::stats() const noexcept

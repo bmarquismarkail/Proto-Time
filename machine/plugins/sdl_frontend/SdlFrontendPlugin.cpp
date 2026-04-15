@@ -352,6 +352,23 @@ public:
         return buffered;
     }
 
+    [[nodiscard]] bool audioQueueBackpressureActive() const noexcept override
+    {
+        if (!config_.enableAudio || audioService_ == nullptr || !audioOutputReady()) {
+            return false;
+        }
+
+        const auto capacity = audioService_->engine().bufferCapacitySamples();
+        if (capacity == 0u) {
+            return false;
+        }
+
+        const auto callbackChunk = static_cast<std::size_t>(std::max(config_.audioCallbackChunkSamples, 1));
+        const auto reserve = std::max<std::size_t>(callbackChunk * 2u, kApuFrameSamples);
+        const auto highWater = capacity > reserve ? capacity - reserve : capacity;
+        return audioService_->engine().bufferedSamples() >= highWater;
+    }
+
     [[nodiscard]] uint32_t queuedAudioBytes() const noexcept override
     {
         if (audioService_ == nullptr) {
@@ -477,6 +494,11 @@ public:
             lcdControlWrite;
 
         if (shouldSampleVideoState) {
+            if (event.type == BMMQ::MachineEventType::VBlank && shouldDeferVideoFrameForAudioLowWater()) {
+                ++stats_.audioQueueLowWaterHits;
+                appendLog("sdl: skipped video frame preparation while audio buffer was low");
+                return;
+            }
             lastVideoState_ = view.videoState();
             if (lastVideoState_.has_value()) {
                 if (videoService_ != nullptr && videoService_->submitVideoState(event, *lastVideoState_)) {
@@ -807,6 +829,17 @@ private:
         stats_.peakQueuedAudioBytes = std::max<std::uint32_t>(
             stats_.peakQueuedAudioBytes,
             static_cast<std::uint32_t>(stats_.audioBufferedHighWaterSamples * sizeof(int16_t)));
+    }
+
+    [[nodiscard]] bool shouldDeferVideoFrameForAudioLowWater() const noexcept
+    {
+        if (!config_.enableAudio || audioService_ == nullptr || !audioOutputReady() || !lastFrame_.has_value()) {
+            return false;
+        }
+
+        const auto callbackChunk = static_cast<std::size_t>(std::max(config_.audioCallbackChunkSamples, 1));
+        const auto lowWaterSamples = std::max<std::size_t>(callbackChunk * 2u, kApuFrameSamples);
+        return audioService_->engine().bufferedSamples() < lowWaterSamples;
     }
 
     void configureVideoService()

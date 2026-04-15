@@ -236,9 +236,13 @@ int main()
     assert(inputRecorder->lastInputState->directionPressed());
     assert(loggingInput->entryCount() >= 1);
 
+    const auto videoEventsBeforeVramWrite = video->videoEventCount;
     machine.runtimeContext().write8(0x8000, 0x42u);
+    assert(video->videoEventCount == videoEventsBeforeVramWrite);
+    machine.runtimeContext().write8(0xFF42, 0x12u);
+    assert(video->videoEventCount == videoEventsBeforeVramWrite);
     machine.runtimeContext().write8(0xFF40, 0x91u);
-    assert(video->videoEventCount >= 2);
+    assert(video->videoEventCount == videoEventsBeforeVramWrite + 1);
     assert(video->lastVideoEvent.type == BMMQ::MachineEventType::MemoryWriteObserved);
     assert(video->lastVideoEvent.category == BMMQ::PluginCategory::Video);
     assert(video->lastObservedValue == 0x91u);
@@ -302,7 +306,7 @@ int main()
     assert(machine.pluginManager().hasDisabledPlugins());
     assert(throwing->machineEventCount == 1);
     assert(firstInput->sampleCalls == 2);
-    assert(video->lastMachineEvent.type == BMMQ::MachineEventType::StepCompleted);
+    assert(video->lastMachineEvent.type != BMMQ::MachineEventType::StepCompleted);
 
     const auto status = machine.pluginManager().statusFor("test.plugin.throwing");
     assert(status.has_value());
@@ -320,7 +324,15 @@ int main()
     assert(reenabled);
     assert(!machine.pluginManager().statusFor("test.plugin.throwing")->disabled);
 
-    machine.step();
+    machine.pluginManager().emit(machine.view(), BMMQ::MachineEvent{
+        BMMQ::MachineEventType::NetworkActivity,
+        BMMQ::PluginCategory::System,
+        0,
+        0,
+        0,
+        nullptr,
+        "explicit generic plugin re-enable check"
+    });
     assert(throwing->machineEventCount == 2);
 
     machine.pluginManager().resetFailures();

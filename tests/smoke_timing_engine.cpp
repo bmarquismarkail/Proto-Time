@@ -91,6 +91,35 @@ int main()
     CHECK_TRUE(!engine.canExecute());
     CHECK_TRUE(engine.stats().singleStepsGranted == 1u);
 
+    // Execution slicing should be cycle-based and default to roughly 1 ms of emulated time.
+    BMMQ::TimingConfig sliceCfg;
+    sliceCfg.baseClockHz = 1000000.0;
+    sliceCfg.minInstructionCycles = 4.0;
+    sliceCfg.executionSliceSeconds = 0.001;
+    sliceCfg.frontendServiceSliceSeconds = 0.001;
+    BMMQ::TimingEngine sliceEngine(sliceCfg);
+    sliceEngine.start(t0);
+
+    sliceEngine.beginExecutionSlice();
+    CHECK_TRUE(sliceEngine.stats().executionSlicesEntered == 1u);
+    auto sliceDecision = sliceEngine.recordExecutionSliceCycles(996.0);
+    CHECK_TRUE(!sliceDecision.executionSliceComplete);
+    CHECK_TRUE(!sliceDecision.frontendServiceDue);
+    CHECK_TRUE(sliceEngine.stats().frontendServiceChecks == 0u);
+
+    sliceDecision = sliceEngine.recordExecutionSliceCycles(4.0);
+    CHECK_TRUE(sliceDecision.executionSliceComplete);
+    CHECK_TRUE(sliceDecision.frontendServiceDue);
+    CHECK_TRUE(sliceEngine.stats().executionSlicesCompleted == 1u);
+    CHECK_TRUE(sliceEngine.stats().frontendServiceChecks == 1u);
+    CHECK_TRUE(sliceEngine.stats().lastExecutionSliceCycles >= 1000.0);
+
+    sliceEngine.beginExecutionSlice();
+    sliceDecision = sliceEngine.recordExecutionSliceCycles(4.0);
+    CHECK_TRUE(!sliceDecision.executionSliceComplete);
+    CHECK_TRUE(!sliceDecision.frontendServiceDue);
+    CHECK_TRUE(sliceEngine.stats().executionSlicesEntered == 2u);
+
     return 0;
 }
 

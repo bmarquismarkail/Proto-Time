@@ -265,6 +265,11 @@ public:
         return implementation_->bufferedAudioSamples();
     }
 
+    [[nodiscard]] bool audioQueueBackpressureActive() const noexcept override
+    {
+        return implementation_->audioQueueBackpressureActive();
+    }
+
     [[nodiscard]] uint32_t queuedAudioBytes() const noexcept override
     {
         return implementation_->queuedAudioBytes();

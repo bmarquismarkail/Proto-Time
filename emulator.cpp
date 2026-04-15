@@ -241,12 +241,16 @@ int main(int argc, char** argv)
         constexpr auto kMaxCatchUpWindow = std::chrono::milliseconds(8);
         constexpr auto kMinSleepQuantum = std::chrono::milliseconds(1);
         const double kMinInstructionCycles = 4.0;
+        const double kExecutionSliceSeconds = 0.001;
+        const double kFrontendServiceSliceSeconds = 0.001;
 
         BMMQ::TimingService timingService;
         BMMQ::TimingConfig timingConfig;
         timingConfig.baseClockHz = static_cast<double>(cpuClockHz);
         timingConfig.speedMultiplier = options.speedMultiplier;
         timingConfig.minInstructionCycles = kMinInstructionCycles;
+        timingConfig.executionSliceSeconds = kExecutionSliceSeconds;
+        timingConfig.frontendServiceSliceSeconds = kFrontendServiceSliceSeconds;
         timingConfig.maxCatchUp = kMaxCatchUpWindow;
         timingConfig.minSleepQuantum = kMinSleepQuantum;
         timingConfig.throttled = !options.unthrottled;
@@ -290,6 +294,10 @@ int main(int argc, char** argv)
             return false;
         };
 
+        auto audioBackpressureActive = [&]() -> bool {
+            return frontend != nullptr && frontend->audioQueueBackpressureActive();
+        };
+
         while (gStopRequested == 0) {
             if (options.stepLimit.has_value() && steps >= *options.stepLimit) {
                 break;
@@ -304,9 +312,15 @@ int main(int argc, char** argv)
             timingEngine.update(now);
 
             bool executedInstruction = false;
-            while (timingEngine.canExecute() && gStopRequested == 0) {
+            bool executionSliceActive = false;
+            while (!audioBackpressureActive() && timingEngine.canExecute() && gStopRequested == 0) {
                 if (options.stepLimit.has_value() && steps >= *options.stepLimit) {
                     break;
+                }
+
+                if (!executionSliceActive) {
+                    timingEngine.beginExecutionSlice();
+                    executionSliceActive = true;
                 }
 
                 machine.step();
@@ -314,10 +328,15 @@ int main(int argc, char** argv)
                 executedInstruction = true;
 
                 const auto retiredCycles = static_cast<double>(machine.runtimeContext().getLastFeedback().retiredCycles);
+                const auto chargedCycles = std::max(kMinInstructionCycles, retiredCycles);
                 timingEngine.charge(retiredCycles);
+                const auto sliceDecision = timingEngine.recordExecutionSliceCycles(chargedCycles);
 
-                if (serviceFrontendUntil(SteadyClock::now())) {
+                if (sliceDecision.frontendServiceDue && serviceFrontendUntil(SteadyClock::now())) {
                     gStopRequested = 1;
+                    break;
+                }
+                if (sliceDecision.executionSliceComplete) {
                     break;
                 }
             }
@@ -334,15 +353,24 @@ int main(int argc, char** argv)
 
             if (!executedInstruction) {
                 const auto nextStepTime = timingEngine.nextWakeTime(idleNow);
+                const auto audioBackpressureWakeTime = audioBackpressureActive()
+                    ? idleNow + std::chrono::milliseconds(1)
+                    : idleNow;
                 const auto frontendWakeTime = (frontend != nullptr) ? nextFrontendService : idleNow;
-                const auto nextWakeTime = (frontend != nullptr)
+                auto nextWakeTime = (frontend != nullptr)
                     ? std::min(frontendWakeTime, nextStepTime)
                     : nextStepTime;
+                if (audioBackpressureWakeTime > idleNow) {
+                    nextWakeTime = (nextWakeTime > idleNow)
+                        ? std::min(nextWakeTime, audioBackpressureWakeTime)
+                        : audioBackpressureWakeTime;
+                }
 
                 const bool frontendSleepDue = (frontend != nullptr) && (frontendWakeTime > idleNow);
+                const bool audioBackpressureSleepDue = audioBackpressureWakeTime > idleNow;
                 const bool timingSleepDue = timingEngine.shouldSleep(idleNow) && (nextStepTime > idleNow);
 
-                if (timingSleepDue || frontendSleepDue) {
+                if (timingSleepDue || frontendSleepDue || audioBackpressureSleepDue) {
                     if (nextWakeTime > idleNow) {
                         std::this_thread::sleep_until(nextWakeTime);
                     }
