@@ -63,6 +63,25 @@ int main()
     CHECK_TRUE(tinySleepEngine.nextWakeTime(subQuantumNow) <= subQuantumNow);
     CHECK_TRUE(tinySleepEngine.stats().sleepSkippedForSmallDeficit >= 1u);
 
+    // Instruction overshoot must become timing debt. Otherwise an instruction
+    // that costs more than the current budget makes emulation run fast.
+    BMMQ::TimingConfig overshootCfg;
+    overshootCfg.baseClockHz = 1000000.0;
+    overshootCfg.minInstructionCycles = 4.0;
+    overshootCfg.minSleepQuantum = std::chrono::microseconds(1);
+    overshootCfg.throttled = true;
+    BMMQ::TimingEngine overshootEngine(overshootCfg);
+    overshootEngine.start(t0);
+    overshootEngine.update(t0 + std::chrono::microseconds(4));
+    CHECK_TRUE(overshootEngine.canExecute());
+    overshootEngine.charge(16.0);
+    CHECK_TRUE(!overshootEngine.canExecute());
+    CHECK_TRUE(overshootEngine.stats().cycleDebt >= 12.0);
+    overshootEngine.update(t0 + std::chrono::microseconds(19));
+    CHECK_TRUE(!overshootEngine.canExecute());
+    overshootEngine.update(t0 + std::chrono::microseconds(20));
+    CHECK_TRUE(overshootEngine.canExecute());
+
     // Scheduler-sized deficits should allow sleeping.
     BMMQ::TimingConfig sleepCfg;
     sleepCfg.baseClockHz = 1000.0;

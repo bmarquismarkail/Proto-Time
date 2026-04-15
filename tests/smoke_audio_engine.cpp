@@ -26,6 +26,9 @@ int main()
     engine.appendRecentPcm(recent, 1u);
     assert(engine.bufferedSamples() == 256u);
 
+    engine.appendRecentPcm(recent, 4u);
+    assert(engine.bufferedSamples() == 512u);
+
     std::vector<int16_t> out(64, 0);
     engine.render(out);
     assert(engine.stats().callbackCount == 1u);

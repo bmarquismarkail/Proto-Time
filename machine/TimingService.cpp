@@ -6,6 +6,11 @@ namespace BMMQ {
 namespace {
 constexpr double kMinTimingSliceSeconds = 1e-6;
 
+void updateCycleDebt(TimingStats& stats) noexcept
+{
+    stats.cycleDebt = std::max(0.0, -stats.cycleBudget);
+}
+
 void sanitizeTimingConfig(TimingConfig& config) noexcept
 {
     if (config.executionSliceSeconds <= 0.0) {
@@ -31,6 +36,7 @@ void TimingEngine::configure(const TimingConfig& config) noexcept
     stats_.throttled = control_.throttled;
     stats_.speedMultiplier = control_.speedMultiplier;
     stats_.effectiveClockHz = config_.baseClockHz * control_.speedMultiplier;
+    updateCycleDebt(stats_);
 }
 
 void TimingEngine::applyControl(const TimingControlState& control) noexcept
@@ -45,6 +51,7 @@ void TimingEngine::applyControl(const TimingControlState& control) noexcept
     stats_.throttled = control_.throttled;
     stats_.speedMultiplier = control_.speedMultiplier;
     stats_.effectiveClockHz = config_.baseClockHz * control_.speedMultiplier;
+    updateCycleDebt(stats_);
 }
 
 void TimingEngine::start(std::chrono::steady_clock::time_point now) noexcept
@@ -77,6 +84,7 @@ void TimingEngine::update(std::chrono::steady_clock::time_point now) noexcept
         stats_.cycleBudget = maxBudget;
         ++stats_.catchUpClampCount;
     }
+    updateCycleDebt(stats_);
 }
 
 bool TimingEngine::canExecute() const noexcept
@@ -93,7 +101,12 @@ bool TimingEngine::canExecute() const noexcept
 void TimingEngine::charge(double retiredCycles) noexcept
 {
     const double charged = std::max(config_.minInstructionCycles, retiredCycles);
-    stats_.cycleBudget = std::max(0.0, stats_.cycleBudget - charged);
+    if (!control_.throttled || control_.paused) {
+        stats_.cycleBudget = std::max(0.0, stats_.cycleBudget - charged);
+    } else {
+        stats_.cycleBudget -= charged;
+    }
+    updateCycleDebt(stats_);
     if (control_.paused && control_.singleStepRequested) {
         control_.singleStepRequested = false;
         ++stats_.singleStepsGranted;

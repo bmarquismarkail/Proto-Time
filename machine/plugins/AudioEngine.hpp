@@ -137,10 +137,7 @@ public:
         if (isFirstFrame || resetRequired) {
             desiredSampleCount = std::min<std::size_t>(pcm.size(), config_.frameChunkSamples);
         } else if (frameCounter > lastFrameCounter_) {
-            const auto frameDelta = frameCounter - lastFrameCounter_;
-            desiredSampleCount = static_cast<std::size_t>(std::min<uint64_t>(
-                static_cast<uint64_t>(pcm.size()),
-                frameDelta * static_cast<uint64_t>(config_.frameChunkSamples)));
+            desiredSampleCount = std::min<std::size_t>(pcm.size(), config_.frameChunkSamples);
         }
 
         if (desiredSampleCount == 0u) {
