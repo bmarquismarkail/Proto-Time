@@ -211,13 +211,13 @@ public:
         }
 
         bool stagedAny = false;
-        if (auto* digital = dynamic_cast<IDigitalInputSourcePlugin*>(adapter_); digital != nullptr) {
-            if (const auto sample = digital->sampleDigitalInput(); sample.has_value()) {
+        if (digitalAdapter_ != nullptr) {
+            if (const auto sample = digitalAdapter_->sampleDigitalInput(); sample.has_value()) {
                 stagedAny = engine_.stageDigitalSnapshot(*sample, generation) || stagedAny;
             }
         }
-        if (auto* analog = dynamic_cast<IAnalogInputSourcePlugin*>(adapter_); analog != nullptr) {
-            if (const auto sample = analog->sampleAnalogInput(); sample.has_value()) {
+        if (analogAdapter_ != nullptr) {
+            if (const auto sample = analogAdapter_->sampleAnalogInput(); sample.has_value()) {
                 stagedAny = engine_.stageAnalogSnapshot(*sample, generation) || stagedAny;
             }
         }
@@ -272,6 +272,7 @@ private:
                 return false;
             }
             if (&adapter == adapter_) {
+                cacheAdapterInterfacesLocked(adapter);
                 diagnostics_.activeAdapterSummary = std::string(adapter.name());
                 diagnostics_.lastBackendError.clear();
                 return true;
@@ -282,6 +283,7 @@ private:
             }
             adapter_->close();
             std::forward<AttachFn>(attachFn)();
+            cacheAdapterInterfacesLocked(*adapter_);
             diagnostics_.activeAdapterSummary = std::string(adapter.name());
             diagnostics_.lastBackendError.clear();
             setState(InputLifecycleState::Active);
@@ -290,6 +292,7 @@ private:
 
         detachCurrentAdapterLocked();
         std::forward<AttachFn>(attachFn)();
+        cacheAdapterInterfacesLocked(*adapter_);
         diagnostics_.activeAdapterSummary = std::string(adapter.name());
         diagnostics_.lastBackendError.clear();
         setState(InputLifecycleState::Paused);
@@ -312,8 +315,21 @@ private:
         if (adapter_ != nullptr) {
             adapter_->close();
         }
+        clearAdapterInterfaceCacheLocked();
         adapter_ = nullptr;
         ownedAdapter_.reset();
+    }
+
+    void cacheAdapterInterfacesLocked(IInputPlugin& adapter) noexcept
+    {
+        digitalAdapter_ = dynamic_cast<IDigitalInputSourcePlugin*>(&adapter);
+        analogAdapter_ = dynamic_cast<IAnalogInputSourcePlugin*>(&adapter);
+    }
+
+    void clearAdapterInterfaceCacheLocked() noexcept
+    {
+        digitalAdapter_ = nullptr;
+        analogAdapter_ = nullptr;
     }
 
     void syncDiagnostics() const noexcept
@@ -332,6 +348,8 @@ private:
 
     InputEngine engine_{};
     IInputPlugin* adapter_ = nullptr;
+    IDigitalInputSourcePlugin* digitalAdapter_ = nullptr;
+    IAnalogInputSourcePlugin* analogAdapter_ = nullptr;
     std::unique_ptr<IInputPlugin> ownedAdapter_{};
     std::string mappingProfileName_{};
     InputLifecycleState state_ = InputLifecycleState::Detached;
