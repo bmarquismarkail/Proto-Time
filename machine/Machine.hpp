@@ -138,6 +138,8 @@ public:
     virtual ExecutionGuarantee guarantee() const noexcept {
         return runtimeContext().guarantee();
     }
+    virtual void serviceInput() {
+    }
     virtual void step() {
         runtimeContext().step();
     }

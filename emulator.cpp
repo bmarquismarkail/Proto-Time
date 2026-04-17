@@ -304,6 +304,7 @@ int main(int argc, char** argv)
             } while (nextFrontendService <= now);
             if (servicedFrontend) {
                 timingEngine.applyControl(timingService.takeControlSnapshot());
+                machine.serviceInput();
             }
             return false;
         };

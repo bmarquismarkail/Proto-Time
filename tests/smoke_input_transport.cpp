@@ -52,6 +52,10 @@ int main(int argc, char** argv)
     assert(!machine.currentDigitalInputMask().has_value());
 
     machine.step();
+    assert(!machine.currentDigitalInputMask().has_value());
+    assert(frontend->stats().inputPolls == 0u);
+
+    machine.serviceInput();
     assert(machine.currentDigitalInputMask().has_value());
     assert(*machine.currentDigitalInputMask() == rightAndButton1Mask);
     assert(frontend->stats().inputPolls >= 1u);
@@ -65,13 +69,17 @@ int main(int argc, char** argv)
 
     machine.step();
     assert(machine.currentDigitalInputMask().has_value());
+    assert(*machine.currentDigitalInputMask() == rightAndButton1Mask);
+
+    machine.serviceInput();
+    assert(machine.currentDigitalInputMask().has_value());
     assert(*machine.currentDigitalInputMask() == rightMask);
     assert(frontend->lastInputState().has_value());
     assert(frontend->lastInputState()->pressedMask == rightMask);
 
     frontend->clearQueuedDigitalInputMask();
     assert(!frontend->queuedDigitalInputMask().has_value());
-    machine.step();
+    machine.serviceInput();
     assert(machine.currentDigitalInputMask().has_value());
     assert(*machine.currentDigitalInputMask() == 0x00u);
 

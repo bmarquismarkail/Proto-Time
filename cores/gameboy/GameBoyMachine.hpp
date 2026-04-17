@@ -310,7 +310,6 @@ public:
     }
 
     void step() override {
-        pollInputPlugins();
         if (bootEntryPending_) {
             context_.writeRegister16(GB::RegisterId::PC, 0x0100);
             bootEntryPending_ = false;
@@ -372,6 +371,10 @@ public:
 
         lastLy_ = ly;
         lastPpuMode_ = ppuMode;
+    }
+
+    void serviceInput() override {
+        pollInputPlugins();
     }
 
     uint16_t readRegisterPair(std::string_view id) const override {

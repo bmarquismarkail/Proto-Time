@@ -37,6 +37,7 @@ public:
         PluginT& ref = *plugin;
         Entry entry;
         entry.plugin = std::move(plugin);
+        cacheInterfaces(entry);
         plugins_.push_back(std::move(entry));
         return ref;
     }
@@ -152,7 +153,7 @@ public:
             }
             try {
                 entry.plugin->onMachineEvent(event, view);
-                dispatchTyped(*entry.plugin, event, view);
+                dispatchTyped(entry, event, view);
             } catch (...) {
                 markFailure(entry);
             }
@@ -171,7 +172,7 @@ public:
             if (entry.disabled) {
                 continue;
             }
-            auto* plugin = dynamic_cast<IDigitalInputPlugin*>(entry.plugin.get());
+            auto* plugin = entry.digitalInput;
             if (plugin == nullptr) {
                 continue;
             }
@@ -198,7 +199,7 @@ public:
             if (entry.disabled) {
                 continue;
             }
-            auto* plugin = dynamic_cast<IAnalogInputPlugin*>(entry.plugin.get());
+            auto* plugin = entry.analogInput;
             if (plugin == nullptr) {
                 continue;
             }
@@ -222,6 +223,13 @@ public:
 private:
     struct Entry {
         std::unique_ptr<IPlugin> plugin;
+        IVideoPlugin* video = nullptr;
+        IAudioPlugin* audio = nullptr;
+        IDigitalInputPlugin* digitalInput = nullptr;
+        IAnalogInputPlugin* analogInput = nullptr;
+        INetworkPlugin* network = nullptr;
+        ISerialPlugin* serial = nullptr;
+        IParallelPlugin* parallel = nullptr;
         bool attached = false;
         bool disabled = false;
         std::size_t failureCount = 0;
@@ -243,6 +251,17 @@ private:
         return status;
     }
 
+    static void cacheInterfaces(Entry& entry) noexcept
+    {
+        entry.video = dynamic_cast<IVideoPlugin*>(entry.plugin.get());
+        entry.audio = dynamic_cast<IAudioPlugin*>(entry.plugin.get());
+        entry.digitalInput = dynamic_cast<IDigitalInputPlugin*>(entry.plugin.get());
+        entry.analogInput = dynamic_cast<IAnalogInputPlugin*>(entry.plugin.get());
+        entry.network = dynamic_cast<INetworkPlugin*>(entry.plugin.get());
+        entry.serial = dynamic_cast<ISerialPlugin*>(entry.plugin.get());
+        entry.parallel = dynamic_cast<IParallelPlugin*>(entry.plugin.get());
+    }
+
     static void markFailure(Entry& entry)
     {
         entry.disabled = true;
@@ -259,44 +278,44 @@ private:
         }
     }
 
-    static void dispatchTyped(IPlugin& plugin, const MachineEvent& event, const MachineView& view)
+    static void dispatchTyped(Entry& entry, const MachineEvent& event, const MachineView& view)
     {
         switch (event.category) {
         case PluginCategory::System:
             break;
         case PluginCategory::Video:
-            if (auto* typed = dynamic_cast<IVideoPlugin*>(&plugin)) {
-                typed->onVideoEvent(event, view);
+            if (entry.video != nullptr) {
+                entry.video->onVideoEvent(event, view);
             }
             break;
         case PluginCategory::Audio:
-            if (auto* typed = dynamic_cast<IAudioPlugin*>(&plugin)) {
-                typed->onAudioEvent(event, view);
+            if (entry.audio != nullptr) {
+                entry.audio->onAudioEvent(event, view);
             }
             break;
         case PluginCategory::DigitalInput:
-            if (auto* typed = dynamic_cast<IDigitalInputPlugin*>(&plugin)) {
-                typed->onDigitalInputEvent(event, view);
+            if (entry.digitalInput != nullptr) {
+                entry.digitalInput->onDigitalInputEvent(event, view);
             }
             break;
         case PluginCategory::AnalogInput:
-            if (auto* typed = dynamic_cast<IAnalogInputPlugin*>(&plugin)) {
-                typed->onAnalogInputEvent(event, view);
+            if (entry.analogInput != nullptr) {
+                entry.analogInput->onAnalogInputEvent(event, view);
             }
             break;
         case PluginCategory::Network:
-            if (auto* typed = dynamic_cast<INetworkPlugin*>(&plugin)) {
-                typed->onNetworkEvent(event, view);
+            if (entry.network != nullptr) {
+                entry.network->onNetworkEvent(event, view);
             }
             break;
         case PluginCategory::Serial:
-            if (auto* typed = dynamic_cast<ISerialPlugin*>(&plugin)) {
-                typed->onSerialEvent(event, view);
+            if (entry.serial != nullptr) {
+                entry.serial->onSerialEvent(event, view);
             }
             break;
         case PluginCategory::Parallel:
-            if (auto* typed = dynamic_cast<IParallelPlugin*>(&plugin)) {
-                typed->onParallelEvent(event, view);
+            if (entry.parallel != nullptr) {
+                entry.parallel->onParallelEvent(event, view);
             }
             break;
         }

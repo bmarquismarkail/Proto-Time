@@ -227,6 +227,17 @@ int main()
     assert(firstInput->sampleCalls == 1);
     assert(secondInput->sampleCalls == 0);
 
+    machine.step();
+    assert(firstInput->sampleCalls == 1);
+    assert(secondInput->sampleCalls == 0);
+    assert(!machine.currentDigitalInputMask().has_value());
+
+    machine.serviceInput();
+    assert(firstInput->sampleCalls == 2);
+    assert(secondInput->sampleCalls == 0);
+    assert(machine.currentDigitalInputMask().has_value());
+    assert(*machine.currentDigitalInputMask() == 0x0Fu);
+
     machine.setJoypadState(0x03u);
     assert(video->machineEventCount >= 1);
     assert(inputRecorder->eventCount >= 1);

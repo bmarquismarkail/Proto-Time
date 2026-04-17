@@ -121,6 +121,7 @@ int main(int argc, char** argv)
     assert(frontend->queuedDigitalInputMask().has_value());
     assert(*frontend->queuedDigitalInputMask() == 0x15u);
     assert(frontend->isButtonPressed(BMMQ::InputButton::Button1));
+    machine.serviceInput();
 
     GameBoyMachine dmaVisibilityMachine;
     dmaVisibilityMachine.loadRom(cartridgeRom);
