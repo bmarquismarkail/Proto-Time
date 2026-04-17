@@ -18,6 +18,14 @@ BMMQ::CpuFeedback step(LR3592_DMG& cpu)
     return cpu.getLastFeedback();
 }
 
+BMMQ::CpuFeedback fastStep(LR3592_DMG& cpu)
+{
+    auto fetchBlock = cpu.fetch();
+    const bool executed = cpu.tryFastExecute(fetchBlock);
+    assert(executed);
+    return cpu.getLastFeedback();
+}
+
 RegisterPair* pair(LR3592_DMG& cpu, BMMQ::RegisterId id)
 {
     auto* entry = cpu.getMemory().file.findRegister(id);
@@ -126,6 +134,19 @@ int main()
         }
         assert(pair(cpu, GB::RegisterId::AF)->hi == 0x00);
         assert(scalar(cpu, GB::RegisterId::PC) == 1);
+    }
+
+    {
+        LR3592_DMG cpu;
+        loadAndSetPc(cpu, 0x0200, {0xEF, 0x00, 0x00});
+        scalar(cpu, GB::RegisterId::SP, 0xD000);
+        const auto feedback = fastStep(cpu);
+        assert(feedback.executionPath == BMMQ::ExecutionPathHint::CpuOptimizedFastPath);
+        assert(feedback.retiredCycles == 16u);
+        assert(scalar(cpu, GB::RegisterId::PC) == 0x0028u);
+        assert(scalar(cpu, GB::RegisterId::SP) == 0xCFFEu);
+        assert(readByte(cpu, 0xCFFE) == 0x01u);
+        assert(readByte(cpu, 0xCFFF) == 0x02u);
     }
 
     {
