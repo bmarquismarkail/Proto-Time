@@ -50,6 +50,8 @@ struct EmulatorOptions {
     bool unthrottled = false;
     double speedMultiplier = 1.0;
     bool startPaused = false;
+    bool audioEnabled = true;
+    std::string audioBackend = "sdl";
 };
 
 void printUsage(std::string_view program)
@@ -65,6 +67,9 @@ void printUsage(std::string_view program)
               << "  --unthrottled      Run unthrottled (no wall-clock pacing)\n"
               << "  --speed <mult>     Start with speed multiplier (e.g. 2.0)\n"
               << "  --pause            Start paused (use single-step to advance)\n"
+              << "  --no-audio         Disable frontend audio output\n"
+              << "  --audio-backend <name>\n"
+              << "                     Frontend audio backend: sdl, dummy, or file (default: sdl)\n"
               << "  --headless         Run without the SDL frontend plugin\n"
               << "  -h, --help         Show this help text\n\n"
               << "Controls:\n"
@@ -137,6 +142,13 @@ EmulatorOptions parseArguments(int argc, char** argv)
             }
         } else if (arg == "--pause") {
             options.startPaused = true;
+        } else if (arg == "--no-audio") {
+            options.audioEnabled = false;
+        } else if (arg == "--audio-backend") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--audio-backend requires a backend name");
+            }
+            options.audioBackend = argv[++i];
         } else if (arg == "--headless") {
             options.headless = true;
         } else if (arg == "-h" || arg == "--help") {
@@ -204,6 +216,8 @@ int main(int argc, char** argv)
             config.pumpBackendEventsOnInputSample = false;
             config.autoPresentOnVideoEvent = false;
             config.showWindowOnPresent = true;
+            config.enableAudio = options.audioEnabled;
+            config.audioBackend = options.audioBackend;
 
             const auto pluginPath = options.pluginPath.value_or(
                 BMMQ::defaultSdlFrontendPluginPath((argc > 0 && argv != nullptr)
