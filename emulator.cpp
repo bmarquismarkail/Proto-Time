@@ -202,8 +202,7 @@ int main(int argc, char** argv)
             machine.loadBootRom(readBinaryFile(*options.bootRomPath));
         }
 
-        const auto romBytes = readBinaryFile(options.romPath);
-        machine.loadRom(romBytes);
+        std::size_t romSize = machine.loadRomFromPath(options.romPath);
 
         BMMQ::ISdlFrontendPlugin* frontend = nullptr;
         std::unique_ptr<BMMQ::ISdlFrontendPlugin> frontendPlugin;
@@ -235,7 +234,8 @@ int main(int argc, char** argv)
             }
         }
 
-        std::cout << "Loaded ROM: " << options.romPath << " (" << romBytes.size() << " bytes)\n";
+        std::cout << "Loaded ROM: " << options.romPath << " ("
+            << romSize << " bytes)\n";
         if (options.bootRomPath.has_value()) {
             std::cout << "Loaded boot ROM: " << *options.bootRomPath << '\n';
         }

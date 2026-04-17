@@ -5,6 +5,9 @@
 #include <cstdint>
 #include <cstddef>
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <string_view>
 #include <stdexcept>
@@ -19,6 +22,7 @@
 #include "register_id.hpp"
 #include "hardware_registers.hpp"
 #include "gameboy_plugin_runtime.hpp"
+#include "cartridge/CartridgeSaveManager.hpp"
 
 class GameBoyRuntimeContext final : public BMMQ::RuntimeContext {
 public:
@@ -233,6 +237,7 @@ public:
     }
 
     ~GameBoyMachine() override {
+        (void)flushCartridgeSave();
         if (pluginManager_.initialized()) {
             pluginManager_.shutdown(view());
         }
@@ -255,30 +260,43 @@ public:
             throw std::invalid_argument("ROM must not be empty");
         }
 
-        bootEntryPending_ = false;
+        (void)flushCartridgeSave();
         rom_.load(bytes);
-        configureCartridge(bytes);
-        configureMemoryMap();
-        installVisibleRomBanks();
-        initializeDmgStartupRegisters();
-        romLoaded_ = true;
-        ++inputGeneration_;
-        inputService().advanceGeneration(inputGeneration_);
-        lastDigitalInputMask_.reset();
-        lastPolledDigitalInput_.reset();
-        lastLy_ = context_.read8(0xFF44);
-        lastPpuMode_ = static_cast<uint8_t>(context_.read8(0xFF41) & 0x03u);
-        scanlineVideoCaptureActive_ = false;
-        lastScanlineVideoSignature_ = currentScanlineVideoSignature();
-        emitMachineEvent(BMMQ::MachineEvent{
-            BMMQ::MachineEventType::RomLoaded,
-            BMMQ::PluginCategory::System,
-            stepCounter_,
-            0,
-            0,
-            nullptr,
-            "ROM loaded"
-        });
+        cartridge_.load(bytes);
+        saveManager_.clearBinding();
+        finalizeRomLoad();
+    }
+
+    // Returns the number of bytes loaded
+    std::size_t loadRomFromPath(const std::filesystem::path& path) {
+        (void)flushCartridgeSave();
+        std::ifstream input(path, std::ios::binary);
+        if (!input) {
+            throw std::runtime_error("Unable to open ROM: " + path.string());
+        }
+        std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+        if (bytes.empty()) {
+            throw std::runtime_error("ROM is empty: " + path.string());
+        }
+
+        rom_.load(bytes);
+        cartridge_.load(bytes);
+        saveManager_.bindRomPath(path);
+        saveManager_.load(cartridge_);
+        finalizeRomLoad();
+        return bytes.size();
+    }
+
+    [[nodiscard]] bool flushCartridgeSave() {
+        return saveManager_.flush(cartridge_);
+    }
+
+    [[nodiscard]] const GB::GameBoyCartridge& cartridge() const noexcept {
+        return cartridge_;
+    }
+
+    [[nodiscard]] GB::GameBoyCartridge& cartridge() noexcept {
+        return cartridge_;
     }
 
     void loadBootRom(const std::vector<uint8_t>& bytes) {
@@ -371,6 +389,9 @@ public:
 
         lastLy_ = ly;
         lastPpuMode_ = ppuMode;
+        if ((stepCounter_ % kSaveFlushStepInterval) == 0u) {
+            (void)flushCartridgeSave();
+        }
     }
 
     void serviceInput() override {
@@ -431,6 +452,31 @@ public:
     }
 
 private:
+    void finalizeRomLoad() {
+        bootEntryPending_ = false;
+        configureMemoryMap();
+        installVisibleRomBanks();
+        initializeDmgStartupRegisters();
+        romLoaded_ = true;
+        ++inputGeneration_;
+        inputService().advanceGeneration(inputGeneration_);
+        lastDigitalInputMask_.reset();
+        lastPolledDigitalInput_.reset();
+        lastLy_ = context_.read8(0xFF44);
+        lastPpuMode_ = static_cast<uint8_t>(context_.read8(0xFF41) & 0x03u);
+        scanlineVideoCaptureActive_ = false;
+        lastScanlineVideoSignature_ = currentScanlineVideoSignature();
+        emitMachineEvent(BMMQ::MachineEvent{
+            BMMQ::MachineEventType::RomLoaded,
+            BMMQ::PluginCategory::System,
+            stepCounter_,
+            0,
+            0,
+            nullptr,
+            "ROM loaded"
+        });
+    }
+
     void pollInputPlugins() {
         if (inputService().state() == BMMQ::InputLifecycleState::Active) {
             (void)inputService().pollActiveAdapter(inputGeneration_);
@@ -549,343 +595,39 @@ private:
         return rom;
     }();
 
-    enum class CartridgeController {
-        None,
-        MBC1,
-        MBC2,
-        MBC3,
-        MBC5,
-    };
-
-    [[nodiscard]] static std::size_t ramSizeForHeader(uint8_t ramSizeCode,
-                                                      CartridgeController controller) {
-        if (controller == CartridgeController::MBC2) {
-            return 0x0200u;
-        }
-
-        switch (ramSizeCode) {
-        case 0x00:
-            return 0;
-        case 0x01:
-            return 0x0800u;
-        case 0x02:
-            return 0x2000u;
-        case 0x03:
-            return 0x8000u;
-        case 0x04:
-            return 0x20000u;
-        case 0x05:
-            return 0x10000u;
-        default:
-            return 0;
-        }
-    }
-
-    void configureCartridge(const std::vector<uint8_t>& bytes) {
-        const auto type = bytes.size() > 0x147 ? bytes[0x147] : 0x00;
-        const auto ramSizeCode = bytes.size() > 0x149 ? bytes[0x149] : 0x00;
-        switch (type) {
-        case 0x00:
-            controller_ = CartridgeController::None;
-            break;
-        case 0x01:
-        case 0x02:
-        case 0x03:
-            controller_ = CartridgeController::MBC1;
-            break;
-        case 0x05:
-        case 0x06:
-            controller_ = CartridgeController::MBC2;
-            break;
-        case 0x0F:
-        case 0x10:
-        case 0x11:
-        case 0x12:
-        case 0x13:
-            controller_ = CartridgeController::MBC3;
-            break;
-        case 0x19:
-        case 0x1A:
-        case 0x1B:
-        case 0x1C:
-        case 0x1D:
-        case 0x1E:
-            controller_ = CartridgeController::MBC5;
-            break;
-        default:
-            controller_ = CartridgeController::None;
-            if (bytes.size() > 0x8000) {
-                throw std::invalid_argument("ROM exceeds first-milestone Game Boy ROM window");
-            }
-            break;
-        }
-
-        if (controller_ == CartridgeController::None && bytes.size() > 0x8000) {
-            throw std::invalid_argument("ROM exceeds first-milestone Game Boy ROM window");
-        }
-
-        romBankCount_ = (bytes.size() + 0x3FFFu) / 0x4000u;
-        currentRomBank_ = romBankCount_ > 1 ? 1 : 0;
-        currentRamBank_ = 0;
-        ramEnabled_ = false;
-        hasRtc_ = (type == 0x0Fu || type == 0x10u);
-        selectedRtcRegister_ = 0xFFu;
-        rtcLatched_ = false;
-        cartridgeRam_.assign(ramSizeForHeader(ramSizeCode, controller_), 0x00u);
-        mbc1LowBankBits_ = 1;
-        mbc1UpperBankBits_ = 0;
-        mbc1BankingModeSelect_ = false;
-        mbc5HighBankBit_ = 0;
-    }
+    static constexpr uint64_t kSaveFlushStepInterval = 4096u;
 
     void installVisibleRomBanks() {
-        installRomBankWindow(0x0000, fixedBankIndex());
-        installRomBankWindow(0x4000, switchableBankIndex());
+        installRomBankWindow(0x0000, cartridge_.fixedBankIndex());
+        installRomBankWindow(0x4000, cartridge_.switchableBankIndex());
     }
 
     void installRomBankWindow(uint16_t base, std::size_t bankIndex) {
         std::vector<uint8_t> window(0x4000, 0xFF);
-        const auto romBytes = rom_.bytes();
-        const auto offset = bankIndex * 0x4000u;
-        if (offset < romBytes.size()) {
-            const auto count = std::min<std::size_t>(window.size(), romBytes.size() - offset);
-            std::copy_n(romBytes.begin() + static_cast<std::ptrdiff_t>(offset), count, window.begin());
-        }
+        cartridge_.copyRomBankWindow(bankIndex, window);
         memoryMap_.installRom(window, base);
     }
 
-    [[nodiscard]] std::size_t fixedBankIndex() const {
-        if (controller_ == CartridgeController::MBC1 && mbc1BankingModeSelect_) {
-            return ((static_cast<std::size_t>(mbc1UpperBankBits_) << 5) % romBankCount_);
-        }
-        return 0;
-    }
-
-    [[nodiscard]] std::size_t switchableBankIndex() const {
-        if (romBankCount_ <= 1) {
-            return 0;
-        }
-
-        switch (controller_) {
-        case CartridgeController::None:
-            return romBankCount_ > 1 ? 1 : 0;
-        case CartridgeController::MBC1: {
-            std::size_t bank = (static_cast<std::size_t>(mbc1UpperBankBits_) << 5) |
-                               static_cast<std::size_t>(mbc1LowBankBits_ & 0x1Fu);
-            bank &= 0x7Fu;
-            bank %= romBankCount_;
-            if ((bank & 0x1Fu) == 0) {
-                bank = (bank + 1) % romBankCount_;
-            }
-            return bank == 0 ? 1 % romBankCount_ : bank;
-        }
-        case CartridgeController::MBC2:
-        case CartridgeController::MBC3:
-            return currentRomBank_ % romBankCount_ == 0 ? 1 % romBankCount_ : currentRomBank_ % romBankCount_;
-        case CartridgeController::MBC5:
-            return currentRomBank_ % romBankCount_;
-        }
-
-        return 0;
-    }
-
-    [[nodiscard]] std::size_t selectedRamBankIndex() const {
-        const std::size_t bankSize = controller_ == CartridgeController::MBC2 ? 0x0200u : 0x2000u;
-        if (bankSize == 0 || cartridgeRam_.empty()) {
-            return 0;
-        }
-        const auto bankCount = std::max<std::size_t>(std::size_t{1}, cartridgeRam_.size() / bankSize);
-
-        switch (controller_) {
-        case CartridgeController::MBC1:
-            return mbc1BankingModeSelect_ ? (mbc1UpperBankBits_ % bankCount) : 0;
-        case CartridgeController::MBC3:
-        case CartridgeController::MBC5:
-            return currentRamBank_ % bankCount;
-        case CartridgeController::MBC2:
-        case CartridgeController::None:
-            return 0;
-        }
-
-        return 0;
-    }
-
-    [[nodiscard]] bool rtcRegisterSelected() const {
-        return hasRtc_ && selectedRtcRegister_ >= 0x08u && selectedRtcRegister_ <= 0x0Cu;
-    }
-
     bool handleCartridgeRamRead(uint16_t address, std::span<uint8_t> value) const {
-        if (address < 0xA000u || address >= 0xC000u || controller_ == CartridgeController::None) {
-            return false;
-        }
-
-        if (!ramEnabled_) {
-            std::fill(value.begin(), value.end(), static_cast<uint8_t>(0xFF));
-            return true;
-        }
-
-        if (rtcRegisterSelected()) {
-            const auto rtcIndex = static_cast<std::size_t>(selectedRtcRegister_ - 0x08u);
-            const auto rtcValue = rtcRegisters_[rtcIndex];
-            std::fill(value.begin(), value.end(), rtcValue);
-            return true;
-        }
-
-        if (cartridgeRam_.empty()) {
-            std::fill(value.begin(), value.end(), static_cast<uint8_t>(0xFF));
-            return true;
-        }
-
-        const std::size_t bankSize = controller_ == CartridgeController::MBC2 ? 0x0200u : 0x2000u;
-        const auto bankIndex = selectedRamBankIndex();
-        for (std::size_t i = 0; i < value.size(); ++i) {
-            const auto localOffset = controller_ == CartridgeController::MBC2
-                ? ((static_cast<std::size_t>(address - 0xA000u) + i) & 0x01FFu)
-                : (static_cast<std::size_t>(address - 0xA000u) + i);
-            const auto ramIndex = bankIndex * bankSize + localOffset;
-            if (ramIndex >= cartridgeRam_.size()) {
-                value[i] = 0xFFu;
-            } else if (controller_ == CartridgeController::MBC2) {
-                value[i] = static_cast<uint8_t>(0xF0u | (cartridgeRam_[ramIndex] & 0x0Fu));
-            } else {
-                value[i] = cartridgeRam_[ramIndex];
-            }
-        }
-        return true;
+        return cartridge_.read(address, value);
     }
 
     bool handleCartridgeRamWrite(uint16_t address, std::span<const uint8_t> value) {
-        if (address < 0xA000u || address >= 0xC000u || controller_ == CartridgeController::None) {
+        if (address < 0xA000u || address >= 0xC000u) {
             return false;
         }
-
-        if (!ramEnabled_) {
-            return true;
-        }
-
-        if (rtcRegisterSelected()) {
-            const auto rtcIndex = static_cast<std::size_t>(selectedRtcRegister_ - 0x08u);
-            rtcRegisters_[rtcIndex] = value.front();
-            return true;
-        }
-
-        if (cartridgeRam_.empty()) {
-            return true;
-        }
-
-        const std::size_t bankSize = controller_ == CartridgeController::MBC2 ? 0x0200u : 0x2000u;
-        const auto bankIndex = selectedRamBankIndex();
-        for (std::size_t i = 0; i < value.size(); ++i) {
-            const auto localOffset = controller_ == CartridgeController::MBC2
-                ? ((static_cast<std::size_t>(address - 0xA000u) + i) & 0x01FFu)
-                : (static_cast<std::size_t>(address - 0xA000u) + i);
-            const auto ramIndex = bankIndex * bankSize + localOffset;
-            if (ramIndex >= cartridgeRam_.size()) {
-                continue;
-            }
-            cartridgeRam_[ramIndex] = controller_ == CartridgeController::MBC2
-                ? static_cast<uint8_t>(value[i] & 0x0Fu)
-                : value[i];
-        }
-        return true;
+        return cartridge_.write(address, value);
     }
 
     bool handleCartridgeWrite(uint16_t address, std::span<const uint8_t> value) {
-        if (value.size() != 1 || address >= 0x8000 || controller_ == CartridgeController::None) {
+        if (value.size() != 1) {
             return false;
         }
-
-        const auto data = value[0];
-        switch (controller_) {
-        case CartridgeController::MBC1:
-            if (address < 0x2000) {
-                ramEnabled_ = (data & 0x0Fu) == 0x0Au;
-                return true;
-            }
-            if (address < 0x4000) {
-                mbc1LowBankBits_ = data & 0x1Fu;
-                if (mbc1LowBankBits_ == 0) {
-                    mbc1LowBankBits_ = 1;
-                }
-                installVisibleRomBanks();
-                return true;
-            }
-            if (address < 0x6000) {
-                mbc1UpperBankBits_ = data & 0x03u;
-                installVisibleRomBanks();
-                return true;
-            }
-            mbc1BankingModeSelect_ = (data & 0x01u) != 0;
+        const auto result = cartridge_.write(address, value[0]);
+        if (result.romBankChanged) {
             installVisibleRomBanks();
-            return true;
-        case CartridgeController::MBC2:
-            if (address < 0x2000) {
-                if ((address & 0x0100u) == 0u) {
-                    ramEnabled_ = (data & 0x0Fu) == 0x0Au;
-                }
-                return true;
-            }
-            if (address < 0x4000) {
-                if ((address & 0x0100u) != 0) {
-                    currentRomBank_ = data & 0x0Fu;
-                    if (currentRomBank_ == 0) {
-                        currentRomBank_ = 1;
-                    }
-                    installVisibleRomBanks();
-                }
-                return true;
-            }
-            return true;
-        case CartridgeController::MBC3:
-            if (address < 0x2000) {
-                ramEnabled_ = (data & 0x0Fu) == 0x0Au;
-                return true;
-            }
-            if (address < 0x4000) {
-                currentRomBank_ = data & 0x7Fu;
-                if (currentRomBank_ == 0) {
-                    currentRomBank_ = 1;
-                }
-                installVisibleRomBanks();
-                return true;
-            }
-            if (address < 0x6000) {
-                if (data <= 0x03u) {
-                    currentRamBank_ = data & 0x03u;
-                    selectedRtcRegister_ = 0xFFu;
-                } else if (hasRtc_ && data >= 0x08u && data <= 0x0Cu) {
-                    selectedRtcRegister_ = data;
-                }
-                return true;
-            }
-            rtcLatched_ = (data & 0x01u) != 0u;
-            return true;
-        case CartridgeController::MBC5:
-            if (address < 0x2000) {
-                ramEnabled_ = (data & 0x0Fu) == 0x0Au;
-                return true;
-            }
-            if (address < 0x3000) {
-                currentRomBank_ = (currentRomBank_ & 0x100u) | data;
-                installVisibleRomBanks();
-                return true;
-            }
-            if (address < 0x4000) {
-                mbc5HighBankBit_ = data & 0x01u;
-                currentRomBank_ = (static_cast<std::size_t>(mbc5HighBankBit_) << 8) | (currentRomBank_ & 0xFFu);
-                installVisibleRomBanks();
-                return true;
-            }
-            if (address < 0x6000) {
-                currentRamBank_ = data & 0x0Fu;
-                return true;
-            }
-            return true;
-        case CartridgeController::None:
-            return false;
         }
-
-        return false;
+        return result.handled;
     }
 
     bool handleSpecialRead(uint16_t address, std::span<uint8_t> value) const {
@@ -1093,20 +835,8 @@ private:
     std::array<uint8_t, 0x100> bootRom_ = kDefaultBootRom;
     bool bootRomMapped_ = false;
     bool bootEntryPending_ = false;
-    CartridgeController controller_ = CartridgeController::None;
-    std::size_t romBankCount_ = 0;
-    std::size_t currentRomBank_ = 1;
-    std::vector<uint8_t> cartridgeRam_;
-    std::size_t currentRamBank_ = 0;
-    bool ramEnabled_ = false;
-    bool hasRtc_ = false;
-    uint8_t selectedRtcRegister_ = 0xFFu;
-    bool rtcLatched_ = false;
-    std::array<uint8_t, 5> rtcRegisters_{};
-    uint8_t mbc1LowBankBits_ = 1;
-    uint8_t mbc1UpperBankBits_ = 0;
-    bool mbc1BankingModeSelect_ = false;
-    uint8_t mbc5HighBankBit_ = 0;
+    GB::GameBoyCartridge cartridge_;
+    GB::CartridgeSaveManager saveManager_;
     uint64_t stepCounter_ = 0;
     uint64_t inputGeneration_ = 1;
     uint8_t lastLy_ = 0;
