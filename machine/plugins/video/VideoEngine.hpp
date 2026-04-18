@@ -9,6 +9,8 @@
 #include <span>
 #include <vector>
 
+#include "../../../cores/gameboy/video/GameBoyVisualExtractor.hpp"
+#include "../../VisualOverrideService.hpp"
 #include "../IoPlugin.hpp"
 #include "VideoFrame.hpp"
 
@@ -57,6 +59,11 @@ public:
     [[nodiscard]] uint64_t currentGeneration() const noexcept
     {
         return currentGeneration_;
+    }
+
+    void setVisualOverrideService(VisualOverrideService* service) noexcept
+    {
+        visualOverrideService_ = service;
     }
 
     uint64_t advanceGeneration() noexcept
@@ -121,10 +128,22 @@ public:
             }
 
             uint8_t shade = 0;
+            bool usedVisualOverride = false;
             if (backgroundEnabled) {
-                const auto colorIndex = backgroundColorIndex(state, x, screenY);
+                const auto sample = backgroundSample(state, x, screenY);
+                const auto colorIndex = sample.colorIndex;
                 backgroundColorIndices[static_cast<std::size_t>(x)] = colorIndex;
-                shade = mapPaletteShade(state.bgp, colorIndex);
+                if (auto replacementPixel = replacementPixelForTile(state, sample.tileIndex, sample.tileX, sample.tileY,
+                                                                     VisualResourceKind::Tile);
+                    replacementPixel.has_value()) {
+                    frame.pixels[pixelIndex] = *replacementPixel;
+                    usedVisualOverride = true;
+                } else {
+                    shade = mapPaletteShade(state.bgp, colorIndex);
+                }
+            }
+            if (usedVisualOverride) {
+                continue;
             }
             frame.pixels[pixelIndex] = paletteColor(shade);
         }
@@ -278,6 +297,18 @@ private:
 
     [[nodiscard]] static uint8_t backgroundColorIndex(const VideoStateView& state, int screenX, int screenY) noexcept
     {
+        return backgroundSample(state, screenX, screenY).colorIndex;
+    }
+
+    struct BackgroundSample {
+        uint8_t tileIndex = 0;
+        uint8_t tileX = 0;
+        uint8_t tileY = 0;
+        uint8_t colorIndex = 0;
+    };
+
+    [[nodiscard]] static BackgroundSample backgroundSample(const VideoStateView& state, int screenX, int screenY) noexcept
+    {
         const bool windowEnabled = (state.lcdc & 0x20u) != 0u;
         const int windowLeft = static_cast<int>(state.wx) - 7;
         const bool useWindow = windowEnabled && screenY >= static_cast<int>(state.wy) && screenX >= windowLeft;
@@ -296,17 +327,54 @@ private:
             mapBase + static_cast<uint16_t>(((mapY >> 3) & 0x1Fu) * 32 + ((mapX >> 3) & 0x1Fu)));
         const auto tileIndex = readVramByte(state, tileMapAddress);
         const bool unsignedTileData = (state.lcdc & 0x10u) != 0u;
-        return sampleTileColorIndex(state,
-                                    tileIndex,
-                                    unsignedTileData,
-                                    static_cast<uint8_t>(mapX & 0x07),
-                                    static_cast<uint8_t>(mapY & 0x07));
+        const auto tileX = static_cast<uint8_t>(mapX & 0x07);
+        const auto tileY = static_cast<uint8_t>(mapY & 0x07);
+        return BackgroundSample{
+            .tileIndex = tileIndex,
+            .tileX = tileX,
+            .tileY = tileY,
+            .colorIndex = sampleTileColorIndex(state, tileIndex, unsignedTileData, tileX, tileY),
+        };
     }
 
-    static void compositeSpritesForScanline(VideoFramePacket& frame,
-                                            const VideoStateView& state,
-                                            std::span<const uint8_t> backgroundColorIndices,
-                                            int screenY) noexcept
+    [[nodiscard]] std::optional<uint32_t> replacementPixelForTile(const VideoStateView& state,
+                                                                  uint8_t tileIndex,
+                                                                  uint8_t tileX,
+                                                                  uint8_t tileY,
+                                                                  VisualResourceKind kind) const
+    {
+        if (visualOverrideService_ == nullptr || !visualOverrideService_->enabled()) {
+            return std::nullopt;
+        }
+        auto resource = GB::decodeGameBoyTileResource(state, tileIndex, kind);
+        if (!resource.has_value()) {
+            return std::nullopt;
+        }
+        (void)visualOverrideService_->observe(*resource);
+
+        auto resolved = visualOverrideService_->resolve(resource->descriptor);
+        if (!resolved.has_value() || resolved->image.empty()) {
+            if (kind != VisualResourceKind::Tile) {
+                resource->descriptor.kind = VisualResourceKind::Tile;
+                resolved = visualOverrideService_->resolve(resource->descriptor);
+            }
+            if (!resolved.has_value() || resolved->image.empty()) {
+                return std::nullopt;
+            }
+        }
+        const auto replacementX = static_cast<std::size_t>(tileX) * resolved->image.width / resource->descriptor.width;
+        const auto replacementY = static_cast<std::size_t>(tileY) * resolved->image.height / resource->descriptor.height;
+        const auto index = replacementY * resolved->image.width + replacementX;
+        if (index >= resolved->image.argbPixels.size()) {
+            return std::nullopt;
+        }
+        return resolved->image.argbPixels[index];
+    }
+
+    void compositeSpritesForScanline(VideoFramePacket& frame,
+                                     const VideoStateView& state,
+                                     std::span<const uint8_t> backgroundColorIndices,
+                                     int screenY) const
     {
         if ((state.lcdc & 0x02u) == 0u || state.oam.empty()) {
             return;
@@ -356,6 +424,15 @@ private:
                 const auto pixelIndex = static_cast<std::size_t>(screenY) * static_cast<std::size_t>(frame.width)
                                       + static_cast<std::size_t>(screenX);
                 const uint8_t spriteColumn = static_cast<uint8_t>(xFlip ? (7 - localX) : localX);
+                if (const auto replacementPixel = replacementPixelForTile(state,
+                                                                           effectiveTile,
+                                                                           spriteColumn,
+                                                                           static_cast<uint8_t>(spriteRow),
+                                                                           VisualResourceKind::Sprite);
+                    replacementPixel.has_value()) {
+                    frame.pixels[pixelIndex] = *replacementPixel;
+                    continue;
+                }
                 const uint8_t colorIndex = sampleTileColorIndex(state,
                                                                 effectiveTile,
                                                                 true,
@@ -375,6 +452,7 @@ private:
     }
 
     VideoEngineConfig config_{};
+    VisualOverrideService* visualOverrideService_ = nullptr;
     std::deque<VideoFramePacket> queuedFrames_{};
     std::optional<VideoFramePacket> lastValidFrame_{};
     VideoEngineStats stats_{};

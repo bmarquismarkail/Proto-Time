@@ -12,6 +12,7 @@
 #include "RegisterId.hpp"
 #include "RuntimeContext.hpp"
 #include "VideoService.hpp"
+#include "VisualOverrideService.hpp"
 #include "TimingService.hpp"
 #include "plugins/IoPlugin.hpp"
 #include "plugins/PluginManager.hpp"
@@ -28,8 +29,12 @@ public:
     Machine()
         : audioService_(std::make_unique<AudioService>()),
           inputService_(std::make_unique<InputService>()),
-                    videoService_(std::make_unique<VideoService>()),
-                    timingService_(std::make_unique<TimingService>()) {}
+          videoService_(std::make_unique<VideoService>()),
+          visualOverrideService_(std::make_unique<VisualOverrideService>()),
+          timingService_(std::make_unique<TimingService>())
+    {
+        videoService_->setVisualOverrideService(visualOverrideService_.get());
+    }
     Machine(const Machine&) = delete;
     Machine& operator=(const Machine&) = delete;
     Machine(Machine&&) = delete;
@@ -50,6 +55,12 @@ public:
     }
     [[nodiscard]] const VideoService& videoService() const {
         return *videoService_;
+    }
+    [[nodiscard]] VisualOverrideService& visualOverrideService() {
+        return *visualOverrideService_;
+    }
+    [[nodiscard]] const VisualOverrideService& visualOverrideService() const {
+        return *visualOverrideService_;
     }
     [[nodiscard]] InputService& inputService() {
         return *inputService_;
@@ -75,6 +86,18 @@ public:
             return false;
         }
         videoService_ = std::move(service);
+        videoService_->setVisualOverrideService(visualOverrideService_.get());
+        return true;
+    }
+    [[nodiscard]] bool setVisualOverrideService(std::unique_ptr<VisualOverrideService> service) {
+        if (!service) {
+            return false;
+        }
+        if (pluginManager().initialized()) {
+            return false;
+        }
+        visualOverrideService_ = std::move(service);
+        videoService_->setVisualOverrideService(visualOverrideService_.get());
         return true;
     }
     [[nodiscard]] bool setInputService(std::unique_ptr<InputService> service) {
@@ -149,6 +172,7 @@ private:
     std::unique_ptr<AudioService> audioService_;
     std::unique_ptr<InputService> inputService_;
     std::unique_ptr<VideoService> videoService_;
+    std::unique_ptr<VisualOverrideService> visualOverrideService_;
     std::unique_ptr<TimingService> timingService_;
 };
 
@@ -178,6 +202,14 @@ inline VideoService& queryVideoService(Machine& machine) {
 
 inline const VideoService& queryVideoService(const Machine& machine) {
     return machine.videoService();
+}
+
+inline VisualOverrideService& queryVisualOverrideService(Machine& machine) {
+    return machine.visualOverrideService();
+}
+
+inline const VisualOverrideService& queryVisualOverrideService(const Machine& machine) {
+    return machine.visualOverrideService();
 }
 
 inline TimingService& queryTimingService(Machine& machine) {

@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "VisualOverrideService.hpp"
 #include "plugins/IoPlugin.hpp"
 #include "plugins/video/VideoEngine.hpp"
 #include "plugins/video/VideoPlugin.hpp"
@@ -55,6 +56,12 @@ public:
     [[nodiscard]] const VideoEngine& engine() const noexcept
     {
         return engine_;
+    }
+
+    void setVisualOverrideService(VisualOverrideService* service) noexcept
+    {
+        visualOverrideService_ = service;
+        engine_.setVisualOverrideService(service);
     }
 
     [[nodiscard]] VideoLifecycleState state() const noexcept
@@ -416,6 +423,7 @@ private:
     }
 
     VideoEngine engine_{};
+    VisualOverrideService* visualOverrideService_ = nullptr;
     VideoPresenterConfig presenterConfig_{};
     std::unique_ptr<IVideoPresenterPlugin> presenter_{};
     std::vector<std::unique_ptr<IVideoFrameProcessorPlugin>> processors_{};

@@ -15,6 +15,7 @@ class Machine;
 class AudioService;
 class InputService;
 class VideoService;
+class VisualOverrideService;
 class TimingService;
 struct CpuFeedback;
 std::optional<uint32_t> queryDigitalInputMask(const Machine& machine);
@@ -24,6 +25,8 @@ InputService& queryInputService(Machine& machine);
 const InputService& queryInputService(const Machine& machine);
 VideoService& queryVideoService(Machine& machine);
 const VideoService& queryVideoService(const Machine& machine);
+VisualOverrideService& queryVisualOverrideService(Machine& machine);
+const VisualOverrideService& queryVisualOverrideService(const Machine& machine);
 std::vector<int16_t> queryRecentAudioSamples(const Machine& machine);
 uint32_t queryAudioSampleRate(const Machine& machine);
 uint64_t queryAudioFrameCounter(const Machine& machine);
@@ -204,6 +207,10 @@ struct MachineView {
         return queryVideoService(machine);
     }
 
+    [[nodiscard]] const VisualOverrideService& visualOverrideService() const {
+        return queryVisualOverrideService(machine);
+    }
+
     [[nodiscard]] const TimingService& timingService() const {
         return queryTimingService(machine);
     }
@@ -381,6 +388,14 @@ struct MutableMachineView : MachineView {
 
     [[nodiscard]] const VideoService& videoService() const {
         return queryVideoService(mutableMachine);
+    }
+
+    [[nodiscard]] VisualOverrideService& visualOverrideService() {
+        return queryVisualOverrideService(mutableMachine);
+    }
+
+    [[nodiscard]] const VisualOverrideService& visualOverrideService() const {
+        return queryVisualOverrideService(mutableMachine);
     }
 
     [[nodiscard]] InputService& inputService() {

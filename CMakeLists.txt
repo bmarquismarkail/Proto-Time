@@ -5,6 +5,7 @@ project(timeEmulator)
 option(BMMQ_ENABLE_TSAN "Enable ThreadSanitizer for race detection builds" OFF)
 
 find_package(SDL2 QUIET)
+find_package(ZLIB REQUIRED)
 
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
@@ -33,7 +34,10 @@ add_library(time-gameboy-interpreter-core
 	cores/gameboy/decode/gb_interpreter.cpp
     cores/gameboy/gameboy.cpp
     machine/TimingService.cpp
+    machine/VisualOverrideService.cpp
 )
+set_target_properties(time-gameboy-interpreter-core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(time-gameboy-interpreter-core PUBLIC ZLIB::ZLIB)
 add_library(time-sdl-frontend-loader
     machine/plugins/SdlFrontendPluginLoader.cpp
 )
@@ -145,6 +149,9 @@ add_test(NAME smoke_video_transport COMMAND time-smoke-video-transport)
 add_executable(time-smoke-video-fallback tests/smoke_video_fallback.cpp)
 target_link_libraries(time-smoke-video-fallback time-gameboy-interpreter-core)
 add_test(NAME smoke_video_fallback COMMAND time-smoke-video-fallback)
+add_executable(time-smoke-visual-override tests/smoke_visual_override.cpp)
+target_link_libraries(time-smoke-visual-override time-gameboy-interpreter-core)
+add_test(NAME smoke_visual_override COMMAND time-smoke-visual-override)
 add_executable(time-smoke-audio-service tests/smoke_audio_service.cpp)
 target_link_libraries(time-smoke-audio-service time-gameboy-interpreter-core)
 add_test(NAME smoke_audio_service COMMAND time-smoke-audio-service)
