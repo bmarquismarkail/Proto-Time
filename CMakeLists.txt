@@ -38,6 +38,9 @@ add_library(time-sdl-frontend-loader
     machine/plugins/SdlFrontendPluginLoader.cpp
 )
 target_link_libraries(time-sdl-frontend-loader ${CMAKE_DL_LIBS})
+add_library(time-emulator-config STATIC
+    emulator/EmulatorConfig.cpp
+)
 set(BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE 0)
 add_library(time-sdl-audio-output STATIC
     machine/plugins/sdl_frontend/SdlAudioOutput.cpp
@@ -64,7 +67,7 @@ add_library(time-sdl-frontend-plugin SHARED
 )
 target_link_libraries(time-sdl-frontend-plugin PRIVATE time-gameboy-interpreter-core)
 add_executable(timeEmulator emulator.cpp)
-target_link_libraries(timeEmulator time-gameboy-interpreter-core time-sdl-frontend-loader)
+target_link_libraries(timeEmulator time-gameboy-interpreter-core time-sdl-frontend-loader time-emulator-config)
 if (TARGET SDL2::SDL2)
     target_link_libraries(time-sdl-audio-output PRIVATE SDL2::SDL2)
     target_link_libraries(time-sdl-video-adapter PRIVATE SDL2::SDL2)
@@ -127,6 +130,9 @@ target_link_libraries(time-smoke-input-transport time-gameboy-interpreter-core t
 add_test(NAME smoke_input_transport COMMAND time-smoke-input-transport)
 add_executable(time-smoke-input-fallback tests/smoke_input_fallback.cpp)
 add_test(NAME smoke_input_fallback COMMAND time-smoke-input-fallback)
+add_executable(time-smoke-emulator-config tests/smoke_emulator_config.cpp)
+target_link_libraries(time-smoke-emulator-config time-emulator-config)
+add_test(NAME smoke_emulator_config COMMAND time-smoke-emulator-config)
 add_executable(time-smoke-video-engine tests/smoke_video_engine.cpp)
 target_link_libraries(time-smoke-video-engine time-gameboy-interpreter-core)
 add_test(NAME smoke_video_engine COMMAND time-smoke-video-engine)

@@ -66,7 +66,7 @@ int main(int argc, char** argv)
 
     BMMQ::SdlFrontendConfig config;
     config.windowTitle = "Proto-Time SDL Smoke";
-    config.windowScale = 3;
+    config.windowScale = 3u;
     config.frameWidth = 32;
     config.frameHeight = 24;
     config.audioPreviewSampleCount = 64;

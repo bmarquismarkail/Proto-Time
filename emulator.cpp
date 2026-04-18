@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+#include "emulator/EmulatorConfig.hpp"
 #include "machine/plugins/SdlFrontendPluginLoader.hpp"
 #include "machine/TimingService.hpp"
 
@@ -40,25 +41,12 @@ void handleSignal(int)
     gStopRequested = 1;
 }
 
-struct EmulatorOptions {
-    std::filesystem::path romPath;
-    std::optional<std::filesystem::path> bootRomPath;
-    std::optional<std::filesystem::path> pluginPath;
-    std::optional<std::uint64_t> stepLimit;
-    int windowScale = 3;
-    bool headless = false;
-    bool unthrottled = false;
-    double speedMultiplier = 1.0;
-    bool startPaused = false;
-    bool audioEnabled = true;
-    std::string audioBackend = "sdl";
-};
-
 void printUsage(std::string_view program)
 {
     std::cerr << "Usage: " << program << " --rom <path.gb> [options]\n"
               << "   or: " << program << " <path.gb> [options]\n\n"
               << "Options:\n"
+              << "  --config <path>    Optional INI-style emulator configuration file\n"
               << "  --rom <path>       Cartridge ROM to load\n"
               << "  --boot-rom <path>  Optional 256-byte DMG boot ROM\n"
               << "  --plugin <path>    Optional SDL frontend shared object override\n"
@@ -74,98 +62,6 @@ void printUsage(std::string_view program)
               << "  -h, --help         Show this help text\n\n"
               << "Controls:\n"
               << "  Arrow keys = D-pad, Z = A, X = B, Backspace = Select, Enter = Start\n";
-}
-
-void assignRomPath(EmulatorOptions& options, const char* value)
-{
-    if (!options.romPath.empty()) {
-        throw std::invalid_argument("ROM path was provided more than once");
-    }
-    options.romPath = value;
-}
-
-std::uint64_t parseUnsignedArgument(const char* value, std::string_view optionName)
-{
-    try {
-        std::size_t parsedChars = 0;
-        const auto parsedValue = std::stoull(value, &parsedChars, 0);
-        if (parsedChars != std::string(value).size()) {
-            throw std::invalid_argument("trailing characters");
-        }
-        return static_cast<std::uint64_t>(parsedValue);
-    } catch (const std::exception&) {
-        throw std::invalid_argument("Invalid value for " + std::string(optionName) + ": " + value);
-    }
-}
-
-EmulatorOptions parseArguments(int argc, char** argv)
-{
-    EmulatorOptions options;
-
-    for (int i = 1; i < argc; ++i) {
-        const std::string arg = argv[i];
-        if (arg == "--rom") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--rom requires a path");
-            }
-            assignRomPath(options, argv[++i]);
-        } else if (arg == "--boot-rom") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--boot-rom requires a path");
-            }
-            options.bootRomPath = std::filesystem::path(argv[++i]);
-        } else if (arg == "--plugin") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--plugin requires a path");
-            }
-            options.pluginPath = std::filesystem::path(argv[++i]);
-        } else if (arg == "--steps") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--steps requires a count");
-            }
-            options.stepLimit = parseUnsignedArgument(argv[++i], "--steps");
-        } else if (arg == "--scale") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--scale requires a positive integer");
-            }
-            options.windowScale = static_cast<int>(std::max<std::uint64_t>(1u, parseUnsignedArgument(argv[++i], "--scale")));
-        } else if (arg == "--unthrottled") {
-            options.unthrottled = true;
-        } else if (arg == "--speed") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--speed requires a numeric multiplier");
-            }
-            try {
-                options.speedMultiplier = std::stod(argv[++i]);
-            } catch (...) {
-                throw std::invalid_argument("Invalid value for --speed: " + std::string(argv[i]));
-            }
-        } else if (arg == "--pause") {
-            options.startPaused = true;
-        } else if (arg == "--no-audio") {
-            options.audioEnabled = false;
-        } else if (arg == "--audio-backend") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--audio-backend requires a backend name");
-            }
-            options.audioBackend = argv[++i];
-        } else if (arg == "--headless") {
-            options.headless = true;
-        } else if (arg == "-h" || arg == "--help") {
-            printUsage(argv[0]);
-            std::exit(EXIT_SUCCESS);
-        } else if (!arg.empty() && arg.front() == '-') {
-            throw std::invalid_argument("Unknown option: " + arg);
-        } else {
-            assignRomPath(options, argv[i]);
-        }
-    }
-
-    if (options.romPath.empty()) {
-        throw std::invalid_argument("Missing ROM path. Use --rom <file.gb>.");
-    }
-
-    return options;
 }
 
 std::vector<std::uint8_t> readBinaryFile(const std::filesystem::path& path)
@@ -189,7 +85,12 @@ std::vector<std::uint8_t> readBinaryFile(const std::filesystem::path& path)
 int main(int argc, char** argv)
 {
     try {
-        const auto options = parseArguments(argc, argv);
+        const auto parsedArguments = BMMQ::parseEmulatorArguments(argc, argv);
+        if (parsedArguments.helpRequested) {
+            printUsage((argc > 0 && argv != nullptr) ? argv[0] : "timeEmulator");
+            return EXIT_SUCCESS;
+        }
+        const auto options = BMMQ::resolveEmulatorConfig(parsedArguments);
 
         std::signal(SIGINT, handleSignal);
 #ifdef SIGTERM
@@ -209,7 +110,7 @@ int main(int argc, char** argv)
         if (!options.headless) {
             BMMQ::SdlFrontendConfig config;
             config.windowTitle = "Proto-Time - " + options.romPath.filename().string();
-            config.windowScale = std::max(options.windowScale, 1);
+            config.windowScale = std::max(options.windowScale, 1u);
             config.autoInitializeBackend = true;
             config.createHiddenWindowOnInitialize = true;
             config.pumpBackendEventsOnInputSample = false;

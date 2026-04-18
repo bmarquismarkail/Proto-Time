@@ -17,7 +17,7 @@ namespace BMMQ {
 
 struct SdlFrontendConfig {
     std::string windowTitle = "T.I.M.E. SDL Frontend";
-    int windowScale = 2;
+    std::uint32_t windowScale = 2;
     int frameWidth = 160;
     int frameHeight = 144;
     int audioPreviewSampleCount = 128;

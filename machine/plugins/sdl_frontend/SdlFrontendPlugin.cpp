@@ -931,7 +931,7 @@ private:
         });
         (void)videoService_->configurePresenter({
             .windowTitle = config_.windowTitle,
-            .scale = std::max(config_.windowScale, 1),
+            .scale = std::max(config_.windowScale, 1u),
             .frameWidth = std::max(config_.frameWidth, 1),
             .frameHeight = std::max(config_.frameHeight, 1),
             .createHiddenWindowOnOpen = true,
