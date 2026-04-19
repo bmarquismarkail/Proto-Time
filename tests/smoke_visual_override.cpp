@@ -119,6 +119,8 @@ int main()
     assert(explicitPaletteRegister.has_value());
     assert(explicitPaletteRegister->descriptor.source.paletteValue == 0xAAu);
     assert(explicitPaletteRegister->descriptor.source.paletteRegister == "OBP1");
+    auto escapedMetadataResource = *explicitPaletteRegister;
+    escapedMetadataResource.descriptor.source.paletteRegister = std::string("A") + '\b' + '\f' + '\x01' + 'Z';
 
     BMMQ::VisualOverrideService service;
     assert(service.enabled());
@@ -185,6 +187,36 @@ int main()
     assert(!paletteService.resolve(differentPalette->descriptor).has_value());
     assert(paletteService.diagnostics().resolveMisses == 1u);
 
+    const auto paletteHashImagePath = root / "palette-hash-pack" / "images" / "tile.png";
+    writeBinaryFile(paletteHashImagePath, makePng2x2Rgba());
+    const auto paletteHashManifestPath = root / "palette-hash-pack" / "pack.json";
+    writeTextFile(paletteHashManifestPath,
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"palette-hash.gb\",\n"
+        "  \"name\": \"Palette Hash Pack\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [\n"
+        "    {\n"
+        "      \"match\": {\n"
+        "        \"kind\": \"Tile\",\n"
+        "        \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "        \"paletteHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.paletteHash) + "\",\n"
+        "        \"width\": 8,\n"
+        "        \"height\": 8\n"
+        "      },\n"
+        "      \"replace\": {\n"
+        "        \"image\": \"images/tile.png\"\n"
+        "      }\n"
+        "    }\n"
+        "  ]\n"
+        "}\n");
+    BMMQ::VisualOverrideService paletteHashService;
+    assert(paletteHashService.loadPackManifest(paletteHashManifestPath));
+    assert(paletteHashService.resolve(resource->descriptor).has_value());
+    assert(!paletteHashService.resolve(differentPalette->descriptor).has_value());
+    assert(paletteHashService.diagnostics().resolveMisses == 1u);
+
     service.setEnabled(false);
     assert(!service.resolve(resource->descriptor).has_value());
     service.setEnabled(true);
@@ -211,18 +243,57 @@ int main()
     BMMQ::VisualOverrideService missingAssetService;
     assert(missingAssetService.loadPackManifest(root / "pack" / "bad.json"));
     assert(!missingAssetService.resolve(resource->descriptor).has_value());
+    assert(missingAssetService.diagnostics().missingReplacementImages == 1u);
+
+    writeTextFile(root / "pack" / "invalid-rules.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"invalid-rules.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [\n"
+        "    {\n"
+        "      \"match\": {\n"
+        "        \"kind\": \"Tile\",\n"
+        "        \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "        \"width\": 8,\n"
+        "        \"height\": 8\n"
+        "      },\n"
+        "      \"replace\": {}\n"
+        "    }\n"
+        "  ]\n"
+        "}\n");
+    BMMQ::VisualOverrideService invalidRuleService;
+    assert(invalidRuleService.loadPackManifest(root / "pack" / "invalid-rules.json"));
+    assert(invalidRuleService.diagnostics().invalidRulesSkipped == 1u);
+    assert(invalidRuleService.diagnostics().rulesLoaded == 0u);
 
     BMMQ::VisualOverrideService captureService;
     const auto dumpDir = root / "capture";
     assert(captureService.beginCapture(dumpDir, "gameboy"));
     assert(captureService.observe(*resource));
+    assert(captureService.observe(escapedMetadataResource));
     assert(!captureService.observe(*identical));
-    assert(captureService.captureStats().uniqueResourcesDumped == 1u);
+    assert(captureService.captureStats().uniqueResourcesDumped == 2u);
     const auto captureManifest = dumpDir / "manifest.stub.json";
     assert(std::filesystem::exists(captureManifest));
+    const auto capturePack = dumpDir / "pack.json";
+    assert(std::filesystem::exists(capturePack));
+    const auto captureMetadata = dumpDir / "capture_metadata.json";
+    assert(std::filesystem::exists(captureMetadata));
     const auto captureManifestText = readTextFile(captureManifest);
     assert(captureManifestText.find("\"paletteHash\"") != std::string::npos);
     assert(captureManifestText.find("\"paletteAwareHash\"") != std::string::npos);
+    const auto capturePackText = readTextFile(capturePack);
+    assert(capturePackText.find("\"name\": \"Captured gameboy visual resources\"") != std::string::npos);
+    assert(capturePackText.find("\"metadata\"") == std::string::npos);
+    const auto captureMetadataText = readTextFile(captureMetadata);
+    assert(captureMetadataText.find("\"sourceAddress\"") != std::string::npos);
+    assert(captureMetadataText.find("\"paletteRegister\": \"BGP\"") != std::string::npos);
+    assert(captureMetadataText.find("\"paletteRegister\": \"A\\b\\f\\u0001Z\"") != std::string::npos);
+
+    BMMQ::VisualOverrideService capturedPackService;
+    assert(capturedPackService.loadPackManifest(capturePack));
+    assert(capturedPackService.resolve(resource->descriptor).has_value());
 
     GameBoyMachine machine;
     assert(&machine.visualOverrideService() == &machine.mutableView().visualOverrideService());

@@ -317,6 +317,8 @@ int main(int argc, char** argv)
             const auto visualDiagnostics = machine.visualOverrideService().diagnostics();
             const auto captureStats = machine.visualOverrideService().captureStats();
             std::cout << "Visual overrides: rules=" << visualDiagnostics.rulesLoaded
+                      << " invalidRules=" << visualDiagnostics.invalidRulesSkipped
+                      << " missingImages=" << visualDiagnostics.missingReplacementImages
                       << " hits=" << visualDiagnostics.resolveHits
                       << " misses=" << visualDiagnostics.resolveMisses
                       << " loadFailures=" << visualDiagnostics.replacementLoadFailures

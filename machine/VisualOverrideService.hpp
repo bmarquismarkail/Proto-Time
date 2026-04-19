@@ -22,6 +22,8 @@ struct VisualCaptureStats {
 
 struct VisualOverrideDiagnostics {
     std::size_t rulesLoaded = 0;
+    std::size_t invalidRulesSkipped = 0;
+    std::size_t missingReplacementImages = 0;
     std::size_t resolveHits = 0;
     std::size_t resolveMisses = 0;
     std::size_t replacementLoadFailures = 0;
@@ -54,6 +56,7 @@ private:
     struct Rule {
         VisualResourceKind kind = VisualResourceKind::Unknown;
         VisualResourceHash decodedHash = 0;
+        VisualResourceHash paletteHash = 0;
         VisualResourceHash paletteAwareHash = 0;
         uint32_t width = 0;
         uint32_t height = 0;

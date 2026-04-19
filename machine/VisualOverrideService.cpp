@@ -10,6 +10,7 @@
 #include <span>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 #include <variant>
 
@@ -300,6 +301,49 @@ private:
     return parsed;
 }
 
+[[nodiscard]] std::string jsonEscaped(std::string_view value)
+{
+    std::string escaped;
+    escaped.reserve(value.size());
+    for (const char c : value) {
+        const auto byte = static_cast<unsigned char>(c);
+        switch (c) {
+        case '"':
+            escaped += "\\\"";
+            break;
+        case '\\':
+            escaped += "\\\\";
+            break;
+        case '\b':
+            escaped += "\\b";
+            break;
+        case '\f':
+            escaped += "\\f";
+            break;
+        case '\n':
+            escaped += "\\n";
+            break;
+        case '\r':
+            escaped += "\\r";
+            break;
+        case '\t':
+            escaped += "\\t";
+            break;
+        default:
+            if (byte < 0x20u) {
+                constexpr char kHex[] = "0123456789abcdef";
+                escaped += "\\u00";
+                escaped.push_back(kHex[(byte >> 4u) & 0x0Fu]);
+                escaped.push_back(kHex[byte & 0x0Fu]);
+            } else {
+                escaped.push_back(c);
+            }
+            break;
+        }
+    }
+    return escaped;
+}
+
 [[nodiscard]] uint32_t readBigEndian32(std::span<const uint8_t> bytes, std::size_t offset) noexcept
 {
     return (static_cast<uint32_t>(bytes[offset]) << 24u) |
@@ -403,16 +447,20 @@ bool VisualOverrideService::loadPackManifest(const std::filesystem::path& manife
     }
 
     const auto* rulesValue = findMember(root, "rules");
+    std::size_t invalidRulesSkipped = 0;
+    std::size_t missingReplacementImages = 0;
     if (rulesValue != nullptr && rulesValue->array() != nullptr) {
         std::size_t order = 0;
         for (const auto& ruleValue : *rulesValue->array()) {
             if (ruleValue.object() == nullptr) {
+                ++invalidRulesSkipped;
                 continue;
             }
             const auto* matchValue = findMember(*ruleValue.object(), "match");
             const auto* replaceValue = findMember(*ruleValue.object(), "replace");
             if (matchValue == nullptr || replaceValue == nullptr ||
                 matchValue->object() == nullptr || replaceValue->object() == nullptr) {
+                ++invalidRulesSkipped;
                 continue;
             }
 
@@ -421,6 +469,9 @@ bool VisualOverrideService::loadPackManifest(const std::filesystem::path& manife
             rule.kind = visualResourceKindFromString(jsonString(*matchValue->object(), "kind").value_or(""));
             if (const auto hash = jsonString(*matchValue->object(), "decodedHash"); hash.has_value()) {
                 rule.decodedHash = parseVisualHashString(*hash).value_or(0u);
+            }
+            if (const auto hash = jsonString(*matchValue->object(), "paletteHash"); hash.has_value()) {
+                rule.paletteHash = parseVisualHashString(*hash).value_or(0u);
             }
             if (const auto hash = jsonString(*matchValue->object(), "paletteAwareHash"); hash.has_value()) {
                 rule.paletteAwareHash = parseVisualHashString(*hash).value_or(0u);
@@ -431,10 +482,16 @@ bool VisualOverrideService::loadPackManifest(const std::filesystem::path& manife
             if (rule.kind == VisualResourceKind::Unknown ||
                 (rule.decodedHash == 0u && rule.paletteAwareHash == 0u) ||
                 rule.image.empty()) {
+                ++invalidRulesSkipped;
                 continue;
+            }
+            std::error_code existsEc;
+            if (!std::filesystem::exists(pack.root / rule.image, existsEc)) {
+                ++missingReplacementImages;
             }
             rule.specificity = 1u +
                 (rule.decodedHash != 0u ? 2u : 0u) +
+                (rule.paletteHash != 0u ? 3u : 0u) +
                 (rule.paletteAwareHash != 0u ? 4u : 0u) +
                 (rule.width != 0u ? 1u : 0u) +
                 (rule.height != 0u ? 1u : 0u);
@@ -447,6 +504,8 @@ bool VisualOverrideService::loadPackManifest(const std::filesystem::path& manife
         return false;
     }
     packs_.push_back(std::move(pack));
+    diagnostics_.invalidRulesSkipped += invalidRulesSkipped;
+    diagnostics_.missingReplacementImages += missingReplacementImages;
     diagnostics_.rulesLoaded = 0;
     for (const auto& loadedPack : packs_) {
         diagnostics_.rulesLoaded += loadedPack.rules.size();
@@ -603,6 +662,9 @@ bool VisualOverrideService::matches(const Rule& rule, const VisualResourceDescri
     if (rule.paletteAwareHash != 0u && rule.paletteAwareHash != descriptor.paletteAwareHash) {
         return false;
     }
+    if (rule.paletteHash != 0u && rule.paletteHash != descriptor.paletteHash) {
+        return false;
+    }
     if (rule.decodedHash != 0u && rule.decodedHash != descriptor.contentHash) {
         return false;
     }
@@ -756,41 +818,81 @@ std::optional<VisualReplacementImage> VisualOverrideService::loadPng(const std::
 
 bool VisualOverrideService::writeCaptureManifest() const
 {
-    std::ofstream out(captureDirectory_ / "manifest.stub.json");
-    if (!out) {
+    const auto writeRules = [this](const std::filesystem::path& path, bool includeMetadata) {
+        std::ofstream out(path);
+        if (!out) {
+            return false;
+        }
+        out << "{\n";
+        out << "  \"schemaVersion\": 1,\n";
+        out << "  \"id\": \"capture." << jsonEscaped(captureMachineId_) << "\",\n";
+        out << "  \"name\": \"Captured " << jsonEscaped(captureMachineId_) << " visual resources\",\n";
+        out << "  \"targets\": [\"" << jsonEscaped(captureMachineId_) << "\"],\n";
+        out << "  \"rules\": [\n";
+        for (std::size_t i = 0; i < captureEntries_.size(); ++i) {
+            const auto& entry = captureEntries_[i];
+            out << "    {\n";
+            out << "      \"match\": {\n";
+            out << "        \"kind\": \"" << visualResourceKindName(entry.descriptor.kind) << "\",\n";
+            out << "        \"decodedHash\": \"" << toHexVisualHash(entry.descriptor.contentHash) << "\",\n";
+            out << "        \"paletteHash\": \"" << toHexVisualHash(entry.descriptor.paletteHash) << "\",\n";
+            out << "        \"paletteAwareHash\": \"" << toHexVisualHash(entry.descriptor.paletteAwareHash) << "\",\n";
+            out << "        \"width\": " << entry.descriptor.width << ",\n";
+            out << "        \"height\": " << entry.descriptor.height << "\n";
+            out << "      },\n";
+            if (includeMetadata) {
+                out << "      \"metadata\": {\n";
+                out << "        \"resourceKind\": \"" << visualResourceKindName(entry.descriptor.kind) << "\",\n";
+                out << "        \"sourceAddress\": \"0x" << std::hex << entry.descriptor.source.address << std::dec << "\",\n";
+                out << "        \"tileIndex\": " << entry.descriptor.source.index << ",\n";
+                out << "        \"paletteRegister\": \"" << jsonEscaped(entry.descriptor.source.paletteRegister) << "\",\n";
+                out << "        \"paletteValue\": \"0x" << std::hex << entry.descriptor.source.paletteValue << std::dec << "\"\n";
+                out << "      },\n";
+            }
+            out << "      \"replace\": {\n";
+            out << "        \"image\": \"" << jsonEscaped(entry.imagePath) << "\"\n";
+            out << "      }\n";
+            out << "    }" << (i + 1u < captureEntries_.size() ? "," : "") << "\n";
+        }
+        out << "  ]\n";
+        out << "}\n";
+        return true;
+    };
+
+    const auto writeMetadata = [this](const std::filesystem::path& path) {
+        std::ofstream out(path);
+        if (!out) {
+            return false;
+        }
+        out << "{\n";
+        out << "  \"schemaVersion\": 1,\n";
+        out << "  \"machine\": \"" << jsonEscaped(captureMachineId_) << "\",\n";
+        out << "  \"entries\": [\n";
+        for (std::size_t i = 0; i < captureEntries_.size(); ++i) {
+            const auto& entry = captureEntries_[i];
+            out << "    {\n";
+            out << "      \"image\": \"" << jsonEscaped(entry.imagePath) << "\",\n";
+            out << "      \"resourceKind\": \"" << visualResourceKindName(entry.descriptor.kind) << "\",\n";
+            out << "      \"decodedHash\": \"" << toHexVisualHash(entry.descriptor.contentHash) << "\",\n";
+            out << "      \"paletteHash\": \"" << toHexVisualHash(entry.descriptor.paletteHash) << "\",\n";
+            out << "      \"paletteAwareHash\": \"" << toHexVisualHash(entry.descriptor.paletteAwareHash) << "\",\n";
+            out << "      \"sourceAddress\": \"0x" << std::hex << entry.descriptor.source.address << std::dec << "\",\n";
+            out << "      \"tileIndex\": " << entry.descriptor.source.index << ",\n";
+            out << "      \"paletteRegister\": \"" << jsonEscaped(entry.descriptor.source.paletteRegister) << "\",\n";
+            out << "      \"paletteValue\": \"0x" << std::hex << entry.descriptor.source.paletteValue << std::dec << "\"\n";
+            out << "    }" << (i + 1u < captureEntries_.size() ? "," : "") << "\n";
+        }
+        out << "  ]\n";
+        out << "}\n";
+        return true;
+    };
+
+    if (!writeRules(captureDirectory_ / "pack.json", false) ||
+        !writeRules(captureDirectory_ / "manifest.stub.json", true) ||
+        !writeMetadata(captureDirectory_ / "capture_metadata.json")) {
         lastError_ = "unable to write visual capture manifest";
         return false;
     }
-    out << "{\n";
-    out << "  \"schemaVersion\": 1,\n";
-    out << "  \"id\": \"capture." << captureMachineId_ << "\",\n";
-    out << "  \"name\": \"Captured " << captureMachineId_ << " visual resources\",\n";
-    out << "  \"targets\": [\"" << captureMachineId_ << "\"],\n";
-    out << "  \"rules\": [\n";
-    for (std::size_t i = 0; i < captureEntries_.size(); ++i) {
-        const auto& entry = captureEntries_[i];
-        out << "    {\n";
-        out << "      \"match\": {\n";
-        out << "        \"kind\": \"" << visualResourceKindName(entry.descriptor.kind) << "\",\n";
-        out << "        \"decodedHash\": \"" << toHexVisualHash(entry.descriptor.contentHash) << "\",\n";
-        out << "        \"paletteHash\": \"" << toHexVisualHash(entry.descriptor.paletteHash) << "\",\n";
-        out << "        \"paletteAwareHash\": \"" << toHexVisualHash(entry.descriptor.paletteAwareHash) << "\",\n";
-        out << "        \"width\": " << entry.descriptor.width << ",\n";
-        out << "        \"height\": " << entry.descriptor.height << "\n";
-        out << "      },\n";
-        out << "      \"metadata\": {\n";
-        out << "        \"sourceAddress\": \"0x" << std::hex << entry.descriptor.source.address << std::dec << "\",\n";
-        out << "        \"tileIndex\": " << entry.descriptor.source.index << ",\n";
-        out << "        \"paletteRegister\": \"" << entry.descriptor.source.paletteRegister << "\",\n";
-        out << "        \"paletteValue\": \"0x" << std::hex << entry.descriptor.source.paletteValue << std::dec << "\"\n";
-        out << "      },\n";
-        out << "      \"replace\": {\n";
-        out << "        \"image\": \"" << entry.imagePath << "\"\n";
-        out << "      }\n";
-        out << "    }" << (i + 1u < captureEntries_.size() ? "," : "") << "\n";
-    }
-    out << "  ]\n";
-    out << "}\n";
     captureManifestDirty_ = false;
     return true;
 }
