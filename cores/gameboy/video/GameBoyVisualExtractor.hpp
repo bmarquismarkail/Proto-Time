@@ -4,6 +4,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
+#include <string_view>
+#include <utility>
 
 #include "../../../machine/VisualTypes.hpp"
 #include "../../../machine/plugins/IoPlugin.hpp"
@@ -13,7 +16,9 @@ namespace GB {
 [[nodiscard]] inline std::optional<BMMQ::DecodedVisualResource> decodeGameBoyTileResource(
     const BMMQ::VideoStateView& state,
     uint16_t tileIndex,
-    BMMQ::VisualResourceKind kind = BMMQ::VisualResourceKind::Tile)
+    BMMQ::VisualResourceKind kind = BMMQ::VisualResourceKind::Tile,
+    uint8_t paletteValue = 0,
+    std::string_view paletteRegister = {})
 {
     constexpr uint32_t kTileWidth = 8;
     constexpr uint32_t kTileHeight = 8;
@@ -31,6 +36,17 @@ namespace GB {
     resource.descriptor.decodedFormat = BMMQ::VisualPixelFormat::Indexed2;
     resource.descriptor.source.index = tileIndex;
     resource.descriptor.source.address = static_cast<uint32_t>(0x8000u + base);
+    if (paletteRegister.empty()) {
+        if (kind == BMMQ::VisualResourceKind::Sprite) {
+            paletteValue = state.obp0;
+            paletteRegister = "OBP0";
+        } else {
+            paletteValue = state.bgp;
+            paletteRegister = "BGP";
+        }
+    }
+    resource.descriptor.source.paletteValue = paletteValue;
+    resource.descriptor.source.paletteRegister = std::string(paletteRegister);
     resource.stride = kTileWidth;
     resource.pixels.resize(kTileWidth * kTileHeight);
 
@@ -46,6 +62,9 @@ namespace GB {
     }
 
     resource.descriptor.contentHash = BMMQ::hashDecodedVisualContent(resource);
+    resource.descriptor.paletteHash = BMMQ::hashVisualPalette(paletteValue);
+    resource.descriptor.paletteAwareHash =
+        BMMQ::combineVisualHashes(resource.descriptor.contentHash, resource.descriptor.paletteHash);
     return resource;
 }
 

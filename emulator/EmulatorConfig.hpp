@@ -20,6 +20,8 @@ struct EmulatorConfig {
     bool startPaused = false;
     bool audioEnabled = true;
     std::string audioBackend = "sdl";
+    std::optional<std::filesystem::path> texturePackPath;
+    std::optional<std::filesystem::path> visualDumpPath;
 };
 
 struct CommandLineConfigOverrides {
@@ -34,6 +36,8 @@ struct CommandLineConfigOverrides {
     std::optional<bool> startPaused;
     std::optional<bool> audioEnabled;
     std::optional<std::string> audioBackend;
+    std::optional<std::filesystem::path> texturePackPath;
+    std::optional<std::filesystem::path> visualDumpPath;
 };
 
 struct ParsedEmulatorArguments {

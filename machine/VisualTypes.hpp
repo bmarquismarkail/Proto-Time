@@ -26,10 +26,19 @@ enum class VisualPixelFormat : uint8_t {
 
 using VisualResourceHash = uint64_t;
 
+namespace detail {
+
+inline constexpr VisualResourceHash kFnvOffset = 14695981039346656037ull;
+inline constexpr VisualResourceHash kFnvPrime = 1099511628211ull;
+
+} // namespace detail
+
 struct VisualSourceMetadata {
     uint32_t bank = 0;
     uint32_t index = 0;
     uint32_t address = 0;
+    uint32_t paletteValue = 0;
+    std::string paletteRegister;
     std::string label;
 };
 
@@ -41,6 +50,7 @@ struct VisualResourceDescriptor {
     VisualPixelFormat decodedFormat = VisualPixelFormat::Unknown;
     VisualResourceHash contentHash = 0;
     VisualResourceHash paletteHash = 0;
+    VisualResourceHash paletteAwareHash = 0;
     VisualSourceMetadata source;
 };
 
@@ -118,12 +128,10 @@ struct ResolvedVisualOverride {
 
 [[nodiscard]] inline VisualResourceHash hashDecodedVisualContent(const DecodedVisualResource& resource) noexcept
 {
-    constexpr VisualResourceHash kFnvOffset = 14695981039346656037ull;
-    constexpr VisualResourceHash kFnvPrime = 1099511628211ull;
-    auto hash = kFnvOffset;
+    auto hash = detail::kFnvOffset;
     const auto mix = [&hash](uint8_t value) noexcept {
         hash ^= static_cast<VisualResourceHash>(value);
-        hash *= kFnvPrime;
+        hash *= detail::kFnvPrime;
     };
 
     mix(static_cast<uint8_t>(resource.descriptor.decodedFormat));
@@ -133,6 +141,26 @@ struct ResolvedVisualOverride {
     }
     for (const auto pixel : resource.pixels) {
         mix(pixel);
+    }
+    return hash;
+}
+
+[[nodiscard]] inline VisualResourceHash hashVisualPalette(uint32_t paletteValue) noexcept
+{
+    auto hash = detail::kFnvOffset;
+    for (int shift = 0; shift < 32; shift += 8) {
+        hash ^= static_cast<VisualResourceHash>((paletteValue >> shift) & 0xFFu);
+        hash *= detail::kFnvPrime;
+    }
+    return hash;
+}
+
+[[nodiscard]] inline VisualResourceHash combineVisualHashes(VisualResourceHash first, VisualResourceHash second) noexcept
+{
+    auto hash = first;
+    for (int shift = 0; shift < 64; shift += 8) {
+        hash ^= static_cast<VisualResourceHash>((second >> shift) & 0xFFu);
+        hash *= detail::kFnvPrime;
     }
     return hash;
 }

@@ -58,6 +58,10 @@ void printUsage(std::string_view program)
               << "  --no-audio         Disable frontend audio output\n"
               << "  --audio-backend <name>\n"
               << "                     Frontend audio backend: sdl, dummy, or file (default: sdl)\n"
+              << "  --texture-pack <path>\n"
+              << "                     Load a visual override pack.json\n"
+              << "  --dump-visual-resources <dir>\n"
+              << "                     Capture observed decoded visual resources for pack authoring\n"
               << "  --headless         Run without the SDL frontend plugin\n"
               << "  -h, --help         Show this help text\n\n"
               << "Controls:\n"
@@ -105,6 +109,24 @@ int main(int argc, char** argv)
 
         std::size_t romSize = machine.loadRomFromPath(options.romPath);
 
+        if (options.texturePackPath.has_value()) {
+            if (!machine.visualOverrideService().loadPackManifest(*options.texturePackPath)) {
+                throw std::runtime_error(
+                    "Unable to load texture pack: " + options.texturePackPath->string() +
+                    " (" + machine.visualOverrideService().lastError() + ")");
+            }
+        }
+
+        bool captureStarted = false;
+        if (options.visualDumpPath.has_value()) {
+            if (!machine.visualOverrideService().beginCapture(*options.visualDumpPath, "gameboy")) {
+                throw std::runtime_error(
+                    "Unable to start visual resource capture: " + options.visualDumpPath->string() +
+                    " (" + machine.visualOverrideService().lastError() + ")");
+            }
+            captureStarted = true;
+        }
+
         BMMQ::ISdlFrontendPlugin* frontend = nullptr;
         std::unique_ptr<BMMQ::ISdlFrontendPlugin> frontendPlugin;
         if (!options.headless) {
@@ -139,6 +161,12 @@ int main(int argc, char** argv)
             << romSize << " bytes)\n";
         if (options.bootRomPath.has_value()) {
             std::cout << "Loaded boot ROM: " << *options.bootRomPath << '\n';
+        }
+        if (options.texturePackPath.has_value()) {
+            std::cout << "Loaded texture pack: " << *options.texturePackPath << '\n';
+        }
+        if (options.visualDumpPath.has_value()) {
+            std::cout << "Capturing visual resources to: " << *options.visualDumpPath << '\n';
         }
         if (frontend != nullptr) {
             std::cout << "Frontend: " << frontend->backendStatusSummary() << '\n';
@@ -282,6 +310,20 @@ int main(int argc, char** argv)
         }
 
         serviceFrontend();
+        if (captureStarted) {
+            machine.visualOverrideService().endCapture();
+        }
+        if (options.texturePackPath.has_value() || options.visualDumpPath.has_value()) {
+            const auto visualDiagnostics = machine.visualOverrideService().diagnostics();
+            const auto captureStats = machine.visualOverrideService().captureStats();
+            std::cout << "Visual overrides: rules=" << visualDiagnostics.rulesLoaded
+                      << " hits=" << visualDiagnostics.resolveHits
+                      << " misses=" << visualDiagnostics.resolveMisses
+                      << " loadFailures=" << visualDiagnostics.replacementLoadFailures
+                      << " ambiguous=" << visualDiagnostics.ambiguousMatches << '\n';
+            std::cout << "Visual capture: unique=" << captureStats.uniqueResourcesDumped
+                      << " duplicates=" << captureStats.duplicateResourcesSkipped << '\n';
+        }
 
         const auto pc = machine.runtimeContext().readRegister16(GB::RegisterId::PC);
         const auto ly = machine.runtimeContext().read8(0xFF44);

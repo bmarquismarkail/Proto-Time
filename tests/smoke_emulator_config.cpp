@@ -81,6 +81,8 @@ int main()
         CHECK_TRUE(!defaults.startPaused);
         CHECK_TRUE(defaults.audioEnabled);
         CHECK_TRUE(defaults.audioBackend == "sdl");
+        CHECK_TRUE(!defaults.texturePackPath.has_value());
+        CHECK_TRUE(!defaults.visualDumpPath.has_value());
     }
 
     writeTextFile(configPath,
@@ -102,7 +104,11 @@ int main()
         "\n"
         "[audio]\n"
         "enabled = false\n"
-        "backend = file\n");
+        "backend = file\n"
+        "\n"
+        "[visual]\n"
+        "texture_pack = packs/pack.json\n"
+        "dump_resources = capture/gameboy\n");
 
     auto fileConfig = BMMQ::loadEmulatorConfig(configPath);
     CHECK_TRUE(fileConfig.romPath == tempDir / "roms/game.gb");
@@ -116,6 +122,8 @@ int main()
     CHECK_TRUE(fileConfig.startPaused);
     CHECK_TRUE(!fileConfig.audioEnabled);
     CHECK_TRUE(fileConfig.audioBackend == "file");
+    CHECK_TRUE(fileConfig.texturePackPath == tempDir / "packs/pack.json");
+    CHECK_TRUE(fileConfig.visualDumpPath == tempDir / "capture/gameboy");
 
     BMMQ::CommandLineConfigOverrides overrides;
     overrides.romPath = std::filesystem::path("cli.gb");
@@ -129,6 +137,8 @@ int main()
     overrides.startPaused = false;
     overrides.audioEnabled = true;
     overrides.audioBackend = "dummy";
+    overrides.texturePackPath = std::filesystem::path("cli-pack.json");
+    overrides.visualDumpPath = std::filesystem::path("cli-capture");
     BMMQ::applyOverrides(fileConfig, overrides);
     CHECK_TRUE(fileConfig.romPath == "cli.gb");
     CHECK_TRUE(fileConfig.bootRomPath == "cli-boot.bin");
@@ -141,6 +151,8 @@ int main()
     CHECK_TRUE(!fileConfig.startPaused);
     CHECK_TRUE(fileConfig.audioEnabled);
     CHECK_TRUE(fileConfig.audioBackend == "dummy");
+    CHECK_TRUE(fileConfig.texturePackPath == "cli-pack.json");
+    CHECK_TRUE(fileConfig.visualDumpPath == "cli-capture");
 
     CHECK_TRUE(throwsInvalidArgumentContaining("ROM path was provided more than once", [] {
         (void)parseArgs({"timeEmulator", "--rom", "a.gb", "b.gb"});
@@ -195,13 +207,31 @@ int main()
     const auto help = parseArgs({"timeEmulator", "--help", "--unknown-after-help"});
     CHECK_TRUE(help.helpRequested);
 
+    CHECK_TRUE(throwsInvalidArgumentContaining("--texture-pack requires a path", [] {
+        (void)parseArgs({"timeEmulator", "--texture-pack"});
+    }));
+
+    CHECK_TRUE(throwsInvalidArgumentContaining("--dump-visual-resources requires a directory", [] {
+        (void)parseArgs({"timeEmulator", "--dump-visual-resources"});
+    }));
+
     const auto resolvedConfigPath = tempDir / "resolved.ini";
-    writeTextFile(resolvedConfigPath, "[emulator]\nrom=config.gb\nheadless=true\n[audio]\nbackend=file\n");
-    auto parsed = parseArgs({"timeEmulator", "--config", resolvedConfigPath.c_str(), "--rom", "cli.gb", "--audio-backend", "dummy"});
+    writeTextFile(resolvedConfigPath,
+        "[emulator]\nrom=config.gb\nheadless=true\n"
+        "[audio]\nbackend=file\n"
+        "[visual]\ntexture_pack=config-pack.json\ndump_resources=config-capture\n");
+    auto parsed = parseArgs({"timeEmulator",
+                             "--config", resolvedConfigPath.c_str(),
+                             "--rom", "cli.gb",
+                             "--audio-backend", "dummy",
+                             "--texture-pack", "cli-pack.json",
+                             "--dump-visual-resources", "cli-capture"});
     auto resolved = BMMQ::resolveEmulatorConfig(parsed);
     CHECK_TRUE(resolved.romPath == "cli.gb");
     CHECK_TRUE(resolved.headless);
     CHECK_TRUE(resolved.audioBackend == "dummy");
+    CHECK_TRUE(resolved.texturePackPath == "cli-pack.json");
+    CHECK_TRUE(resolved.visualDumpPath == "cli-capture");
 
     std::filesystem::remove_all(tempDir);
     return 0;

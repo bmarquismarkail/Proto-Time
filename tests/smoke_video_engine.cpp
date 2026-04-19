@@ -6,9 +6,11 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <span>
 #include <vector>
 
+#include "machine/VisualOverrideService.hpp"
 #include "machine/plugins/AudioEngine.hpp"
 #include "machine/plugins/video/VideoEngine.hpp"
 
@@ -186,6 +188,42 @@ int main()
     assert(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed) < maxPerfTime);
     assert(audioEngine.stats().underrunCount == 0u);
     assert(audioEngine.stats().samplesDelivered >= static_cast<std::size_t>(kFramesToBuild) * audioOutput.size());
+
+    BMMQ::VisualOverrideService inactiveVisualService;
+    BMMQ::VideoEngine inactiveVisualEngine({
+        .frameWidth = 160,
+        .frameHeight = 144,
+        .queueCapacityFrames = 1,
+    });
+    inactiveVisualEngine.setVisualOverrideService(&inactiveVisualService);
+    const auto inactiveStart = std::chrono::steady_clock::now();
+    for (int i = 0; i < kFramesToBuild; ++i) {
+        const auto denseFrame = inactiveVisualEngine.buildDebugFrame(denseState, static_cast<uint64_t>(i + 1));
+        assert(denseFrame.pixelCount() == 160u * 144u);
+    }
+    const auto inactiveElapsed = std::chrono::steady_clock::now() - inactiveStart;
+    assert(std::chrono::duration_cast<std::chrono::milliseconds>(inactiveElapsed) < maxPerfTime);
+
+    const auto captureDir = std::filesystem::temp_directory_path() / "proto_time_video_engine_capture_perf";
+    std::filesystem::remove_all(captureDir);
+    BMMQ::VisualOverrideService captureVisualService;
+    assert(captureVisualService.beginCapture(captureDir, "gameboy"));
+    BMMQ::VideoEngine captureVisualEngine({
+        .frameWidth = 160,
+        .frameHeight = 144,
+        .queueCapacityFrames = 1,
+    });
+    captureVisualEngine.setVisualOverrideService(&captureVisualService);
+    const auto captureStart = std::chrono::steady_clock::now();
+    for (int i = 0; i < 3; ++i) {
+        const auto denseFrame = captureVisualEngine.buildDebugFrame(denseState, static_cast<uint64_t>(i + 1));
+        assert(denseFrame.pixelCount() == 160u * 144u);
+    }
+    const auto captureElapsed = std::chrono::steady_clock::now() - captureStart;
+    assert(captureVisualService.captureStats().uniqueResourcesDumped != 0u);
+    assert(std::chrono::duration_cast<std::chrono::milliseconds>(captureElapsed) < maxPerfTime);
+    captureVisualService.endCapture();
+    std::filesystem::remove_all(captureDir);
 
     return 0;
 }

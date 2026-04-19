@@ -148,6 +148,14 @@ void applyConfigValue(EmulatorConfig& config,
         } else {
             throw std::invalid_argument("Unknown config key: " + label);
         }
+    } else if (section == "visual") {
+        if (key == "texture_pack") {
+            config.texturePackPath = resolveConfigPath(configDirectory, text);
+        } else if (key == "dump_resources") {
+            config.visualDumpPath = resolveConfigPath(configDirectory, text);
+        } else {
+            throw std::invalid_argument("Unknown config key: " + label);
+        }
     } else {
         throw std::invalid_argument("Unknown config section: " + std::string(section));
     }
@@ -181,7 +189,8 @@ EmulatorConfig loadEmulatorConfig(const std::filesystem::path& path)
                 throw std::invalid_argument("Malformed config line " + std::to_string(lineNumber) + ": " + text);
             }
             section = trim(std::string_view(text).substr(1, text.size() - 2));
-            if (section != "emulator" && section != "video" && section != "timing" && section != "audio") {
+            if (section != "emulator" && section != "video" && section != "timing" &&
+                section != "audio" && section != "visual") {
                 throw std::invalid_argument("Unknown config section: " + section);
             }
             continue;
@@ -246,6 +255,12 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     }
     if (overrides.audioBackend.has_value()) {
         config.audioBackend = *overrides.audioBackend;
+    }
+    if (overrides.texturePackPath.has_value()) {
+        config.texturePackPath = *overrides.texturePackPath;
+    }
+    if (overrides.visualDumpPath.has_value()) {
+        config.visualDumpPath = *overrides.visualDumpPath;
     }
 }
 
@@ -316,6 +331,16 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
                 throw std::invalid_argument("--audio-backend requires a backend name");
             }
             arguments.overrides.audioBackend = argv[++i];
+        } else if (arg == "--texture-pack") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--texture-pack requires a path");
+            }
+            arguments.overrides.texturePackPath = std::filesystem::path(argv[++i]);
+        } else if (arg == "--dump-visual-resources") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--dump-visual-resources requires a directory");
+            }
+            arguments.overrides.visualDumpPath = std::filesystem::path(argv[++i]);
         } else if (arg == "--headless") {
             arguments.overrides.headless = true;
         } else if (arg == "-h" || arg == "--help") {

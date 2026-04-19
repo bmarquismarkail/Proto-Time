@@ -355,6 +355,21 @@ void VisualOverrideService::setEnabled(bool enabled) noexcept
     enabled_ = enabled;
 }
 
+bool VisualOverrideService::hasActiveWork() const noexcept
+{
+    return enabled_ && (captureEnabled_ || !packs_.empty());
+}
+
+bool VisualOverrideService::hasLoadedPacks() const noexcept
+{
+    return !packs_.empty();
+}
+
+bool VisualOverrideService::capturing() const noexcept
+{
+    return captureEnabled_;
+}
+
 bool VisualOverrideService::loadPackManifest(const std::filesystem::path& manifestPath)
 {
     std::ifstream input(manifestPath);
@@ -407,13 +422,22 @@ bool VisualOverrideService::loadPackManifest(const std::filesystem::path& manife
             if (const auto hash = jsonString(*matchValue->object(), "decodedHash"); hash.has_value()) {
                 rule.decodedHash = parseVisualHashString(*hash).value_or(0u);
             }
+            if (const auto hash = jsonString(*matchValue->object(), "paletteAwareHash"); hash.has_value()) {
+                rule.paletteAwareHash = parseVisualHashString(*hash).value_or(0u);
+            }
             rule.width = jsonUInt32(*matchValue->object(), "width").value_or(0u);
             rule.height = jsonUInt32(*matchValue->object(), "height").value_or(0u);
             rule.image = jsonString(*replaceValue->object(), "image").value_or("");
-            if (rule.kind == VisualResourceKind::Unknown || rule.decodedHash == 0u || rule.image.empty()) {
+            if (rule.kind == VisualResourceKind::Unknown ||
+                (rule.decodedHash == 0u && rule.paletteAwareHash == 0u) ||
+                rule.image.empty()) {
                 continue;
             }
-            rule.specificity = 2u + (rule.width != 0u ? 1u : 0u) + (rule.height != 0u ? 1u : 0u);
+            rule.specificity = 1u +
+                (rule.decodedHash != 0u ? 2u : 0u) +
+                (rule.paletteAwareHash != 0u ? 4u : 0u) +
+                (rule.width != 0u ? 1u : 0u) +
+                (rule.height != 0u ? 1u : 0u);
             pack.rules.push_back(std::move(rule));
         }
     }
@@ -423,6 +447,10 @@ bool VisualOverrideService::loadPackManifest(const std::filesystem::path& manife
         return false;
     }
     packs_.push_back(std::move(pack));
+    diagnostics_.rulesLoaded = 0;
+    for (const auto& loadedPack : packs_) {
+        diagnostics_.rulesLoaded += loadedPack.rules.size();
+    }
     ++generation_;
     resolvedCache_.clear();
     imageCache_.clear();
@@ -451,6 +479,9 @@ std::optional<ResolvedVisualOverride> VisualOverrideService::resolve(const Visua
             if (!matches(rule, descriptor)) {
                 continue;
             }
+            if (bestRule != nullptr && rule.specificity == bestRule->specificity && rule.order != bestRule->order) {
+                ++diagnostics_.ambiguousMatches;
+            }
             if (bestRule == nullptr ||
                 rule.specificity > bestRule->specificity ||
                 (rule.specificity == bestRule->specificity && rule.order < bestRule->order)) {
@@ -461,11 +492,18 @@ std::optional<ResolvedVisualOverride> VisualOverrideService::resolve(const Visua
     }
 
     if (bestRule == nullptr || bestPack == nullptr) {
+        ++diagnostics_.resolveMisses;
         return std::nullopt;
     }
     ResolvedPath resolvedPath{bestPack->id, bestPack->root / bestRule->image};
     resolvedCache_.emplace(key, resolvedPath);
-    return loadResolved(resolvedPath);
+    auto resolved = loadResolved(resolvedPath);
+    if (resolved.has_value()) {
+        ++diagnostics_.resolveHits;
+    } else {
+        ++diagnostics_.replacementLoadFailures;
+    }
+    return resolved;
 }
 
 bool VisualOverrideService::beginCapture(const std::filesystem::path& directory, std::string machineId)
@@ -488,6 +526,9 @@ bool VisualOverrideService::beginCapture(const std::filesystem::path& directory,
 
 void VisualOverrideService::endCapture() noexcept
 {
+    if (captureManifestDirty_) {
+        (void)writeCaptureManifest();
+    }
     captureEnabled_ = false;
 }
 
@@ -518,16 +559,22 @@ bool VisualOverrideService::observe(const DecodedVisualResource& resource)
         return false;
     }
     captureEntries_.push_back(CaptureEntry{resource.descriptor, relativePath});
-    if (!writeCaptureManifest()) {
-        return false;
-    }
+    captureManifestDirty_ = true;
     ++captureStats_.uniqueResourcesDumped;
     return true;
 }
 
 const VisualCaptureStats& VisualOverrideService::captureStats() const noexcept
 {
+    if (captureManifestDirty_) {
+        (void)writeCaptureManifest();
+    }
     return captureStats_;
+}
+
+const VisualOverrideDiagnostics& VisualOverrideService::diagnostics() const noexcept
+{
+    return diagnostics_;
 }
 
 std::string VisualOverrideService::lastError() const
@@ -544,12 +591,22 @@ std::string VisualOverrideService::makeDescriptorKey(const VisualResourceDescrip
 {
     return descriptor.machineId + "|" + visualResourceKindName(descriptor.kind) + "|" +
         std::to_string(descriptor.width) + "x" + std::to_string(descriptor.height) + "|" +
-        toHexVisualHash(descriptor.contentHash);
+        toHexVisualHash(descriptor.contentHash) + "|" +
+        toHexVisualHash(descriptor.paletteAwareHash);
 }
 
 bool VisualOverrideService::matches(const Rule& rule, const VisualResourceDescriptor& descriptor) noexcept
 {
-    if (rule.kind != descriptor.kind || rule.decodedHash != descriptor.contentHash) {
+    if (rule.kind != descriptor.kind) {
+        return false;
+    }
+    if (rule.paletteAwareHash != 0u && rule.paletteAwareHash != descriptor.paletteAwareHash) {
+        return false;
+    }
+    if (rule.decodedHash != 0u && rule.decodedHash != descriptor.contentHash) {
+        return false;
+    }
+    if (rule.paletteAwareHash == 0u && rule.decodedHash == 0u) {
         return false;
     }
     if (rule.width != 0u && rule.width != descriptor.width) {
@@ -697,7 +754,7 @@ std::optional<VisualReplacementImage> VisualOverrideService::loadPng(const std::
     return image;
 }
 
-bool VisualOverrideService::writeCaptureManifest()
+bool VisualOverrideService::writeCaptureManifest() const
 {
     std::ofstream out(captureDirectory_ / "manifest.stub.json");
     if (!out) {
@@ -716,8 +773,16 @@ bool VisualOverrideService::writeCaptureManifest()
         out << "      \"match\": {\n";
         out << "        \"kind\": \"" << visualResourceKindName(entry.descriptor.kind) << "\",\n";
         out << "        \"decodedHash\": \"" << toHexVisualHash(entry.descriptor.contentHash) << "\",\n";
+        out << "        \"paletteHash\": \"" << toHexVisualHash(entry.descriptor.paletteHash) << "\",\n";
+        out << "        \"paletteAwareHash\": \"" << toHexVisualHash(entry.descriptor.paletteAwareHash) << "\",\n";
         out << "        \"width\": " << entry.descriptor.width << ",\n";
         out << "        \"height\": " << entry.descriptor.height << "\n";
+        out << "      },\n";
+        out << "      \"metadata\": {\n";
+        out << "        \"sourceAddress\": \"0x" << std::hex << entry.descriptor.source.address << std::dec << "\",\n";
+        out << "        \"tileIndex\": " << entry.descriptor.source.index << ",\n";
+        out << "        \"paletteRegister\": \"" << entry.descriptor.source.paletteRegister << "\",\n";
+        out << "        \"paletteValue\": \"0x" << std::hex << entry.descriptor.source.paletteValue << std::dec << "\"\n";
         out << "      },\n";
         out << "      \"replace\": {\n";
         out << "        \"image\": \"" << entry.imagePath << "\"\n";
@@ -726,6 +791,7 @@ bool VisualOverrideService::writeCaptureManifest()
     }
     out << "  ]\n";
     out << "}\n";
+    captureManifestDirty_ = false;
     return true;
 }
 

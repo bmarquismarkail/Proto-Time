@@ -7,6 +7,9 @@
 #include <deque>
 #include <optional>
 #include <span>
+#include <string>
+#include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "../../../cores/gameboy/video/GameBoyVisualExtractor.hpp"
@@ -86,6 +89,7 @@ public:
             return frame;
         }
 
+        resetVisualTileCache();
         std::vector<uint8_t> backgroundColorIndices(static_cast<std::size_t>(frame.width), 0u);
         for (int y = 0; y < frame.height; ++y) {
             renderScanline(frame, state, y, backgroundColorIndices);
@@ -134,7 +138,9 @@ public:
                 const auto colorIndex = sample.colorIndex;
                 backgroundColorIndices[static_cast<std::size_t>(x)] = colorIndex;
                 if (auto replacementPixel = replacementPixelForTile(state, sample.tileIndex, sample.tileX, sample.tileY,
-                                                                     VisualResourceKind::Tile);
+                                                                     VisualResourceKind::Tile,
+                                                                     state.bgp,
+                                                                     "BGP");
                     replacementPixel.has_value()) {
                     frame.pixels[pixelIndex] = *replacementPixel;
                     usedVisualOverride = true;
@@ -337,38 +343,80 @@ private:
         };
     }
 
+    struct VisualTileCacheEntry {
+        std::optional<DecodedVisualResource> resource;
+        std::optional<ResolvedVisualOverride> resolved;
+        bool decodeAttempted = false;
+        bool resolveAttempted = false;
+    };
+
+    void resetVisualTileCache() const
+    {
+        visualTileCache_.clear();
+    }
+
+    [[nodiscard]] static uint32_t visualTileCacheKey(uint8_t tileIndex,
+                                                     VisualResourceKind kind,
+                                                     uint8_t paletteValue) noexcept
+    {
+        return (static_cast<uint32_t>(kind) << 16u) |
+               (static_cast<uint32_t>(paletteValue) << 8u) |
+               static_cast<uint32_t>(tileIndex);
+    }
+
     [[nodiscard]] std::optional<uint32_t> replacementPixelForTile(const VideoStateView& state,
                                                                   uint8_t tileIndex,
                                                                   uint8_t tileX,
                                                                   uint8_t tileY,
-                                                                  VisualResourceKind kind) const
+                                                                  VisualResourceKind kind,
+                                                                  uint8_t paletteValue,
+                                                                  std::string_view paletteRegister) const
     {
-        if (visualOverrideService_ == nullptr || !visualOverrideService_->enabled()) {
+        if (visualOverrideService_ == nullptr || !visualOverrideService_->hasActiveWork()) {
             return std::nullopt;
         }
-        auto resource = GB::decodeGameBoyTileResource(state, tileIndex, kind);
-        if (!resource.has_value()) {
-            return std::nullopt;
-        }
-        (void)visualOverrideService_->observe(*resource);
+        const auto cacheKey = visualTileCacheKey(tileIndex, kind, paletteValue);
+        auto& entry = visualTileCache_[cacheKey];
 
-        auto resolved = visualOverrideService_->resolve(resource->descriptor);
-        if (!resolved.has_value() || resolved->image.empty()) {
-            if (kind != VisualResourceKind::Tile) {
-                resource->descriptor.kind = VisualResourceKind::Tile;
-                resolved = visualOverrideService_->resolve(resource->descriptor);
+        if (!entry.decodeAttempted) {
+            entry.decodeAttempted = true;
+            auto resource = GB::decodeGameBoyTileResource(state, tileIndex, kind, paletteValue, paletteRegister);
+            if (!resource.has_value()) {
+                return std::nullopt;
+            }
+            (void)visualOverrideService_->observe(*resource);
+            entry.resource = std::move(*resource);
+        }
+
+        if (!entry.resource.has_value()) {
+            return std::nullopt;
+        }
+
+        if (!visualOverrideService_->hasLoadedPacks()) {
+            return std::nullopt;
+        }
+
+        if (!entry.resolveAttempted) {
+            entry.resolveAttempted = true;
+            auto resolved = visualOverrideService_->resolve(entry.resource->descriptor);
+            if ((!resolved.has_value() || resolved->image.empty()) && kind != VisualResourceKind::Tile) {
+                auto fallbackDescriptor = entry.resource->descriptor;
+                fallbackDescriptor.kind = VisualResourceKind::Tile;
+                resolved = visualOverrideService_->resolve(fallbackDescriptor);
             }
             if (!resolved.has_value() || resolved->image.empty()) {
                 return std::nullopt;
             }
+            entry.resolved = std::move(*resolved);
         }
-        const auto replacementX = static_cast<std::size_t>(tileX) * resolved->image.width / resource->descriptor.width;
-        const auto replacementY = static_cast<std::size_t>(tileY) * resolved->image.height / resource->descriptor.height;
-        const auto index = replacementY * resolved->image.width + replacementX;
-        if (index >= resolved->image.argbPixels.size()) {
+
+        const auto replacementX = static_cast<std::size_t>(tileX) * entry.resolved->image.width / entry.resource->descriptor.width;
+        const auto replacementY = static_cast<std::size_t>(tileY) * entry.resolved->image.height / entry.resource->descriptor.height;
+        const auto index = replacementY * entry.resolved->image.width + replacementX;
+        if (index >= entry.resolved->image.argbPixels.size()) {
             return std::nullopt;
         }
-        return resolved->image.argbPixels[index];
+        return entry.resolved->image.argbPixels[index];
     }
 
     void compositeSpritesForScanline(VideoFramePacket& frame,
@@ -428,7 +476,9 @@ private:
                                                                            effectiveTile,
                                                                            spriteColumn,
                                                                            static_cast<uint8_t>(spriteRow),
-                                                                           VisualResourceKind::Sprite);
+                                                                           VisualResourceKind::Sprite,
+                                                                           palette,
+                                                                           (attributes & 0x10u) != 0u ? "OBP1" : "OBP0");
                     replacementPixel.has_value()) {
                     frame.pixels[pixelIndex] = *replacementPixel;
                     continue;
@@ -453,6 +503,7 @@ private:
 
     VideoEngineConfig config_{};
     VisualOverrideService* visualOverrideService_ = nullptr;
+    mutable std::unordered_map<uint32_t, VisualTileCacheEntry> visualTileCache_;
     std::deque<VideoFramePacket> queuedFrames_{};
     std::optional<VideoFramePacket> lastValidFrame_{};
     VideoEngineStats stats_{};

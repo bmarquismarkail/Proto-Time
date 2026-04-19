@@ -7,8 +7,10 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
@@ -63,6 +65,12 @@ BMMQ::VideoStateView makeTileState(uint8_t lowByte, uint8_t highByte)
     return state;
 }
 
+std::string readTextFile(const std::filesystem::path& path)
+{
+    std::ifstream input(path);
+    return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+}
+
 } // namespace
 
 int main()
@@ -80,16 +88,37 @@ int main()
     assert(resource->descriptor.height == 8u);
     assert(resource->descriptor.decodedFormat == BMMQ::VisualPixelFormat::Indexed2);
     assert(resource->descriptor.contentHash != 0u);
+    assert(resource->descriptor.paletteHash != 0u);
+    assert(resource->descriptor.paletteAwareHash != 0u);
+    assert(resource->descriptor.paletteAwareHash != resource->descriptor.contentHash);
     assert(resource->pixels.size() == 64u);
 
     auto identical = GB::decodeGameBoyTileResource(state, 0u, BMMQ::VisualResourceKind::Tile);
     assert(identical.has_value());
     assert(identical->descriptor.contentHash == resource->descriptor.contentHash);
+    assert(identical->descriptor.paletteHash == resource->descriptor.paletteHash);
+    assert(identical->descriptor.paletteAwareHash == resource->descriptor.paletteAwareHash);
 
     auto differentState = makeTileState(0x00u, 0xFFu);
     auto different = GB::decodeGameBoyTileResource(differentState, 0u, BMMQ::VisualResourceKind::Tile);
     assert(different.has_value());
     assert(different->descriptor.contentHash != resource->descriptor.contentHash);
+
+    auto differentPaletteState = state;
+    differentPaletteState.bgp = 0x1Bu;
+    auto differentPalette = GB::decodeGameBoyTileResource(differentPaletteState, 0u, BMMQ::VisualResourceKind::Tile);
+    assert(differentPalette.has_value());
+    assert(differentPalette->descriptor.contentHash == resource->descriptor.contentHash);
+    assert(differentPalette->descriptor.paletteHash != resource->descriptor.paletteHash);
+    assert(differentPalette->descriptor.paletteAwareHash != resource->descriptor.paletteAwareHash);
+
+    const std::string paletteRegisterText = "OBP1";
+    const std::string_view paletteRegisterView = paletteRegisterText;
+    auto explicitPaletteRegister =
+        GB::decodeGameBoyTileResource(state, 0u, BMMQ::VisualResourceKind::Sprite, 0xAAu, paletteRegisterView);
+    assert(explicitPaletteRegister.has_value());
+    assert(explicitPaletteRegister->descriptor.source.paletteValue == 0xAAu);
+    assert(explicitPaletteRegister->descriptor.source.paletteRegister == "OBP1");
 
     BMMQ::VisualOverrideService service;
     assert(service.enabled());
@@ -118,12 +147,43 @@ int main()
         "}\n");
 
     assert(service.loadPackManifest(manifestPath));
+    assert(service.diagnostics().rulesLoaded == 1u);
     auto resolved = service.resolve(resource->descriptor);
     assert(resolved.has_value());
     assert(resolved->image.width == 2u);
     assert(resolved->image.height == 2u);
     assert(resolved->image.argbPixels.size() == 4u);
     assert(resolved->image.argbPixels[0] == 0xFFFF0000u);
+    assert(service.diagnostics().resolveHits == 1u);
+
+    const auto paletteImagePath = root / "palette-pack" / "images" / "tile.png";
+    writeBinaryFile(paletteImagePath, makePng2x2Rgba());
+    const auto paletteManifestPath = root / "palette-pack" / "pack.json";
+    writeTextFile(paletteManifestPath,
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"palette.gb\",\n"
+        "  \"name\": \"Palette Pack\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [\n"
+        "    {\n"
+        "      \"match\": {\n"
+        "        \"kind\": \"Tile\",\n"
+        "        \"paletteAwareHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.paletteAwareHash) + "\",\n"
+        "        \"width\": 8,\n"
+        "        \"height\": 8\n"
+        "      },\n"
+        "      \"replace\": {\n"
+        "        \"image\": \"images/tile.png\"\n"
+        "      }\n"
+        "    }\n"
+        "  ]\n"
+        "}\n");
+    BMMQ::VisualOverrideService paletteService;
+    assert(paletteService.loadPackManifest(paletteManifestPath));
+    assert(paletteService.resolve(resource->descriptor).has_value());
+    assert(!paletteService.resolve(differentPalette->descriptor).has_value());
+    assert(paletteService.diagnostics().resolveMisses == 1u);
 
     service.setEnabled(false);
     assert(!service.resolve(resource->descriptor).has_value());
@@ -158,7 +218,11 @@ int main()
     assert(captureService.observe(*resource));
     assert(!captureService.observe(*identical));
     assert(captureService.captureStats().uniqueResourcesDumped == 1u);
-    assert(std::filesystem::exists(dumpDir / "manifest.stub.json"));
+    const auto captureManifest = dumpDir / "manifest.stub.json";
+    assert(std::filesystem::exists(captureManifest));
+    const auto captureManifestText = readTextFile(captureManifest);
+    assert(captureManifestText.find("\"paletteHash\"") != std::string::npos);
+    assert(captureManifestText.find("\"paletteAwareHash\"") != std::string::npos);
 
     GameBoyMachine machine;
     assert(&machine.visualOverrideService() == &machine.mutableView().visualOverrideService());
