@@ -3,6 +3,8 @@
 #include <array>
 #include <cstdint>
 #include <fstream>
+#include <iomanip>
+#include <sstream>
 #include <span>
 #include <string>
 #include <vector>
@@ -55,6 +57,13 @@ namespace {
     return escaped;
 }
 
+[[nodiscard]] std::string fixedHex(uint32_t value, int width)
+{
+    std::ostringstream out;
+    out << "0x" << std::hex << std::nouppercase << std::setfill('0') << std::setw(width) << value;
+    return out.str();
+}
+
 void appendBigEndian32(std::vector<uint8_t>& bytes, uint32_t value)
 {
     bytes.push_back(static_cast<uint8_t>((value >> 24u) & 0xFFu));
@@ -99,6 +108,11 @@ bool VisualCaptureWriter::writeManifests(const std::filesystem::path& captureDir
             out << "      \"match\": {\n";
             out << "        \"kind\": \"" << visualResourceKindName(entry.descriptor.kind) << "\",\n";
             out << "        \"sourceHash\": \"" << toHexVisualHash(entry.descriptor.sourceHash) << "\",\n";
+            out << "        \"sourceBank\": " << entry.descriptor.source.bank << ",\n";
+            out << "        \"sourceAddress\": \"" << fixedHex(entry.descriptor.source.address, 4) << "\",\n";
+            out << "        \"tileIndex\": " << entry.descriptor.source.index << ",\n";
+            out << "        \"paletteRegister\": \"" << jsonEscaped(entry.descriptor.source.paletteRegister) << "\",\n";
+            out << "        \"paletteValue\": \"" << fixedHex(entry.descriptor.source.paletteValue, 2) << "\",\n";
             out << "        \"decodedHash\": \"" << toHexVisualHash(entry.descriptor.contentHash) << "\",\n";
             out << "        \"paletteHash\": \"" << toHexVisualHash(entry.descriptor.paletteHash) << "\",\n";
             out << "        \"paletteAwareHash\": \"" << toHexVisualHash(entry.descriptor.paletteAwareHash) << "\",\n";
@@ -108,10 +122,11 @@ bool VisualCaptureWriter::writeManifests(const std::filesystem::path& captureDir
             if (includeMetadata) {
                 out << "      \"metadata\": {\n";
                 out << "        \"resourceKind\": \"" << visualResourceKindName(entry.descriptor.kind) << "\",\n";
-                out << "        \"sourceAddress\": \"0x" << std::hex << entry.descriptor.source.address << std::dec << "\",\n";
+                out << "        \"sourceBank\": " << entry.descriptor.source.bank << ",\n";
+                out << "        \"sourceAddress\": \"" << fixedHex(entry.descriptor.source.address, 4) << "\",\n";
                 out << "        \"tileIndex\": " << entry.descriptor.source.index << ",\n";
                 out << "        \"paletteRegister\": \"" << jsonEscaped(entry.descriptor.source.paletteRegister) << "\",\n";
-                out << "        \"paletteValue\": \"0x" << std::hex << entry.descriptor.source.paletteValue << std::dec << "\"\n";
+                out << "        \"paletteValue\": \"" << fixedHex(entry.descriptor.source.paletteValue, 2) << "\"\n";
                 out << "      },\n";
             }
             out << "      \"replace\": {\n";
@@ -142,10 +157,11 @@ bool VisualCaptureWriter::writeManifests(const std::filesystem::path& captureDir
             out << "      \"decodedHash\": \"" << toHexVisualHash(entry.descriptor.contentHash) << "\",\n";
             out << "      \"paletteHash\": \"" << toHexVisualHash(entry.descriptor.paletteHash) << "\",\n";
             out << "      \"paletteAwareHash\": \"" << toHexVisualHash(entry.descriptor.paletteAwareHash) << "\",\n";
-            out << "      \"sourceAddress\": \"0x" << std::hex << entry.descriptor.source.address << std::dec << "\",\n";
+            out << "      \"sourceBank\": " << entry.descriptor.source.bank << ",\n";
+            out << "      \"sourceAddress\": \"" << fixedHex(entry.descriptor.source.address, 4) << "\",\n";
             out << "      \"tileIndex\": " << entry.descriptor.source.index << ",\n";
             out << "      \"paletteRegister\": \"" << jsonEscaped(entry.descriptor.source.paletteRegister) << "\",\n";
-            out << "      \"paletteValue\": \"0x" << std::hex << entry.descriptor.source.paletteValue << std::dec << "\"\n";
+            out << "      \"paletteValue\": \"" << fixedHex(entry.descriptor.source.paletteValue, 2) << "\"\n";
             out << "    }" << (i + 1u < entries.size() ? "," : "") << "\n";
         }
         out << "  ]\n";

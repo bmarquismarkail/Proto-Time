@@ -115,6 +115,20 @@ int main(int argc, char** argv)
     frontend->requestWindowVisibility(true);
     assert(frontend->windowVisibilityRequested());
 
+    const auto earlySnapshotsBeforeVisualObservation = frontend->stats().videoStateSnapshots;
+    const auto earlyFramesPreparedBeforeVisualObservation = frontend->stats().framesPrepared;
+    frontend->onVideoEvent(BMMQ::MachineEvent{
+        BMMQ::MachineEventType::VisualResourceObserved,
+        BMMQ::PluginCategory::Video,
+        0,
+        0,
+        0,
+        nullptr,
+        "early visual observation should not sample video state"
+    }, machine.view());
+    assert(frontend->stats().videoStateSnapshots == earlySnapshotsBeforeVisualObservation);
+    assert(frontend->stats().framesPrepared == earlyFramesPreparedBeforeVisualObservation);
+
     frontend->pressButton(BMMQ::InputButton::Right);
     frontend->pressButton(BMMQ::InputButton::Up);
     frontend->pressButton(BMMQ::InputButton::Button1);
@@ -162,6 +176,20 @@ int main(int argc, char** argv)
         assert(frontend->serviceFrontend());
         assert(frontend->bufferedAudioSamples() <= frontend->stats().audioRingBufferCapacitySamples);
     }
+    const auto snapshotsBeforeVisualObservation = frontend->stats().videoStateSnapshots;
+    const auto framesPreparedBeforeVisualObservation = frontend->stats().framesPrepared;
+    frontend->onVideoEvent(BMMQ::MachineEvent{
+        BMMQ::MachineEventType::VisualResourceObserved,
+        BMMQ::PluginCategory::Video,
+        0,
+        0,
+        0,
+        nullptr,
+        "visual observation should not sample video state"
+    }, machine.view());
+    assert(frontend->stats().videoStateSnapshots == snapshotsBeforeVisualObservation);
+    assert(frontend->stats().framesPrepared == framesPreparedBeforeVisualObservation);
+
     const auto pumpedBeforeStep = frontend->pumpBackendEvents();
     (void)pumpedBeforeStep;
     for (int i = 0; i < 20000; ++i) {

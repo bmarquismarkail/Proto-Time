@@ -4,6 +4,7 @@
 #include <fstream>
 #include <map>
 #include <optional>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -366,6 +367,8 @@ private:
     return *value->string();
 }
 
+[[nodiscard]] std::optional<uint64_t> parseVisualHashString(const std::string& value);
+
 [[nodiscard]] std::optional<uint32_t> jsonUInt32(const JsonValue::Object& object, const std::string& key)
 {
     const auto* value = findMember(object, key);
@@ -373,6 +376,25 @@ private:
         return std::nullopt;
     }
     return static_cast<uint32_t>(*value->number());
+}
+
+[[nodiscard]] std::optional<uint32_t> jsonFlexibleUInt32(const JsonValue::Object& object, const std::string& key)
+{
+    const auto* value = findMember(object, key);
+    if (value == nullptr) {
+        return std::nullopt;
+    }
+    if (value->number() != nullptr && *value->number() >= 0.0 &&
+        *value->number() <= static_cast<double>(std::numeric_limits<uint32_t>::max())) {
+        return static_cast<uint32_t>(*value->number());
+    }
+    if (value->string() != nullptr) {
+        const auto parsed = parseVisualHashString(*value->string());
+        if (parsed.has_value() && *parsed <= std::numeric_limits<uint32_t>::max()) {
+            return static_cast<uint32_t>(*parsed);
+        }
+    }
+    return std::nullopt;
 }
 
 [[nodiscard]] bool jsonUInt32Equals(const JsonValue::Object& object, const std::string& key, uint32_t expected)
@@ -503,6 +525,14 @@ VisualPackManifestLoadResult loadVisualPackManifest(const std::filesystem::path&
             }
             rule.width = jsonUInt32(*matchValue->object(), "width").value_or(0u);
             rule.height = jsonUInt32(*matchValue->object(), "height").value_or(0u);
+            rule.sourceBank = jsonFlexibleUInt32(*matchValue->object(), "sourceBank");
+            rule.sourceAddress = jsonFlexibleUInt32(*matchValue->object(), "sourceAddress");
+            rule.sourceIndex = jsonFlexibleUInt32(*matchValue->object(), "tileIndex");
+            if (!rule.sourceIndex.has_value()) {
+                rule.sourceIndex = jsonFlexibleUInt32(*matchValue->object(), "sourceIndex");
+            }
+            rule.paletteRegister = jsonString(*matchValue->object(), "paletteRegister").value_or("");
+            rule.paletteValue = jsonFlexibleUInt32(*matchValue->object(), "paletteValue");
             rule.image = jsonString(*replaceValue->object(), "image").value_or("");
             rule.scalePolicy = jsonString(*replaceValue->object(), "scalePolicy").value_or("");
             rule.filterPolicy = jsonString(*replaceValue->object(), "filterPolicy").value_or("");
@@ -526,7 +556,12 @@ VisualPackManifestLoadResult loadVisualPackManifest(const std::filesystem::path&
                 (rule.paletteAwareHash != 0u ? 4u : 0u) +
                 (!rule.semanticLabel.empty() ? 3u : 0u) +
                 (rule.width != 0u ? 1u : 0u) +
-                (rule.height != 0u ? 1u : 0u);
+                (rule.height != 0u ? 1u : 0u) +
+                (rule.sourceBank.has_value() ? 1u : 0u) +
+                (rule.sourceAddress.has_value() ? 2u : 0u) +
+                (rule.sourceIndex.has_value() ? 2u : 0u) +
+                (!rule.paletteRegister.empty() ? 2u : 0u) +
+                (rule.paletteValue.has_value() ? 2u : 0u);
             pack.rules.push_back(std::move(rule));
         }
     }

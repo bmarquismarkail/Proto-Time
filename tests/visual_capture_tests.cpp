@@ -57,6 +57,11 @@ int main()
     const auto captureManifestText = Visual::readTextFile(captureManifest);
     assert(captureManifestText.find("\"sourceHash\"") != std::string::npos);
     assert(captureManifestText.find(BMMQ::toHexVisualHash(resource->descriptor.sourceHash)) != std::string::npos);
+    assert(captureManifestText.find("\"sourceAddress\"") != std::string::npos);
+    assert(captureManifestText.find("\"sourceAddress\": \"0x8000\"") != std::string::npos);
+    assert(captureManifestText.find("\"tileIndex\"") != std::string::npos);
+    assert(captureManifestText.find("\"paletteRegister\"") != std::string::npos);
+    assert(captureManifestText.find("\"paletteValue\": \"0xe4\"") != std::string::npos);
     assert(captureManifestText.find("\"paletteHash\"") != std::string::npos);
     assert(captureManifestText.find("\"paletteAwareHash\"") != std::string::npos);
     const auto capturePackText = Visual::readTextFile(capturePack);
@@ -64,7 +69,9 @@ int main()
     assert(capturePackText.find("\"metadata\"") == std::string::npos);
     const auto captureMetadataText = Visual::readTextFile(captureMetadata);
     assert(captureMetadataText.find("\"sourceHash\"") != std::string::npos);
+    assert(captureMetadataText.find("\"sourceBank\"") != std::string::npos);
     assert(captureMetadataText.find("\"sourceAddress\"") != std::string::npos);
+    assert(captureMetadataText.find("\"paletteValue\": \"0xaa\"") != std::string::npos);
     assert(captureMetadataText.find("\"paletteRegister\": \"BGP\"") != std::string::npos);
     assert(captureMetadataText.find("\"paletteRegister\": \"A\\b\\f\\u0001Z\"") != std::string::npos);
 

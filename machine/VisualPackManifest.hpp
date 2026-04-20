@@ -23,6 +23,11 @@ struct VisualOverrideRule {
     VisualResourceHash paletteAwareHash = 0;
     uint32_t width = 0;
     uint32_t height = 0;
+    std::optional<uint32_t> sourceBank;
+    std::optional<uint32_t> sourceAddress;
+    std::optional<uint32_t> sourceIndex;
+    std::optional<uint32_t> paletteValue;
+    std::string paletteRegister;
     std::filesystem::path image;
     std::string scalePolicy;
     std::string filterPolicy;

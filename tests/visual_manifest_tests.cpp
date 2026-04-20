@@ -134,6 +134,62 @@ int main()
     assert(!wrongSourceHashService.resolve(resource->descriptor).has_value());
     assert(wrongSourceHashService.diagnostics().resolveMisses == 1u);
 
+    Visual::writeBinaryFile(root / "metadata-match-pack" / "images" / "tile.png", Visual::makePng2x2Rgba());
+    Visual::writeTextFile(root / "metadata-match-pack" / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"metadata-match.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"sourceHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.sourceHash) + "\",\n"
+        "      \"sourceBank\": 0,\n"
+        "      \"sourceAddress\": \"0x8000\",\n"
+        "      \"tileIndex\": 0,\n"
+        "      \"paletteRegister\": \"BGP\",\n"
+        "      \"paletteValue\": \"0xe4\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\"image\": \"images/tile.png\"}\n"
+        "  }]\n"
+        "}\n");
+    BMMQ::VisualOverrideService metadataMatchService;
+    assert(metadataMatchService.loadPackManifest(root / "metadata-match-pack" / "pack.json"));
+    auto metadataResolved = metadataMatchService.resolve(resource->descriptor);
+    assert(metadataResolved.has_value());
+    assert(metadataResolved->packId == "metadata-match.gb");
+    auto differentTileIndexDescriptor = resource->descriptor;
+    differentTileIndexDescriptor.source.index = 1u;
+    assert(!metadataMatchService.resolve(differentTileIndexDescriptor).has_value());
+    assert(metadataMatchService.diagnostics().resolveMisses == 1u);
+
+    Visual::writeBinaryFile(root / "metadata-miss-pack" / "images" / "tile.png", Visual::makePng2x2Rgba());
+    Visual::writeTextFile(root / "metadata-miss-pack" / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"metadata-miss.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"sourceHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.sourceHash) + "\",\n"
+        "      \"sourceAddress\": \"0x8000\",\n"
+        "      \"tileIndex\": 1,\n"
+        "      \"paletteRegister\": \"BGP\",\n"
+        "      \"paletteValue\": \"0xe4\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\"image\": \"images/tile.png\"}\n"
+        "  }]\n"
+        "}\n");
+    BMMQ::VisualOverrideService metadataMissService;
+    assert(metadataMissService.loadPackManifest(root / "metadata-miss-pack" / "pack.json"));
+    assert(!metadataMissService.resolve(resource->descriptor).has_value());
+    assert(metadataMissService.diagnostics().resolveMisses == 1u);
+
     const auto semanticImagePath = root / "semantic-pack" / "images" / "tile.png";
     Visual::writeBinaryFile(semanticImagePath, Visual::makePng2x2Rgba());
     const auto semanticManifestPath = root / "semantic-pack" / "pack.json";

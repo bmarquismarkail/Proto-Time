@@ -401,6 +401,11 @@ std::string VisualOverrideService::makeDescriptorKey(const VisualResourceDescrip
         std::to_string(descriptor.width) + "x" + std::to_string(descriptor.height) + "|" +
         visualPixelFormatName(descriptor.decodedFormat) + "|" +
         descriptor.source.label + "|" +
+        std::to_string(descriptor.source.bank) + "|" +
+        std::to_string(descriptor.source.address) + "|" +
+        std::to_string(descriptor.source.index) + "|" +
+        descriptor.source.paletteRegister + "|" +
+        std::to_string(descriptor.source.paletteValue) + "|" +
         toHexVisualHash(descriptor.sourceHash) + "|" +
         toHexVisualHash(descriptor.contentHash) + "|" +
         toHexVisualHash(descriptor.paletteHash) + "|" +
@@ -419,6 +424,21 @@ bool VisualOverrideService::matches(const VisualOverrideRule& rule, const Visual
         return false;
     }
     if (!rule.semanticLabel.empty() && rule.semanticLabel != descriptor.source.label) {
+        return false;
+    }
+    if (rule.sourceBank.has_value() && *rule.sourceBank != descriptor.source.bank) {
+        return false;
+    }
+    if (rule.sourceAddress.has_value() && *rule.sourceAddress != descriptor.source.address) {
+        return false;
+    }
+    if (rule.sourceIndex.has_value() && *rule.sourceIndex != descriptor.source.index) {
+        return false;
+    }
+    if (!rule.paletteRegister.empty() && rule.paletteRegister != descriptor.source.paletteRegister) {
+        return false;
+    }
+    if (rule.paletteValue.has_value() && *rule.paletteValue != descriptor.source.paletteValue) {
         return false;
     }
     if (rule.sourceHash != 0u && rule.sourceHash != descriptor.sourceHash) {

@@ -491,11 +491,16 @@ public:
         }
         ++stats_.videoEvents;
         const bool lcdControlWrite = event.type == BMMQ::MachineEventType::MemoryWriteObserved && event.address == 0xFF40u;
-        const bool shouldSampleVideoState =
+        const bool carriesVideoState =
+            event.type == BMMQ::MachineEventType::MemoryWriteObserved ||
             event.type == BMMQ::MachineEventType::VBlank ||
-            event.type == BMMQ::MachineEventType::VideoScanlineReady ||
-            !lastFrame_.has_value() ||
-            lcdControlWrite;
+            event.type == BMMQ::MachineEventType::VideoScanlineReady;
+        const bool shouldSampleVideoState =
+            carriesVideoState &&
+            (event.type == BMMQ::MachineEventType::VBlank ||
+             event.type == BMMQ::MachineEventType::VideoScanlineReady ||
+             !lastFrame_.has_value() ||
+             lcdControlWrite);
 
         bool submittedVideoFrame = false;
         if (shouldSampleVideoState) {
