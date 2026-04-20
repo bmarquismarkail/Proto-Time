@@ -1,6 +1,7 @@
 #ifndef BMMQ_TESTS_VISUAL_TEST_HELPERS_HPP
 #define BMMQ_TESTS_VISUAL_TEST_HELPERS_HPP
 
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -85,22 +86,42 @@ inline void appendBigEndian32(std::vector<uint8_t>& bytes, uint32_t value)
 inline void appendPngChunk(std::vector<uint8_t>& bytes, const char* type, const std::vector<uint8_t>& data)
 {
     appendBigEndian32(bytes, static_cast<uint32_t>(data.size()));
+    const auto typeOffset = bytes.size();
     bytes.insert(bytes.end(), type, type + 4u);
     bytes.insert(bytes.end(), data.begin(), data.end());
-    appendBigEndian32(bytes, 0u);
+    const auto crc = crc32(0u,
+                           bytes.data() + typeOffset,
+                           static_cast<uLong>(4u + data.size()));
+    appendBigEndian32(bytes, static_cast<uint32_t>(crc));
 }
+
+[[nodiscard]] inline std::vector<uint8_t> makeRgbaPng(uint32_t width,
+                                                      uint32_t height,
+                                                      const std::vector<uint32_t>& argbPixels);
 
 [[nodiscard]] inline std::vector<uint8_t> makeSolidPng2x2Rgba(uint32_t argb)
 {
+    std::vector<uint32_t> pixels(4u, argb);
+    return makeRgbaPng(2u, 2u, pixels);
+}
+
+[[nodiscard]] inline std::vector<uint8_t> makeRgbaPng(uint32_t width, uint32_t height, const std::vector<uint32_t>& argbPixels)
+{
+    const auto expectedPixels =
+        static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+    assert(argbPixels.size() == expectedPixels);
+
     std::vector<uint8_t> raw;
-    raw.reserve(18u);
-    const auto r = static_cast<uint8_t>((argb >> 16u) & 0xFFu);
-    const auto g = static_cast<uint8_t>((argb >> 8u) & 0xFFu);
-    const auto b = static_cast<uint8_t>(argb & 0xFFu);
-    const auto a = static_cast<uint8_t>((argb >> 24u) & 0xFFu);
-    for (std::size_t y = 0; y < 2u; ++y) {
+    raw.reserve((static_cast<std::size_t>(width) * 4u + 1u) * static_cast<std::size_t>(height));
+    for (std::size_t y = 0; y < height; ++y) {
         raw.push_back(0u);
-        for (std::size_t x = 0; x < 2u; ++x) {
+        for (std::size_t x = 0; x < width; ++x) {
+            const auto index = y * static_cast<std::size_t>(width) + x;
+            const auto argb = argbPixels[index];
+            const auto r = static_cast<uint8_t>((argb >> 16u) & 0xFFu);
+            const auto g = static_cast<uint8_t>((argb >> 8u) & 0xFFu);
+            const auto b = static_cast<uint8_t>(argb & 0xFFu);
+            const auto a = static_cast<uint8_t>((argb >> 24u) & 0xFFu);
             raw.push_back(r);
             raw.push_back(g);
             raw.push_back(b);
@@ -122,8 +143,8 @@ inline void appendPngChunk(std::vector<uint8_t>& bytes, const char* type, const 
 
     std::vector<uint8_t> png{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
     std::vector<uint8_t> ihdr;
-    appendBigEndian32(ihdr, 2u);
-    appendBigEndian32(ihdr, 2u);
+    appendBigEndian32(ihdr, width);
+    appendBigEndian32(ihdr, height);
     ihdr.push_back(8u);
     ihdr.push_back(6u);
     ihdr.push_back(0u);

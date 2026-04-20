@@ -2,6 +2,7 @@
 #define BMMQ_VIDEO_ENGINE_HPP
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -436,13 +437,114 @@ private:
             entry.resolved = std::move(*resolved);
         }
 
-        const auto replacementX = static_cast<std::size_t>(tileX) * entry.resolved->image.width / entry.resource->descriptor.width;
-        const auto replacementY = static_cast<std::size_t>(tileY) * entry.resolved->image.height / entry.resource->descriptor.height;
-        const auto index = replacementY * entry.resolved->image.width + replacementX;
-        if (index >= entry.resolved->image.argbPixels.size()) {
+        if (!entry.resolved.has_value()) {
             return std::nullopt;
         }
-        return entry.resolved->image.argbPixels[index];
+        return sampleReplacementPixel(*entry.resolved, entry.resource->descriptor, tileX, tileY);
+    }
+
+    [[nodiscard]] static std::optional<uint32_t> sampleReplacementPixel(const ResolvedVisualOverride& resolved,
+                                                                        const VisualResourceDescriptor& descriptor,
+                                                                        uint8_t tileX,
+                                                                        uint8_t tileY) noexcept
+    {
+        if (resolved.image.empty()) {
+            return std::nullopt;
+        }
+        if (resolved.scalePolicy == "exact" &&
+            (resolved.image.width != descriptor.width || resolved.image.height != descriptor.height)) {
+            return std::nullopt;
+        }
+
+        if (resolved.scalePolicy == "crop") {
+            return sampleNearest(resolved.image,
+                                 cropCoordinate(tileX, resolved.image.width, descriptor.width, resolved.anchor),
+                                 cropCoordinate(tileY, resolved.image.height, descriptor.height, resolved.anchor));
+        }
+
+        const auto x = scaledCoordinate(tileX, resolved.image.width, descriptor.width);
+        const auto y = scaledCoordinate(tileY, resolved.image.height, descriptor.height);
+        if (resolved.filterPolicy == "linear") {
+            return sampleLinear(resolved.image, x, y);
+        }
+        return sampleNearest(resolved.image,
+                             static_cast<std::size_t>(x),
+                             static_cast<std::size_t>(y));
+    }
+
+    [[nodiscard]] static double scaledCoordinate(uint8_t sourceCoordinate,
+                                                 uint32_t replacementSize,
+                                                 uint32_t sourceSize) noexcept
+    {
+        if (sourceSize <= 1u || replacementSize <= 1u) {
+            return 0.0;
+        }
+        return static_cast<double>(sourceCoordinate) * static_cast<double>(replacementSize - 1u) /
+               static_cast<double>(sourceSize - 1u);
+    }
+
+    [[nodiscard]] static std::size_t cropCoordinate(uint8_t sourceCoordinate,
+                                                    uint32_t replacementSize,
+                                                    uint32_t sourceSize,
+                                                    const std::string& anchor) noexcept
+    {
+        std::size_t offset = 0;
+        if (replacementSize > sourceSize) {
+            if (anchor == "bottom-right" || anchor == "right" || anchor == "bottom") {
+                offset = static_cast<std::size_t>(replacementSize - sourceSize);
+            } else if (anchor == "center" || anchor == "middle") {
+                offset = static_cast<std::size_t>((replacementSize - sourceSize) / 2u);
+            }
+        }
+        return std::min(offset + static_cast<std::size_t>(sourceCoordinate),
+                        static_cast<std::size_t>(replacementSize - 1u));
+    }
+
+    [[nodiscard]] static std::optional<uint32_t> sampleNearest(const VisualReplacementImage& image,
+                                                               std::size_t x,
+                                                               std::size_t y) noexcept
+    {
+        const auto clampedX = std::min(x, static_cast<std::size_t>(image.width - 1u));
+        const auto clampedY = std::min(y, static_cast<std::size_t>(image.height - 1u));
+        const auto index = clampedY * static_cast<std::size_t>(image.width) + clampedX;
+        if (index >= image.argbPixels.size()) {
+            return std::nullopt;
+        }
+        return image.argbPixels[index];
+    }
+
+    [[nodiscard]] static std::optional<uint32_t> sampleLinear(const VisualReplacementImage& image,
+                                                              double x,
+                                                              double y) noexcept
+    {
+        const auto x0 = static_cast<std::size_t>(std::floor(x));
+        const auto y0 = static_cast<std::size_t>(std::floor(y));
+        const auto x1 = std::min(x0 + 1u, static_cast<std::size_t>(image.width - 1u));
+        const auto y1 = std::min(y0 + 1u, static_cast<std::size_t>(image.height - 1u));
+        const auto tx = x - static_cast<double>(x0);
+        const auto ty = y - static_cast<double>(y0);
+        const auto c00 = sampleNearest(image, x0, y0);
+        const auto c10 = sampleNearest(image, x1, y0);
+        const auto c01 = sampleNearest(image, x0, y1);
+        const auto c11 = sampleNearest(image, x1, y1);
+        if (!c00.has_value() || !c10.has_value() || !c01.has_value() || !c11.has_value()) {
+            return std::nullopt;
+        }
+        const auto blend = [tx, ty](uint32_t c00Value, uint32_t c10Value, uint32_t c01Value, uint32_t c11Value,
+                                    int shift) {
+            const auto p00 = static_cast<double>((c00Value >> shift) & 0xFFu);
+            const auto p10 = static_cast<double>((c10Value >> shift) & 0xFFu);
+            const auto p01 = static_cast<double>((c01Value >> shift) & 0xFFu);
+            const auto p11 = static_cast<double>((c11Value >> shift) & 0xFFu);
+            const auto top = p00 + (p10 - p00) * tx;
+            const auto bottom = p01 + (p11 - p01) * tx;
+            return static_cast<uint32_t>(std::lround(top + (bottom - top) * ty));
+        };
+        const auto a = blend(*c00, *c10, *c01, *c11, 24);
+        const auto r = blend(*c00, *c10, *c01, *c11, 16);
+        const auto g = blend(*c00, *c10, *c01, *c11, 8);
+        const auto b = blend(*c00, *c10, *c01, *c11, 0);
+        return (a << 24u) | (r << 16u) | (g << 8u) | b;
     }
 
     void compositeSpritesForScanline(VideoFramePacket& frame,

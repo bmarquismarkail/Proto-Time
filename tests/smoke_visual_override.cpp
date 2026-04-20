@@ -121,6 +121,110 @@ int main()
                      visualEvents.end(),
                      BMMQ::MachineEventType::VisualOverrideResolved) != visualEvents.end());
 
+    BMMQ::VisualOverrideService exactPolicyService;
+    const auto exactPolicyDir = root / "exact-policy-pack";
+    Visual::writeBinaryFile(exactPolicyDir / "tile.png", Visual::makeSolidPng2x2Rgba(0xFFFF0000u));
+    Visual::writeTextFile(exactPolicyDir / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"exact-policy.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"image\": \"tile.png\",\n"
+        "      \"scalePolicy\": \"exact\"\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    assert(exactPolicyService.loadPackManifest(exactPolicyDir / "pack.json"));
+    BMMQ::VideoService exactPolicyVideoService(BMMQ::VideoEngineConfig{
+        .frameWidth = 8,
+        .frameHeight = 8,
+        .queueCapacityFrames = 1,
+    });
+    exactPolicyVideoService.setVisualOverrideService(&exactPolicyService);
+    auto exactPolicyFrame = exactPolicyVideoService.engine().buildDebugFrame(state, 6u);
+    assert(exactPolicyFrame.pixels[0] == 0xFF88C070u);
+
+    BMMQ::VisualOverrideService cropAnchorService;
+    const auto cropAnchorDir = root / "crop-anchor-pack";
+    std::vector<uint32_t> cropPixels(16u * 16u, 0xFFFF0000u);
+    for (std::size_t y = 8u; y < 16u; ++y) {
+        for (std::size_t x = 8u; x < 16u; ++x) {
+            cropPixels[y * 16u + x] = 0xFF00FF00u;
+        }
+    }
+    Visual::writeBinaryFile(cropAnchorDir / "tile.png", Visual::makeRgbaPng(16u, 16u, cropPixels));
+    Visual::writeTextFile(cropAnchorDir / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"crop-anchor.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"image\": \"tile.png\",\n"
+        "      \"scalePolicy\": \"crop\",\n"
+        "      \"anchor\": \"bottom-right\"\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    assert(cropAnchorService.loadPackManifest(cropAnchorDir / "pack.json"));
+    BMMQ::VideoService cropAnchorVideoService(BMMQ::VideoEngineConfig{
+        .frameWidth = 8,
+        .frameHeight = 8,
+        .queueCapacityFrames = 1,
+    });
+    cropAnchorVideoService.setVisualOverrideService(&cropAnchorService);
+    auto cropAnchorFrame = cropAnchorVideoService.engine().buildDebugFrame(state, 7u);
+    assert(cropAnchorFrame.pixels[0] == 0xFF00FF00u);
+
+    BMMQ::VisualOverrideService linearPolicyService;
+    const auto linearPolicyDir = root / "linear-policy-pack";
+    Visual::writeBinaryFile(linearPolicyDir / "tile.png",
+                            Visual::makeRgbaPng(2u, 1u, {0xFFFF0000u, 0xFF00FF00u}));
+    Visual::writeTextFile(linearPolicyDir / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"linear-policy.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"image\": \"tile.png\",\n"
+        "      \"scalePolicy\": \"allow-any\",\n"
+        "      \"filterPolicy\": \"linear\"\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    assert(linearPolicyService.loadPackManifest(linearPolicyDir / "pack.json"));
+    BMMQ::VideoService linearPolicyVideoService(BMMQ::VideoEngineConfig{
+        .frameWidth = 8,
+        .frameHeight = 8,
+        .queueCapacityFrames = 1,
+    });
+    linearPolicyVideoService.setVisualOverrideService(&linearPolicyService);
+    auto linearPolicyFrame = linearPolicyVideoService.engine().buildDebugFrame(state, 8u);
+    // A 2x1 replacement from red to green is upscaled across the 8x8 tile; pixel 4 lands between the
+    // endpoints in the bilinear sample, producing roughly R=0x6D and G=0x92, so the expected ARGB is 0xFF6D9200.
+    assert(linearPolicyFrame.pixels[4] == 0xFF6D9200u);
+
     auto signedTileState = Visual::makeTileState(0x00u, 0x00u);
     signedTileState.lcdc = 0x81u;
     for (std::size_t row = 0; row < 8u; ++row) {
