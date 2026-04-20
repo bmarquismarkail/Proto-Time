@@ -17,6 +17,7 @@ struct VisualOverrideRule {
     std::string semanticLabel;
     VisualResourceKind kind = VisualResourceKind::Unknown;
     VisualPixelFormat decodedFormat = VisualPixelFormat::Unknown;
+    VisualResourceHash sourceHash = 0;
     VisualResourceHash decodedHash = 0;
     VisualResourceHash paletteHash = 0;
     VisualResourceHash paletteAwareHash = 0;

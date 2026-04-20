@@ -401,6 +401,7 @@ std::string VisualOverrideService::makeDescriptorKey(const VisualResourceDescrip
         std::to_string(descriptor.width) + "x" + std::to_string(descriptor.height) + "|" +
         visualPixelFormatName(descriptor.decodedFormat) + "|" +
         descriptor.source.label + "|" +
+        toHexVisualHash(descriptor.sourceHash) + "|" +
         toHexVisualHash(descriptor.contentHash) + "|" +
         toHexVisualHash(descriptor.paletteHash) + "|" +
         toHexVisualHash(descriptor.paletteAwareHash);
@@ -420,6 +421,9 @@ bool VisualOverrideService::matches(const VisualOverrideRule& rule, const Visual
     if (!rule.semanticLabel.empty() && rule.semanticLabel != descriptor.source.label) {
         return false;
     }
+    if (rule.sourceHash != 0u && rule.sourceHash != descriptor.sourceHash) {
+        return false;
+    }
     if (rule.paletteAwareHash != 0u && rule.paletteAwareHash != descriptor.paletteAwareHash) {
         return false;
     }
@@ -429,7 +433,7 @@ bool VisualOverrideService::matches(const VisualOverrideRule& rule, const Visual
     if (rule.decodedHash != 0u && rule.decodedHash != descriptor.contentHash) {
         return false;
     }
-    if (rule.paletteAwareHash == 0u && rule.decodedHash == 0u) {
+    if (rule.sourceHash == 0u && rule.paletteAwareHash == 0u && rule.decodedHash == 0u) {
         return false;
     }
     if (rule.width != 0u && rule.width != descriptor.width) {

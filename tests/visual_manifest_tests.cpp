@@ -90,6 +90,50 @@ int main()
     assert(multiTargetResolved.has_value());
     assert(multiTargetResolved->packId == "multi-target.gb");
 
+    const auto sourceHashImagePath = root / "source-hash-pack" / "images" / "tile.png";
+    Visual::writeBinaryFile(sourceHashImagePath, Visual::makePng2x2Rgba());
+    Visual::writeTextFile(root / "source-hash-pack" / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"source-hash.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"sourceHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.sourceHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\"image\": \"images/tile.png\"}\n"
+        "  }]\n"
+        "}\n");
+    BMMQ::VisualOverrideService sourceHashService;
+    assert(sourceHashService.loadPackManifest(root / "source-hash-pack" / "pack.json"));
+    auto sourceHashResolved = sourceHashService.resolve(resource->descriptor);
+    assert(sourceHashResolved.has_value());
+    assert(sourceHashResolved->packId == "source-hash.gb");
+
+    Visual::writeBinaryFile(root / "wrong-source-hash-pack" / "images" / "tile.png", Visual::makePng2x2Rgba());
+    Visual::writeTextFile(root / "wrong-source-hash-pack" / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"wrong-source-hash.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"sourceHash\": \"0xffffffffffffffff\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\"image\": \"images/tile.png\"}\n"
+        "  }]\n"
+        "}\n");
+    BMMQ::VisualOverrideService wrongSourceHashService;
+    assert(wrongSourceHashService.loadPackManifest(root / "wrong-source-hash-pack" / "pack.json"));
+    assert(!wrongSourceHashService.resolve(resource->descriptor).has_value());
+    assert(wrongSourceHashService.diagnostics().resolveMisses == 1u);
+
     const auto semanticImagePath = root / "semantic-pack" / "images" / "tile.png";
     Visual::writeBinaryFile(semanticImagePath, Visual::makePng2x2Rgba());
     const auto semanticManifestPath = root / "semantic-pack" / "pack.json";

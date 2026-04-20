@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -35,6 +36,8 @@ namespace GB {
     resource.descriptor.width = kTileWidth;
     resource.descriptor.height = kTileHeight;
     resource.descriptor.decodedFormat = BMMQ::VisualPixelFormat::Indexed2;
+    resource.descriptor.sourceHash = BMMQ::hashVisualSourceBytes(
+        std::span<const uint8_t>(state.vram.data() + static_cast<std::ptrdiff_t>(base), kBytesPerTile));
     resource.descriptor.source.index = tileIndex;
     resource.descriptor.source.address = static_cast<uint32_t>(0x8000u + base);
     if (paletteRegister.empty()) {

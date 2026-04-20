@@ -489,6 +489,9 @@ VisualPackManifestLoadResult loadVisualPackManifest(const std::filesystem::path&
             rule.kind = visualResourceKindFromString(jsonString(*matchValue->object(), "kind").value_or(""));
             rule.decodedFormat =
                 visualPixelFormatFromString(jsonString(*matchValue->object(), "decodedFormat").value_or(""));
+            if (const auto hash = jsonString(*matchValue->object(), "sourceHash"); hash.has_value()) {
+                rule.sourceHash = parseVisualHashString(*hash).value_or(0u);
+            }
             if (const auto hash = jsonString(*matchValue->object(), "decodedHash"); hash.has_value()) {
                 rule.decodedHash = parseVisualHashString(*hash).value_or(0u);
             }
@@ -505,7 +508,7 @@ VisualPackManifestLoadResult loadVisualPackManifest(const std::filesystem::path&
             rule.filterPolicy = jsonString(*replaceValue->object(), "filterPolicy").value_or("");
             rule.anchor = jsonString(*replaceValue->object(), "anchor").value_or("");
             if (rule.kind == VisualResourceKind::Unknown ||
-                (rule.decodedHash == 0u && rule.paletteAwareHash == 0u) ||
+                (rule.sourceHash == 0u && rule.decodedHash == 0u && rule.paletteAwareHash == 0u) ||
                 rule.image.empty()) {
                 ++result.invalidRulesSkipped;
                 continue;
@@ -517,6 +520,7 @@ VisualPackManifestLoadResult loadVisualPackManifest(const std::filesystem::path&
             rule.specificity = 1u +
                 (!rule.machineId.empty() ? 4u : 0u) +
                 (rule.decodedFormat != VisualPixelFormat::Unknown ? 2u : 0u) +
+                (rule.sourceHash != 0u ? 2u : 0u) +
                 (rule.decodedHash != 0u ? 2u : 0u) +
                 (rule.paletteHash != 0u ? 3u : 0u) +
                 (rule.paletteAwareHash != 0u ? 4u : 0u) +

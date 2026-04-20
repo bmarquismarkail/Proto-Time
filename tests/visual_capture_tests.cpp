@@ -55,12 +55,15 @@ int main()
     assert(std::filesystem::exists(captureMetadata));
 
     const auto captureManifestText = Visual::readTextFile(captureManifest);
+    assert(captureManifestText.find("\"sourceHash\"") != std::string::npos);
+    assert(captureManifestText.find(BMMQ::toHexVisualHash(resource->descriptor.sourceHash)) != std::string::npos);
     assert(captureManifestText.find("\"paletteHash\"") != std::string::npos);
     assert(captureManifestText.find("\"paletteAwareHash\"") != std::string::npos);
     const auto capturePackText = Visual::readTextFile(capturePack);
     assert(capturePackText.find("\"name\": \"Captured gameboy visual resources\"") != std::string::npos);
     assert(capturePackText.find("\"metadata\"") == std::string::npos);
     const auto captureMetadataText = Visual::readTextFile(captureMetadata);
+    assert(captureMetadataText.find("\"sourceHash\"") != std::string::npos);
     assert(captureMetadataText.find("\"sourceAddress\"") != std::string::npos);
     assert(captureMetadataText.find("\"paletteRegister\": \"BGP\"") != std::string::npos);
     assert(captureMetadataText.find("\"paletteRegister\": \"A\\b\\f\\u0001Z\"") != std::string::npos);

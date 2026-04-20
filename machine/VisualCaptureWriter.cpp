@@ -98,6 +98,7 @@ bool VisualCaptureWriter::writeManifests(const std::filesystem::path& captureDir
             out << "    {\n";
             out << "      \"match\": {\n";
             out << "        \"kind\": \"" << visualResourceKindName(entry.descriptor.kind) << "\",\n";
+            out << "        \"sourceHash\": \"" << toHexVisualHash(entry.descriptor.sourceHash) << "\",\n";
             out << "        \"decodedHash\": \"" << toHexVisualHash(entry.descriptor.contentHash) << "\",\n";
             out << "        \"paletteHash\": \"" << toHexVisualHash(entry.descriptor.paletteHash) << "\",\n";
             out << "        \"paletteAwareHash\": \"" << toHexVisualHash(entry.descriptor.paletteAwareHash) << "\",\n";
@@ -137,6 +138,7 @@ bool VisualCaptureWriter::writeManifests(const std::filesystem::path& captureDir
             out << "    {\n";
             out << "      \"image\": \"" << jsonEscaped(entry.imagePath) << "\",\n";
             out << "      \"resourceKind\": \"" << visualResourceKindName(entry.descriptor.kind) << "\",\n";
+            out << "      \"sourceHash\": \"" << toHexVisualHash(entry.descriptor.sourceHash) << "\",\n";
             out << "      \"decodedHash\": \"" << toHexVisualHash(entry.descriptor.contentHash) << "\",\n";
             out << "      \"paletteHash\": \"" << toHexVisualHash(entry.descriptor.paletteHash) << "\",\n";
             out << "      \"paletteAwareHash\": \"" << toHexVisualHash(entry.descriptor.paletteAwareHash) << "\",\n";

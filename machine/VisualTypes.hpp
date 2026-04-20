@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <iomanip>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -31,6 +32,12 @@ namespace detail {
 inline constexpr VisualResourceHash kFnvOffset = 14695981039346656037ull;
 inline constexpr VisualResourceHash kFnvPrime = 1099511628211ull;
 
+inline void mixVisualHashByte(VisualResourceHash& hash, uint8_t value) noexcept
+{
+    hash ^= static_cast<VisualResourceHash>(value);
+    hash *= kFnvPrime;
+}
+
 } // namespace detail
 
 struct VisualSourceMetadata {
@@ -48,6 +55,7 @@ struct VisualResourceDescriptor {
     uint32_t width = 0;
     uint32_t height = 0;
     VisualPixelFormat decodedFormat = VisualPixelFormat::Unknown;
+    VisualResourceHash sourceHash = 0;
     VisualResourceHash contentHash = 0;
     VisualResourceHash paletteHash = 0;
     VisualResourceHash paletteAwareHash = 0;
@@ -140,23 +148,31 @@ struct ResolvedVisualOverride {
     return out.str();
 }
 
+[[nodiscard]] inline VisualResourceHash hashVisualSourceBytes(std::span<const uint8_t> bytes,
+                                                             VisualResourceHash seed) noexcept
+{
+    auto hash = seed;
+    for (const auto byte : bytes) {
+        detail::mixVisualHashByte(hash, byte);
+    }
+    return hash;
+}
+
+[[nodiscard]] inline VisualResourceHash hashVisualSourceBytes(std::span<const uint8_t> bytes) noexcept
+{
+    return hashVisualSourceBytes(bytes, detail::kFnvOffset);
+}
+
 [[nodiscard]] inline VisualResourceHash hashDecodedVisualContent(const DecodedVisualResource& resource) noexcept
 {
     auto hash = detail::kFnvOffset;
-    const auto mix = [&hash](uint8_t value) noexcept {
-        hash ^= static_cast<VisualResourceHash>(value);
-        hash *= detail::kFnvPrime;
-    };
 
-    mix(static_cast<uint8_t>(resource.descriptor.decodedFormat));
+    detail::mixVisualHashByte(hash, static_cast<uint8_t>(resource.descriptor.decodedFormat));
     for (int shift = 0; shift < 32; shift += 8) {
-        mix(static_cast<uint8_t>((resource.descriptor.width >> shift) & 0xFFu));
-        mix(static_cast<uint8_t>((resource.descriptor.height >> shift) & 0xFFu));
+        detail::mixVisualHashByte(hash, static_cast<uint8_t>((resource.descriptor.width >> shift) & 0xFFu));
+        detail::mixVisualHashByte(hash, static_cast<uint8_t>((resource.descriptor.height >> shift) & 0xFFu));
     }
-    for (const auto pixel : resource.pixels) {
-        mix(pixel);
-    }
-    return hash;
+    return hashVisualSourceBytes(resource.pixels, hash);
 }
 
 [[nodiscard]] inline VisualResourceHash hashVisualPalette(uint32_t paletteValue) noexcept
