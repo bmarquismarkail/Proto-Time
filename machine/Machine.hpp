@@ -34,6 +34,7 @@ public:
           timingService_(std::make_unique<TimingService>())
     {
         videoService_->setVisualOverrideService(visualOverrideService_.get());
+        bindVisualOverrideEvents();
     }
     Machine(const Machine&) = delete;
     Machine& operator=(const Machine&) = delete;
@@ -97,6 +98,7 @@ public:
             return false;
         }
         visualOverrideService_ = std::move(service);
+        bindVisualOverrideEvents();
         videoService_->setVisualOverrideService(visualOverrideService_.get());
         return true;
     }
@@ -169,6 +171,14 @@ public:
     virtual uint16_t readRegisterPair(std::string_view id) const = 0;
 
 private:
+    void bindVisualOverrideEvents()
+    {
+        visualOverrideService_->setEventSink([this](const MachineEvent& event) {
+            const auto machineView = view();
+            pluginManager().emit(machineView, event);
+        });
+    }
+
     std::unique_ptr<AudioService> audioService_;
     std::unique_ptr<InputService> inputService_;
     std::unique_ptr<VideoService> videoService_;

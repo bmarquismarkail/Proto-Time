@@ -427,6 +427,7 @@ VisualPackManifestLoadResult loadVisualPackManifest(const std::filesystem::path&
     pack.root = manifestPath.parent_path();
     pack.id = jsonString(root, "id").value_or("");
     pack.name = jsonString(root, "name").value_or("");
+    pack.priority = jsonUInt32(root, "priority").value_or(0u);
     if (const auto* targetsValue = findMember(root, "targets");
         targetsValue != nullptr && targetsValue->array() != nullptr && !targetsValue->array()->empty()) {
         const auto& firstTarget = targetsValue->array()->front();
@@ -462,7 +463,14 @@ VisualPackManifestLoadResult loadVisualPackManifest(const std::filesystem::path&
 
             VisualOverrideRule rule;
             rule.order = order++;
+            rule.machineId = jsonString(*matchValue->object(), "machineId").value_or("");
+            if (rule.machineId.empty()) {
+                rule.machineId = jsonString(*matchValue->object(), "machine").value_or("");
+            }
+            rule.semanticLabel = jsonString(*matchValue->object(), "semanticLabel").value_or("");
             rule.kind = visualResourceKindFromString(jsonString(*matchValue->object(), "kind").value_or(""));
+            rule.decodedFormat =
+                visualPixelFormatFromString(jsonString(*matchValue->object(), "decodedFormat").value_or(""));
             if (const auto hash = jsonString(*matchValue->object(), "decodedHash"); hash.has_value()) {
                 rule.decodedHash = parseVisualHashString(*hash).value_or(0u);
             }
@@ -475,6 +483,9 @@ VisualPackManifestLoadResult loadVisualPackManifest(const std::filesystem::path&
             rule.width = jsonUInt32(*matchValue->object(), "width").value_or(0u);
             rule.height = jsonUInt32(*matchValue->object(), "height").value_or(0u);
             rule.image = jsonString(*replaceValue->object(), "image").value_or("");
+            rule.scalePolicy = jsonString(*replaceValue->object(), "scalePolicy").value_or("");
+            rule.filterPolicy = jsonString(*replaceValue->object(), "filterPolicy").value_or("");
+            rule.anchor = jsonString(*replaceValue->object(), "anchor").value_or("");
             if (rule.kind == VisualResourceKind::Unknown ||
                 (rule.decodedHash == 0u && rule.paletteAwareHash == 0u) ||
                 rule.image.empty()) {
@@ -486,9 +497,12 @@ VisualPackManifestLoadResult loadVisualPackManifest(const std::filesystem::path&
                 ++result.missingReplacementImages;
             }
             rule.specificity = 1u +
+                (!rule.machineId.empty() ? 4u : 0u) +
+                (rule.decodedFormat != VisualPixelFormat::Unknown ? 2u : 0u) +
                 (rule.decodedHash != 0u ? 2u : 0u) +
                 (rule.paletteHash != 0u ? 3u : 0u) +
                 (rule.paletteAwareHash != 0u ? 4u : 0u) +
+                (!rule.semanticLabel.empty() ? 3u : 0u) +
                 (rule.width != 0u ? 1u : 0u) +
                 (rule.height != 0u ? 1u : 0u);
             pack.rules.push_back(std::move(rule));

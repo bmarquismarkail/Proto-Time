@@ -48,6 +48,18 @@ inline const char* machineEventTypeName(MachineEventType type)
         return "RomLoaded";
     case MachineEventType::VideoScanlineReady:
         return "VideoScanlineReady";
+    case MachineEventType::VisualResourceObserved:
+        return "VisualResourceObserved";
+    case MachineEventType::VisualResourceDecoded:
+        return "VisualResourceDecoded";
+    case MachineEventType::VisualOverrideResolved:
+        return "VisualOverrideResolved";
+    case MachineEventType::VisualPackMiss:
+        return "VisualPackMiss";
+    case MachineEventType::FrameCompositionStarted:
+        return "FrameCompositionStarted";
+    case MachineEventType::FrameCompositionCompleted:
+        return "FrameCompositionCompleted";
     }
     return "Unknown";
 }

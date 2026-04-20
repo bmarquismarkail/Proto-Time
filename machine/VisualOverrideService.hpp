@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -14,6 +15,7 @@
 #include "VisualCaptureWriter.hpp"
 #include "VisualPackManifest.hpp"
 #include "VisualTypes.hpp"
+#include "plugins/IoPlugin.hpp"
 
 namespace BMMQ {
 
@@ -34,6 +36,8 @@ struct VisualOverrideDiagnostics {
 
 class VisualOverrideService {
 public:
+    using EventSink = std::function<void(const MachineEvent&)>;
+
     VisualOverrideService() = default;
 
     [[nodiscard]] bool enabled() const noexcept;
@@ -48,6 +52,12 @@ public:
     [[nodiscard]] bool beginCapture(const std::filesystem::path& directory, std::string machineId);
     void endCapture() noexcept;
     [[nodiscard]] bool observe(const DecodedVisualResource& resource);
+    void notifyResourceDecoded(const VisualResourceDescriptor& descriptor) const;
+    void notifyFrameCompositionStarted(uint64_t generation) const;
+    void notifyFrameCompositionCompleted(uint64_t generation) const;
+
+    void setEventSink(EventSink sink);
+    void clearEventSink() noexcept;
 
     [[nodiscard]] const VisualCaptureStats& captureStats() const noexcept;
     [[nodiscard]] const VisualOverrideDiagnostics& diagnostics() const noexcept;
@@ -58,6 +68,9 @@ private:
     struct ResolvedPath {
         std::string packId;
         std::filesystem::path path;
+        std::string scalePolicy;
+        std::string filterPolicy;
+        std::string anchor;
     };
 
     [[nodiscard]] static std::string makeDescriptorKey(const VisualResourceDescriptor& descriptor);
@@ -65,6 +78,7 @@ private:
     [[nodiscard]] std::optional<ResolvedVisualOverride> loadResolved(const ResolvedPath& resolvedPath);
     [[nodiscard]] std::optional<VisualReplacementImage> loadPng(const std::filesystem::path& path);
     [[nodiscard]] bool writeCaptureManifest() const;
+    void emitVisualEvent(MachineEventType type, uint64_t tick, std::string_view detail) const;
 
     bool enabled_ = true;
     bool captureEnabled_ = false;
@@ -81,6 +95,7 @@ private:
     std::unordered_map<std::string, VisualReplacementImage> imageCache_;
     std::size_t imageCacheBytes_ = 0;
     mutable std::string lastError_;
+    EventSink eventSink_;
 };
 
 } // namespace BMMQ

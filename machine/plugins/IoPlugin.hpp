@@ -59,6 +59,12 @@ enum class MachineEventType : uint8_t {
     BootRomVisibilityChanged = 11,
     RomLoaded = 12,
     VideoScanlineReady = 13,
+    VisualResourceObserved = 14,
+    VisualResourceDecoded = 15,
+    VisualOverrideResolved = 16,
+    VisualPackMiss = 17,
+    FrameCompositionStarted = 18,
+    FrameCompositionCompleted = 19,
 };
 
 struct IoRegionDescriptor {

@@ -101,7 +101,11 @@ std::optional<ResolvedVisualOverride> VisualOverrideService::resolve(const Visua
 
     const auto key = makeDescriptorKey(descriptor);
     if (const auto cached = resolvedCache_.find(key); cached != resolvedCache_.end()) {
-        return loadResolved(cached->second);
+        auto resolved = loadResolved(cached->second);
+        if (resolved.has_value()) {
+            emitVisualEvent(MachineEventType::VisualOverrideResolved, 0u, "visual-override-resolved");
+        }
+        return resolved;
     }
 
     const VisualOverrideRule* bestRule = nullptr;
@@ -119,7 +123,9 @@ std::optional<ResolvedVisualOverride> VisualOverrideService::resolve(const Visua
             }
             if (bestRule == nullptr ||
                 rule.specificity > bestRule->specificity ||
-                (rule.specificity == bestRule->specificity && rule.order < bestRule->order)) {
+                (rule.specificity == bestRule->specificity && pack.priority > bestPack->priority) ||
+                (rule.specificity == bestRule->specificity && pack.priority == bestPack->priority &&
+                 rule.order < bestRule->order)) {
                 bestRule = &rule;
                 bestPack = &pack;
             }
@@ -128,13 +134,19 @@ std::optional<ResolvedVisualOverride> VisualOverrideService::resolve(const Visua
 
     if (bestRule == nullptr || bestPack == nullptr) {
         ++diagnostics_.resolveMisses;
+        emitVisualEvent(MachineEventType::VisualPackMiss, 0u, "visual-pack-miss");
         return std::nullopt;
     }
-    ResolvedPath resolvedPath{bestPack->id, bestPack->root / bestRule->image};
+    ResolvedPath resolvedPath{bestPack->id,
+                              bestPack->root / bestRule->image,
+                              bestRule->scalePolicy,
+                              bestRule->filterPolicy,
+                              bestRule->anchor};
     resolvedCache_.emplace(key, resolvedPath);
     auto resolved = loadResolved(resolvedPath);
     if (resolved.has_value()) {
         ++diagnostics_.resolveHits;
+        emitVisualEvent(MachineEventType::VisualOverrideResolved, 0u, "visual-override-resolved");
     } else {
         ++diagnostics_.replacementLoadFailures;
     }
@@ -169,6 +181,9 @@ void VisualOverrideService::endCapture() noexcept
 
 bool VisualOverrideService::observe(const DecodedVisualResource& resource)
 {
+    if (enabled_ && resource.descriptor.contentHash != 0u) {
+        emitVisualEvent(MachineEventType::VisualResourceObserved, 0u, "visual-resource-observed");
+    }
     if (!captureEnabled_ || resource.descriptor.contentHash == 0u || resource.pixels.empty()) {
         return false;
     }
@@ -199,6 +214,33 @@ bool VisualOverrideService::observe(const DecodedVisualResource& resource)
     return true;
 }
 
+void VisualOverrideService::notifyResourceDecoded(const VisualResourceDescriptor& descriptor) const
+{
+    if (enabled_ && descriptor.contentHash != 0u) {
+        emitVisualEvent(MachineEventType::VisualResourceDecoded, 0u, "visual-resource-decoded");
+    }
+}
+
+void VisualOverrideService::notifyFrameCompositionStarted(uint64_t generation) const
+{
+    emitVisualEvent(MachineEventType::FrameCompositionStarted, generation, "frame-composition-started");
+}
+
+void VisualOverrideService::notifyFrameCompositionCompleted(uint64_t generation) const
+{
+    emitVisualEvent(MachineEventType::FrameCompositionCompleted, generation, "frame-composition-completed");
+}
+
+void VisualOverrideService::setEventSink(EventSink sink)
+{
+    eventSink_ = std::move(sink);
+}
+
+void VisualOverrideService::clearEventSink() noexcept
+{
+    eventSink_ = nullptr;
+}
+
 const VisualCaptureStats& VisualOverrideService::captureStats() const noexcept
 {
     if (captureManifestDirty_) {
@@ -226,13 +268,25 @@ std::string VisualOverrideService::makeDescriptorKey(const VisualResourceDescrip
 {
     return descriptor.machineId + "|" + visualResourceKindName(descriptor.kind) + "|" +
         std::to_string(descriptor.width) + "x" + std::to_string(descriptor.height) + "|" +
+        visualPixelFormatName(descriptor.decodedFormat) + "|" +
+        descriptor.source.label + "|" +
         toHexVisualHash(descriptor.contentHash) + "|" +
+        toHexVisualHash(descriptor.paletteHash) + "|" +
         toHexVisualHash(descriptor.paletteAwareHash);
 }
 
 bool VisualOverrideService::matches(const VisualOverrideRule& rule, const VisualResourceDescriptor& descriptor) noexcept
 {
     if (rule.kind != descriptor.kind) {
+        return false;
+    }
+    if (!rule.machineId.empty() && rule.machineId != descriptor.machineId) {
+        return false;
+    }
+    if (rule.decodedFormat != VisualPixelFormat::Unknown && rule.decodedFormat != descriptor.decodedFormat) {
+        return false;
+    }
+    if (!rule.semanticLabel.empty() && rule.semanticLabel != descriptor.source.label) {
         return false;
     }
     if (rule.paletteAwareHash != 0u && rule.paletteAwareHash != descriptor.paletteAwareHash) {
@@ -265,6 +319,9 @@ std::optional<ResolvedVisualOverride> VisualOverrideService::loadResolved(const 
     return ResolvedVisualOverride{
         .packId = resolvedPath.packId,
         .assetPath = resolvedPath.path.string(),
+        .scalePolicy = resolvedPath.scalePolicy,
+        .filterPolicy = resolvedPath.filterPolicy,
+        .anchor = resolvedPath.anchor,
         .image = std::move(*image),
     };
 }
@@ -429,6 +486,19 @@ bool VisualOverrideService::writeCaptureManifest() const
     }
     captureManifestDirty_ = false;
     return true;
+}
+
+void VisualOverrideService::emitVisualEvent(MachineEventType type, uint64_t tick, std::string_view detail) const
+{
+    if (!eventSink_) {
+        return;
+    }
+    eventSink_(MachineEvent{
+        .type = type,
+        .category = PluginCategory::Video,
+        .tick = tick,
+        .detail = detail,
+    });
 }
 
 } // namespace BMMQ

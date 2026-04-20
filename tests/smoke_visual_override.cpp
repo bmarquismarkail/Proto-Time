@@ -3,6 +3,7 @@
 #endif
 
 #include <cassert>
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -208,6 +209,91 @@ int main()
     assert(resolved->image.argbPixels.size() == 4u);
     assert(resolved->image.argbPixels[0] == 0xFFFF0000u);
     assert(service.diagnostics().resolveHits == 1u);
+
+    const auto semanticImagePath = root / "semantic-pack" / "images" / "tile.png";
+    writeBinaryFile(semanticImagePath, makePng2x2Rgba());
+    const auto semanticManifestPath = root / "semantic-pack" / "pack.json";
+    writeTextFile(semanticManifestPath,
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"semantic.gb\",\n"
+        "  \"name\": \"Semantic Pack\",\n"
+        "  \"target\": \"gameboy\",\n"
+        "  \"priority\": 3,\n"
+        "  \"rules\": [\n"
+        "    {\n"
+        "      \"match\": {\n"
+        "        \"kind\": \"Tile\",\n"
+        "        \"machineId\": \"gameboy\",\n"
+        "        \"decodedFormat\": \"Indexed2\",\n"
+        "        \"semanticLabel\": \"hud_digit\",\n"
+        "        \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "        \"width\": 8,\n"
+        "        \"height\": 8\n"
+        "      },\n"
+        "      \"replace\": {\n"
+        "        \"image\": \"images/tile.png\",\n"
+        "        \"scalePolicy\": \"nearest\",\n"
+        "        \"filterPolicy\": \"preserve-hard-edges\",\n"
+        "        \"anchor\": \"top-left\"\n"
+        "      }\n"
+        "    }\n"
+        "  ]\n"
+        "}\n");
+    BMMQ::VisualOverrideService semanticService;
+    assert(semanticService.loadPackManifest(semanticManifestPath));
+    assert(!semanticService.resolve(resource->descriptor).has_value());
+    auto labeledDescriptor = resource->descriptor;
+    labeledDescriptor.source.label = "hud_digit";
+    auto semanticResolved = semanticService.resolve(labeledDescriptor);
+    assert(semanticResolved.has_value());
+    assert(semanticResolved->packId == "semantic.gb");
+    assert(semanticResolved->scalePolicy == "nearest");
+    assert(semanticResolved->filterPolicy == "preserve-hard-edges");
+    assert(semanticResolved->anchor == "top-left");
+
+    const auto lowPriorityImagePath = root / "priority-low-pack" / "tile.png";
+    const auto highPriorityImagePath = root / "priority-high-pack" / "tile.png";
+    writeBinaryFile(lowPriorityImagePath, makePng2x2Rgba());
+    writeBinaryFile(highPriorityImagePath, makePng2x2Rgba());
+    writeTextFile(root / "priority-low-pack" / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"priority-low.gb\",\n"
+        "  \"target\": \"gameboy\",\n"
+        "  \"priority\": 1,\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\"image\": \"tile.png\"}\n"
+        "  }]\n"
+        "}\n");
+    writeTextFile(root / "priority-high-pack" / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"priority-high.gb\",\n"
+        "  \"target\": \"gameboy\",\n"
+        "  \"priority\": 9,\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\"image\": \"tile.png\"}\n"
+        "  }]\n"
+        "}\n");
+    BMMQ::VisualOverrideService priorityService;
+    assert(priorityService.loadPackManifest(root / "priority-low-pack" / "pack.json"));
+    assert(priorityService.loadPackManifest(root / "priority-high-pack" / "pack.json"));
+    auto priorityResolved = priorityService.resolve(resource->descriptor);
+    assert(priorityResolved.has_value());
+    assert(priorityResolved->packId == "priority-high.gb");
 
     const auto paletteImagePath = root / "palette-pack" / "images" / "tile.png";
     writeBinaryFile(paletteImagePath, makePng2x2Rgba());
@@ -506,8 +592,25 @@ int main()
     assert(originalFrame.pixels[0] == 0xFF88C070u);
 
     videoService.setVisualOverrideService(&service);
+    std::vector<BMMQ::MachineEventType> visualEvents;
+    service.setEventSink([&visualEvents](const BMMQ::MachineEvent& event) {
+        assert(event.category == BMMQ::PluginCategory::Video);
+        visualEvents.push_back(event.type);
+    });
     auto replacedFrame = videoService.engine().buildDebugFrame(state, 2u);
     assert(replacedFrame.pixels[0] == 0xFFFF0000u);
+    assert(!visualEvents.empty());
+    assert(visualEvents.front() == BMMQ::MachineEventType::FrameCompositionStarted);
+    assert(visualEvents.back() == BMMQ::MachineEventType::FrameCompositionCompleted);
+    assert(std::find(visualEvents.begin(),
+                     visualEvents.end(),
+                     BMMQ::MachineEventType::VisualResourceObserved) != visualEvents.end());
+    assert(std::find(visualEvents.begin(),
+                     visualEvents.end(),
+                     BMMQ::MachineEventType::VisualResourceDecoded) != visualEvents.end());
+    assert(std::find(visualEvents.begin(),
+                     visualEvents.end(),
+                     BMMQ::MachineEventType::VisualOverrideResolved) != visualEvents.end());
 
     auto signedTileState = makeTileState(0x00u, 0x00u);
     signedTileState.lcdc = 0x81u;

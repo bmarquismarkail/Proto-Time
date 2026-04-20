@@ -82,10 +82,18 @@ public:
         frame.height = config_.frameHeight;
         frame.generation = generation;
         frame.source = VideoFrameSource::MachineSnapshot;
+        const bool notifyVisualComposition =
+            visualOverrideService_ != nullptr && visualOverrideService_->hasActiveWork();
+        if (notifyVisualComposition) {
+            visualOverrideService_->notifyFrameCompositionStarted(generation);
+        }
 
         const auto pixelCount = static_cast<std::size_t>(frame.width) * static_cast<std::size_t>(frame.height);
         frame.pixels.assign(pixelCount, paletteColor(0));
         if (state.vram.empty()) {
+            if (notifyVisualComposition) {
+                visualOverrideService_->notifyFrameCompositionCompleted(generation);
+            }
             return frame;
         }
 
@@ -93,6 +101,9 @@ public:
         std::vector<uint8_t> backgroundColorIndices(static_cast<std::size_t>(frame.width), 0u);
         for (int y = 0; y < frame.height; ++y) {
             renderScanline(frame, state, y, backgroundColorIndices);
+        }
+        if (notifyVisualComposition) {
+            visualOverrideService_->notifyFrameCompositionCompleted(generation);
         }
         return frame;
     }
@@ -398,6 +409,7 @@ private:
             if (!resource.has_value()) {
                 return std::nullopt;
             }
+            visualOverrideService_->notifyResourceDecoded(resource->descriptor);
             (void)visualOverrideService_->observe(*resource);
             entry.resource = std::move(*resource);
         }

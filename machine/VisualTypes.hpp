@@ -74,6 +74,9 @@ struct VisualReplacementImage {
 struct ResolvedVisualOverride {
     std::string packId;
     std::string assetPath;
+    std::string scalePolicy;
+    std::string filterPolicy;
+    std::string anchor;
     VisualReplacementImage image;
 };
 
@@ -117,6 +120,17 @@ struct ResolvedVisualOverride {
         break;
     }
     return "Unknown";
+}
+
+[[nodiscard]] inline constexpr VisualPixelFormat visualPixelFormatFromString(std::string_view value) noexcept
+{
+    if (value == "Indexed2" || value == "indexed2") {
+        return VisualPixelFormat::Indexed2;
+    }
+    if (value == "Rgba8888" || value == "RGBA8888" || value == "rgba8888") {
+        return VisualPixelFormat::Rgba8888;
+    }
+    return VisualPixelFormat::Unknown;
 }
 
 [[nodiscard]] inline std::string toHexVisualHash(VisualResourceHash hash)

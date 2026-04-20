@@ -13,13 +13,19 @@
 namespace BMMQ {
 
 struct VisualOverrideRule {
+    std::string machineId;
+    std::string semanticLabel;
     VisualResourceKind kind = VisualResourceKind::Unknown;
+    VisualPixelFormat decodedFormat = VisualPixelFormat::Unknown;
     VisualResourceHash decodedHash = 0;
     VisualResourceHash paletteHash = 0;
     VisualResourceHash paletteAwareHash = 0;
     uint32_t width = 0;
     uint32_t height = 0;
     std::filesystem::path image;
+    std::string scalePolicy;
+    std::string filterPolicy;
+    std::string anchor;
     std::size_t order = 0;
     uint32_t specificity = 0;
 };
@@ -28,6 +34,7 @@ struct VisualPackManifest {
     std::string id;
     std::string name;
     std::string target;
+    uint32_t priority = 0;
     std::filesystem::path root;
     std::vector<VisualOverrideRule> rules;
 };
