@@ -11,6 +11,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "VisualCaptureWriter.hpp"
+#include "VisualPackManifest.hpp"
 #include "VisualTypes.hpp"
 
 namespace BMMQ {
@@ -53,42 +55,16 @@ public:
     [[nodiscard]] uint64_t generation() const noexcept;
 
 private:
-    struct Rule {
-        VisualResourceKind kind = VisualResourceKind::Unknown;
-        VisualResourceHash decodedHash = 0;
-        VisualResourceHash paletteHash = 0;
-        VisualResourceHash paletteAwareHash = 0;
-        uint32_t width = 0;
-        uint32_t height = 0;
-        std::filesystem::path image;
-        std::size_t order = 0;
-        uint32_t specificity = 0;
-    };
-
-    struct VisualPack {
-        std::string id;
-        std::string name;
-        std::string target;
-        std::filesystem::path root;
-        std::vector<Rule> rules;
-    };
-
     struct ResolvedPath {
         std::string packId;
         std::filesystem::path path;
     };
 
-    struct CaptureEntry {
-        VisualResourceDescriptor descriptor;
-        std::string imagePath;
-    };
-
     [[nodiscard]] static std::string makeDescriptorKey(const VisualResourceDescriptor& descriptor);
-    [[nodiscard]] static bool matches(const Rule& rule, const VisualResourceDescriptor& descriptor) noexcept;
+    [[nodiscard]] static bool matches(const VisualOverrideRule& rule, const VisualResourceDescriptor& descriptor) noexcept;
     [[nodiscard]] std::optional<ResolvedVisualOverride> loadResolved(const ResolvedPath& resolvedPath);
     [[nodiscard]] std::optional<VisualReplacementImage> loadPng(const std::filesystem::path& path);
     [[nodiscard]] bool writeCaptureManifest() const;
-    [[nodiscard]] bool writeDecodedResourcePng(const std::filesystem::path& path, const DecodedVisualResource& resource);
 
     bool enabled_ = true;
     bool captureEnabled_ = false;
@@ -98,9 +74,9 @@ private:
     VisualCaptureStats captureStats_{};
     mutable VisualOverrideDiagnostics diagnostics_{};
     std::set<std::string> captureSeen_;
-    std::vector<CaptureEntry> captureEntries_;
+    std::vector<VisualCaptureEntry> captureEntries_;
     mutable bool captureManifestDirty_ = false;
-    std::vector<VisualPack> packs_;
+    std::vector<VisualPackManifest> packs_;
     std::map<std::string, ResolvedPath> resolvedCache_;
     std::unordered_map<std::string, VisualReplacementImage> imageCache_;
     mutable std::string lastError_;

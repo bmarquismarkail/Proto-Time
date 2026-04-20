@@ -13,8 +13,9 @@
 
 namespace GB {
 
-[[nodiscard]] inline std::optional<BMMQ::DecodedVisualResource> decodeGameBoyTileResource(
+[[nodiscard]] inline std::optional<BMMQ::DecodedVisualResource> decodeGameBoyTileResourceAtVramOffset(
     const BMMQ::VideoStateView& state,
+    std::size_t vramOffset,
     uint16_t tileIndex,
     BMMQ::VisualResourceKind kind = BMMQ::VisualResourceKind::Tile,
     uint8_t paletteValue = 0,
@@ -23,7 +24,7 @@ namespace GB {
     constexpr uint32_t kTileWidth = 8;
     constexpr uint32_t kTileHeight = 8;
     constexpr std::size_t kBytesPerTile = 16;
-    const auto base = static_cast<std::size_t>(tileIndex) * kBytesPerTile;
+    const auto base = vramOffset;
     if (base + kBytesPerTile > state.vram.size()) {
         return std::nullopt;
     }
@@ -66,6 +67,22 @@ namespace GB {
     resource.descriptor.paletteAwareHash =
         BMMQ::combineVisualHashes(resource.descriptor.contentHash, resource.descriptor.paletteHash);
     return resource;
+}
+
+[[nodiscard]] inline std::optional<BMMQ::DecodedVisualResource> decodeGameBoyTileResource(
+    const BMMQ::VideoStateView& state,
+    uint16_t tileIndex,
+    BMMQ::VisualResourceKind kind = BMMQ::VisualResourceKind::Tile,
+    uint8_t paletteValue = 0,
+    std::string_view paletteRegister = {})
+{
+    constexpr std::size_t kBytesPerTile = 16;
+    return decodeGameBoyTileResourceAtVramOffset(state,
+                                                 static_cast<std::size_t>(tileIndex) * kBytesPerTile,
+                                                 tileIndex,
+                                                 kind,
+                                                 paletteValue,
+                                                 paletteRegister);
 }
 
 } // namespace GB

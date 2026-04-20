@@ -34,7 +34,9 @@ add_library(time-gameboy-interpreter-core
 	cores/gameboy/decode/gb_interpreter.cpp
     cores/gameboy/gameboy.cpp
     machine/TimingService.cpp
+    machine/VisualCaptureWriter.cpp
     machine/VisualOverrideService.cpp
+    machine/VisualPackManifest.cpp
 )
 set_target_properties(time-gameboy-interpreter-core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(time-gameboy-interpreter-core PUBLIC ZLIB::ZLIB)

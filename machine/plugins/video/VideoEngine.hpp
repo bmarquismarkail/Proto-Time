@@ -137,7 +137,8 @@ public:
                 const auto sample = backgroundSample(state, x, screenY);
                 const auto colorIndex = sample.colorIndex;
                 backgroundColorIndices[static_cast<std::size_t>(x)] = colorIndex;
-                if (auto replacementPixel = replacementPixelForTile(state, sample.tileIndex, sample.tileX, sample.tileY,
+                if (auto replacementPixel = replacementPixelForTile(state, sample.tileIndex, sample.tileAddress,
+                                                                     sample.tileX, sample.tileY,
                                                                      VisualResourceKind::Tile,
                                                                      state.bgp,
                                                                      "BGP");
@@ -287,18 +288,20 @@ private:
                                                       uint8_t tileX,
                                                       uint8_t tileY) noexcept
     {
-        uint16_t tileAddress = 0x8000u;
-        if (unsignedTileData) {
-            tileAddress = static_cast<uint16_t>(0x8000u + static_cast<uint16_t>(tileIndex) * 16u);
-        } else {
-            tileAddress = static_cast<uint16_t>(0x9000 + static_cast<int16_t>(static_cast<int8_t>(tileIndex)) * 16);
-        }
-
+        const auto tileAddress = tileDataAddress(tileIndex, unsignedTileData);
         const auto rowAddress = static_cast<uint16_t>(tileAddress + static_cast<uint16_t>(tileY) * 2u);
         const auto low = readVramByte(state, rowAddress);
         const auto high = readVramByte(state, static_cast<uint16_t>(rowAddress + 1u));
         const auto bit = static_cast<uint8_t>(7u - (tileX & 0x07u));
         return static_cast<uint8_t>((((high >> bit) & 0x01u) << 1u) | ((low >> bit) & 0x01u));
+    }
+
+    [[nodiscard]] static uint16_t tileDataAddress(uint8_t tileIndex, bool unsignedTileData) noexcept
+    {
+        if (unsignedTileData) {
+            return static_cast<uint16_t>(0x8000u + static_cast<uint16_t>(tileIndex) * 16u);
+        }
+        return static_cast<uint16_t>(0x9000 + static_cast<int16_t>(static_cast<int8_t>(tileIndex)) * 16);
     }
 
     [[nodiscard]] static uint8_t backgroundColorIndex(const VideoStateView& state, int screenX, int screenY) noexcept
@@ -308,6 +311,7 @@ private:
 
     struct BackgroundSample {
         uint8_t tileIndex = 0;
+        uint16_t tileAddress = 0x8000u;
         uint8_t tileX = 0;
         uint8_t tileY = 0;
         uint8_t colorIndex = 0;
@@ -337,6 +341,7 @@ private:
         const auto tileY = static_cast<uint8_t>(mapY & 0x07);
         return BackgroundSample{
             .tileIndex = tileIndex,
+            .tileAddress = tileDataAddress(tileIndex, unsignedTileData),
             .tileX = tileX,
             .tileY = tileY,
             .colorIndex = sampleTileColorIndex(state, tileIndex, unsignedTileData, tileX, tileY),
@@ -355,17 +360,18 @@ private:
         visualTileCache_.clear();
     }
 
-    [[nodiscard]] static uint32_t visualTileCacheKey(uint8_t tileIndex,
+    [[nodiscard]] static uint32_t visualTileCacheKey(uint16_t tileAddress,
                                                      VisualResourceKind kind,
                                                      uint8_t paletteValue) noexcept
     {
-        return (static_cast<uint32_t>(kind) << 16u) |
-               (static_cast<uint32_t>(paletteValue) << 8u) |
-               static_cast<uint32_t>(tileIndex);
+        return (static_cast<uint32_t>(kind) << 24u) |
+               (static_cast<uint32_t>(paletteValue) << 16u) |
+               static_cast<uint32_t>((tileAddress - 0x8000u) / 16u);
     }
 
     [[nodiscard]] std::optional<uint32_t> replacementPixelForTile(const VideoStateView& state,
                                                                   uint8_t tileIndex,
+                                                                  uint16_t tileAddress,
                                                                   uint8_t tileX,
                                                                   uint8_t tileY,
                                                                   VisualResourceKind kind,
@@ -375,12 +381,20 @@ private:
         if (visualOverrideService_ == nullptr || !visualOverrideService_->hasActiveWork()) {
             return std::nullopt;
         }
-        const auto cacheKey = visualTileCacheKey(tileIndex, kind, paletteValue);
+        if (tileAddress < 0x8000u) {
+            return std::nullopt;
+        }
+        const auto cacheKey = visualTileCacheKey(tileAddress, kind, paletteValue);
         auto& entry = visualTileCache_[cacheKey];
 
         if (!entry.decodeAttempted) {
             entry.decodeAttempted = true;
-            auto resource = GB::decodeGameBoyTileResource(state, tileIndex, kind, paletteValue, paletteRegister);
+            auto resource = GB::decodeGameBoyTileResourceAtVramOffset(state,
+                                                                      static_cast<std::size_t>(tileAddress - 0x8000u),
+                                                                      tileIndex,
+                                                                      kind,
+                                                                      paletteValue,
+                                                                      paletteRegister);
             if (!resource.has_value()) {
                 return std::nullopt;
             }
@@ -472,17 +486,6 @@ private:
                 const auto pixelIndex = static_cast<std::size_t>(screenY) * static_cast<std::size_t>(frame.width)
                                       + static_cast<std::size_t>(screenX);
                 const uint8_t spriteColumn = static_cast<uint8_t>(xFlip ? (7 - localX) : localX);
-                if (const auto replacementPixel = replacementPixelForTile(state,
-                                                                           effectiveTile,
-                                                                           spriteColumn,
-                                                                           static_cast<uint8_t>(spriteRow),
-                                                                           VisualResourceKind::Sprite,
-                                                                           palette,
-                                                                           (attributes & 0x10u) != 0u ? "OBP1" : "OBP0");
-                    replacementPixel.has_value()) {
-                    frame.pixels[pixelIndex] = *replacementPixel;
-                    continue;
-                }
                 const uint8_t colorIndex = sampleTileColorIndex(state,
                                                                 effectiveTile,
                                                                 true,
@@ -496,6 +499,19 @@ private:
                 }
 
                 const uint8_t shade = mapPaletteShade(palette, colorIndex);
+                const auto spriteTileAddress = tileDataAddress(effectiveTile, true);
+                if (const auto replacementPixel = replacementPixelForTile(state,
+                                                                           effectiveTile,
+                                                                           spriteTileAddress,
+                                                                           spriteColumn,
+                                                                           static_cast<uint8_t>(spriteRow),
+                                                                           VisualResourceKind::Sprite,
+                                                                           palette,
+                                                                           (attributes & 0x10u) != 0u ? "OBP1" : "OBP0");
+                    replacementPixel.has_value()) {
+                    frame.pixels[pixelIndex] = *replacementPixel;
+                    continue;
+                }
                 frame.pixels[pixelIndex] = paletteColor(shade);
             }
         }

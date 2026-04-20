@@ -15,6 +15,7 @@
 
 #include "cores/gameboy/GameBoyMachine.hpp"
 #include "cores/gameboy/video/GameBoyVisualExtractor.hpp"
+#include "machine/VisualCaptureWriter.hpp"
 #include "machine/VisualOverrideService.hpp"
 #include "machine/VisualTypes.hpp"
 
@@ -63,6 +64,35 @@ BMMQ::VideoStateView makeTileState(uint8_t lowByte, uint8_t highByte)
     }
     state.vram[0x1800u] = 0x00u;
     return state;
+}
+
+void writeSingleRulePack(const std::filesystem::path& manifestPath,
+                         std::string_view id,
+                         BMMQ::VisualResourceKind kind,
+                         BMMQ::VisualResourceHash hash,
+                         const std::filesystem::path& imagePath)
+{
+    writeBinaryFile(imagePath, makePng2x2Rgba());
+    writeTextFile(manifestPath,
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"" + std::string(id) + "\",\n"
+        "  \"name\": \"Smoke Pack\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [\n"
+        "    {\n"
+        "      \"match\": {\n"
+        "        \"kind\": \"" + BMMQ::visualResourceKindName(kind) + "\",\n"
+        "        \"decodedHash\": \"" + BMMQ::toHexVisualHash(hash) + "\",\n"
+        "        \"width\": 8,\n"
+        "        \"height\": 8\n"
+        "      },\n"
+        "      \"replace\": {\n"
+        "        \"image\": \"" + imagePath.filename().string() + "\"\n"
+        "      }\n"
+        "    }\n"
+        "  ]\n"
+        "}\n");
 }
 
 std::string readTextFile(const std::filesystem::path& path)
@@ -295,6 +325,71 @@ int main()
     assert(capturedPackService.loadPackManifest(capturePack));
     assert(capturedPackService.resolve(resource->descriptor).has_value());
 
+    BMMQ::DecodedVisualResource invalidCaptureResource = *resource;
+    invalidCaptureResource.descriptor.width = 0u;
+    invalidCaptureResource.descriptor.height = 8u;
+    invalidCaptureResource.stride = 0u;
+    std::string captureWriteError = "unchanged";
+    assert(!BMMQ::VisualCaptureWriter::writeDecodedResourcePng(root / "invalid.png",
+                                                               invalidCaptureResource,
+                                                               captureWriteError));
+    assert(captureWriteError.find("width=0") != std::string::npos);
+    assert(captureWriteError.find("height=8") != std::string::npos);
+    assert(captureWriteError.find("stride=0") != std::string::npos);
+
+    const auto unicodeImagePath = root / "unicode-pack" / "tile.png";
+    writeBinaryFile(unicodeImagePath, makePng2x2Rgba());
+    const auto unicodeManifestPath = root / "unicode-pack" / "pack.json";
+    writeTextFile(unicodeManifestPath,
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"unicode.\\u0041.\\uD83D\\uDE00\",\n"
+        "  \"name\": \"Unicode Pack\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [\n"
+        "    {\n"
+        "      \"match\": {\n"
+        "        \"kind\": \"Tile\",\n"
+        "        \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "        \"width\": 8,\n"
+        "        \"height\": 8\n"
+        "      },\n"
+        "      \"replace\": {\n"
+        "        \"image\": \"tile.png\"\n"
+        "      }\n"
+        "    }\n"
+        "  ]\n"
+        "}\n");
+    BMMQ::VisualOverrideService unicodePackService;
+    assert(unicodePackService.loadPackManifest(unicodeManifestPath));
+    auto unicodeResolved = unicodePackService.resolve(resource->descriptor);
+    assert(unicodeResolved.has_value());
+    assert(unicodeResolved->packId == std::string("unicode.A.") + "\xF0\x9F\x98\x80");
+
+    writeTextFile(root / "pack" / "garbage-hash.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"garbage-hash.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [\n"
+        "    {\n"
+        "      \"match\": {\n"
+        "        \"kind\": \"Tile\",\n"
+        "        \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "garbage\",\n"
+        "        \"width\": 8,\n"
+        "        \"height\": 8\n"
+        "      },\n"
+        "      \"replace\": {\n"
+        "        \"image\": \"images/tile.png\"\n"
+        "      }\n"
+        "    }\n"
+        "  ]\n"
+        "}\n");
+    BMMQ::VisualOverrideService garbageHashService;
+    assert(garbageHashService.loadPackManifest(root / "pack" / "garbage-hash.json"));
+    assert(garbageHashService.diagnostics().invalidRulesSkipped == 1u);
+    assert(garbageHashService.diagnostics().rulesLoaded == 0u);
+
     GameBoyMachine machine;
     assert(&machine.visualOverrideService() == &machine.mutableView().visualOverrideService());
     assert(machine.setVisualOverrideService(std::make_unique<BMMQ::VisualOverrideService>()));
@@ -315,6 +410,85 @@ int main()
     videoService.setVisualOverrideService(&service);
     auto replacedFrame = videoService.engine().buildDebugFrame(state, 2u);
     assert(replacedFrame.pixels[0] == 0xFFFF0000u);
+
+    auto signedTileState = makeTileState(0x00u, 0x00u);
+    signedTileState.lcdc = 0x81u;
+    for (std::size_t row = 0; row < 8u; ++row) {
+        signedTileState.vram[0x1000u + row * 2u] = 0xFFu;
+        signedTileState.vram[0x1000u + row * 2u + 1u] = 0x00u;
+    }
+    signedTileState.vram[0x1800u] = 0x00u;
+    auto signedTileResource = GB::decodeGameBoyTileResource(signedTileState, 0x100u, BMMQ::VisualResourceKind::Tile);
+    assert(signedTileResource.has_value());
+    BMMQ::VisualOverrideService signedTileService;
+    writeSingleRulePack(root / "signed-pack" / "pack.json",
+                        "signed.gb",
+                        BMMQ::VisualResourceKind::Tile,
+                        signedTileResource->descriptor.contentHash,
+                        root / "signed-pack" / "signed.png");
+    assert(signedTileService.loadPackManifest(root / "signed-pack" / "pack.json"));
+    BMMQ::VideoService signedTileVideoService(BMMQ::VideoEngineConfig{
+        .frameWidth = 8,
+        .frameHeight = 8,
+        .queueCapacityFrames = 1,
+    });
+    signedTileVideoService.setVisualOverrideService(&signedTileService);
+    auto signedTileFrame = signedTileVideoService.engine().buildDebugFrame(signedTileState, 3u);
+    assert(signedTileFrame.pixels[0] == 0xFFFF0000u);
+
+    auto transparentSpriteState = makeTileState(0x00u, 0x00u);
+    transparentSpriteState.lcdc = 0x93u;
+    transparentSpriteState.oam[0] = 16u;
+    transparentSpriteState.oam[1] = 8u;
+    transparentSpriteState.oam[2] = 0x00u;
+    transparentSpriteState.oam[3] = 0x00u;
+    auto transparentSpriteResource =
+        GB::decodeGameBoyTileResource(transparentSpriteState, 0u, BMMQ::VisualResourceKind::Sprite);
+    assert(transparentSpriteResource.has_value());
+    BMMQ::VisualOverrideService transparentSpriteService;
+    writeSingleRulePack(root / "transparent-sprite-pack" / "pack.json",
+                        "transparent-sprite.gb",
+                        BMMQ::VisualResourceKind::Sprite,
+                        transparentSpriteResource->descriptor.contentHash,
+                        root / "transparent-sprite-pack" / "sprite.png");
+    assert(transparentSpriteService.loadPackManifest(root / "transparent-sprite-pack" / "pack.json"));
+    BMMQ::VideoService transparentSpriteVideoService(BMMQ::VideoEngineConfig{
+        .frameWidth = 8,
+        .frameHeight = 8,
+        .queueCapacityFrames = 1,
+    });
+    transparentSpriteVideoService.setVisualOverrideService(&transparentSpriteService);
+    auto transparentSpriteFrame = transparentSpriteVideoService.engine().buildDebugFrame(transparentSpriteState, 4u);
+    assert(transparentSpriteFrame.pixels[0] == 0xFFE0F8D0u);
+
+    auto prioritySpriteState = makeTileState(0xFFu, 0x00u);
+    prioritySpriteState.lcdc = 0x93u;
+    for (std::size_t row = 0; row < 8u; ++row) {
+        prioritySpriteState.vram[0x0010u + row * 2u] = 0xFFu;
+        prioritySpriteState.vram[0x0010u + row * 2u + 1u] = 0xFFu;
+    }
+    prioritySpriteState.oam[0] = 16u;
+    prioritySpriteState.oam[1] = 8u;
+    prioritySpriteState.oam[2] = 0x01u;
+    prioritySpriteState.oam[3] = 0x80u;
+    auto prioritySpriteResource =
+        GB::decodeGameBoyTileResource(prioritySpriteState, 1u, BMMQ::VisualResourceKind::Sprite);
+    assert(prioritySpriteResource.has_value());
+    BMMQ::VisualOverrideService prioritySpriteService;
+    writeSingleRulePack(root / "priority-sprite-pack" / "pack.json",
+                        "priority-sprite.gb",
+                        BMMQ::VisualResourceKind::Sprite,
+                        prioritySpriteResource->descriptor.contentHash,
+                        root / "priority-sprite-pack" / "sprite.png");
+    assert(prioritySpriteService.loadPackManifest(root / "priority-sprite-pack" / "pack.json"));
+    BMMQ::VideoService prioritySpriteVideoService(BMMQ::VideoEngineConfig{
+        .frameWidth = 8,
+        .frameHeight = 8,
+        .queueCapacityFrames = 1,
+    });
+    prioritySpriteVideoService.setVisualOverrideService(&prioritySpriteService);
+    auto prioritySpriteFrame = prioritySpriteVideoService.engine().buildDebugFrame(prioritySpriteState, 5u);
+    assert(prioritySpriteFrame.pixels[0] == 0xFF88C070u);
 
     std::filesystem::remove_all(root);
     return 0;
