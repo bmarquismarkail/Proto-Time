@@ -58,10 +58,12 @@ void printUsage(std::string_view program)
               << "  --no-audio         Disable frontend audio output\n"
               << "  --audio-backend <name>\n"
               << "                     Frontend audio backend: sdl, dummy, or file (default: sdl)\n"
-              << "  --texture-pack <path>\n"
-              << "                     Load a visual override pack.json\n"
-              << "  --dump-visual-resources <dir>\n"
+              << "  --visual-pack <path>\n"
+              << "                     Load a visual override pack.json; repeat to load multiple packs\n"
+              << "  --visual-capture <dir>\n"
               << "                     Capture observed decoded visual resources for pack authoring\n"
+              << "  --visual-pack-reload\n"
+              << "                     Poll visual pack manifests/assets and reload changed packs\n"
               << "  --headless         Run without the SDL frontend plugin\n"
               << "  -h, --help         Show this help text\n\n"
               << "Controls:\n"
@@ -109,19 +111,19 @@ int main(int argc, char** argv)
 
         std::size_t romSize = machine.loadRomFromPath(options.romPath);
 
-        if (options.texturePackPath.has_value()) {
-            if (!machine.visualOverrideService().loadPackManifest(*options.texturePackPath)) {
+        for (const auto& visualPackPath : options.visualPackPaths) {
+            if (!machine.visualOverrideService().loadPackManifest(visualPackPath)) {
                 throw std::runtime_error(
-                    "Unable to load texture pack: " + options.texturePackPath->string() +
+                    "Unable to load visual pack: " + visualPackPath.string() +
                     " (" + machine.visualOverrideService().lastError() + ")");
             }
         }
 
         bool captureStarted = false;
-        if (options.visualDumpPath.has_value()) {
-            if (!machine.visualOverrideService().beginCapture(*options.visualDumpPath, "gameboy")) {
+        if (options.visualCapturePath.has_value()) {
+            if (!machine.visualOverrideService().beginCapture(*options.visualCapturePath, "gameboy")) {
                 throw std::runtime_error(
-                    "Unable to start visual resource capture: " + options.visualDumpPath->string() +
+                    "Unable to start visual resource capture: " + options.visualCapturePath->string() +
                     " (" + machine.visualOverrideService().lastError() + ")");
             }
             captureStarted = true;
@@ -162,11 +164,14 @@ int main(int argc, char** argv)
         if (options.bootRomPath.has_value()) {
             std::cout << "Loaded boot ROM: " << *options.bootRomPath << '\n';
         }
-        if (options.texturePackPath.has_value()) {
-            std::cout << "Loaded texture pack: " << *options.texturePackPath << '\n';
+        for (const auto& visualPackPath : options.visualPackPaths) {
+            std::cout << "Loaded visual pack: " << visualPackPath << '\n';
         }
-        if (options.visualDumpPath.has_value()) {
-            std::cout << "Capturing visual resources to: " << *options.visualDumpPath << '\n';
+        if (options.visualPackReload) {
+            std::cout << "Visual pack reload polling enabled\n";
+        }
+        if (options.visualCapturePath.has_value()) {
+            std::cout << "Capturing visual resources to: " << *options.visualCapturePath << '\n';
         }
         if (frontend != nullptr) {
             std::cout << "Frontend: " << frontend->backendStatusSummary() << '\n';
@@ -208,11 +213,22 @@ int main(int argc, char** argv)
             timingService.setPaused(true);
         }
 
+        auto pollVisualPackReload = [&]() {
+            if (!options.visualPackReload) {
+                return;
+            }
+            const bool reloaded = machine.visualOverrideService().reloadChangedPacks();
+            if (!reloaded && !machine.visualOverrideService().lastError().empty()) {
+                std::cerr << "warning: " << machine.visualOverrideService().lastError() << '\n';
+            }
+        };
+
         auto serviceFrontend = [&]() -> bool {
             if (frontend == nullptr) {
                 return false;
             }
             frontend->serviceFrontend();
+            pollVisualPackReload();
             return frontend->quitRequested();
         };
 
@@ -290,6 +306,9 @@ int main(int argc, char** argv)
             if (serviceFrontendUntil(idleNow)) {
                 break;
             }
+            if (frontend == nullptr) {
+                pollVisualPackReload();
+            }
 
             if (!executedInstruction) {
                 const auto nextStepTime = timingEngine.nextWakeTime(idleNow);
@@ -313,7 +332,7 @@ int main(int argc, char** argv)
         if (captureStarted) {
             machine.visualOverrideService().endCapture();
         }
-        if (options.texturePackPath.has_value() || options.visualDumpPath.has_value()) {
+        if (!options.visualPackPaths.empty() || options.visualCapturePath.has_value()) {
             const auto visualDiagnostics = machine.visualOverrideService().diagnostics();
             const auto captureStats = machine.visualOverrideService().captureStats();
             std::cout << "Visual overrides: rules=" << visualDiagnostics.rulesLoaded
@@ -322,7 +341,10 @@ int main(int argc, char** argv)
                       << " hits=" << visualDiagnostics.resolveHits
                       << " misses=" << visualDiagnostics.resolveMisses
                       << " loadFailures=" << visualDiagnostics.replacementLoadFailures
-                      << " ambiguous=" << visualDiagnostics.ambiguousMatches << '\n';
+                      << " ambiguous=" << visualDiagnostics.ambiguousMatches
+                      << " reloadChecks=" << visualDiagnostics.packReloadChecks
+                      << " reloads=" << visualDiagnostics.packReloadsSucceeded
+                      << " reloadFailures=" << visualDiagnostics.packReloadsFailed << '\n';
             std::cout << "Visual capture: unique=" << captureStats.uniqueResourcesDumped
                       << " duplicates=" << captureStats.duplicateResourcesSkipped << '\n';
         }

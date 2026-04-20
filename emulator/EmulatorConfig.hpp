@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace BMMQ {
 
@@ -20,8 +21,9 @@ struct EmulatorConfig {
     bool startPaused = false;
     bool audioEnabled = true;
     std::string audioBackend = "sdl";
-    std::optional<std::filesystem::path> texturePackPath;
-    std::optional<std::filesystem::path> visualDumpPath;
+    std::vector<std::filesystem::path> visualPackPaths;
+    std::optional<std::filesystem::path> visualCapturePath;
+    bool visualPackReload = false;
 };
 
 struct CommandLineConfigOverrides {
@@ -36,8 +38,9 @@ struct CommandLineConfigOverrides {
     std::optional<bool> startPaused;
     std::optional<bool> audioEnabled;
     std::optional<std::string> audioBackend;
-    std::optional<std::filesystem::path> texturePackPath;
-    std::optional<std::filesystem::path> visualDumpPath;
+    std::optional<std::vector<std::filesystem::path>> visualPackPaths;
+    std::optional<std::filesystem::path> visualCapturePath;
+    std::optional<bool> visualPackReload;
 };
 
 struct ParsedEmulatorArguments {

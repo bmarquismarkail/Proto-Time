@@ -149,10 +149,12 @@ void applyConfigValue(EmulatorConfig& config,
             throw std::invalid_argument("Unknown config key: " + label);
         }
     } else if (section == "visual") {
-        if (key == "texture_pack") {
-            config.texturePackPath = resolveConfigPath(configDirectory, text);
-        } else if (key == "dump_resources") {
-            config.visualDumpPath = resolveConfigPath(configDirectory, text);
+        if (key == "pack" || key == "visual_pack" || key == "texture_pack") {
+            config.visualPackPaths.push_back(resolveConfigPath(configDirectory, text));
+        } else if (key == "capture" || key == "visual_capture" || key == "dump_resources") {
+            config.visualCapturePath = resolveConfigPath(configDirectory, text);
+        } else if (key == "reload") {
+            config.visualPackReload = parseBool(text, label);
         } else {
             throw std::invalid_argument("Unknown config key: " + label);
         }
@@ -211,7 +213,9 @@ EmulatorConfig loadEmulatorConfig(const std::filesystem::path& path)
         }
 
         const auto qualifiedKey = section + "." + key;
-        if (!seenKeys.insert(qualifiedKey).second) {
+        const bool repeatableKey =
+            section == "visual" && (key == "pack" || key == "visual_pack" || key == "texture_pack");
+        if (!repeatableKey && !seenKeys.insert(qualifiedKey).second) {
             throw std::invalid_argument("Duplicate config key: " + qualifiedKey);
         }
 
@@ -256,11 +260,14 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     if (overrides.audioBackend.has_value()) {
         config.audioBackend = *overrides.audioBackend;
     }
-    if (overrides.texturePackPath.has_value()) {
-        config.texturePackPath = *overrides.texturePackPath;
+    if (overrides.visualPackPaths.has_value()) {
+        config.visualPackPaths = *overrides.visualPackPaths;
     }
-    if (overrides.visualDumpPath.has_value()) {
-        config.visualDumpPath = *overrides.visualDumpPath;
+    if (overrides.visualCapturePath.has_value()) {
+        config.visualCapturePath = *overrides.visualCapturePath;
+    }
+    if (overrides.visualPackReload.has_value()) {
+        config.visualPackReload = *overrides.visualPackReload;
     }
 }
 
@@ -331,16 +338,21 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
                 throw std::invalid_argument("--audio-backend requires a backend name");
             }
             arguments.overrides.audioBackend = argv[++i];
-        } else if (arg == "--texture-pack") {
+        } else if (arg == "--visual-pack" || arg == "--texture-pack") {
             if (i + 1 >= argc) {
-                throw std::invalid_argument("--texture-pack requires a path");
+                throw std::invalid_argument(arg + " requires a path");
             }
-            arguments.overrides.texturePackPath = std::filesystem::path(argv[++i]);
-        } else if (arg == "--dump-visual-resources") {
+            if (!arguments.overrides.visualPackPaths.has_value()) {
+                arguments.overrides.visualPackPaths = std::vector<std::filesystem::path>{};
+            }
+            arguments.overrides.visualPackPaths->push_back(std::filesystem::path(argv[++i]));
+        } else if (arg == "--visual-capture" || arg == "--dump-visual-resources") {
             if (i + 1 >= argc) {
-                throw std::invalid_argument("--dump-visual-resources requires a directory");
+                throw std::invalid_argument(arg + " requires a directory");
             }
-            arguments.overrides.visualDumpPath = std::filesystem::path(argv[++i]);
+            arguments.overrides.visualCapturePath = std::filesystem::path(argv[++i]);
+        } else if (arg == "--visual-pack-reload") {
+            arguments.overrides.visualPackReload = true;
         } else if (arg == "--headless") {
             arguments.overrides.headless = true;
         } else if (arg == "-h" || arg == "--help") {
