@@ -4,6 +4,7 @@
 
 #include <cassert>
 #include <cstddef>
+#include <chrono>
 #include <filesystem>
 #include <string>
 
@@ -12,6 +13,21 @@
 #include "machine/VisualPackLimits.hpp"
 #include "machine/VisualTypes.hpp"
 #include "tests/visual_test_helpers.hpp"
+
+namespace {
+
+void advanceWriteTime(const std::filesystem::path& path)
+{
+    static int offsetSeconds = 1;
+    std::error_code ec;
+    std::filesystem::last_write_time(
+        path,
+        std::filesystem::file_time_type::clock::now() + std::chrono::seconds(offsetSeconds++),
+        ec);
+    assert(!ec);
+}
+
+} // namespace
 
 int main()
 {
@@ -325,6 +341,183 @@ int main()
     assert(oversizedInflateService.loadPackManifest(root / "oversized-inflate-pack" / "pack.json"));
     assert(!oversizedInflateService.resolve(resource->descriptor).has_value());
     assert(oversizedInflateService.diagnostics().replacementLoadFailures == 1u);
+
+    const auto reloadPackDir = root / "reload-pack";
+    const auto reloadManifestPath = reloadPackDir / "pack.json";
+    const auto reloadImagePath = reloadPackDir / "tile.png";
+    Visual::writeBinaryFile(reloadImagePath, Visual::makeSolidPng2x2Rgba(0xFFFF0000u));
+    Visual::writeTextFile(reloadManifestPath,
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"reload-original.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\"image\": \"tile.png\"}\n"
+        "  }]\n"
+        "}\n");
+    BMMQ::VisualOverrideService reloadService;
+    assert(reloadService.loadPackManifest(reloadManifestPath));
+    const auto loadedGeneration = reloadService.generation();
+    auto reloadResolved = reloadService.resolve(resource->descriptor);
+    assert(reloadResolved.has_value());
+    assert(reloadResolved->packId == "reload-original.gb");
+    assert(reloadResolved->image.argbPixels[0] == 0xFFFF0000u);
+    assert(!reloadService.reloadChangedPacks());
+    assert(reloadService.generation() == loadedGeneration);
+    assert(reloadService.diagnostics().packReloadChecks == 1u);
+    assert(reloadService.diagnostics().packReloadsSkipped == 1u);
+
+    Visual::writeTextFile(reloadManifestPath,
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"reload-updated.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\"image\": \"tile.png\"}\n"
+        "  }]\n"
+        "}\n");
+    advanceWriteTime(reloadManifestPath);
+    assert(reloadService.reloadChangedPacks());
+    assert(reloadService.generation() == loadedGeneration + 1u);
+    reloadResolved = reloadService.resolve(resource->descriptor);
+    assert(reloadResolved.has_value());
+    assert(reloadResolved->packId == "reload-updated.gb");
+    assert(reloadService.diagnostics().packReloadsSucceeded == 1u);
+
+    const auto generationBeforeFailedReload = reloadService.generation();
+    Visual::writeTextFile(reloadManifestPath,
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"reload-broken.gb\"\n"
+        "}\n");
+    advanceWriteTime(reloadManifestPath);
+    assert(!reloadService.reloadChangedPacks());
+    assert(reloadService.generation() == generationBeforeFailedReload);
+    assert(reloadService.lastError().find("visual pack reload failed") != std::string::npos);
+    reloadResolved = reloadService.resolve(resource->descriptor);
+    assert(reloadResolved.has_value());
+    assert(reloadResolved->packId == "reload-updated.gb");
+    assert(reloadService.diagnostics().packReloadsFailed == 1u);
+
+    Visual::writeTextFile(reloadManifestPath,
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"reload-updated.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\"image\": \"tile.png\"}\n"
+        "  }]\n"
+        "}\n");
+    advanceWriteTime(reloadManifestPath);
+    assert(reloadService.reloadChangedPacks());
+    reloadResolved = reloadService.resolve(resource->descriptor);
+    assert(reloadResolved.has_value());
+    assert(reloadResolved->image.argbPixels[0] == 0xFFFF0000u);
+
+    const auto generationBeforeAssetReload = reloadService.generation();
+    Visual::writeBinaryFile(reloadImagePath, Visual::makeSolidPng2x2Rgba(0xFF00FF00u));
+    advanceWriteTime(reloadImagePath);
+    assert(reloadService.reloadChangedPacks());
+    assert(reloadService.generation() == generationBeforeAssetReload + 1u);
+    reloadResolved = reloadService.resolve(resource->descriptor);
+    assert(reloadResolved.has_value());
+    assert(reloadResolved->packId == "reload-updated.gb");
+    assert(reloadResolved->image.argbPixels[0] == 0xFF00FF00u);
+
+    const auto diagnosticPackA = root / "diagnostic-pack-a";
+    const auto diagnosticPackB = root / "diagnostic-pack-b";
+    Visual::writeBinaryFile(diagnosticPackA / "tile.png", Visual::makeSolidPng2x2Rgba(0xFFFF0000u));
+    Visual::writeBinaryFile(diagnosticPackB / "tile.png", Visual::makeSolidPng2x2Rgba(0xFFFF0000u));
+    Visual::writeTextFile(diagnosticPackA / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"diagnostic-a.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\"image\": \"tile.png\"}\n"
+        "  }]\n"
+        "}\n");
+    Visual::writeTextFile(diagnosticPackB / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"diagnostic-b.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\"image\": \"tile.png\"}\n"
+        "  }]\n"
+        "}\n");
+    BMMQ::VisualOverrideService diagnosticReloadService;
+    assert(diagnosticReloadService.loadPackManifest(diagnosticPackA / "pack.json"));
+    assert(diagnosticReloadService.loadPackManifest(diagnosticPackB / "pack.json"));
+    const auto invalidBeforeFailedBatch = diagnosticReloadService.diagnostics().invalidRulesSkipped;
+    const auto missingBeforeFailedBatch = diagnosticReloadService.diagnostics().missingReplacementImages;
+
+    Visual::writeTextFile(diagnosticPackA / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"diagnostic-a-reload.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [\n"
+        "    {\n"
+        "      \"match\": {\n"
+        "        \"kind\": \"Tile\",\n"
+        "        \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "        \"width\": 8,\n"
+        "        \"height\": 8\n"
+        "      },\n"
+        "      \"replace\": {}\n"
+        "    },\n"
+        "    {\n"
+        "      \"match\": {\n"
+        "        \"kind\": \"Tile\",\n"
+        "        \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "        \"width\": 8,\n"
+        "        \"height\": 8\n"
+        "      },\n"
+        "      \"replace\": {\"image\": \"missing.png\"}\n"
+        "    }\n"
+        "  ]\n"
+        "}\n");
+    advanceWriteTime(diagnosticPackA / "pack.json");
+    Visual::writeTextFile(diagnosticPackB / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"diagnostic-b-broken.gb\"\n"
+        "}\n");
+    advanceWriteTime(diagnosticPackB / "pack.json");
+    assert(!diagnosticReloadService.reloadChangedPacks());
+    assert(diagnosticReloadService.diagnostics().invalidRulesSkipped == invalidBeforeFailedBatch);
+    assert(diagnosticReloadService.diagnostics().missingReplacementImages == missingBeforeFailedBatch);
 
     std::filesystem::remove_all(root);
     return 0;

@@ -78,17 +78,68 @@ bool VisualOverrideService::loadPackManifest(const std::filesystem::path& manife
         lastError_ = std::move(loadResult.error);
         return false;
     }
-    packs_.push_back(std::move(*loadResult.manifest));
+    packs_.push_back(makeLoadedPack(manifestPath, std::move(*loadResult.manifest)));
     diagnostics_.invalidRulesSkipped += loadResult.invalidRulesSkipped;
     diagnostics_.missingReplacementImages += loadResult.missingReplacementImages;
-    diagnostics_.rulesLoaded = 0;
-    for (const auto& loadedPack : packs_) {
-        diagnostics_.rulesLoaded += loadedPack.rules.size();
-    }
+    diagnostics_.rulesLoaded = countLoadedRules(packs_);
     ++generation_;
-    resolvedCache_.clear();
-    imageCache_.clear();
-    imageCacheBytes_ = 0;
+    clearResolutionCaches();
+    lastError_.clear();
+    return true;
+}
+
+bool VisualOverrideService::reloadChangedPacks()
+{
+    ++diagnostics_.packReloadChecks;
+    if (packs_.empty()) {
+        ++diagnostics_.packReloadsSkipped;
+        return false;
+    }
+
+    std::vector<LoadedPack> reloadedPacks;
+    std::size_t localInvalidRulesSkipped = 0;
+    std::size_t localMissingReplacementImages = 0;
+    bool changed = false;
+    bool failed = false;
+    for (const auto& loadedPack : packs_) {
+        const auto manifestTime = fileWriteTime(loadedPack.manifestPath);
+        const bool manifestChanged = manifestTime != loadedPack.manifestWriteTime;
+        const bool assetChanged = watchedAssetChanged(loadedPack);
+        if (!manifestChanged && !assetChanged) {
+            reloadedPacks.push_back(loadedPack);
+            continue;
+        }
+
+        auto loadResult = loadVisualPackManifest(loadedPack.manifestPath);
+        if (!loadResult.manifest.has_value()) {
+            ++diagnostics_.packReloadsFailed;
+            lastError_ = "visual pack reload failed: " + loadedPack.manifestPath.string() + ": " + loadResult.error;
+            failed = true;
+            reloadedPacks.push_back(loadedPack);
+            continue;
+        }
+
+        localInvalidRulesSkipped += loadResult.invalidRulesSkipped;
+        localMissingReplacementImages += loadResult.missingReplacementImages;
+        reloadedPacks.push_back(makeLoadedPack(loadedPack.manifestPath, std::move(*loadResult.manifest)));
+        changed = true;
+    }
+
+    if (failed) {
+        return false;
+    }
+    if (!changed) {
+        ++diagnostics_.packReloadsSkipped;
+        return false;
+    }
+
+    packs_ = std::move(reloadedPacks);
+    diagnostics_.invalidRulesSkipped += localInvalidRulesSkipped;
+    diagnostics_.missingReplacementImages += localMissingReplacementImages;
+    diagnostics_.rulesLoaded = countLoadedRules(packs_);
+    ++diagnostics_.packReloadsSucceeded;
+    ++generation_;
+    clearResolutionCaches();
     lastError_.clear();
     return true;
 }
@@ -109,8 +160,9 @@ std::optional<ResolvedVisualOverride> VisualOverrideService::resolve(const Visua
     }
 
     const VisualOverrideRule* bestRule = nullptr;
-    const VisualPackManifest* bestPack = nullptr;
-    for (const auto& pack : packs_) {
+    const LoadedPack* bestPack = nullptr;
+    for (const auto& loadedPack : packs_) {
+        const auto& pack = loadedPack.manifest;
         if (!pack.target.empty() && pack.target != descriptor.machineId) {
             continue;
         }
@@ -123,11 +175,11 @@ std::optional<ResolvedVisualOverride> VisualOverrideService::resolve(const Visua
             }
             if (bestRule == nullptr ||
                 rule.specificity > bestRule->specificity ||
-                (rule.specificity == bestRule->specificity && pack.priority > bestPack->priority) ||
-                (rule.specificity == bestRule->specificity && pack.priority == bestPack->priority &&
+                (rule.specificity == bestRule->specificity && pack.priority > bestPack->manifest.priority) ||
+                (rule.specificity == bestRule->specificity && pack.priority == bestPack->manifest.priority &&
                  rule.order < bestRule->order)) {
                 bestRule = &rule;
-                bestPack = &pack;
+                bestPack = &loadedPack;
             }
         }
     }
@@ -137,8 +189,8 @@ std::optional<ResolvedVisualOverride> VisualOverrideService::resolve(const Visua
         emitVisualEvent(MachineEventType::VisualPackMiss, 0u, "visual-pack-miss");
         return std::nullopt;
     }
-    ResolvedPath resolvedPath{bestPack->id,
-                              bestPack->root / bestRule->image,
+    ResolvedPath resolvedPath{bestPack->manifest.id,
+                              bestPack->manifest.root / bestRule->image,
                               bestRule->scalePolicy,
                               bestRule->filterPolicy,
                               bestRule->anchor};
@@ -262,6 +314,77 @@ std::string VisualOverrideService::lastError() const
 uint64_t VisualOverrideService::generation() const noexcept
 {
     return generation_;
+}
+
+std::filesystem::file_time_type VisualOverrideService::fileWriteTime(const std::filesystem::path& path) noexcept
+{
+    std::error_code ec;
+    const auto writeTime = std::filesystem::last_write_time(path, ec);
+    if (ec) {
+        return std::filesystem::file_time_type::min();
+    }
+    return writeTime;
+}
+
+std::vector<VisualOverrideService::WatchedPathStamp> VisualOverrideService::collectAssetStamps(
+    const VisualPackManifest& manifest)
+{
+    std::vector<WatchedPathStamp> stamps;
+    std::set<std::string> seen;
+    for (const auto& rule : manifest.rules) {
+        if (rule.image.empty()) {
+            continue;
+        }
+        const auto assetPath = (manifest.root / rule.image).lexically_normal();
+        const auto key = assetPath.string();
+        if (!seen.insert(key).second) {
+            continue;
+        }
+        stamps.push_back(WatchedPathStamp{
+            .path = assetPath,
+            .writeTime = fileWriteTime(assetPath),
+        });
+    }
+    return stamps;
+}
+
+bool VisualOverrideService::watchedAssetChanged(const LoadedPack& pack) noexcept
+{
+    for (const auto& stamp : pack.assetStamps) {
+        if (fileWriteTime(stamp.path) != stamp.writeTime) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::size_t VisualOverrideService::countLoadedRules(const std::vector<LoadedPack>& packs) noexcept
+{
+    std::size_t rulesLoaded = 0;
+    for (const auto& loadedPack : packs) {
+        rulesLoaded += loadedPack.manifest.rules.size();
+    }
+    return rulesLoaded;
+}
+
+VisualOverrideService::LoadedPack VisualOverrideService::makeLoadedPack(std::filesystem::path manifestPath,
+                                                                        VisualPackManifest manifest) const
+{
+    auto assetStamps = collectAssetStamps(manifest);
+    const auto manifestWriteTime = fileWriteTime(manifestPath);
+    return LoadedPack{
+        .manifest = std::move(manifest),
+        .manifestPath = std::move(manifestPath),
+        .manifestWriteTime = manifestWriteTime,
+        .assetStamps = std::move(assetStamps),
+    };
+}
+
+void VisualOverrideService::clearResolutionCaches()
+{
+    resolvedCache_.clear();
+    imageCache_.clear();
+    imageCacheBytes_ = 0;
 }
 
 std::string VisualOverrideService::makeDescriptorKey(const VisualResourceDescriptor& descriptor)

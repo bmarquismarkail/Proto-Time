@@ -32,6 +32,10 @@ struct VisualOverrideDiagnostics {
     std::size_t resolveMisses = 0;
     std::size_t replacementLoadFailures = 0;
     std::size_t ambiguousMatches = 0;
+    std::size_t packReloadChecks = 0;
+    std::size_t packReloadsSkipped = 0;
+    std::size_t packReloadsSucceeded = 0;
+    std::size_t packReloadsFailed = 0;
 };
 
 class VisualOverrideService {
@@ -47,6 +51,7 @@ public:
     [[nodiscard]] bool capturing() const noexcept;
 
     [[nodiscard]] bool loadPackManifest(const std::filesystem::path& manifestPath);
+    [[nodiscard]] bool reloadChangedPacks();
     [[nodiscard]] std::optional<ResolvedVisualOverride> resolve(const VisualResourceDescriptor& descriptor);
 
     [[nodiscard]] bool beginCapture(const std::filesystem::path& directory, std::string machineId);
@@ -73,6 +78,24 @@ private:
         std::string anchor;
     };
 
+    struct WatchedPathStamp {
+        std::filesystem::path path;
+        std::filesystem::file_time_type writeTime{};
+    };
+
+    struct LoadedPack {
+        VisualPackManifest manifest;
+        std::filesystem::path manifestPath;
+        std::filesystem::file_time_type manifestWriteTime{};
+        std::vector<WatchedPathStamp> assetStamps;
+    };
+
+    [[nodiscard]] static std::filesystem::file_time_type fileWriteTime(const std::filesystem::path& path) noexcept;
+    [[nodiscard]] static std::vector<WatchedPathStamp> collectAssetStamps(const VisualPackManifest& manifest);
+    [[nodiscard]] static bool watchedAssetChanged(const LoadedPack& pack) noexcept;
+    [[nodiscard]] static std::size_t countLoadedRules(const std::vector<LoadedPack>& packs) noexcept;
+    [[nodiscard]] LoadedPack makeLoadedPack(std::filesystem::path manifestPath, VisualPackManifest manifest) const;
+    void clearResolutionCaches();
     [[nodiscard]] static std::string makeDescriptorKey(const VisualResourceDescriptor& descriptor);
     [[nodiscard]] static bool matches(const VisualOverrideRule& rule, const VisualResourceDescriptor& descriptor) noexcept;
     [[nodiscard]] std::optional<ResolvedVisualOverride> loadResolved(const ResolvedPath& resolvedPath);
@@ -90,7 +113,7 @@ private:
     std::set<std::string> captureSeen_;
     std::vector<VisualCaptureEntry> captureEntries_;
     mutable bool captureManifestDirty_ = false;
-    std::vector<VisualPackManifest> packs_;
+    std::vector<LoadedPack> packs_;
     std::map<std::string, ResolvedPath> resolvedCache_;
     std::unordered_map<std::string, VisualReplacementImage> imageCache_;
     std::size_t imageCacheBytes_ = 0;

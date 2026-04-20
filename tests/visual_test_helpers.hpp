@@ -10,6 +10,8 @@
 #include <string_view>
 #include <vector>
 
+#include <zlib.h>
+
 #include "cores/gameboy/video/GameBoyVisualExtractor.hpp"
 #include "machine/VisualTypes.hpp"
 #include "machine/plugins/IoPlugin.hpp"
@@ -70,6 +72,67 @@ inline void writeBinaryFile(const std::filesystem::path& path, const std::vector
         0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44,
         0x00, 0x00, 0x00, 0x00,
     };
+}
+
+inline void appendBigEndian32(std::vector<uint8_t>& bytes, uint32_t value)
+{
+    bytes.push_back(static_cast<uint8_t>((value >> 24u) & 0xFFu));
+    bytes.push_back(static_cast<uint8_t>((value >> 16u) & 0xFFu));
+    bytes.push_back(static_cast<uint8_t>((value >> 8u) & 0xFFu));
+    bytes.push_back(static_cast<uint8_t>(value & 0xFFu));
+}
+
+inline void appendPngChunk(std::vector<uint8_t>& bytes, const char* type, const std::vector<uint8_t>& data)
+{
+    appendBigEndian32(bytes, static_cast<uint32_t>(data.size()));
+    bytes.insert(bytes.end(), type, type + 4u);
+    bytes.insert(bytes.end(), data.begin(), data.end());
+    appendBigEndian32(bytes, 0u);
+}
+
+[[nodiscard]] inline std::vector<uint8_t> makeSolidPng2x2Rgba(uint32_t argb)
+{
+    std::vector<uint8_t> raw;
+    raw.reserve(18u);
+    const auto r = static_cast<uint8_t>((argb >> 16u) & 0xFFu);
+    const auto g = static_cast<uint8_t>((argb >> 8u) & 0xFFu);
+    const auto b = static_cast<uint8_t>(argb & 0xFFu);
+    const auto a = static_cast<uint8_t>((argb >> 24u) & 0xFFu);
+    for (std::size_t y = 0; y < 2u; ++y) {
+        raw.push_back(0u);
+        for (std::size_t x = 0; x < 2u; ++x) {
+            raw.push_back(r);
+            raw.push_back(g);
+            raw.push_back(b);
+            raw.push_back(a);
+        }
+    }
+
+    auto compressedSize = compressBound(static_cast<uLong>(raw.size()));
+    std::vector<uint8_t> compressed(compressedSize);
+    const auto status = compress2(compressed.data(),
+                                  &compressedSize,
+                                  raw.data(),
+                                  static_cast<uLong>(raw.size()),
+                                  Z_BEST_SPEED);
+    if (status != Z_OK) {
+        return {};
+    }
+    compressed.resize(compressedSize);
+
+    std::vector<uint8_t> png{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+    std::vector<uint8_t> ihdr;
+    appendBigEndian32(ihdr, 2u);
+    appendBigEndian32(ihdr, 2u);
+    ihdr.push_back(8u);
+    ihdr.push_back(6u);
+    ihdr.push_back(0u);
+    ihdr.push_back(0u);
+    ihdr.push_back(0u);
+    appendPngChunk(png, "IHDR", ihdr);
+    appendPngChunk(png, "IDAT", compressed);
+    appendPngChunk(png, "IEND", {});
+    return png;
 }
 
 [[nodiscard]] inline VideoStateView makeTileState(uint8_t lowByte, uint8_t highByte)
