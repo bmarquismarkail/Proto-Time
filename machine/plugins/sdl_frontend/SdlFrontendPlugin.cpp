@@ -36,6 +36,7 @@
     }
 #include <cstdint>
 #include <cctype>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -931,7 +932,9 @@ private:
         });
         (void)videoService_->configurePresenter({
             .windowTitle = config_.windowTitle,
-            .scale = std::max(config_.windowScale, 1u),
+            .scale = static_cast<int>(std::min<std::uint32_t>(
+                std::max(config_.windowScale, 1u),
+                static_cast<std::uint32_t>(std::numeric_limits<int>::max()))),
             .frameWidth = std::max(config_.frameWidth, 1),
             .frameHeight = std::max(config_.frameHeight, 1),
             .createHiddenWindowOnOpen = true,
