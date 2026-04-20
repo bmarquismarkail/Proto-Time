@@ -16,6 +16,8 @@
 
 #include <zlib.h>
 
+#include "VisualPackLimits.hpp"
+
 namespace BMMQ {
 namespace {
 
@@ -86,6 +88,7 @@ bool VisualOverrideService::loadPackManifest(const std::filesystem::path& manife
     ++generation_;
     resolvedCache_.clear();
     imageCache_.clear();
+    imageCacheBytes_ = 0;
     lastError_.clear();
     return true;
 }
@@ -273,6 +276,14 @@ std::optional<VisualReplacementImage> VisualOverrideService::loadPng(const std::
         return cached->second;
     }
 
+    std::error_code sizeEc;
+    const auto fileSize = std::filesystem::file_size(path, sizeEc);
+    if (!sizeEc && fileSize > VisualPackLimits::kMaxPngBytes) {
+        lastError_ = "replacement PNG too large: bytes=" + std::to_string(fileSize) +
+            " max=" + std::to_string(VisualPackLimits::kMaxPngBytes);
+        return std::nullopt;
+    }
+
     std::ifstream input(path, std::ios::binary);
     if (!input) {
         return std::nullopt;
@@ -313,6 +324,13 @@ std::optional<VisualReplacementImage> VisualOverrideService::loadPng(const std::
             const auto compression = bytes[dataOffset + 10u];
             const auto filter = bytes[dataOffset + 11u];
             const auto interlace = bytes[dataOffset + 12u];
+            if (width > VisualPackLimits::kMaxReplacementImageDimension ||
+                height > VisualPackLimits::kMaxReplacementImageDimension) {
+                lastError_ = "replacement PNG dimensions too large: width=" + std::to_string(width) +
+                    " height=" + std::to_string(height) +
+                    " max=" + std::to_string(VisualPackLimits::kMaxReplacementImageDimension);
+                return std::nullopt;
+            }
             if (width == 0u || height == 0u || bitDepth != 8u ||
                 (colorType != 2u && colorType != 6u) ||
                 compression != 0u || filter != 0u || interlace != 0u) {
@@ -329,6 +347,11 @@ std::optional<VisualReplacementImage> VisualOverrideService::loadPng(const std::
     const std::size_t channels = colorType == 6u ? 4u : 3u;
     const std::size_t stride = static_cast<std::size_t>(width) * channels;
     const std::size_t inflatedSize = (stride + 1u) * static_cast<std::size_t>(height);
+    if (inflatedSize > VisualPackLimits::kMaxReplacementInflatedBytes) {
+        lastError_ = "replacement PNG inflated data too large: bytes=" + std::to_string(inflatedSize) +
+            " max=" + std::to_string(VisualPackLimits::kMaxReplacementInflatedBytes);
+        return std::nullopt;
+    }
     std::vector<uint8_t> inflated(inflatedSize);
     auto destinationSize = static_cast<uLongf>(inflated.size());
     if (uncompress(inflated.data(), &destinationSize, idat.data(), static_cast<uLong>(idat.size())) != Z_OK ||
@@ -373,8 +396,17 @@ std::optional<VisualReplacementImage> VisualOverrideService::loadPng(const std::
     VisualReplacementImage image;
     image.width = width;
     image.height = height;
-    image.argbPixels.reserve(static_cast<std::size_t>(width) * static_cast<std::size_t>(height));
-    for (std::size_t i = 0; i < static_cast<std::size_t>(width) * static_cast<std::size_t>(height); ++i) {
+    const auto pixelCount = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+    const auto imageBytes = pixelCount * sizeof(uint32_t);
+    if (imageBytes > VisualPackLimits::kMaxReplacementCacheBytes ||
+        imageCacheBytes_ > VisualPackLimits::kMaxReplacementCacheBytes - imageBytes) {
+        lastError_ = "replacement image cache budget exceeded: requested=" + std::to_string(imageBytes) +
+            " current=" + std::to_string(imageCacheBytes_) +
+            " max=" + std::to_string(VisualPackLimits::kMaxReplacementCacheBytes);
+        return std::nullopt;
+    }
+    image.argbPixels.reserve(pixelCount);
+    for (std::size_t i = 0; i < pixelCount; ++i) {
         const auto base = i * channels;
         const auto r = decoded[base];
         const auto g = decoded[base + 1u];
@@ -386,6 +418,7 @@ std::optional<VisualReplacementImage> VisualOverrideService::loadPng(const std::
                                    static_cast<uint32_t>(b));
     }
     imageCache_.emplace(key, image);
+    imageCacheBytes_ += imageBytes;
     return image;
 }
 

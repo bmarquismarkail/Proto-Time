@@ -79,6 +79,7 @@ private:
     std::vector<VisualPackManifest> packs_;
     std::map<std::string, ResolvedPath> resolvedCache_;
     std::unordered_map<std::string, VisualReplacementImage> imageCache_;
+    std::size_t imageCacheBytes_ = 0;
     mutable std::string lastError_;
 };
 

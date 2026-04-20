@@ -17,6 +17,7 @@
 #include "cores/gameboy/video/GameBoyVisualExtractor.hpp"
 #include "machine/VisualCaptureWriter.hpp"
 #include "machine/VisualOverrideService.hpp"
+#include "machine/VisualPackLimits.hpp"
 #include "machine/VisualTypes.hpp"
 
 namespace {
@@ -48,6 +49,26 @@ std::vector<uint8_t> makePng2x2Rgba()
         0xC8, 0x09, 0xF7, 0xF9, 0xAB, 0xB6, 0x0D, 0x00,
         0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
         0x42, 0x60, 0x82,
+    };
+}
+
+std::vector<uint8_t> makeHeaderOnlyPng(uint32_t width, uint32_t height)
+{
+    return {
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+        static_cast<uint8_t>((width >> 24u) & 0xFFu),
+        static_cast<uint8_t>((width >> 16u) & 0xFFu),
+        static_cast<uint8_t>((width >> 8u) & 0xFFu),
+        static_cast<uint8_t>(width & 0xFFu),
+        static_cast<uint8_t>((height >> 24u) & 0xFFu),
+        static_cast<uint8_t>((height >> 16u) & 0xFFu),
+        static_cast<uint8_t>((height >> 8u) & 0xFFu),
+        static_cast<uint8_t>(height & 0xFFu),
+        0x08, 0x06, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44,
+        0x00, 0x00, 0x00, 0x00,
     };
 }
 
@@ -389,6 +410,83 @@ int main()
     assert(garbageHashService.loadPackManifest(root / "pack" / "garbage-hash.json"));
     assert(garbageHashService.diagnostics().invalidRulesSkipped == 1u);
     assert(garbageHashService.diagnostics().rulesLoaded == 0u);
+
+    writeTextFile(root / "oversized-pack" / "pack.json",
+                  std::string(1024u * 1024u + 1u, ' '));
+    BMMQ::VisualOverrideService oversizedManifestService;
+    assert(!oversizedManifestService.loadPackManifest(root / "oversized-pack" / "pack.json"));
+    assert(oversizedManifestService.lastError().find("visual pack manifest too large") != std::string::npos);
+
+    std::string tooManyRules =
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"too-many-rules.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [\n";
+    for (std::size_t i = 0; i < 1025u; ++i) {
+        tooManyRules +=
+            "    {\n"
+            "      \"match\": {\n"
+            "        \"kind\": \"Tile\",\n"
+            "        \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+            "        \"width\": 8,\n"
+            "        \"height\": 8\n"
+            "      },\n"
+            "      \"replace\": {\n"
+            "        \"image\": \"images/tile.png\"\n"
+            "      }\n"
+            "    }" + std::string(i + 1u < 1025u ? "," : "") + "\n";
+    }
+    tooManyRules += "  ]\n}\n";
+    writeTextFile(root / "too-many-rules" / "pack.json", tooManyRules);
+    BMMQ::VisualOverrideService tooManyRulesService;
+    assert(!tooManyRulesService.loadPackManifest(root / "too-many-rules" / "pack.json"));
+    assert(tooManyRulesService.lastError().find("too many visual pack rules") != std::string::npos);
+
+    const auto oversizedImagePath = root / "oversized-image-pack" / "large.png";
+    writeBinaryFile(oversizedImagePath,
+                    makeHeaderOnlyPng(BMMQ::VisualPackLimits::kMaxReplacementImageDimension + 1u, 1u));
+    writeTextFile(root / "oversized-image-pack" / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"oversized-image.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\"image\": \"large.png\"}\n"
+        "  }]\n"
+        "}\n");
+    BMMQ::VisualOverrideService oversizedImageService;
+    assert(oversizedImageService.loadPackManifest(root / "oversized-image-pack" / "pack.json"));
+    assert(!oversizedImageService.resolve(resource->descriptor).has_value());
+    assert(oversizedImageService.diagnostics().replacementLoadFailures == 1u);
+
+    const auto oversizedInflateImagePath = root / "oversized-inflate-pack" / "large.png";
+    writeBinaryFile(oversizedInflateImagePath, makeHeaderOnlyPng(2048u, 2048u));
+    writeTextFile(root / "oversized-inflate-pack" / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"oversized-inflate.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\"image\": \"large.png\"}\n"
+        "  }]\n"
+        "}\n");
+    BMMQ::VisualOverrideService oversizedInflateService;
+    assert(oversizedInflateService.loadPackManifest(root / "oversized-inflate-pack" / "pack.json"));
+    assert(!oversizedInflateService.resolve(resource->descriptor).has_value());
+    assert(oversizedInflateService.diagnostics().replacementLoadFailures == 1u);
 
     GameBoyMachine machine;
     assert(&machine.visualOverrideService() == &machine.mutableView().visualOverrideService());

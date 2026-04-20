@@ -11,6 +11,8 @@
 #include <utility>
 #include <variant>
 
+#include "VisualPackLimits.hpp"
+
 namespace BMMQ {
 namespace {
 
@@ -394,6 +396,15 @@ private:
 
 VisualPackManifestLoadResult loadVisualPackManifest(const std::filesystem::path& manifestPath)
 {
+    std::error_code sizeEc;
+    const auto manifestSize = std::filesystem::file_size(manifestPath, sizeEc);
+    if (!sizeEc && manifestSize > VisualPackLimits::kMaxManifestBytes) {
+        VisualPackManifestLoadResult result;
+        result.error = "visual pack manifest too large: bytes=" + std::to_string(manifestSize) +
+            " max=" + std::to_string(VisualPackLimits::kMaxManifestBytes);
+        return result;
+    }
+
     std::ifstream input(manifestPath);
     if (!input) {
         VisualPackManifestLoadResult result;
@@ -429,6 +440,12 @@ VisualPackManifestLoadResult loadVisualPackManifest(const std::filesystem::path&
 
     const auto* rulesValue = findMember(root, "rules");
     if (rulesValue != nullptr && rulesValue->array() != nullptr) {
+        if (rulesValue->array()->size() > VisualPackLimits::kMaxManifestRules) {
+            result.error = "too many visual pack rules: count=" + std::to_string(rulesValue->array()->size()) +
+                " max=" + std::to_string(VisualPackLimits::kMaxManifestRules);
+            return result;
+        }
+
         std::size_t order = 0;
         for (const auto& ruleValue : *rulesValue->array()) {
             if (ruleValue.object() == nullptr) {
