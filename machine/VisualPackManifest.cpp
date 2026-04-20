@@ -16,6 +16,8 @@
 namespace BMMQ {
 namespace {
 
+constexpr uint32_t kSupportedVisualPackSchemaVersion = 1u;
+
 struct JsonValue {
     using Object = std::map<std::string, JsonValue>;
     using Array = std::vector<JsonValue>;
@@ -373,6 +375,12 @@ private:
     return static_cast<uint32_t>(*value->number());
 }
 
+[[nodiscard]] bool jsonUInt32Equals(const JsonValue::Object& object, const std::string& key, uint32_t expected)
+{
+    const auto* value = findMember(object, key);
+    return value != nullptr && value->number() != nullptr && *value->number() == static_cast<double>(expected);
+}
+
 [[nodiscard]] std::optional<uint64_t> parseVisualHashString(const std::string& value)
 {
     uint64_t parsed = 0;
@@ -423,20 +431,30 @@ VisualPackManifestLoadResult loadVisualPackManifest(const std::filesystem::path&
 
     VisualPackManifestLoadResult result;
     const auto& root = *rootValue->object();
+    if (!jsonUInt32Equals(root, "schemaVersion", kSupportedVisualPackSchemaVersion)) {
+        result.error = "unsupported visual pack schemaVersion: expected=" +
+            std::to_string(kSupportedVisualPackSchemaVersion);
+        return result;
+    }
+
     VisualPackManifest pack;
     pack.root = manifestPath.parent_path();
     pack.id = jsonString(root, "id").value_or("");
     pack.name = jsonString(root, "name").value_or("");
     pack.priority = jsonUInt32(root, "priority").value_or(0u);
+    if (const auto target = jsonString(root, "target"); target.has_value() && !target->empty()) {
+        pack.targets.push_back(*target);
+    }
     if (const auto* targetsValue = findMember(root, "targets");
-        targetsValue != nullptr && targetsValue->array() != nullptr && !targetsValue->array()->empty()) {
-        const auto& firstTarget = targetsValue->array()->front();
-        if (firstTarget.string() != nullptr) {
-            pack.target = *firstTarget.string();
+        targetsValue != nullptr && targetsValue->array() != nullptr) {
+        for (const auto& targetValue : *targetsValue->array()) {
+            if (targetValue.string() != nullptr && !targetValue.string()->empty()) {
+                pack.targets.push_back(*targetValue.string());
+            }
         }
     }
-    if (pack.target.empty()) {
-        pack.target = jsonString(root, "target").value_or("");
+    if (!pack.targets.empty()) {
+        pack.target = pack.targets.front();
     }
 
     const auto* rulesValue = findMember(root, "rules");
@@ -509,7 +527,7 @@ VisualPackManifestLoadResult loadVisualPackManifest(const std::filesystem::path&
         }
     }
 
-    if (pack.id.empty() || pack.target.empty()) {
+    if (pack.id.empty() || pack.targets.empty()) {
         result.error = "visual pack manifest missing id or target";
         return result;
     }

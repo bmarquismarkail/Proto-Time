@@ -44,6 +44,14 @@ namespace {
     return upLeft;
 }
 
+[[nodiscard]] bool targetsMachine(const VisualPackManifest& pack, const std::string& machineId) noexcept
+{
+    if (pack.targets.empty()) {
+        return pack.target.empty() || pack.target == machineId;
+    }
+    return std::find(pack.targets.begin(), pack.targets.end(), machineId) != pack.targets.end();
+}
+
 } // namespace
 
 bool VisualOverrideService::enabled() const noexcept
@@ -163,7 +171,7 @@ std::optional<ResolvedVisualOverride> VisualOverrideService::resolve(const Visua
     const LoadedPack* bestPack = nullptr;
     for (const auto& loadedPack : packs_) {
         const auto& pack = loadedPack.manifest;
-        if (!pack.target.empty() && pack.target != descriptor.machineId) {
+        if (!targetsMachine(pack, descriptor.machineId)) {
             continue;
         }
         for (const auto& rule : pack.rules) {

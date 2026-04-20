@@ -46,6 +46,50 @@ int main()
     auto differentPalette = GB::decodeGameBoyTileResource(differentPaletteState, 0u, BMMQ::VisualResourceKind::Tile);
     assert(differentPalette.has_value());
 
+    Visual::writeTextFile(root / "schema-missing-pack" / "pack.json",
+        "{\n"
+        "  \"id\": \"schema-missing.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": []\n"
+        "}\n");
+    BMMQ::VisualOverrideService missingSchemaService;
+    assert(!missingSchemaService.loadPackManifest(root / "schema-missing-pack" / "pack.json"));
+    assert(missingSchemaService.lastError().find("unsupported visual pack schemaVersion") != std::string::npos);
+
+    Visual::writeTextFile(root / "schema-unsupported-pack" / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 2,\n"
+        "  \"id\": \"schema-unsupported.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": []\n"
+        "}\n");
+    BMMQ::VisualOverrideService unsupportedSchemaService;
+    assert(!unsupportedSchemaService.loadPackManifest(root / "schema-unsupported-pack" / "pack.json"));
+    assert(unsupportedSchemaService.lastError().find("unsupported visual pack schemaVersion") != std::string::npos);
+
+    const auto multiTargetImagePath = root / "multi-target-pack" / "images" / "tile.png";
+    Visual::writeBinaryFile(multiTargetImagePath, Visual::makePng2x2Rgba());
+    Visual::writeTextFile(root / "multi-target-pack" / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"multi-target.gb\",\n"
+        "  \"targets\": [\"nes\", \"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\"image\": \"images/tile.png\"}\n"
+        "  }]\n"
+        "}\n");
+    BMMQ::VisualOverrideService multiTargetService;
+    assert(multiTargetService.loadPackManifest(root / "multi-target-pack" / "pack.json"));
+    auto multiTargetResolved = multiTargetService.resolve(resource->descriptor);
+    assert(multiTargetResolved.has_value());
+    assert(multiTargetResolved->packId == "multi-target.gb");
+
     const auto semanticImagePath = root / "semantic-pack" / "images" / "tile.png";
     Visual::writeBinaryFile(semanticImagePath, Visual::makePng2x2Rgba());
     const auto semanticManifestPath = root / "semantic-pack" / "pack.json";

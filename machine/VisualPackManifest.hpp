@@ -34,6 +34,7 @@ struct VisualPackManifest {
     std::string id;
     std::string name;
     std::string target;
+    std::vector<std::string> targets;
     uint32_t priority = 0;
     std::filesystem::path root;
     std::vector<VisualOverrideRule> rules;
