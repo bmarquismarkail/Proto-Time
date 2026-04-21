@@ -2,6 +2,7 @@
 #define BMMQ_VIDEO_ENGINE_HPP
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -488,6 +489,52 @@ private:
                                                                         uint8_t tileY,
                                                                         uint64_t generation) noexcept
     {
+        const auto applyPostEffects = [&resolved](uint32_t pixel) noexcept {
+            auto result = pixel;
+            for (const auto& effect : resolved.effects) {
+                switch (effect.kind) {
+                case VisualPostEffectKind::Invert: {
+                    const auto alpha = result & 0xFF000000u;
+                    result = alpha | (~result & 0x00FFFFFFu);
+                    break;
+                }
+                case VisualPostEffectKind::Grayscale: {
+                    const auto alpha = (result >> 24u) & 0xFFu;
+                    const auto red = (result >> 16u) & 0xFFu;
+                    const auto green = (result >> 8u) & 0xFFu;
+                    const auto blue = result & 0xFFu;
+                    const auto gray = static_cast<uint32_t>(std::lround(
+                        0.299 * static_cast<double>(red) +
+                        0.587 * static_cast<double>(green) +
+                        0.114 * static_cast<double>(blue)));
+                    result = (alpha << 24u) | (gray << 16u) | (gray << 8u) | gray;
+                    break;
+                }
+                case VisualPostEffectKind::Multiply: {
+                    const auto multiplyChannel = [result, &effect](int shift) noexcept {
+                        return static_cast<uint32_t>(
+                            (((result >> shift) & 0xFFu) * ((effect.argb >> shift) & 0xFFu) + 127u) / 255u);
+                    };
+                    result = (multiplyChannel(24) << 24u) |
+                             (multiplyChannel(16) << 16u) |
+                             (multiplyChannel(8) << 8u) |
+                             multiplyChannel(0);
+                    break;
+                }
+                case VisualPostEffectKind::AlphaScale: {
+                    const auto alpha = ((result >> 24u) & 0xFFu);
+                    const auto scaledAlpha = static_cast<uint32_t>((alpha * effect.amount + 127u) / 255u);
+                    result = (scaledAlpha << 24u) | (result & 0x00FFFFFFu);
+                    break;
+                }
+                default:
+                    assert(false && "Unhandled VisualPostEffectKind");
+                    break;
+                }
+            }
+            return result;
+        };
+
         if (resolved.mode == VisualOverrideMode::ReplacePalette) {
             const auto* palette = std::get_if<VisualReplacementPalette>(&resolved.payload);
             if (palette == nullptr) {
@@ -500,7 +547,7 @@ private:
             if (index >= resource.pixels.size()) {
                 return std::nullopt;
             }
-            return (*palette)[resource.pixels[index] & 0x03u];
+            return applyPostEffects((*palette)[resource.pixels[index] & 0x03u]);
         }
         const auto sampleImagePixel = [&resolved, &resource, tileX, tileY](const VisualReplacementImage& image)
             -> std::optional<uint32_t> {
@@ -594,7 +641,11 @@ private:
 
         if (resolved.mode == VisualOverrideMode::ReplaceImage) {
             const auto* image = std::get_if<VisualReplacementImage>(&resolved.payload);
-            return image == nullptr ? std::nullopt : sampleImagePixel(*image);
+            if (image == nullptr) {
+                return std::nullopt;
+            }
+            const auto sampled = sampleImagePixel(*image);
+            return sampled.has_value() ? std::optional<uint32_t>(applyPostEffects(*sampled)) : std::nullopt;
         }
         if (resolved.mode == VisualOverrideMode::AnimationGroup) {
             const auto* animation = std::get_if<VisualAnimationGroup>(&resolved.payload);
@@ -603,7 +654,8 @@ private:
             }
             const auto frameIndex = static_cast<std::size_t>(
                 (generation / static_cast<uint64_t>(animation->frameDuration)) % animation->frames.size());
-            return sampleImagePixel(animation->frames[frameIndex]);
+            const auto sampled = sampleImagePixel(animation->frames[frameIndex]);
+            return sampled.has_value() ? std::optional<uint32_t>(applyPostEffects(*sampled)) : std::nullopt;
         }
         const auto* layers = std::get_if<std::vector<VisualReplacementImage>>(&resolved.payload);
         if (resolved.mode != VisualOverrideMode::CompositeLayers || layers == nullptr || layers->empty()) {
@@ -623,7 +675,7 @@ private:
         if (!sampledAnyLayer) {
             return std::nullopt;
         }
-        return composed;
+        return applyPostEffects(composed);
     }
 
     [[nodiscard]] static double scaledCoordinate(uint8_t sourceCoordinate,

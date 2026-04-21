@@ -235,6 +235,7 @@ std::optional<ResolvedVisualOverride> VisualOverrideService::resolve(const Visua
                               {},
                               {},
                               bestRule->animationFrameDuration,
+                              bestRule->effects,
                               bestRule->palette,
                               bestRule->slicing,
                               bestRule->transform,
@@ -609,6 +610,7 @@ std::optional<ResolvedVisualOverride> VisualOverrideService::loadResolved(const 
             .filterPolicy = resolvedPath.filterPolicy,
             .anchor = resolvedPath.anchor,
             .payload = std::move(*image),
+            .effects = resolvedPath.effects,
             .slice = resolvedPath.slicing.value_or(VisualSliceRect{}),
             .transform = resolvedPath.transform.value_or(VisualTransform{}),
         };
@@ -631,6 +633,7 @@ std::optional<ResolvedVisualOverride> VisualOverrideService::loadResolved(const 
             .filterPolicy = resolvedPath.filterPolicy,
             .anchor = resolvedPath.anchor,
             .payload = std::move(layers),
+            .effects = resolvedPath.effects,
             .slice = resolvedPath.slicing.value_or(VisualSliceRect{}),
             .transform = resolvedPath.transform.value_or(VisualTransform{}),
         };
@@ -656,6 +659,7 @@ std::optional<ResolvedVisualOverride> VisualOverrideService::loadResolved(const 
                 .frames = std::move(frames),
                 .frameDuration = *resolvedPath.animationFrameDuration,
             },
+            .effects = resolvedPath.effects,
             .slice = resolvedPath.slicing.value_or(VisualSliceRect{}),
             .transform = resolvedPath.transform.value_or(VisualTransform{}),
         };
@@ -671,6 +675,7 @@ std::optional<ResolvedVisualOverride> VisualOverrideService::loadResolved(const 
         .filterPolicy = resolvedPath.filterPolicy,
         .anchor = resolvedPath.anchor,
         .payload = *resolvedPath.palette,
+        .effects = resolvedPath.effects,
         .slice = resolvedPath.slicing.value_or(VisualSliceRect{}),
         .transform = resolvedPath.transform.value_or(VisualTransform{}),
     };

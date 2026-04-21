@@ -86,6 +86,7 @@ private:
         std::vector<std::filesystem::path> layerPaths;
         std::vector<std::filesystem::path> animationFramePaths;
         std::optional<uint32_t> animationFrameDuration;
+        std::vector<VisualPostEffect> effects;
         std::optional<VisualReplacementPalette> palette;
         std::optional<VisualSliceRect> slicing;
         std::optional<VisualTransform> transform;

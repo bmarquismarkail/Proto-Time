@@ -1,6 +1,7 @@
 #include "VisualPackManifest.hpp"
 
 #include <cctype>
+#include <cmath>
 #include <fstream>
 #include <map>
 #include <optional>
@@ -469,6 +470,163 @@ private:
     return true;
 }
 
+[[nodiscard]] std::optional<uint32_t> jsonFlexibleColor(const JsonValue& value)
+{
+    if (value.number() != nullptr && *value.number() >= 0.0 &&
+        *value.number() <= static_cast<double>(std::numeric_limits<uint32_t>::max())) {
+        return static_cast<uint32_t>(*value.number());
+    }
+    if (value.string() != nullptr) {
+        const auto parsed = parseVisualHashString(*value.string());
+        if (parsed.has_value() && *parsed <= std::numeric_limits<uint32_t>::max()) {
+            return static_cast<uint32_t>(*parsed);
+        }
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] bool appendStructuredEffect(const JsonValue::Object& object,
+                                          std::vector<VisualPostEffect>& effects)
+{
+    const auto kind = jsonString(object, "kind").value_or("");
+    if (kind == "invert") {
+        effects.push_back(VisualPostEffect{.kind = VisualPostEffectKind::Invert});
+        return true;
+    }
+    if (kind == "grayscale") {
+        effects.push_back(VisualPostEffect{.kind = VisualPostEffectKind::Grayscale});
+        return true;
+    }
+    if (kind == "multiply") {
+        const auto* argbValue = findMember(object, "argb");
+        if (argbValue == nullptr) {
+            return false;
+        }
+        const auto argb = jsonFlexibleColor(*argbValue);
+        if (!argb.has_value()) {
+            return false;
+        }
+        effects.push_back(VisualPostEffect{
+            .kind = VisualPostEffectKind::Multiply,
+            .argb = *argb,
+        });
+        return true;
+    }
+    if (kind == "alphaScale") {
+        const auto* value = findMember(object, "value");
+        if (value == nullptr || value->number() == nullptr || *value->number() < 0.0 || *value->number() > 1.0) {
+            return false;
+        }
+        effects.push_back(VisualPostEffect{
+            .kind = VisualPostEffectKind::AlphaScale,
+            .amount = static_cast<uint8_t>(std::lround(*value->number() * 255.0)),
+        });
+        return true;
+    }
+    return false;
+}
+
+[[nodiscard]] bool appendScriptedEffect(std::string_view command, std::vector<VisualPostEffect>& effects)
+{
+    const auto trim = [](std::string_view value) {
+        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())) != 0) {
+            value.remove_prefix(1u);
+        }
+        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())) != 0) {
+            value.remove_suffix(1u);
+        }
+        return value;
+    };
+
+    command = trim(command);
+    if (command.empty()) {
+        return false;
+    }
+    if (command == "invert") {
+        effects.push_back(VisualPostEffect{.kind = VisualPostEffectKind::Invert});
+        return true;
+    }
+    if (command == "grayscale") {
+        effects.push_back(VisualPostEffect{.kind = VisualPostEffectKind::Grayscale});
+        return true;
+    }
+
+    constexpr std::string_view kMultiplyPrefix = "multiply ";
+    if (command.starts_with(kMultiplyPrefix)) {
+        const auto parsed = parseVisualHashString(std::string(trim(command.substr(kMultiplyPrefix.size()))));
+        if (!parsed.has_value() || *parsed > std::numeric_limits<uint32_t>::max()) {
+            return false;
+        }
+        effects.push_back(VisualPostEffect{
+            .kind = VisualPostEffectKind::Multiply,
+            .argb = static_cast<uint32_t>(*parsed),
+        });
+        return true;
+    }
+
+    constexpr std::string_view kAlphaScalePrefix = "alpha-scale ";
+    if (command.starts_with(kAlphaScalePrefix)) {
+        const auto operand = std::string(trim(command.substr(kAlphaScalePrefix.size())));
+        if (operand.empty()) {
+            return false;
+        }
+        double value = -1.0;
+        std::size_t parsedChars = 0;
+        try {
+            value = std::stod(operand, &parsedChars);
+        } catch (const std::exception&) {
+            return false;
+        }
+        if (parsedChars != operand.size() || value < 0.0 || value > 1.0) {
+            return false;
+        }
+        effects.push_back(VisualPostEffect{
+            .kind = VisualPostEffectKind::AlphaScale,
+            .amount = static_cast<uint8_t>(std::lround(value * 255.0)),
+        });
+        return true;
+    }
+    return false;
+}
+
+[[nodiscard]] bool jsonEffects(const JsonValue::Object& object,
+                               const std::string& key,
+                               std::vector<VisualPostEffect>& effects)
+{
+    const auto* value = findMember(object, key);
+    if (value == nullptr) {
+        return true;
+    }
+    if (value->array() == nullptr) {
+        return false;
+    }
+    for (const auto& entry : *value->array()) {
+        if (entry.object() == nullptr || !appendStructuredEffect(*entry.object(), effects)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] bool jsonScript(const JsonValue::Object& object,
+                              const std::string& key,
+                              std::vector<VisualPostEffect>& effects)
+{
+    const auto* value = findMember(object, key);
+    if (value == nullptr) {
+        return true;
+    }
+    if (value->array() == nullptr) {
+        return false;
+    }
+    for (const auto& entry : *value->array()) {
+        if (entry.string() == nullptr || !appendScriptedEffect(*entry.string(), effects)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 [[nodiscard]] std::optional<VisualSliceRect> jsonSlicing(const JsonValue::Object& object, const std::string& key)
 {
     const auto* value = findMember(object, key);
@@ -653,6 +811,11 @@ VisualPackManifestLoadResult loadVisualPackManifest(const std::filesystem::path&
             const bool hasAnimation = findMember(*replaceValue->object(), "animation") != nullptr;
             if (hasAnimation &&
                 !jsonAnimation(*replaceValue->object(), "animation", rule.animationFrames, rule.animationFrameDuration)) {
+                ++result.invalidRulesSkipped;
+                continue;
+            }
+            if (!jsonEffects(*replaceValue->object(), "effects", rule.effects) ||
+                !jsonScript(*replaceValue->object(), "script", rule.effects)) {
                 ++result.invalidRulesSkipped;
                 continue;
             }

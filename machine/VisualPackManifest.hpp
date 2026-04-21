@@ -36,6 +36,10 @@ struct VisualOverrideRule {
     std::vector<std::filesystem::path> layers;
     std::vector<std::filesystem::path> animationFrames;
     std::optional<uint32_t> animationFrameDuration;
+    // Post-effects support Invert, Grayscale, Multiply, and AlphaScale. They can be applied to
+    // any replacement payload (`image`, composited `layers`, or `animationFrames`) and run in
+    // declaration order from first to last.
+    std::vector<VisualPostEffect> effects;
     std::optional<VisualReplacementPalette> palette;
     std::optional<VisualSliceRect> slicing;
     std::optional<VisualTransform> transform;

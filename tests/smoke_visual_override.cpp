@@ -21,6 +21,17 @@ int main()
 {
     namespace Visual = BMMQ::Tests::Visual;
 
+    assert(std::string_view(BMMQ::visualPostEffectKindName(BMMQ::VisualPostEffectKind::Invert)) == "Invert");
+    assert(std::string_view(BMMQ::visualPostEffectKindName(BMMQ::VisualPostEffectKind::Grayscale)) == "Grayscale");
+    assert(std::string_view(BMMQ::visualPostEffectKindName(BMMQ::VisualPostEffectKind::Multiply)) == "Multiply");
+    assert(std::string_view(BMMQ::visualPostEffectKindName(BMMQ::VisualPostEffectKind::AlphaScale)) == "AlphaScale");
+    assert(BMMQ::visualPostEffectKindFromString("Invert").value() == BMMQ::VisualPostEffectKind::Invert);
+    assert(BMMQ::visualPostEffectKindFromString("invert").value() == BMMQ::VisualPostEffectKind::Invert);
+    assert(BMMQ::visualPostEffectKindFromString("Grayscale").value() == BMMQ::VisualPostEffectKind::Grayscale);
+    assert(BMMQ::visualPostEffectKindFromString("Multiply").value() == BMMQ::VisualPostEffectKind::Multiply);
+    assert(BMMQ::visualPostEffectKindFromString("AlphaScale").value() == BMMQ::VisualPostEffectKind::AlphaScale);
+    assert(!BMMQ::visualPostEffectKindFromString("unknown").has_value());
+
     {
         const BMMQ::VisualAnimationGroup noFrames;
         assert(noFrames.empty());
@@ -450,6 +461,68 @@ int main()
     assert(animationFrame1.pixels[0] == 0xFFFF0000u);
     assert(animationFrame2.pixels[0] == 0xFF00FF00u);
     assert(animationFrame3.pixels[0] == 0xFF00FF00u);
+
+    BMMQ::VisualOverrideService postEffectsService;
+    const auto postEffectsDir = root / "post-effects-pack";
+    Visual::writeBinaryFile(postEffectsDir / "tile.png", Visual::makeSolidPng2x2Rgba(0xFFFFFFFFu));
+    Visual::writeTextFile(postEffectsDir / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"post-effects.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"image\": \"tile.png\",\n"
+        "      \"effects\": [{\"kind\": \"multiply\", \"argb\": \"0xffff0000\"}]\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    assert(postEffectsService.loadPackManifest(postEffectsDir / "pack.json"));
+    BMMQ::VideoService postEffectsVideoService(BMMQ::VideoEngineConfig{
+        .frameWidth = 8,
+        .frameHeight = 8,
+        .queueCapacityFrames = 1,
+    });
+    postEffectsVideoService.setVisualOverrideService(&postEffectsService);
+    auto postEffectsFrame = postEffectsVideoService.engine().buildDebugFrame(state, 24u);
+    assert(postEffectsFrame.pixels[0] == 0xFFFF0000u);
+
+    BMMQ::VisualOverrideService scriptedEffectsService;
+    const auto scriptedEffectsDir = root / "scripted-effects-pack";
+    Visual::writeBinaryFile(scriptedEffectsDir / "tile.png", Visual::makeSolidPng2x2Rgba(0xFFFF0000u));
+    Visual::writeTextFile(scriptedEffectsDir / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"scripted-effects.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"image\": \"tile.png\",\n"
+        "      \"script\": [\"invert\"]\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    assert(scriptedEffectsService.loadPackManifest(scriptedEffectsDir / "pack.json"));
+    BMMQ::VideoService scriptedEffectsVideoService(BMMQ::VideoEngineConfig{
+        .frameWidth = 8,
+        .frameHeight = 8,
+        .queueCapacityFrames = 1,
+    });
+    scriptedEffectsVideoService.setVisualOverrideService(&scriptedEffectsService);
+    auto scriptedEffectsFrame = scriptedEffectsVideoService.engine().buildDebugFrame(state, 25u);
+    assert(scriptedEffectsFrame.pixels[0] == 0xFF00FFFFu);
 
     BMMQ::VisualOverrideService linearPolicyService;
     const auto linearPolicyDir = root / "linear-policy-pack";

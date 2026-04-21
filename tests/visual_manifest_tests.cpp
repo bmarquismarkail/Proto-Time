@@ -617,6 +617,88 @@ int main()
     assert(animationTooLargeService.diagnostics().invalidRulesSkipped == 1u);
     assert(animationTooLargeService.diagnostics().rulesLoaded == 0u);
 
+    Visual::writeBinaryFile(root / "effects-pack" / "tile.png", Visual::makeSolidPng2x2Rgba(0xFFFFFFFFu));
+    Visual::writeTextFile(root / "effects-pack" / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"effects.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"image\": \"tile.png\",\n"
+        "      \"effects\": [{\"kind\": \"multiply\", \"argb\": \"0xffff0000\"}]\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    BMMQ::VisualOverrideService effectsService;
+    assert(effectsService.loadPackManifest(root / "effects-pack" / "pack.json"));
+    auto effectsResolved = effectsService.resolve(resource->descriptor);
+    assert(effectsResolved.has_value());
+    assert(effectsResolved->effects.size() == 1u);
+    assert(effectsResolved->effects[0].kind == BMMQ::VisualPostEffectKind::Multiply);
+    assert(effectsResolved->effects[0].argb == 0xFFFF0000u);
+
+    Visual::writeBinaryFile(root / "script-pack" / "tile.png", Visual::makeSolidPng2x2Rgba(0xFFFF0000u));
+    Visual::writeTextFile(root / "script-pack" / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"script.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"image\": \"tile.png\",\n"
+        "      \"script\": [\"invert\", \"alpha-scale 0.5\"]\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    BMMQ::VisualOverrideService scriptService;
+    assert(scriptService.loadPackManifest(root / "script-pack" / "pack.json"));
+    assert(scriptService.diagnostics().rulesLoaded == 1u);
+    auto scriptResolved = scriptService.resolve(resource->descriptor);
+    assert(scriptService.diagnostics().resolveMisses == 0u);
+    assert(scriptService.diagnostics().replacementLoadFailures == 0u);
+    assert(scriptResolved.has_value());
+    assert(scriptResolved->effects.size() == 2u);
+    assert(scriptResolved->effects[0].kind == BMMQ::VisualPostEffectKind::Invert);
+    assert(scriptResolved->effects[1].kind == BMMQ::VisualPostEffectKind::AlphaScale);
+    assert(scriptResolved->effects[1].amount == 128u);
+
+    Visual::writeBinaryFile(root / "script-invalid-pack" / "tile.png", Visual::makeSolidPng2x2Rgba(0xFFFF0000u));
+    Visual::writeTextFile(root / "script-invalid-pack" / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"script-invalid.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"image\": \"tile.png\",\n"
+        "      \"script\": [\"totally-unknown\"]\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    BMMQ::VisualOverrideService scriptInvalidService;
+    assert(scriptInvalidService.loadPackManifest(root / "script-invalid-pack" / "pack.json"));
+    assert(scriptInvalidService.diagnostics().invalidRulesSkipped == 1u);
+    assert(scriptInvalidService.diagnostics().rulesLoaded == 0u);
+
     Visual::writeTextFile(root / "animation-empty-frames-pack" / "pack.json",
         "{\n"
         "  \"schemaVersion\": 1,\n"

@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <iomanip>
+#include <optional>
 #include <span>
 #include <sstream>
 #include <string>
@@ -110,6 +111,52 @@ struct VisualAnimationGroup {
     }
 };
 
+enum class VisualPostEffectKind : uint8_t {
+    Invert = 0,
+    Grayscale,
+    Multiply,
+    AlphaScale,
+};
+
+[[nodiscard]] inline constexpr const char* visualPostEffectKindName(VisualPostEffectKind kind) noexcept
+{
+    switch (kind) {
+    case VisualPostEffectKind::Invert:
+        return "Invert";
+    case VisualPostEffectKind::Grayscale:
+        return "Grayscale";
+    case VisualPostEffectKind::Multiply:
+        return "Multiply";
+    case VisualPostEffectKind::AlphaScale:
+        return "AlphaScale";
+    }
+    return "Unknown";
+}
+
+[[nodiscard]] inline constexpr std::optional<VisualPostEffectKind> visualPostEffectKindFromString(
+    std::string_view value) noexcept
+{
+    if (value == "Invert" || value == "invert") {
+        return VisualPostEffectKind::Invert;
+    }
+    if (value == "Grayscale" || value == "grayscale") {
+        return VisualPostEffectKind::Grayscale;
+    }
+    if (value == "Multiply" || value == "multiply") {
+        return VisualPostEffectKind::Multiply;
+    }
+    if (value == "AlphaScale" || value == "alphaScale" || value == "alpha-scale") {
+        return VisualPostEffectKind::AlphaScale;
+    }
+    return std::nullopt;
+}
+
+struct VisualPostEffect {
+    VisualPostEffectKind kind = VisualPostEffectKind::Invert;
+    uint32_t argb = 0xFFFFFFFFu;
+    uint8_t amount = 255u;
+};
+
 enum class VisualOverrideMode : uint8_t {
     None = 0,
     ReplaceImage,
@@ -132,6 +179,7 @@ struct ResolvedVisualOverride {
     std::string filterPolicy;
     std::string anchor;
     ResolvedVisualPayload payload = std::monostate{};
+    std::vector<VisualPostEffect> effects;
     VisualSliceRect slice;
     VisualTransform transform;
 };
