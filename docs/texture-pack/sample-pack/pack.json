@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "docs.sample.gb",
+  "name": "Documentation Sample Pack",
+  "targets": ["gameboy"],
+  "priority": 100,
+  "rules": [
+    {
+      "match": {
+        "kind": "Tile",
+        "decodedHash": "0x1111111111111111",
+        "width": 8,
+        "height": 8
+      },
+      "replace": {
+        "image": "images/tile-red.png"
+      }
+    }
+  ]
+}
