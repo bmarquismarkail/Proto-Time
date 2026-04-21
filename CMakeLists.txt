@@ -38,6 +38,25 @@ add_library(time-gameboy-interpreter-core
     machine/VisualOverrideService.cpp
     machine/VisualPackManifest.cpp
 )
+
+
+# Sega Game Gear core (WIP)
+add_library(time-gamegear-core STATIC
+    cores/gamegear/GameGearMachine.cpp
+    cores/gamegear/Z80Interpreter.cpp
+    cores/gamegear/GameGearVDP.cpp
+    cores/gamegear/GameGearPSG.cpp
+    cores/gamegear/GameGearInput.cpp
+    cores/gamegear/GameGearCartridge.cpp
+    cores/gamegear/GameGearMemoryMap.cpp
+    machine/TimingService.cpp
+    machine/VisualCaptureWriter.cpp
+    machine/VisualOverrideService.cpp
+    machine/VisualPackManifest.cpp
+)
+set_target_properties(time-gamegear-core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(time-gamegear-core PUBLIC ZLIB::ZLIB)
+
 set_target_properties(time-gameboy-interpreter-core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(time-gameboy-interpreter-core PUBLIC ZLIB::ZLIB)
 add_library(time-sdl-frontend-loader
@@ -94,6 +113,14 @@ target_compile_definitions(time-sdl-frontend-plugin PRIVATE BMMQ_SDL_FRONTEND_CO
 target_link_libraries(time-sdl-frontend-plugin PRIVATE time-sdl-audio-output time-dummy-audio-output time-file-audio-output time-sdl-video-adapter)
 
 enable_testing()
+add_executable(time-smoke-gamegear-core tests/smoke_gamegear_core.cpp)
+target_link_libraries(time-smoke-gamegear-core time-gamegear-core)
+add_test(NAME smoke_gamegear_core COMMAND time-smoke-gamegear-core)
+add_executable(time-smoke-gamegear-cartridge
+    tests/smoke_gamegear_cartridge.cpp
+    cores/gamegear/GameGearCartridge.cpp
+)
+add_test(NAME smoke_gamegear_cartridge COMMAND time-smoke-gamegear-cartridge)
 add_executable(time-smoke-snapshot tests/smoke_snapshot.cpp)
 add_test(NAME smoke_snapshot COMMAND time-smoke-snapshot)
 add_executable(time-smoke-register-snapshot tests/smoke_register_snapshot.cpp)
