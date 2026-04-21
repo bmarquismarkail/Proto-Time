@@ -2,13 +2,17 @@
 #define BMMQ_VISUAL_PACK_LIMITS_HPP
 
 #include <cstddef>
+#include <cstdint>
 
 namespace BMMQ {
 
 struct VisualPackLimits {
     static constexpr std::size_t kMaxManifestBytes = 1024u * 1024u;
     static constexpr std::size_t kMaxManifestRules = 1024u;
+    static constexpr std::size_t kMaxManifestLayers = 256u;
+    static constexpr std::size_t kMaxManifestAnimationFrames = 256u;
     static constexpr std::size_t kMaxPngBytes = 8u * 1024u * 1024u;
+    static constexpr uint32_t kMaxAnimationFrameDuration = 60000u;
     static constexpr std::size_t kMaxReplacementImageDimension = 2048;
     static constexpr std::size_t kMaxReplacementBytesPerPixel = 4u;
     static constexpr std::size_t kMaxReplacementInflatedBytes = 16u * 1024u * 1024u;

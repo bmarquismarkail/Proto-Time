@@ -1,6 +1,7 @@
 #ifndef BMMQ_VISUAL_TYPES_HPP
 #define BMMQ_VISUAL_TYPES_HPP
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -9,6 +10,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace BMMQ {
@@ -95,11 +97,32 @@ struct VisualTransform {
 
 using VisualReplacementPalette = std::array<uint32_t, 4>;
 
+struct VisualAnimationGroup {
+    std::vector<VisualReplacementImage> frames;
+    uint32_t frameDuration = 1;
+
+    [[nodiscard]] bool empty() const noexcept
+    {
+        return frames.empty()
+            || std::all_of(frames.begin(), frames.end(), [](const VisualReplacementImage& frame) {
+                   return frame.empty();
+               });
+    }
+};
+
 enum class VisualOverrideMode : uint8_t {
     None = 0,
     ReplaceImage,
     ReplacePalette,
+    CompositeLayers,
+    AnimationGroup,
 };
+
+using ResolvedVisualPayload = std::variant<std::monostate,
+                                           VisualReplacementImage,
+                                           std::vector<VisualReplacementImage>,
+                                           VisualAnimationGroup,
+                                           VisualReplacementPalette>;
 
 struct ResolvedVisualOverride {
     VisualOverrideMode mode = VisualOverrideMode::None;
@@ -108,13 +131,7 @@ struct ResolvedVisualOverride {
     std::string scalePolicy;
     std::string filterPolicy;
     std::string anchor;
-    VisualReplacementImage image;
-    VisualReplacementPalette palette{
-        0xFF000000u,
-        0xFF000000u,
-        0xFF000000u,
-        0xFF000000u,
-    };
+    ResolvedVisualPayload payload = std::monostate{};
     VisualSliceRect slice;
     VisualTransform transform;
 };

@@ -232,12 +232,23 @@ std::optional<ResolvedVisualOverride> VisualOverrideService::resolve(const Visua
     }
     ResolvedPath resolvedPath{bestPack->manifest.id,
                               bestRule->image.empty() ? std::filesystem::path{} : bestPack->manifest.root / bestRule->image,
+                              {},
+                              {},
+                              bestRule->animationFrameDuration,
                               bestRule->palette,
                               bestRule->slicing,
                               bestRule->transform,
                               bestRule->scalePolicy,
                               bestRule->filterPolicy,
                               bestRule->anchor};
+    resolvedPath.layerPaths.reserve(bestRule->layers.size());
+    for (const auto& layer : bestRule->layers) {
+        resolvedPath.layerPaths.push_back(bestPack->manifest.root / layer);
+    }
+    resolvedPath.animationFramePaths.reserve(bestRule->animationFrames.size());
+    for (const auto& frame : bestRule->animationFrames) {
+        resolvedPath.animationFramePaths.push_back(bestPack->manifest.root / frame);
+    }
     resolvedCache_.emplace(key, resolvedPath);
     auto resolved = loadResolved(resolvedPath);
     if (resolved.has_value()) {
@@ -440,18 +451,36 @@ std::vector<VisualOverrideService::WatchedPathStamp> VisualOverrideService::coll
     std::vector<WatchedPathStamp> stamps;
     std::set<std::string> seen;
     for (const auto& rule : manifest.rules) {
-        if (rule.image.empty()) {
-            continue;
+        if (!rule.image.empty()) {
+            const auto assetPath = (manifest.root / rule.image).lexically_normal();
+            const auto key = assetPath.string();
+            if (seen.insert(key).second) {
+                stamps.push_back(WatchedPathStamp{
+                    .path = assetPath,
+                    .writeTime = fileWriteTime(assetPath),
+                });
+            }
         }
-        const auto assetPath = (manifest.root / rule.image).lexically_normal();
-        const auto key = assetPath.string();
-        if (!seen.insert(key).second) {
-            continue;
+        for (const auto& layer : rule.layers) {
+            const auto assetPath = (manifest.root / layer).lexically_normal();
+            const auto key = assetPath.string();
+            if (seen.insert(key).second) {
+                stamps.push_back(WatchedPathStamp{
+                    .path = assetPath,
+                    .writeTime = fileWriteTime(assetPath),
+                });
+            }
         }
-        stamps.push_back(WatchedPathStamp{
-            .path = assetPath,
-            .writeTime = fileWriteTime(assetPath),
-        });
+        for (const auto& frame : rule.animationFrames) {
+            const auto assetPath = (manifest.root / frame).lexically_normal();
+            const auto key = assetPath.string();
+            if (seen.insert(key).second) {
+                stamps.push_back(WatchedPathStamp{
+                    .path = assetPath,
+                    .writeTime = fileWriteTime(assetPath),
+                });
+            }
+        }
     }
     return stamps;
 }
@@ -579,10 +608,54 @@ std::optional<ResolvedVisualOverride> VisualOverrideService::loadResolved(const 
             .scalePolicy = resolvedPath.scalePolicy,
             .filterPolicy = resolvedPath.filterPolicy,
             .anchor = resolvedPath.anchor,
-            .image = std::move(*image),
-            .palette = resolvedPath.palette.value_or(VisualReplacementPalette{
-                0xFF000000u, 0xFF000000u, 0xFF000000u, 0xFF000000u,
-            }),
+            .payload = std::move(*image),
+            .slice = resolvedPath.slicing.value_or(VisualSliceRect{}),
+            .transform = resolvedPath.transform.value_or(VisualTransform{}),
+        };
+    }
+    if (!resolvedPath.layerPaths.empty()) {
+        std::vector<VisualReplacementImage> layers;
+        layers.reserve(resolvedPath.layerPaths.size());
+        for (const auto& layerPath : resolvedPath.layerPaths) {
+            auto image = loadPng(layerPath);
+            if (!image.has_value() || image->empty()) {
+                return std::nullopt;
+            }
+            layers.push_back(std::move(*image));
+        }
+        return ResolvedVisualOverride{
+            .mode = VisualOverrideMode::CompositeLayers,
+            .packId = resolvedPath.packId,
+            .assetPath = {},
+            .scalePolicy = resolvedPath.scalePolicy,
+            .filterPolicy = resolvedPath.filterPolicy,
+            .anchor = resolvedPath.anchor,
+            .payload = std::move(layers),
+            .slice = resolvedPath.slicing.value_or(VisualSliceRect{}),
+            .transform = resolvedPath.transform.value_or(VisualTransform{}),
+        };
+    }
+    if (!resolvedPath.animationFramePaths.empty()) {
+        std::vector<VisualReplacementImage> frames;
+        frames.reserve(resolvedPath.animationFramePaths.size());
+        for (const auto& framePath : resolvedPath.animationFramePaths) {
+            auto image = loadPng(framePath);
+            if (!image.has_value() || image->empty()) {
+                return std::nullopt;
+            }
+            frames.push_back(std::move(*image));
+        }
+        return ResolvedVisualOverride{
+            .mode = VisualOverrideMode::AnimationGroup,
+            .packId = resolvedPath.packId,
+            .assetPath = {},
+            .scalePolicy = resolvedPath.scalePolicy,
+            .filterPolicy = resolvedPath.filterPolicy,
+            .anchor = resolvedPath.anchor,
+            .payload = VisualAnimationGroup{
+                .frames = std::move(frames),
+                .frameDuration = *resolvedPath.animationFrameDuration,
+            },
             .slice = resolvedPath.slicing.value_or(VisualSliceRect{}),
             .transform = resolvedPath.transform.value_or(VisualTransform{}),
         };
@@ -597,8 +670,7 @@ std::optional<ResolvedVisualOverride> VisualOverrideService::loadResolved(const 
         .scalePolicy = resolvedPath.scalePolicy,
         .filterPolicy = resolvedPath.filterPolicy,
         .anchor = resolvedPath.anchor,
-        .image = {},
-        .palette = *resolvedPath.palette,
+        .payload = *resolvedPath.palette,
         .slice = resolvedPath.slicing.value_or(VisualSliceRect{}),
         .transform = resolvedPath.transform.value_or(VisualTransform{}),
     };

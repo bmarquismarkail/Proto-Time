@@ -83,6 +83,9 @@ private:
     struct ResolvedPath {
         std::string packId;
         std::filesystem::path path;
+        std::vector<std::filesystem::path> layerPaths;
+        std::vector<std::filesystem::path> animationFramePaths;
+        std::optional<uint32_t> animationFrameDuration;
         std::optional<VisualReplacementPalette> palette;
         std::optional<VisualSliceRect> slicing;
         std::optional<VisualTransform> transform;

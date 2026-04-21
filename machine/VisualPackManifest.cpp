@@ -425,6 +425,50 @@ private:
     return palette;
 }
 
+[[nodiscard]] std::optional<std::vector<std::filesystem::path>> jsonImageLayers(const JsonValue::Object& object,
+                                                                                 const std::string& key)
+{
+    const auto* value = findMember(object, key);
+    if (value == nullptr || value->array() == nullptr || value->array()->empty()) {
+        return std::nullopt;
+    }
+
+    std::vector<std::filesystem::path> layers;
+    layers.reserve(value->array()->size());
+    for (const auto& entry : *value->array()) {
+        if (entry.string() == nullptr || entry.string()->empty()) {
+            return std::nullopt;
+        }
+        layers.emplace_back(*entry.string());
+    }
+    return layers;
+}
+
+[[nodiscard]] bool jsonAnimation(const JsonValue::Object& object,
+                                 const std::string& key,
+                                 std::vector<std::filesystem::path>& frames,
+                                 std::optional<uint32_t>& frameDuration)
+{
+    const auto* value = findMember(object, key);
+    if (value == nullptr) {
+        return false;
+    }
+    if (value->object() == nullptr) {
+        return false;
+    }
+    const auto parsedFrames = jsonImageLayers(*value->object(), "frames");
+    const auto parsedFrameDuration = jsonUInt32(*value->object(), "frameDuration");
+    if (!parsedFrames.has_value() || !parsedFrameDuration.has_value() || *parsedFrameDuration == 0u) {
+        return false;
+    }
+    if (*parsedFrameDuration > VisualPackLimits::kMaxAnimationFrameDuration) {
+        return false;
+    }
+    frames = *parsedFrames;
+    frameDuration = *parsedFrameDuration;
+    return true;
+}
+
 [[nodiscard]] std::optional<VisualSliceRect> jsonSlicing(const JsonValue::Object& object, const std::string& key)
 {
     const auto* value = findMember(object, key);
@@ -603,23 +647,55 @@ VisualPackManifestLoadResult loadVisualPackManifest(const std::filesystem::path&
             rule.paletteRegister = jsonString(*matchValue->object(), "paletteRegister").value_or("");
             rule.paletteValue = jsonFlexibleUInt32(*matchValue->object(), "paletteValue");
             rule.image = jsonString(*replaceValue->object(), "image").value_or("");
+            if (const auto layers = jsonImageLayers(*replaceValue->object(), "layers"); layers.has_value()) {
+                rule.layers = *layers;
+            }
+            const bool hasAnimation = findMember(*replaceValue->object(), "animation") != nullptr;
+            if (hasAnimation &&
+                !jsonAnimation(*replaceValue->object(), "animation", rule.animationFrames, rule.animationFrameDuration)) {
+                ++result.invalidRulesSkipped;
+                continue;
+            }
             rule.palette = jsonPalette(*replaceValue->object(), "palette");
             rule.slicing = jsonSlicing(*replaceValue->object(), "slicing");
             rule.transform = jsonTransform(*replaceValue->object(), "transform");
             rule.scalePolicy = jsonString(*replaceValue->object(), "scalePolicy").value_or("");
             rule.filterPolicy = jsonString(*replaceValue->object(), "filterPolicy").value_or("");
             rule.anchor = jsonString(*replaceValue->object(), "anchor").value_or("");
+            const bool hasLayerList = findMember(*replaceValue->object(), "layers") != nullptr;
+            const bool hasLayerConflict = hasLayerList &&
+                (!rule.image.empty() || rule.palette.has_value() || !rule.animationFrames.empty());
+            const bool hasAnimationConflict = hasAnimation &&
+                (!rule.image.empty() || !rule.layers.empty() || rule.palette.has_value());
             if (rule.kind == VisualResourceKind::Unknown ||
                 (rule.sourceHash == 0u && rule.decodedHash == 0u && rule.paletteAwareHash == 0u) ||
-                (rule.image.empty() && !rule.palette.has_value()) ||
+                (rule.image.empty() && !rule.palette.has_value() && rule.layers.empty() && rule.animationFrames.empty()) ||
+                hasLayerConflict ||
+                hasAnimationConflict ||
+                (hasLayerList && rule.layers.empty()) ||
                 (findMember(*replaceValue->object(), "slicing") != nullptr && !rule.slicing.has_value()) ||
                 (findMember(*replaceValue->object(), "transform") != nullptr && !rule.transform.has_value())) {
+                ++result.invalidRulesSkipped;
+                continue;
+            }
+            if (rule.layers.size() > VisualPackLimits::kMaxManifestLayers ||
+                rule.animationFrames.size() > VisualPackLimits::kMaxManifestAnimationFrames) {
                 ++result.invalidRulesSkipped;
                 continue;
             }
             std::error_code existsEc;
             if (!rule.image.empty() && !std::filesystem::exists(pack.root / rule.image, existsEc)) {
                 ++result.missingReplacementImages;
+            }
+            for (const auto& layer : rule.layers) {
+                if (!std::filesystem::exists(pack.root / layer, existsEc)) {
+                    ++result.missingReplacementImages;
+                }
+            }
+            for (const auto& frame : rule.animationFrames) {
+                if (!std::filesystem::exists(pack.root / frame, existsEc)) {
+                    ++result.missingReplacementImages;
+                }
             }
             rule.specificity = 1u +
                 (!rule.machineId.empty() ? 4u : 0u) +

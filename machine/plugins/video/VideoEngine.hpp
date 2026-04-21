@@ -154,6 +154,7 @@ public:
                                                                      VisualResourceKind::Tile,
                                                                      state.bgp,
                                                                      "BGP",
+                                                                     frame.generation,
                                                                      GB::GameBoyVisualSemanticContext{
                                                                          .fromWindow = sample.useWindow,
                                                                          .hasTileDataMode = true,
@@ -400,6 +401,7 @@ private:
                                                                   VisualResourceKind kind,
                                                                   uint8_t paletteValue,
                                                                   std::string_view paletteRegister,
+                                                                  uint64_t generation,
                                                                   const GB::GameBoyVisualSemanticContext& semanticContext = {}) const
     {
         if (visualOverrideService_ == nullptr || !visualOverrideService_->hasActiveWork()) {
@@ -437,18 +439,38 @@ private:
             return std::nullopt;
         }
 
+        const auto hasResolvedPayload = [](const ResolvedVisualOverride& resolved) noexcept {
+            switch (resolved.mode) {
+            case VisualOverrideMode::ReplaceImage: {
+                const auto* image = std::get_if<VisualReplacementImage>(&resolved.payload);
+                return image != nullptr && !image->empty();
+            }
+            case VisualOverrideMode::CompositeLayers: {
+                const auto* layers = std::get_if<std::vector<VisualReplacementImage>>(&resolved.payload);
+                return layers != nullptr && !layers->empty();
+            }
+            case VisualOverrideMode::AnimationGroup: {
+                const auto* animation = std::get_if<VisualAnimationGroup>(&resolved.payload);
+                return animation != nullptr && !animation->frames.empty();
+            }
+            case VisualOverrideMode::ReplacePalette:
+                return std::holds_alternative<VisualReplacementPalette>(resolved.payload);
+            case VisualOverrideMode::None:
+                break;
+            }
+            return false;
+        };
+
         if (!entry.resolveAttempted) {
             entry.resolveAttempted = true;
             auto resolved = visualOverrideService_->resolve(entry.resource->descriptor);
-            if ((!resolved.has_value() ||
-                 (resolved->mode == VisualOverrideMode::ReplaceImage && resolved->image.empty())) &&
+            if ((!resolved.has_value() || !hasResolvedPayload(*resolved)) &&
                 kind != VisualResourceKind::Tile) {
                 auto fallbackDescriptor = entry.resource->descriptor;
                 fallbackDescriptor.kind = VisualResourceKind::Tile;
                 resolved = visualOverrideService_->resolve(fallbackDescriptor);
             }
-            if (!resolved.has_value() ||
-                (resolved->mode == VisualOverrideMode::ReplaceImage && resolved->image.empty())) {
+            if (!resolved.has_value() || !hasResolvedPayload(*resolved)) {
                 return std::nullopt;
             }
             entry.resolved = std::move(*resolved);
@@ -457,15 +479,20 @@ private:
         if (!entry.resolved.has_value()) {
             return std::nullopt;
         }
-        return sampleReplacementPixel(*entry.resolved, *entry.resource, tileX, tileY);
+        return sampleReplacementPixel(*entry.resolved, *entry.resource, tileX, tileY, generation);
     }
 
     [[nodiscard]] static std::optional<uint32_t> sampleReplacementPixel(const ResolvedVisualOverride& resolved,
                                                                         const DecodedVisualResource& resource,
                                                                         uint8_t tileX,
-                                                                        uint8_t tileY) noexcept
+                                                                        uint8_t tileY,
+                                                                        uint64_t generation) noexcept
     {
         if (resolved.mode == VisualOverrideMode::ReplacePalette) {
+            const auto* palette = std::get_if<VisualReplacementPalette>(&resolved.payload);
+            if (palette == nullptr) {
+                return std::nullopt;
+            }
             if (tileX >= resource.descriptor.width || tileY >= resource.descriptor.height || resource.stride == 0u) {
                 return std::nullopt;
             }
@@ -473,75 +500,130 @@ private:
             if (index >= resource.pixels.size()) {
                 return std::nullopt;
             }
-            return resolved.palette[resource.pixels[index] & 0x03u];
+            return (*palette)[resource.pixels[index] & 0x03u];
         }
-        if (resolved.image.empty()) {
-            return std::nullopt;
-        }
-        const auto sliceX = std::min<std::size_t>(resolved.slice.x, resolved.image.width);
-        const auto sliceY = std::min<std::size_t>(resolved.slice.y, resolved.image.height);
-        const auto availableWidth = static_cast<std::size_t>(resolved.image.width) - sliceX;
-        const auto availableHeight = static_cast<std::size_t>(resolved.image.height) - sliceY;
-        const auto sampleWidth = resolved.slice.width != 0u
-            ? std::min<std::size_t>(resolved.slice.width, availableWidth)
-            : availableWidth;
-        const auto sampleHeight = resolved.slice.height != 0u
-            ? std::min<std::size_t>(resolved.slice.height, availableHeight)
-            : availableHeight;
-        if (sampleWidth == 0u || sampleHeight == 0u) {
-            return std::nullopt;
-        }
-        if (resolved.scalePolicy == "exact" &&
-            (sampleWidth != resource.descriptor.width || sampleHeight != resource.descriptor.height)) {
-            return std::nullopt;
-        }
+        const auto sampleImagePixel = [&resolved, &resource, tileX, tileY](const VisualReplacementImage& image)
+            -> std::optional<uint32_t> {
+            if (image.empty()) {
+                return std::nullopt;
+            }
+            const auto sliceX = std::min<std::size_t>(resolved.slice.x, image.width);
+            const auto sliceY = std::min<std::size_t>(resolved.slice.y, image.height);
+            const auto availableWidth = static_cast<std::size_t>(image.width) - sliceX;
+            const auto availableHeight = static_cast<std::size_t>(image.height) - sliceY;
+            const auto sampleWidth = resolved.slice.width != 0u
+                ? std::min<std::size_t>(resolved.slice.width, availableWidth)
+                : availableWidth;
+            const auto sampleHeight = resolved.slice.height != 0u
+                ? std::min<std::size_t>(resolved.slice.height, availableHeight)
+                : availableHeight;
+            if (sampleWidth == 0u || sampleHeight == 0u) {
+                return std::nullopt;
+            }
+            if (resolved.scalePolicy == "exact" &&
+                (sampleWidth != resource.descriptor.width || sampleHeight != resource.descriptor.height)) {
+                return std::nullopt;
+            }
 
-        const auto applyTransform =
-            [&resolved](std::size_t x, std::size_t y, std::size_t width, std::size_t height) noexcept {
-                std::size_t tx = x;
-                std::size_t ty = y;
-                if (resolved.transform.flipX && width > 0u) {
-                    tx = width - 1u - tx;
-                }
-                if (resolved.transform.flipY && height > 0u) {
-                    ty = height - 1u - ty;
-                }
-                switch (resolved.transform.rotateDegrees) {
-                case 90u:
-                    return std::pair<std::size_t, std::size_t>{ty, width - 1u - tx};
-                case 180u:
-                    return std::pair<std::size_t, std::size_t>{width - 1u - tx, height - 1u - ty};
-                case 270u:
-                    return std::pair<std::size_t, std::size_t>{height - 1u - ty, tx};
-                default:
-                    return std::pair<std::size_t, std::size_t>{tx, ty};
-                }
+            const auto applyTransform =
+                [&resolved](std::size_t x, std::size_t y, std::size_t width, std::size_t height) noexcept {
+                    std::size_t tx = x;
+                    std::size_t ty = y;
+                    if (resolved.transform.flipX && width > 0u) {
+                        tx = width - 1u - tx;
+                    }
+                    if (resolved.transform.flipY && height > 0u) {
+                        ty = height - 1u - ty;
+                    }
+                    switch (resolved.transform.rotateDegrees) {
+                    case 90u:
+                        return std::pair<std::size_t, std::size_t>{ty, width - 1u - tx};
+                    case 180u:
+                        return std::pair<std::size_t, std::size_t>{width - 1u - tx, height - 1u - ty};
+                    case 270u:
+                        return std::pair<std::size_t, std::size_t>{height - 1u - ty, tx};
+                    default:
+                        return std::pair<std::size_t, std::size_t>{tx, ty};
+                    }
+                };
+
+            if (resolved.scalePolicy == "crop") {
+                const auto [sampleX, sampleY] = applyTransform(
+                    cropCoordinate(tileX, static_cast<uint32_t>(sampleWidth), resource.descriptor.width, resolved.anchor),
+                    cropCoordinate(tileY, static_cast<uint32_t>(sampleHeight), resource.descriptor.height, resolved.anchor),
+                    sampleWidth,
+                    sampleHeight);
+                return sampleNearest(image, sliceX + sampleX, sliceY + sampleY);
+            }
+
+            const auto x = scaledCoordinate(tileX, static_cast<uint32_t>(sampleWidth), resource.descriptor.width);
+            const auto y = scaledCoordinate(tileY, static_cast<uint32_t>(sampleHeight), resource.descriptor.height);
+            const auto [sampleX, sampleY] = applyTransform(static_cast<std::size_t>(x),
+                                                           static_cast<std::size_t>(y),
+                                                           sampleWidth,
+                                                           sampleHeight);
+            if (resolved.filterPolicy == "linear" && resolved.transform.rotateDegrees == 0u &&
+                !resolved.transform.flipX && !resolved.transform.flipY) {
+                return sampleLinear(image,
+                                    static_cast<double>(sliceX) + x,
+                                    static_cast<double>(sliceY) + y);
+            }
+            return sampleNearest(image,
+                                 sliceX + sampleX,
+                                 sliceY + sampleY);
+        };
+
+        const auto alphaOver = [](uint32_t dst, uint32_t src) noexcept {
+            const double srcA = static_cast<double>((src >> 24u) & 0xFFu) / 255.0;
+            const double dstA = static_cast<double>((dst >> 24u) & 0xFFu) / 255.0;
+            const double outA = srcA + dstA * (1.0 - srcA);
+            if (outA <= 0.0) {
+                return 0u;
+            }
+            const auto blendChannel = [dst, src, srcA, dstA, outA](int shift) noexcept {
+                const double srcC = static_cast<double>((src >> shift) & 0xFFu);
+                const double dstC = static_cast<double>((dst >> shift) & 0xFFu);
+                return static_cast<uint32_t>(std::lround((srcC * srcA + dstC * dstA * (1.0 - srcA)) / outA));
             };
+            const auto outAlpha = static_cast<uint32_t>(std::lround(outA * 255.0));
+            const auto outRed = blendChannel(16);
+            const auto outGreen = blendChannel(8);
+            const auto outBlue = blendChannel(0);
+            return (outAlpha << 24u) | (outRed << 16u) | (outGreen << 8u) | outBlue;
+        };
 
-        if (resolved.scalePolicy == "crop") {
-            const auto [sampleX, sampleY] = applyTransform(
-                cropCoordinate(tileX, static_cast<uint32_t>(sampleWidth), resource.descriptor.width, resolved.anchor),
-                cropCoordinate(tileY, static_cast<uint32_t>(sampleHeight), resource.descriptor.height, resolved.anchor),
-                sampleWidth,
-                sampleHeight);
-            return sampleNearest(resolved.image, sliceX + sampleX, sliceY + sampleY);
+        if (resolved.mode == VisualOverrideMode::ReplaceImage) {
+            const auto* image = std::get_if<VisualReplacementImage>(&resolved.payload);
+            return image == nullptr ? std::nullopt : sampleImagePixel(*image);
+        }
+        if (resolved.mode == VisualOverrideMode::AnimationGroup) {
+            const auto* animation = std::get_if<VisualAnimationGroup>(&resolved.payload);
+            if (animation == nullptr || animation->frames.empty() || animation->frameDuration == 0u) {
+                return std::nullopt;
+            }
+            const auto frameIndex = static_cast<std::size_t>(
+                (generation / static_cast<uint64_t>(animation->frameDuration)) % animation->frames.size());
+            return sampleImagePixel(animation->frames[frameIndex]);
+        }
+        const auto* layers = std::get_if<std::vector<VisualReplacementImage>>(&resolved.payload);
+        if (resolved.mode != VisualOverrideMode::CompositeLayers || layers == nullptr || layers->empty()) {
+            return std::nullopt;
         }
 
-        const auto x = scaledCoordinate(tileX, static_cast<uint32_t>(sampleWidth), resource.descriptor.width);
-        const auto y = scaledCoordinate(tileY, static_cast<uint32_t>(sampleHeight), resource.descriptor.height);
-        const auto [sampleX, sampleY] = applyTransform(static_cast<std::size_t>(x),
-                                                       static_cast<std::size_t>(y),
-                                                       sampleWidth,
-                                                       sampleHeight);
-        if (resolved.filterPolicy == "linear" && resolved.transform.rotateDegrees == 0u &&
-            !resolved.transform.flipX && !resolved.transform.flipY) {
-            return sampleLinear(resolved.image,
-                                static_cast<double>(sliceX) + x,
-                                static_cast<double>(sliceY) + y);
+        uint32_t composed = 0u;
+        bool sampledAnyLayer = false;
+        for (const auto& layer : *layers) {
+            const auto sampled = sampleImagePixel(layer);
+            if (!sampled.has_value()) {
+                continue;
+            }
+            composed = alphaOver(composed, *sampled);
+            sampledAnyLayer = true;
         }
-        return sampleNearest(resolved.image,
-                             sliceX + sampleX,
-                             sliceY + sampleY);
+        if (!sampledAnyLayer) {
+            return std::nullopt;
+        }
+        return composed;
     }
 
     [[nodiscard]] static double scaledCoordinate(uint8_t sourceCoordinate,
@@ -693,7 +775,8 @@ private:
                                                                            static_cast<uint8_t>(spriteRow),
                                                                            VisualResourceKind::Sprite,
                                                                            palette,
-                                                                           (attributes & 0x10u) != 0u ? "OBP1" : "OBP0");
+                                                                           (attributes & 0x10u) != 0u ? "OBP1" : "OBP0",
+                                                                           frame.generation);
                     replacementPixel.has_value()) {
                     frame.pixels[pixelIndex] = *replacementPixel;
                     continue;

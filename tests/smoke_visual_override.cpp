@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <memory>
+#include <variant>
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
@@ -19,6 +20,28 @@
 int main()
 {
     namespace Visual = BMMQ::Tests::Visual;
+
+    {
+        const BMMQ::VisualAnimationGroup noFrames;
+        assert(noFrames.empty());
+
+        BMMQ::VisualAnimationGroup allEmptyFrames;
+        allEmptyFrames.frames.emplace_back();
+        allEmptyFrames.frames.emplace_back(BMMQ::VisualReplacementImage{
+            .width = 2u,
+            .height = 0u,
+            .argbPixels = {0xFF000000u, 0xFFFFFFFFu, 0xFF000000u, 0xFFFFFFFFu},
+        });
+        assert(allEmptyFrames.empty());
+
+        BMMQ::VisualAnimationGroup hasContent;
+        hasContent.frames.emplace_back(BMMQ::VisualReplacementImage{
+            .width = 2u,
+            .height = 2u,
+            .argbPixels = {0xFF000000u, 0xFFFFFFFFu, 0xFF000000u, 0xFFFFFFFFu},
+        });
+        assert(!hasContent.empty());
+    }
 
     const auto root = std::filesystem::temp_directory_path() / "bmmq_visual_override_smoke";
     std::filesystem::remove_all(root);
@@ -74,10 +97,12 @@ int main()
     assert(service.diagnostics().rulesLoaded == 1u);
     auto resolved = service.resolve(resource->descriptor);
     assert(resolved.has_value());
-    assert(resolved->image.width == 2u);
-    assert(resolved->image.height == 2u);
-    assert(resolved->image.argbPixels.size() == 4u);
-    assert(resolved->image.argbPixels[0] == 0xFFFF0000u);
+    assert(std::holds_alternative<BMMQ::VisualReplacementImage>(resolved->payload));
+    const auto& imagePayload = std::get<BMMQ::VisualReplacementImage>(resolved->payload);
+    assert(imagePayload.width == 2u);
+    assert(imagePayload.height == 2u);
+    assert(imagePayload.argbPixels.size() == 4u);
+    assert(imagePayload.argbPixels[0] == 0xFFFF0000u);
     assert(service.diagnostics().resolveHits == 1u);
 
     service.setEnabled(false);
@@ -354,6 +379,77 @@ int main()
     rotateTransformVideoService.setVisualOverrideService(&rotateTransformService);
     auto rotateTransformFrame = rotateTransformVideoService.engine().buildDebugFrame(state, 15u);
     assert(rotateTransformFrame.pixels[0] == 0xFF0000FFu);
+
+    BMMQ::VisualOverrideService layeredCompositionService;
+    const auto layeredCompositionDir = root / "layered-composition-pack";
+    Visual::writeBinaryFile(layeredCompositionDir / "base.png", Visual::makeSolidPng2x2Rgba(0xFF0000FFu));
+    Visual::writeBinaryFile(layeredCompositionDir / "overlay.png", Visual::makeSolidPng2x2Rgba(0x80FF0000u));
+    Visual::writeTextFile(layeredCompositionDir / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"layered-composition.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"layers\": [\"base.png\", \"overlay.png\"]\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    assert(layeredCompositionService.loadPackManifest(layeredCompositionDir / "pack.json"));
+    BMMQ::VideoService layeredCompositionVideoService(BMMQ::VideoEngineConfig{
+        .frameWidth = 8,
+        .frameHeight = 8,
+        .queueCapacityFrames = 1,
+    });
+    layeredCompositionVideoService.setVisualOverrideService(&layeredCompositionService);
+    auto layeredCompositionFrame = layeredCompositionVideoService.engine().buildDebugFrame(state, 16u);
+    assert(layeredCompositionFrame.pixels[0] == 0xFF80007Fu);
+
+    BMMQ::VisualOverrideService animationGroupService;
+    const auto animationGroupDir = root / "animation-group-pack";
+    Visual::writeBinaryFile(animationGroupDir / "frame0.png", Visual::makeSolidPng2x2Rgba(0xFFFF0000u));
+    Visual::writeBinaryFile(animationGroupDir / "frame1.png", Visual::makeSolidPng2x2Rgba(0xFF00FF00u));
+    Visual::writeTextFile(animationGroupDir / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"animation-group.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"animation\": {\n"
+        "        \"frameDuration\": 2,\n"
+        "        \"frames\": [\"frame0.png\", \"frame1.png\"]\n"
+        "      }\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    assert(animationGroupService.loadPackManifest(animationGroupDir / "pack.json"));
+    BMMQ::VideoService animationGroupVideoService(BMMQ::VideoEngineConfig{
+        .frameWidth = 8,
+        .frameHeight = 8,
+        .queueCapacityFrames = 1,
+    });
+    animationGroupVideoService.setVisualOverrideService(&animationGroupService);
+    auto animationFrame0 = animationGroupVideoService.engine().buildDebugFrame(state, 20u);
+    auto animationFrame1 = animationGroupVideoService.engine().buildDebugFrame(state, 21u);
+    auto animationFrame2 = animationGroupVideoService.engine().buildDebugFrame(state, 22u);
+    auto animationFrame3 = animationGroupVideoService.engine().buildDebugFrame(state, 23u);
+    assert(animationFrame0.pixels[0] == 0xFFFF0000u);
+    assert(animationFrame1.pixels[0] == 0xFFFF0000u);
+    assert(animationFrame2.pixels[0] == 0xFF00FF00u);
+    assert(animationFrame3.pixels[0] == 0xFF00FF00u);
 
     BMMQ::VisualOverrideService linearPolicyService;
     const auto linearPolicyDir = root / "linear-policy-pack";

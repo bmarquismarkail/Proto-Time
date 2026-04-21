@@ -28,7 +28,14 @@ struct VisualOverrideRule {
     std::optional<uint32_t> sourceIndex;
     std::optional<uint32_t> paletteValue;
     std::string paletteRegister;
+    // Replacement mode fields are mutually exclusive: use `image` for one static PNG, `layers`
+    // for an ordered list of PNGs composited front-to-back, or `animationFrames` for an ordered
+    // frame sequence. `animationFrameDuration` is the per-frame duration in milliseconds and is
+    // only set when `animationFrames` is present.
     std::filesystem::path image;
+    std::vector<std::filesystem::path> layers;
+    std::vector<std::filesystem::path> animationFrames;
+    std::optional<uint32_t> animationFrameDuration;
     std::optional<VisualReplacementPalette> palette;
     std::optional<VisualSliceRect> slicing;
     std::optional<VisualTransform> transform;

@@ -7,6 +7,7 @@
 #include <chrono>
 #include <filesystem>
 #include <string>
+#include <variant>
 
 #include "cores/gameboy/video/GameBoyVisualExtractor.hpp"
 #include "machine/VisualOverrideService.hpp"
@@ -347,8 +348,9 @@ int main()
     assert(paletteReplaceService.loadPackManifest(root / "palette-replace-pack" / "pack.json"));
     const auto paletteReplaceResolved = paletteReplaceService.resolve(resource->descriptor);
     assert(paletteReplaceResolved.has_value());
-    assert(paletteReplaceResolved->palette[1] == 0xFF112233u);
-    assert(paletteReplaceResolved->image.empty());
+    assert(std::holds_alternative<BMMQ::VisualReplacementPalette>(paletteReplaceResolved->payload));
+    const auto& paletteReplacePayload = std::get<BMMQ::VisualReplacementPalette>(paletteReplaceResolved->payload);
+    assert(paletteReplacePayload[1] == 0xFF112233u);
 
     Visual::writeTextFile(root / "palette-replace-invalid-pack" / "pack.json",
         "{\n"
@@ -475,6 +477,171 @@ int main()
     assert(transformInvalidService.diagnostics().invalidRulesSkipped == 1u);
     assert(transformInvalidService.diagnostics().rulesLoaded == 0u);
 
+    const auto layeredBaseImagePath = root / "layered-pack" / "base.png";
+    const auto layeredOverlayImagePath = root / "layered-pack" / "overlay.png";
+    Visual::writeBinaryFile(layeredBaseImagePath, Visual::makeSolidPng2x2Rgba(0xFF0000FFu));
+    Visual::writeBinaryFile(layeredOverlayImagePath, Visual::makeSolidPng2x2Rgba(0x80FF0000u));
+    Visual::writeTextFile(root / "layered-pack" / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"layered.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"layers\": [\"base.png\", \"overlay.png\"]\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    BMMQ::VisualOverrideService layeredService;
+    assert(layeredService.loadPackManifest(root / "layered-pack" / "pack.json"));
+    auto layeredResolved = layeredService.resolve(resource->descriptor);
+    assert(layeredResolved.has_value());
+    assert(layeredResolved->mode == BMMQ::VisualOverrideMode::CompositeLayers);
+    assert(std::holds_alternative<std::vector<BMMQ::VisualReplacementImage>>(layeredResolved->payload));
+    const auto& layeredPayload = std::get<std::vector<BMMQ::VisualReplacementImage>>(layeredResolved->payload);
+    assert(layeredPayload.size() == 2u);
+    assert(layeredPayload[0].argbPixels[0] == 0xFF0000FFu);
+    assert(layeredPayload[1].argbPixels[0] == 0x80FF0000u);
+
+    Visual::writeTextFile(root / "layered-invalid-pack" / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"layered-invalid.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"image\": \"base.png\",\n"
+        "      \"layers\": [\"overlay.png\"]\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    BMMQ::VisualOverrideService layeredInvalidService;
+    assert(layeredInvalidService.loadPackManifest(root / "layered-invalid-pack" / "pack.json"));
+    assert(layeredInvalidService.diagnostics().invalidRulesSkipped == 1u);
+    assert(layeredInvalidService.diagnostics().rulesLoaded == 0u);
+
+    Visual::writeBinaryFile(root / "animation-pack" / "frame0.png", Visual::makeSolidPng2x2Rgba(0xFFFF0000u));
+    Visual::writeBinaryFile(root / "animation-pack" / "frame1.png", Visual::makeSolidPng2x2Rgba(0xFF00FF00u));
+    Visual::writeTextFile(root / "animation-pack" / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"animation.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"animation\": {\n"
+        "        \"frameDuration\": 3,\n"
+        "        \"frames\": [\"frame0.png\", \"frame1.png\"]\n"
+        "      }\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    BMMQ::VisualOverrideService animationService;
+    assert(animationService.loadPackManifest(root / "animation-pack" / "pack.json"));
+    auto animationResolved = animationService.resolve(resource->descriptor);
+    assert(animationResolved.has_value());
+    assert(animationResolved->mode == BMMQ::VisualOverrideMode::AnimationGroup);
+    assert(std::holds_alternative<BMMQ::VisualAnimationGroup>(animationResolved->payload));
+    const auto& animationPayload = std::get<BMMQ::VisualAnimationGroup>(animationResolved->payload);
+    assert(animationPayload.frameDuration == 3u);
+    assert(animationPayload.frames.size() == 2u);
+    assert(animationPayload.frames[0].argbPixels[0] == 0xFFFF0000u);
+    assert(animationPayload.frames[1].argbPixels[0] == 0xFF00FF00u);
+
+    Visual::writeTextFile(root / "animation-invalid-pack" / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"animation-invalid.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"animation\": {\n"
+        "        \"frameDuration\": 0,\n"
+        "        \"frames\": [\"frame0.png\", \"frame1.png\"]\n"
+        "      }\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    BMMQ::VisualOverrideService animationInvalidService;
+    assert(animationInvalidService.loadPackManifest(root / "animation-invalid-pack" / "pack.json"));
+    assert(animationInvalidService.diagnostics().invalidRulesSkipped == 1u);
+    assert(animationInvalidService.diagnostics().rulesLoaded == 0u);
+
+    Visual::writeTextFile(root / "animation-too-large-pack" / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"animation-too-large.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"animation\": {\n"
+        "        \"frameDuration\": " +
+            std::to_string(BMMQ::VisualPackLimits::kMaxAnimationFrameDuration + 1u) + ",\n"
+        "        \"frames\": [\"frame0.png\", \"frame1.png\"]\n"
+        "      }\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    BMMQ::VisualOverrideService animationTooLargeService;
+    assert(animationTooLargeService.loadPackManifest(root / "animation-too-large-pack" / "pack.json"));
+    assert(animationTooLargeService.diagnostics().invalidRulesSkipped == 1u);
+    assert(animationTooLargeService.diagnostics().rulesLoaded == 0u);
+
+    Visual::writeTextFile(root / "animation-empty-frames-pack" / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"animation-empty-frames.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"animation\": {\n"
+        "        \"frameDuration\": 3,\n"
+        "        \"frames\": []\n"
+        "      }\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    BMMQ::VisualOverrideService animationEmptyFramesService;
+    assert(animationEmptyFramesService.loadPackManifest(root / "animation-empty-frames-pack" / "pack.json"));
+    assert(animationEmptyFramesService.diagnostics().invalidRulesSkipped == 1u);
+    assert(animationEmptyFramesService.diagnostics().rulesLoaded == 0u);
+
     Visual::writeTextFile(root / "pack" / "bad.json",
         "{\n"
         "  \"schemaVersion\": 1,\n"
@@ -594,6 +761,71 @@ int main()
     assert(!tooManyRulesService.loadPackManifest(root / "too-many-rules" / "pack.json"));
     assert(tooManyRulesService.lastError().find("too many visual pack rules") != std::string::npos);
 
+    constexpr std::size_t oversizedReplacementListCount = 257u;
+
+    std::string tooManyLayers =
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"too-many-layers.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"layers\": [\n";
+    for (std::size_t i = 0; i < oversizedReplacementListCount; ++i) {
+        tooManyLayers += "        \"missing-layer-" + std::to_string(i) + ".png\"" +
+            std::string(i + 1u < oversizedReplacementListCount ? "," : "") + "\n";
+    }
+    tooManyLayers +=
+        "      ]\n"
+        "    }\n"
+        "  }]\n"
+        "}\n";
+    Visual::writeTextFile(root / "too-many-layers-pack" / "pack.json", tooManyLayers);
+    BMMQ::VisualOverrideService tooManyLayersService;
+    assert(tooManyLayersService.loadPackManifest(root / "too-many-layers-pack" / "pack.json"));
+    assert(tooManyLayersService.diagnostics().invalidRulesSkipped == 1u);
+    assert(tooManyLayersService.diagnostics().missingReplacementImages == 0u);
+    assert(tooManyLayersService.diagnostics().rulesLoaded == 0u);
+
+    std::string tooManyAnimationFrames =
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"too-many-animation-frames.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"animation\": {\n"
+        "        \"frameDuration\": 3,\n"
+        "        \"frames\": [\n";
+    for (std::size_t i = 0; i < oversizedReplacementListCount; ++i) {
+        tooManyAnimationFrames += "          \"missing-frame-" + std::to_string(i) + ".png\"" +
+            std::string(i + 1u < oversizedReplacementListCount ? "," : "") + "\n";
+    }
+    tooManyAnimationFrames +=
+        "        ]\n"
+        "      }\n"
+        "    }\n"
+        "  }]\n"
+        "}\n";
+    Visual::writeTextFile(root / "too-many-animation-frames-pack" / "pack.json", tooManyAnimationFrames);
+    BMMQ::VisualOverrideService tooManyAnimationFramesService;
+    assert(tooManyAnimationFramesService.loadPackManifest(root / "too-many-animation-frames-pack" / "pack.json"));
+    assert(tooManyAnimationFramesService.diagnostics().invalidRulesSkipped == 1u);
+    assert(tooManyAnimationFramesService.diagnostics().missingReplacementImages == 0u);
+    assert(tooManyAnimationFramesService.diagnostics().rulesLoaded == 0u);
+
     const auto oversizedImagePath = root / "oversized-image-pack" / "large.png";
     Visual::writeBinaryFile(oversizedImagePath,
                             Visual::makeHeaderOnlyPng(BMMQ::VisualPackLimits::kMaxReplacementImageDimension + 1u, 1u));
@@ -664,7 +896,7 @@ int main()
     auto reloadResolved = reloadService.resolve(resource->descriptor);
     assert(reloadResolved.has_value());
     assert(reloadResolved->packId == "reload-original.gb");
-    assert(reloadResolved->image.argbPixels[0] == 0xFFFF0000u);
+    assert(std::get<BMMQ::VisualReplacementImage>(reloadResolved->payload).argbPixels[0] == 0xFFFF0000u);
     assert(!reloadService.reloadChangedPacks());
     assert(reloadService.generation() == loadedGeneration);
     assert(reloadService.diagnostics().packReloadChecks == 1u);
@@ -732,7 +964,7 @@ int main()
     assert(reloadService.reloadChangedPacks());
     reloadResolved = reloadService.resolve(resource->descriptor);
     assert(reloadResolved.has_value());
-    assert(reloadResolved->image.argbPixels[0] == 0xFFFF0000u);
+    assert(std::get<BMMQ::VisualReplacementImage>(reloadResolved->payload).argbPixels[0] == 0xFFFF0000u);
 
     const auto generationBeforeAssetReload = reloadService.generation();
     Visual::writeBinaryFile(reloadImagePath, Visual::makeSolidPng2x2Rgba(0xFF00FF00u));
@@ -742,7 +974,7 @@ int main()
     reloadResolved = reloadService.resolve(resource->descriptor);
     assert(reloadResolved.has_value());
     assert(reloadResolved->packId == "reload-updated.gb");
-    assert(reloadResolved->image.argbPixels[0] == 0xFF00FF00u);
+    assert(std::get<BMMQ::VisualReplacementImage>(reloadResolved->payload).argbPixels[0] == 0xFF00FF00u);
 
     const auto diagnosticPackA = root / "diagnostic-pack-a";
     const auto diagnosticPackB = root / "diagnostic-pack-b";
