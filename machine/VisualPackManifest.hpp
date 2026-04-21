@@ -30,6 +30,7 @@ struct VisualOverrideRule {
     std::string paletteRegister;
     std::filesystem::path image;
     std::optional<VisualReplacementPalette> palette;
+    std::optional<VisualSliceRect> slicing;
     std::string scalePolicy;
     std::string filterPolicy;
     std::string anchor;

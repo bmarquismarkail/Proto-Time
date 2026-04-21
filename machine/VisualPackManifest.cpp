@@ -425,6 +425,24 @@ private:
     return palette;
 }
 
+[[nodiscard]] std::optional<VisualSliceRect> jsonSlicing(const JsonValue::Object& object, const std::string& key)
+{
+    const auto* value = findMember(object, key);
+    if (value == nullptr || value->object() == nullptr) {
+        return std::nullopt;
+    }
+    VisualSliceRect slice{
+        .x = jsonUInt32(*value->object(), "x").value_or(0u),
+        .y = jsonUInt32(*value->object(), "y").value_or(0u),
+        .width = jsonUInt32(*value->object(), "width").value_or(0u),
+        .height = jsonUInt32(*value->object(), "height").value_or(0u),
+    };
+    if (slice.width == 0u || slice.height == 0u) {
+        return std::nullopt;
+    }
+    return slice;
+}
+
 [[nodiscard]] bool jsonUInt32Equals(const JsonValue::Object& object, const std::string& key, uint32_t expected)
 {
     const auto* value = findMember(object, key);
@@ -563,12 +581,14 @@ VisualPackManifestLoadResult loadVisualPackManifest(const std::filesystem::path&
             rule.paletteValue = jsonFlexibleUInt32(*matchValue->object(), "paletteValue");
             rule.image = jsonString(*replaceValue->object(), "image").value_or("");
             rule.palette = jsonPalette(*replaceValue->object(), "palette");
+            rule.slicing = jsonSlicing(*replaceValue->object(), "slicing");
             rule.scalePolicy = jsonString(*replaceValue->object(), "scalePolicy").value_or("");
             rule.filterPolicy = jsonString(*replaceValue->object(), "filterPolicy").value_or("");
             rule.anchor = jsonString(*replaceValue->object(), "anchor").value_or("");
             if (rule.kind == VisualResourceKind::Unknown ||
                 (rule.sourceHash == 0u && rule.decodedHash == 0u && rule.paletteAwareHash == 0u) ||
-                (rule.image.empty() && !rule.palette.has_value())) {
+                (rule.image.empty() && !rule.palette.has_value()) ||
+                (findMember(*replaceValue->object(), "slicing") != nullptr && !rule.slicing.has_value())) {
                 ++result.invalidRulesSkipped;
                 continue;
             }

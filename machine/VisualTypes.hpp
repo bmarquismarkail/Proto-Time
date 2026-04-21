@@ -80,6 +80,13 @@ struct VisualReplacementImage {
     }
 };
 
+struct VisualSliceRect {
+    uint32_t x = 0;
+    uint32_t y = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+};
+
 using VisualReplacementPalette = std::array<uint32_t, 4>;
 
 enum class VisualOverrideMode : uint8_t {
@@ -102,6 +109,7 @@ struct ResolvedVisualOverride {
         0xFF000000u,
         0xFF000000u,
     };
+    VisualSliceRect slice;
 };
 
 [[nodiscard]] inline constexpr const char* visualResourceKindName(VisualResourceKind kind) noexcept

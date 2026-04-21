@@ -251,6 +251,43 @@ int main()
     auto cropAnchorFrame = cropAnchorVideoService.engine().buildDebugFrame(state, 7u);
     assert(cropAnchorFrame.pixels[0] == 0xFF00FF00u);
 
+    BMMQ::VisualOverrideService slicingService;
+    const auto slicingDir = root / "slicing-pack";
+    std::vector<uint32_t> slicingPixels(16u * 16u, 0xFFFF0000u);
+    for (std::size_t y = 8u; y < 16u; ++y) {
+        for (std::size_t x = 8u; x < 16u; ++x) {
+            slicingPixels[y * 16u + x] = 0xFF00FF00u;
+        }
+    }
+    Visual::writeBinaryFile(slicingDir / "tile.png", Visual::makeRgbaPng(16u, 16u, slicingPixels));
+    Visual::writeTextFile(slicingDir / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"slicing.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"image\": \"tile.png\",\n"
+        "      \"slicing\": {\"x\": 8, \"y\": 8, \"width\": 8, \"height\": 8}\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    assert(slicingService.loadPackManifest(slicingDir / "pack.json"));
+    BMMQ::VideoService slicingVideoService(BMMQ::VideoEngineConfig{
+        .frameWidth = 8,
+        .frameHeight = 8,
+        .queueCapacityFrames = 1,
+    });
+    slicingVideoService.setVisualOverrideService(&slicingService);
+    auto slicingFrame = slicingVideoService.engine().buildDebugFrame(state, 13u);
+    assert(slicingFrame.pixels[0] == 0xFF00FF00u);
+
     BMMQ::VisualOverrideService linearPolicyService;
     const auto linearPolicyDir = root / "linear-policy-pack";
     Visual::writeBinaryFile(linearPolicyDir / "tile.png",

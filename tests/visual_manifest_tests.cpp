@@ -372,6 +372,58 @@ int main()
     assert(paletteReplaceInvalidService.diagnostics().invalidRulesSkipped == 1u);
     assert(paletteReplaceInvalidService.diagnostics().rulesLoaded == 0u);
 
+    const auto slicingImagePath = root / "slicing-pack" / "images" / "tile.png";
+    Visual::writeBinaryFile(slicingImagePath, Visual::makePng2x2Rgba());
+    Visual::writeTextFile(root / "slicing-pack" / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"slicing.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"image\": \"images/tile.png\",\n"
+        "      \"slicing\": {\"x\": 1, \"y\": 0, \"width\": 1, \"height\": 2}\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    BMMQ::VisualOverrideService slicingService;
+    assert(slicingService.loadPackManifest(root / "slicing-pack" / "pack.json"));
+    auto slicingResolved = slicingService.resolve(resource->descriptor);
+    assert(slicingResolved.has_value());
+    assert(slicingResolved->slice.x == 1u);
+    assert(slicingResolved->slice.y == 0u);
+    assert(slicingResolved->slice.width == 1u);
+    assert(slicingResolved->slice.height == 2u);
+
+    Visual::writeTextFile(root / "slicing-invalid-pack" / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"slicing-invalid.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"image\": \"images/tile.png\",\n"
+        "      \"slicing\": {\"x\": 1, \"y\": 0, \"width\": 0, \"height\": 2}\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    BMMQ::VisualOverrideService slicingInvalidService;
+    assert(slicingInvalidService.loadPackManifest(root / "slicing-invalid-pack" / "pack.json"));
+    assert(slicingInvalidService.diagnostics().invalidRulesSkipped == 1u);
+    assert(slicingInvalidService.diagnostics().rulesLoaded == 0u);
+
     Visual::writeTextFile(root / "pack" / "bad.json",
         "{\n"
         "  \"schemaVersion\": 1,\n"

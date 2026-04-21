@@ -84,6 +84,7 @@ private:
         std::string packId;
         std::filesystem::path path;
         std::optional<VisualReplacementPalette> palette;
+        std::optional<VisualSliceRect> slicing;
         std::string scalePolicy;
         std::string filterPolicy;
         std::string anchor;

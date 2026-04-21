@@ -478,25 +478,46 @@ private:
         if (resolved.image.empty()) {
             return std::nullopt;
         }
+        const auto sliceX = std::min<std::size_t>(resolved.slice.x, resolved.image.width);
+        const auto sliceY = std::min<std::size_t>(resolved.slice.y, resolved.image.height);
+        const auto availableWidth = static_cast<std::size_t>(resolved.image.width) - sliceX;
+        const auto availableHeight = static_cast<std::size_t>(resolved.image.height) - sliceY;
+        const auto sampleWidth = resolved.slice.width != 0u
+            ? std::min<std::size_t>(resolved.slice.width, availableWidth)
+            : availableWidth;
+        const auto sampleHeight = resolved.slice.height != 0u
+            ? std::min<std::size_t>(resolved.slice.height, availableHeight)
+            : availableHeight;
+        if (sampleWidth == 0u || sampleHeight == 0u) {
+            return std::nullopt;
+        }
         if (resolved.scalePolicy == "exact" &&
-            (resolved.image.width != resource.descriptor.width || resolved.image.height != resource.descriptor.height)) {
+            (sampleWidth != resource.descriptor.width || sampleHeight != resource.descriptor.height)) {
             return std::nullopt;
         }
 
         if (resolved.scalePolicy == "crop") {
             return sampleNearest(resolved.image,
-                                 cropCoordinate(tileX, resolved.image.width, resource.descriptor.width, resolved.anchor),
-                                 cropCoordinate(tileY, resolved.image.height, resource.descriptor.height, resolved.anchor));
+                                 sliceX + cropCoordinate(tileX,
+                                                         static_cast<uint32_t>(sampleWidth),
+                                                         resource.descriptor.width,
+                                                         resolved.anchor),
+                                 sliceY + cropCoordinate(tileY,
+                                                         static_cast<uint32_t>(sampleHeight),
+                                                         resource.descriptor.height,
+                                                         resolved.anchor));
         }
 
-        const auto x = scaledCoordinate(tileX, resolved.image.width, resource.descriptor.width);
-        const auto y = scaledCoordinate(tileY, resolved.image.height, resource.descriptor.height);
+        const auto x = scaledCoordinate(tileX, static_cast<uint32_t>(sampleWidth), resource.descriptor.width);
+        const auto y = scaledCoordinate(tileY, static_cast<uint32_t>(sampleHeight), resource.descriptor.height);
         if (resolved.filterPolicy == "linear") {
-            return sampleLinear(resolved.image, x, y);
+            return sampleLinear(resolved.image,
+                                static_cast<double>(sliceX) + x,
+                                static_cast<double>(sliceY) + y);
         }
         return sampleNearest(resolved.image,
-                             static_cast<std::size_t>(x),
-                             static_cast<std::size_t>(y));
+                             sliceX + static_cast<std::size_t>(x),
+                             sliceY + static_cast<std::size_t>(y));
     }
 
     [[nodiscard]] static double scaledCoordinate(uint8_t sourceCoordinate,
