@@ -4,6 +4,11 @@
 
 #include <cstdint>
 
+
+#include <vector>
+#include <array>
+
+class GameGearInput;
 class GameGearMemoryMap {
 public:
     GameGearMemoryMap();
@@ -12,5 +17,15 @@ public:
     void reset();
     uint8_t read(uint16_t addr) const;
     void write(uint16_t addr, uint8_t value);
-    // TODO: Add RAM, ROM, I/O mapping
+
+    // ROM and RAM mapping
+    void mapRom(const uint8_t* data, size_t size);
+    void clearRom();
+
+    void setInput(GameGearInput* inputPtr);
+
+private:
+    GameGearInput* input = nullptr;
+    std::vector<uint8_t> rom;
+    std::array<uint8_t, 0x2000> ram{}; // 8KB RAM
 };

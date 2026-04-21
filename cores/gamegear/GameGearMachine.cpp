@@ -45,7 +45,15 @@ struct GameGearMachine::Impl {
     // TODO: Add runtime context, plugin manager, etc.
 };
 
-GameGearMachine::GameGearMachine() : impl(std::make_unique<Impl>()) {}
+GameGearMachine::GameGearMachine() : impl(std::make_unique<Impl>()) {
+    // Wire up CPU memory interface to memory map
+    impl->cpu.setMemoryInterface(
+        [this](uint16_t addr) { return impl->mem.read(addr); },
+        [this](uint16_t addr, uint8_t val) { impl->mem.write(addr, val); }
+    );
+    impl->mem.setInput(&impl->input);
+    impl->cpu.reset();
+}
 GameGearMachine::~GameGearMachine() = default;
 void GameGearMachine::loadRom(const std::vector<uint8_t>& bytes) {
     if (bytes.empty()) {
@@ -54,8 +62,9 @@ void GameGearMachine::loadRom(const std::vector<uint8_t>& bytes) {
     if (bytes.size() > kMaxRomSize) {
         throw std::runtime_error("ROM too large");
     }
+    impl->mem.mapRom(bytes.data(), bytes.size());
     impl->cart.load(bytes.data(), bytes.size());
-    // TODO: Map ROM to memory
+    impl->cpu.reset();
 }
 
 RuntimeContext& GameGearMachine::runtimeContext() {
