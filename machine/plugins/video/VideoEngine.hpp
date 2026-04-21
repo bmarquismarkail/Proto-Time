@@ -496,28 +496,52 @@ private:
             return std::nullopt;
         }
 
+        const auto applyTransform =
+            [&resolved](std::size_t x, std::size_t y, std::size_t width, std::size_t height) noexcept {
+                std::size_t tx = x;
+                std::size_t ty = y;
+                if (resolved.transform.flipX && width > 0u) {
+                    tx = width - 1u - tx;
+                }
+                if (resolved.transform.flipY && height > 0u) {
+                    ty = height - 1u - ty;
+                }
+                switch (resolved.transform.rotateDegrees) {
+                case 90u:
+                    return std::pair<std::size_t, std::size_t>{ty, width - 1u - tx};
+                case 180u:
+                    return std::pair<std::size_t, std::size_t>{width - 1u - tx, height - 1u - ty};
+                case 270u:
+                    return std::pair<std::size_t, std::size_t>{height - 1u - ty, tx};
+                default:
+                    return std::pair<std::size_t, std::size_t>{tx, ty};
+                }
+            };
+
         if (resolved.scalePolicy == "crop") {
-            return sampleNearest(resolved.image,
-                                 sliceX + cropCoordinate(tileX,
-                                                         static_cast<uint32_t>(sampleWidth),
-                                                         resource.descriptor.width,
-                                                         resolved.anchor),
-                                 sliceY + cropCoordinate(tileY,
-                                                         static_cast<uint32_t>(sampleHeight),
-                                                         resource.descriptor.height,
-                                                         resolved.anchor));
+            const auto [sampleX, sampleY] = applyTransform(
+                cropCoordinate(tileX, static_cast<uint32_t>(sampleWidth), resource.descriptor.width, resolved.anchor),
+                cropCoordinate(tileY, static_cast<uint32_t>(sampleHeight), resource.descriptor.height, resolved.anchor),
+                sampleWidth,
+                sampleHeight);
+            return sampleNearest(resolved.image, sliceX + sampleX, sliceY + sampleY);
         }
 
         const auto x = scaledCoordinate(tileX, static_cast<uint32_t>(sampleWidth), resource.descriptor.width);
         const auto y = scaledCoordinate(tileY, static_cast<uint32_t>(sampleHeight), resource.descriptor.height);
-        if (resolved.filterPolicy == "linear") {
+        const auto [sampleX, sampleY] = applyTransform(static_cast<std::size_t>(x),
+                                                       static_cast<std::size_t>(y),
+                                                       sampleWidth,
+                                                       sampleHeight);
+        if (resolved.filterPolicy == "linear" && resolved.transform.rotateDegrees == 0u &&
+            !resolved.transform.flipX && !resolved.transform.flipY) {
             return sampleLinear(resolved.image,
                                 static_cast<double>(sliceX) + x,
                                 static_cast<double>(sliceY) + y);
         }
         return sampleNearest(resolved.image,
-                             sliceX + static_cast<std::size_t>(x),
-                             sliceY + static_cast<std::size_t>(y));
+                             sliceX + sampleX,
+                             sliceY + sampleY);
     }
 
     [[nodiscard]] static double scaledCoordinate(uint8_t sourceCoordinate,

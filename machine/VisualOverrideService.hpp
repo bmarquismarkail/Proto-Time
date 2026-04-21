@@ -85,6 +85,7 @@ private:
         std::filesystem::path path;
         std::optional<VisualReplacementPalette> palette;
         std::optional<VisualSliceRect> slicing;
+        std::optional<VisualTransform> transform;
         std::string scalePolicy;
         std::string filterPolicy;
         std::string anchor;

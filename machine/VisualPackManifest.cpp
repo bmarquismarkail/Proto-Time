@@ -443,6 +443,29 @@ private:
     return slice;
 }
 
+[[nodiscard]] std::optional<VisualTransform> jsonTransform(const JsonValue::Object& object, const std::string& key)
+{
+    const auto* value = findMember(object, key);
+    if (value == nullptr || value->object() == nullptr) {
+        return std::nullopt;
+    }
+
+    VisualTransform transform;
+    if (const auto* flipX = findMember(*value->object(), "flipX"); flipX != nullptr) {
+        transform.flipX = std::holds_alternative<bool>(flipX->value) && std::get<bool>(flipX->value);
+    }
+    if (const auto* flipY = findMember(*value->object(), "flipY"); flipY != nullptr) {
+        transform.flipY = std::holds_alternative<bool>(flipY->value) && std::get<bool>(flipY->value);
+    }
+    if (const auto rotate = jsonUInt32(*value->object(), "rotate"); rotate.has_value()) {
+        if (*rotate != 0u && *rotate != 90u && *rotate != 180u && *rotate != 270u) {
+            return std::nullopt;
+        }
+        transform.rotateDegrees = *rotate;
+    }
+    return transform;
+}
+
 [[nodiscard]] bool jsonUInt32Equals(const JsonValue::Object& object, const std::string& key, uint32_t expected)
 {
     const auto* value = findMember(object, key);
@@ -582,13 +605,15 @@ VisualPackManifestLoadResult loadVisualPackManifest(const std::filesystem::path&
             rule.image = jsonString(*replaceValue->object(), "image").value_or("");
             rule.palette = jsonPalette(*replaceValue->object(), "palette");
             rule.slicing = jsonSlicing(*replaceValue->object(), "slicing");
+            rule.transform = jsonTransform(*replaceValue->object(), "transform");
             rule.scalePolicy = jsonString(*replaceValue->object(), "scalePolicy").value_or("");
             rule.filterPolicy = jsonString(*replaceValue->object(), "filterPolicy").value_or("");
             rule.anchor = jsonString(*replaceValue->object(), "anchor").value_or("");
             if (rule.kind == VisualResourceKind::Unknown ||
                 (rule.sourceHash == 0u && rule.decodedHash == 0u && rule.paletteAwareHash == 0u) ||
                 (rule.image.empty() && !rule.palette.has_value()) ||
-                (findMember(*replaceValue->object(), "slicing") != nullptr && !rule.slicing.has_value())) {
+                (findMember(*replaceValue->object(), "slicing") != nullptr && !rule.slicing.has_value()) ||
+                (findMember(*replaceValue->object(), "transform") != nullptr && !rule.transform.has_value())) {
                 ++result.invalidRulesSkipped;
                 continue;
             }

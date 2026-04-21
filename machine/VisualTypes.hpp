@@ -87,6 +87,12 @@ struct VisualSliceRect {
     uint32_t height = 0;
 };
 
+struct VisualTransform {
+    bool flipX = false;
+    bool flipY = false;
+    uint32_t rotateDegrees = 0;
+};
+
 using VisualReplacementPalette = std::array<uint32_t, 4>;
 
 enum class VisualOverrideMode : uint8_t {
@@ -110,6 +116,7 @@ struct ResolvedVisualOverride {
         0xFF000000u,
     };
     VisualSliceRect slice;
+    VisualTransform transform;
 };
 
 [[nodiscard]] inline constexpr const char* visualResourceKindName(VisualResourceKind kind) noexcept

@@ -288,6 +288,73 @@ int main()
     auto slicingFrame = slicingVideoService.engine().buildDebugFrame(state, 13u);
     assert(slicingFrame.pixels[0] == 0xFF00FF00u);
 
+    BMMQ::VisualOverrideService flipTransformService;
+    const auto flipTransformDir = root / "flip-transform-pack";
+    Visual::writeBinaryFile(flipTransformDir / "tile.png",
+                            Visual::makeRgbaPng(2u, 1u, {0xFFFF0000u, 0xFF00FF00u}));
+    Visual::writeTextFile(flipTransformDir / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"flip-transform.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"image\": \"tile.png\",\n"
+        "      \"transform\": {\"flipX\": true}\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    assert(flipTransformService.loadPackManifest(flipTransformDir / "pack.json"));
+    BMMQ::VideoService flipTransformVideoService(BMMQ::VideoEngineConfig{
+        .frameWidth = 8,
+        .frameHeight = 8,
+        .queueCapacityFrames = 1,
+    });
+    flipTransformVideoService.setVisualOverrideService(&flipTransformService);
+    auto flipTransformFrame = flipTransformVideoService.engine().buildDebugFrame(state, 14u);
+    assert(flipTransformFrame.pixels[0] == 0xFF00FF00u);
+
+    BMMQ::VisualOverrideService rotateTransformService;
+    const auto rotateTransformDir = root / "rotate-transform-pack";
+    std::vector<uint32_t> rotatePixels{
+        0xFFFF0000u, 0xFF00FF00u,
+        0xFF0000FFu, 0xFFFFFF00u,
+    };
+    Visual::writeBinaryFile(rotateTransformDir / "tile.png", Visual::makeRgbaPng(2u, 2u, rotatePixels));
+    Visual::writeTextFile(rotateTransformDir / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"rotate-transform.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"image\": \"tile.png\",\n"
+        "      \"transform\": {\"rotate\": 90}\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    assert(rotateTransformService.loadPackManifest(rotateTransformDir / "pack.json"));
+    BMMQ::VideoService rotateTransformVideoService(BMMQ::VideoEngineConfig{
+        .frameWidth = 8,
+        .frameHeight = 8,
+        .queueCapacityFrames = 1,
+    });
+    rotateTransformVideoService.setVisualOverrideService(&rotateTransformService);
+    auto rotateTransformFrame = rotateTransformVideoService.engine().buildDebugFrame(state, 15u);
+    assert(rotateTransformFrame.pixels[0] == 0xFF0000FFu);
+
     BMMQ::VisualOverrideService linearPolicyService;
     const auto linearPolicyDir = root / "linear-policy-pack";
     Visual::writeBinaryFile(linearPolicyDir / "tile.png",

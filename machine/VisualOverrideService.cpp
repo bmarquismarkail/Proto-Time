@@ -234,6 +234,7 @@ std::optional<ResolvedVisualOverride> VisualOverrideService::resolve(const Visua
                               bestRule->image.empty() ? std::filesystem::path{} : bestPack->manifest.root / bestRule->image,
                               bestRule->palette,
                               bestRule->slicing,
+                              bestRule->transform,
                               bestRule->scalePolicy,
                               bestRule->filterPolicy,
                               bestRule->anchor};
@@ -583,6 +584,7 @@ std::optional<ResolvedVisualOverride> VisualOverrideService::loadResolved(const 
                 0xFF000000u, 0xFF000000u, 0xFF000000u, 0xFF000000u,
             }),
             .slice = resolvedPath.slicing.value_or(VisualSliceRect{}),
+            .transform = resolvedPath.transform.value_or(VisualTransform{}),
         };
     }
     if (!resolvedPath.palette.has_value()) {
@@ -598,6 +600,7 @@ std::optional<ResolvedVisualOverride> VisualOverrideService::loadResolved(const 
         .image = {},
         .palette = *resolvedPath.palette,
         .slice = resolvedPath.slicing.value_or(VisualSliceRect{}),
+        .transform = resolvedPath.transform.value_or(VisualTransform{}),
     };
 }
 

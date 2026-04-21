@@ -424,6 +424,57 @@ int main()
     assert(slicingInvalidService.diagnostics().invalidRulesSkipped == 1u);
     assert(slicingInvalidService.diagnostics().rulesLoaded == 0u);
 
+    const auto transformImagePath = root / "transform-pack" / "images" / "tile.png";
+    Visual::writeBinaryFile(transformImagePath, Visual::makePng2x2Rgba());
+    Visual::writeTextFile(root / "transform-pack" / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"transform.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"image\": \"images/tile.png\",\n"
+        "      \"transform\": {\"flipX\": true, \"flipY\": true, \"rotate\": 270}\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    BMMQ::VisualOverrideService transformService;
+    assert(transformService.loadPackManifest(root / "transform-pack" / "pack.json"));
+    auto transformResolved = transformService.resolve(resource->descriptor);
+    assert(transformResolved.has_value());
+    assert(transformResolved->transform.flipX);
+    assert(transformResolved->transform.flipY);
+    assert(transformResolved->transform.rotateDegrees == 270u);
+
+    Visual::writeTextFile(root / "transform-invalid-pack" / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"transform-invalid.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"image\": \"images/tile.png\",\n"
+        "      \"transform\": {\"rotate\": 45}\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    BMMQ::VisualOverrideService transformInvalidService;
+    assert(transformInvalidService.loadPackManifest(root / "transform-invalid-pack" / "pack.json"));
+    assert(transformInvalidService.diagnostics().invalidRulesSkipped == 1u);
+    assert(transformInvalidService.diagnostics().rulesLoaded == 0u);
+
     Visual::writeTextFile(root / "pack" / "bad.json",
         "{\n"
         "  \"schemaVersion\": 1,\n"
