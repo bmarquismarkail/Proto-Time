@@ -1,5 +1,7 @@
 #include "emulator/EmulatorConfig.hpp"
 
+#include "emulator/MachineFactory.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -106,7 +108,9 @@ void applyConfigValue(EmulatorConfig& config,
     const auto label = std::string(section) + "." + std::string(key);
     const auto text = trim(value);
     if (section == "emulator") {
-        if (key == "rom") {
+        if (key == "core") {
+            config.machineKind = lowerAscii(text);
+        } else if (key == "rom") {
             config.romPath = resolveConfigPath(configDirectory, text);
         } else if (key == "boot_rom") {
             config.bootRomPath = resolveConfigPath(configDirectory, text);
@@ -227,6 +231,9 @@ EmulatorConfig loadEmulatorConfig(const std::filesystem::path& path)
 
 void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& overrides)
 {
+    if (overrides.machineKind.has_value()) {
+        config.machineKind = lowerAscii(*overrides.machineKind);
+    }
     if (overrides.romPath.has_value()) {
         config.romPath = *overrides.romPath;
     }
@@ -273,8 +280,26 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
 
 void validateEmulatorConfig(const EmulatorConfig& config)
 {
+    if (!config.machineKind.has_value()) {
+        throw std::invalid_argument("Missing core selection. Use --core <gameboy|gamegear>.");
+    }
+    const auto kind = parseMachineKind(*config.machineKind);
+    const auto& descriptor = machineDescriptor(kind);
+
     if (config.romPath.empty()) {
         throw std::invalid_argument("Missing ROM path. Use --rom <file.gb>.");
+    }
+    if (config.bootRomPath.has_value() && !descriptor.supportsExternalBootRom) {
+        throw std::invalid_argument(
+            std::string(descriptor.displayName) + " does not support external boot ROM loading");
+    }
+    if ((!config.visualPackPaths.empty() || config.visualPackReload) && !descriptor.supportsVisualPacks) {
+        throw std::invalid_argument(
+            std::string(descriptor.displayName) + " does not support visual packs");
+    }
+    if (config.visualCapturePath.has_value() && !descriptor.supportsVisualCapture) {
+        throw std::invalid_argument(
+            std::string(descriptor.displayName) + " does not support visual capture");
     }
 }
 
@@ -292,6 +317,11 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
                 throw std::invalid_argument("--config was provided more than once");
             }
             arguments.configPath = std::filesystem::path(argv[++i]);
+        } else if (arg == "--core" || arg == "--machine") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--core requires a value");
+            }
+            arguments.overrides.machineKind = lowerAscii(argv[++i]);
         } else if (arg == "--rom") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--rom requires a path");

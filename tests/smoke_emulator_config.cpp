@@ -70,6 +70,7 @@ int main()
 
     {
         BMMQ::EmulatorConfig defaults;
+        CHECK_TRUE(!defaults.machineKind.has_value());
         CHECK_TRUE(defaults.romPath.empty());
         CHECK_TRUE(!defaults.bootRomPath.has_value());
         CHECK_TRUE(!defaults.pluginPath.has_value());
@@ -89,6 +90,7 @@ int main()
     writeTextFile(configPath,
         "# comment\n"
         "[emulator]\n"
+        "core = gameboy\n"
         "rom = roms/game.gb\n"
         "boot_rom = boot/dmg.bin\n"
         "plugin = plugins/frontend.so\n"
@@ -114,6 +116,8 @@ int main()
         "reload = true\n");
 
     auto fileConfig = BMMQ::loadEmulatorConfig(configPath);
+    CHECK_TRUE(fileConfig.machineKind.has_value());
+    CHECK_TRUE(*fileConfig.machineKind == "gameboy");
     CHECK_TRUE(fileConfig.romPath == tempDir / "roms/game.gb");
     CHECK_TRUE(fileConfig.bootRomPath == tempDir / "boot/dmg.bin");
     CHECK_TRUE(fileConfig.pluginPath == tempDir / "plugins/frontend.so");
@@ -132,6 +136,7 @@ int main()
     CHECK_TRUE(fileConfig.visualPackReload);
 
     BMMQ::CommandLineConfigOverrides overrides;
+    overrides.machineKind = std::string("gamegear");
     overrides.romPath = std::filesystem::path("cli.gb");
     overrides.bootRomPath = std::filesystem::path("cli-boot.bin");
     overrides.pluginPath = std::filesystem::path("cli-plugin.so");
@@ -150,6 +155,8 @@ int main()
     overrides.visualCapturePath = std::filesystem::path("cli-capture");
     overrides.visualPackReload = false;
     BMMQ::applyOverrides(fileConfig, overrides);
+    CHECK_TRUE(fileConfig.machineKind.has_value());
+    CHECK_TRUE(*fileConfig.machineKind == "gamegear");
     CHECK_TRUE(fileConfig.romPath == "cli.gb");
     CHECK_TRUE(fileConfig.bootRomPath == "cli-boot.bin");
     CHECK_TRUE(fileConfig.pluginPath == "cli-plugin.so");
@@ -171,8 +178,23 @@ int main()
         (void)parseArgs({"timeEmulator", "--rom", "a.gb", "b.gb"});
     }));
 
+    CHECK_TRUE(throwsInvalidArgumentContaining("Missing core selection", [] {
+        BMMQ::EmulatorConfig config;
+        config.romPath = "missing-core.gb";
+        BMMQ::validateEmulatorConfig(config);
+    }));
+
     CHECK_TRUE(throwsInvalidArgumentContaining("Missing ROM path", [] {
-        BMMQ::validateEmulatorConfig(BMMQ::EmulatorConfig{});
+        BMMQ::EmulatorConfig config;
+        config.machineKind = std::string("gameboy");
+        BMMQ::validateEmulatorConfig(config);
+    }));
+
+    CHECK_TRUE(throwsInvalidArgumentContaining("Unknown machine core", [] {
+        BMMQ::EmulatorConfig config;
+        config.machineKind = std::string("genesis");
+        config.romPath = "bad-core.bin";
+        BMMQ::validateEmulatorConfig(config);
     }));
 
     CHECK_TRUE(throwsInvalidArgumentContaining("Unknown config section", [&] {
@@ -238,11 +260,12 @@ int main()
 
     const auto resolvedConfigPath = tempDir / "resolved.ini";
     writeTextFile(resolvedConfigPath,
-        "[emulator]\nrom=config.gb\nheadless=true\n"
+        "[emulator]\ncore=gameboy\nrom=config.gb\nheadless=true\n"
         "[audio]\nbackend=file\n"
         "[visual]\npack=config-pack.json\ncapture=config-capture\nreload=false\n");
     auto parsed = parseArgs({"timeEmulator",
                              "--config", resolvedConfigPath.c_str(),
+                             "--core", "gameboy",
                              "--rom", "cli.gb",
                              "--audio-backend", "dummy",
                              "--visual-pack", "cli-pack-a.json",
@@ -250,6 +273,8 @@ int main()
                              "--visual-capture", "cli-capture",
                              "--visual-pack-reload"});
     auto resolved = BMMQ::resolveEmulatorConfig(parsed);
+    CHECK_TRUE(resolved.machineKind.has_value());
+    CHECK_TRUE(*resolved.machineKind == "gameboy");
     CHECK_TRUE(resolved.romPath == "cli.gb");
     CHECK_TRUE(resolved.headless);
     CHECK_TRUE(resolved.audioBackend == "dummy");
@@ -258,6 +283,47 @@ int main()
     CHECK_TRUE(resolved.visualPackPaths[1] == "cli-pack-b.json");
     CHECK_TRUE(resolved.visualCapturePath == "cli-capture");
     CHECK_TRUE(resolved.visualPackReload);
+
+    CHECK_TRUE(throwsInvalidArgumentContaining("does not support visual packs", [&] {
+        auto invalid = parseArgs({"timeEmulator",
+                                  "--core", "gamegear",
+                                  "--rom", "cli.gg",
+                                  "--visual-pack", "gg-pack.json"});
+        (void)BMMQ::resolveEmulatorConfig(invalid);
+    }));
+
+    CHECK_TRUE(throwsInvalidArgumentContaining("does not support visual capture", [&] {
+        auto invalid = parseArgs({"timeEmulator",
+                                  "--core", "gamegear",
+                                  "--rom", "cli.gg",
+                                  "--visual-capture", "gg-capture"});
+        (void)BMMQ::resolveEmulatorConfig(invalid);
+    }));
+
+    CHECK_TRUE(throwsInvalidArgumentContaining("does not support external boot ROM loading", [&] {
+        auto invalid = parseArgs({"timeEmulator",
+                                  "--core", "gamegear",
+                                  "--rom", "cli.gg",
+                                  "--boot-rom", "gg-boot.bin"});
+        (void)BMMQ::resolveEmulatorConfig(invalid);
+    }));
+
+    const auto explicitGameBoy = parseArgs({"timeEmulator", "--core", "gameboy", "--rom", "gb.gb"});
+    CHECK_TRUE(explicitGameBoy.overrides.machineKind.has_value());
+    CHECK_TRUE(*explicitGameBoy.overrides.machineKind == "gameboy");
+
+    const auto explicitGameGear = parseArgs({"timeEmulator", "--core", "gamegear", "--rom", "gg.gg"});
+    CHECK_TRUE(explicitGameGear.overrides.machineKind.has_value());
+    CHECK_TRUE(*explicitGameGear.overrides.machineKind == "gamegear");
+
+    CHECK_TRUE(throwsInvalidArgumentContaining("--core requires a value", [] {
+        (void)parseArgs({"timeEmulator", "--core"});
+    }));
+
+    CHECK_TRUE(throwsInvalidArgumentContaining("Unknown machine core", [] {
+        auto parsedUnknown = parseArgs({"timeEmulator", "--core", "mystery", "--rom", "bad.bin"});
+        (void)BMMQ::resolveEmulatorConfig(parsedUnknown);
+    }));
 
     std::filesystem::remove_all(tempDir);
     return 0;

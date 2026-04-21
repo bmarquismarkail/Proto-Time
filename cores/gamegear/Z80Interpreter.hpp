@@ -14,7 +14,7 @@ public:
     ~Z80Interpreter();
 
     void reset();
-    void step();
+    [[nodiscard]] uint32_t step();
 
     // Register interface
     void setMemoryInterface(MemRead reader, MemWrite writer);

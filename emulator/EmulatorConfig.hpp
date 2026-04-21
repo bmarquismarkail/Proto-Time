@@ -10,6 +10,7 @@
 namespace BMMQ {
 
 struct EmulatorConfig {
+    std::optional<std::string> machineKind;
     std::filesystem::path romPath;
     std::optional<std::filesystem::path> bootRomPath;
     std::optional<std::filesystem::path> pluginPath;
@@ -27,6 +28,7 @@ struct EmulatorConfig {
 };
 
 struct CommandLineConfigOverrides {
+    std::optional<std::string> machineKind;
     std::optional<std::filesystem::path> romPath;
     std::optional<std::filesystem::path> bootRomPath;
     std::optional<std::filesystem::path> pluginPath;

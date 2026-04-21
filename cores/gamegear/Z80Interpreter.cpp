@@ -57,9 +57,10 @@ void Z80Interpreter::handleInterrupts() {
     // TODO: Implement interrupt logic
 }
 
-void Z80Interpreter::step() {
+uint32_t Z80Interpreter::step() {
     requireMemoryInterface();
     handleInterrupts();
     const uint8_t opcode = fetch8();
     executeOpcode(opcode);
+    return 4u;
 }

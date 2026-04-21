@@ -16,19 +16,16 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
 #include <iostream>
-#include <iterator>
 #include <memory>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <vector>
 
-#include "cores/gameboy/GameBoyMachine.hpp"
 #include "emulator/EmulatorConfig.hpp"
+#include "emulator/EmulatorHost.hpp"
 #include "machine/plugins/SdlFrontendPluginLoader.hpp"
 #include "machine/TimingService.hpp"
 
@@ -43,12 +40,13 @@ void handleSignal(int)
 
 void printUsage(std::string_view program)
 {
-    std::cerr << "Usage: " << program << " --rom <path.gb> [options]\n"
-              << "   or: " << program << " <path.gb> [options]\n\n"
+    std::cerr << "Usage: " << program << " --core <gameboy|gamegear> --rom <path> [options]\n"
+              << "   or: " << program << " --core <gameboy|gamegear> <path> [options]\n\n"
               << "Options:\n"
+              << "  --core <name>      Machine core to run: gameboy or gamegear\n"
               << "  --config <path>    Optional INI-style emulator configuration file\n"
               << "  --rom <path>       Cartridge ROM to load\n"
-              << "  --boot-rom <path>  Optional 256-byte DMG boot ROM\n"
+              << "  --boot-rom <path>  Optional external boot ROM for supported cores\n"
               << "  --plugin <path>    Optional SDL frontend shared object override\n"
               << "  --steps <count>    Stop after a fixed number of instruction steps\n"
               << "  --scale <n>        SDL window scale factor (default: 3)\n"
@@ -67,23 +65,8 @@ void printUsage(std::string_view program)
               << "  --headless         Run without the SDL frontend plugin\n"
               << "  -h, --help         Show this help text\n\n"
               << "Controls:\n"
-              << "  Arrow keys = D-pad, Z = A, X = B, Backspace = Select, Enter = Start\n";
-}
-
-std::vector<std::uint8_t> readBinaryFile(const std::filesystem::path& path)
-{
-    std::ifstream input(path, std::ios::binary);
-    if (!input) {
-        throw std::runtime_error("Unable to open file: " + path.string());
-    }
-
-    std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(input)),
-                                    std::istreambuf_iterator<char>());
-    if (bytes.empty()) {
-        throw std::runtime_error("File is empty: " + path.string());
-    }
-
-    return bytes;
+              << "  Arrow keys = directions, Z = Button1, X = Button2,\n"
+              << "  Backspace = Meta1, Enter = Meta2\n";
 }
 
 } // namespace
@@ -103,38 +86,20 @@ int main(int argc, char** argv)
         std::signal(SIGTERM, handleSignal);
 #endif
 
-        GameBoyMachine machine;
-
-        if (options.bootRomPath.has_value()) {
-            machine.loadBootRom(readBinaryFile(*options.bootRomPath));
-        }
-
-        std::size_t romSize = machine.loadRomFromPath(options.romPath);
-
-        for (const auto& visualPackPath : options.visualPackPaths) {
-            if (!machine.visualOverrideService().loadPackManifest(visualPackPath)) {
-                throw std::runtime_error(
-                    "Unable to load visual pack: " + visualPackPath.string() +
-                    " (" + machine.visualOverrideService().lastError() + ")");
-            }
-        }
-
-        bool captureStarted = false;
-        if (options.visualCapturePath.has_value()) {
-            if (!machine.visualOverrideService().beginCapture(*options.visualCapturePath, "gameboy")) {
-                throw std::runtime_error(
-                    "Unable to start visual resource capture: " + options.visualCapturePath->string() +
-                    " (" + machine.visualOverrideService().lastError() + ")");
-            }
-            captureStarted = true;
-        }
+        auto bootstrapped = BMMQ::bootstrapMachine(options);
+        auto& machine = *bootstrapped.machine;
+        const auto& descriptor = bootstrapped.descriptor;
+        const auto romSize = bootstrapped.romSize;
 
         BMMQ::ISdlFrontendPlugin* frontend = nullptr;
         std::unique_ptr<BMMQ::ISdlFrontendPlugin> frontendPlugin;
         if (!options.headless) {
             BMMQ::SdlFrontendConfig config;
-            config.windowTitle = "Proto-Time - " + options.romPath.filename().string();
+            config.windowTitle = "Proto-Time - " + std::string(descriptor.displayName) +
+                " - " + options.romPath.filename().string();
             config.windowScale = std::max(options.windowScale, 1u);
+            config.frameWidth = descriptor.defaultFrameWidth;
+            config.frameHeight = descriptor.defaultFrameHeight;
             config.autoInitializeBackend = true;
             config.createHiddenWindowOnInitialize = true;
             config.pumpBackendEventsOnInputSample = false;
@@ -159,6 +124,7 @@ int main(int argc, char** argv)
             }
         }
 
+        std::cout << "Core: " << descriptor.id << '\n';
         std::cout << "Loaded ROM: " << options.romPath << " ("
             << romSize << " bytes)\n";
         if (options.bootRomPath.has_value()) {
@@ -331,30 +297,18 @@ int main(int argc, char** argv)
         }
 
         serviceFrontend();
-        if (captureStarted) {
-            machine.visualOverrideService().endCapture();
-        }
         if (!options.visualPackPaths.empty() || options.visualCapturePath.has_value()) {
             (void)machine.visualOverrideService().captureStats();
             std::cout << machine.visualOverrideService().authorDiagnosticsReport();
         }
 
-        const auto pc = machine.runtimeContext().readRegister16(GB::RegisterId::PC);
-        const auto ly = machine.runtimeContext().read8(0xFF44);
-        const auto lcdc = machine.runtimeContext().read8(0xFF40);
-        const auto stat = machine.runtimeContext().read8(0xFF41);
-        const auto interruptFlags = machine.runtimeContext().read8(0xFF0F);
-        const auto interruptEnable = machine.runtimeContext().read8(0xFFFF);
-
-        std::cout << "Stopped after " << steps
-                  << " instruction steps at PC=0x"
-                  << std::hex << std::uppercase << pc << std::dec << '\n';
-        std::cout << "I/O state: LY=0x" << std::hex << std::uppercase << static_cast<int>(ly)
-                  << " LCDC=0x" << static_cast<int>(lcdc)
-                  << " STAT=0x" << static_cast<int>(stat)
-                  << " IF=0x" << static_cast<int>(interruptFlags)
-                  << " IE=0x" << static_cast<int>(interruptEnable)
-                  << std::dec << '\n';
+        std::cout << "Stopped after " << steps << " instruction steps";
+        const auto stopSummary = machine.stopSummary();
+        if (!stopSummary.empty()) {
+            std::cout << ":\n" << stopSummary << '\n';
+        } else {
+            std::cout << '\n';
+        }
         return EXIT_SUCCESS;
     } catch (const std::invalid_argument& ex) {
         std::cerr << "error: " << ex.what() << '\n';

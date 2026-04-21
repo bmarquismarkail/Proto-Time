@@ -4,7 +4,9 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 #include "machine/Machine.hpp"
@@ -23,11 +25,15 @@ public:
     PluginManager& pluginManager() override;
     const PluginManager& pluginManager() const override;
     void step() override;
+    void serviceInput() override;
 
     std::span<const IoRegionDescriptor> describeIoRegions() const override;
     void attachExecutorPolicy(Plugin::IExecutorPolicyPlugin& policy) override;
     const Plugin::IExecutorPolicyPlugin& attachedExecutorPolicy() const override;
     uint16_t readRegisterPair(std::string_view id) const override;
+    std::optional<uint32_t> currentDigitalInputMask() const override;
+    uint32_t clockHz() const override;
+    std::string stopSummary() const override;
 
 private:
     struct Impl;

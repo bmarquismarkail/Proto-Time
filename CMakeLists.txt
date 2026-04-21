@@ -29,14 +29,19 @@ if (BMMQ_ENABLE_TSAN)
         message(FATAL_ERROR "BMMQ_ENABLE_TSAN=ON requires Clang or GCC")
     endif()
 endif()
-add_library(time-gameboy-interpreter-core
-	cores/gameboy/decode/gb_decoder.cpp
-	cores/gameboy/decode/gb_interpreter.cpp
-    cores/gameboy/gameboy.cpp
+add_library(time-machine-runtime-common STATIC
     machine/TimingService.cpp
     machine/VisualCaptureWriter.cpp
     machine/VisualOverrideService.cpp
     machine/VisualPackManifest.cpp
+)
+set_target_properties(time-machine-runtime-common PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(time-machine-runtime-common PUBLIC ZLIB::ZLIB)
+
+add_library(time-gameboy-interpreter-core
+	cores/gameboy/decode/gb_decoder.cpp
+	cores/gameboy/decode/gb_interpreter.cpp
+    cores/gameboy/gameboy.cpp
 )
 
 
@@ -49,22 +54,36 @@ add_library(time-gamegear-core STATIC
     cores/gamegear/GameGearInput.cpp
     cores/gamegear/GameGearCartridge.cpp
     cores/gamegear/GameGearMemoryMap.cpp
-    machine/TimingService.cpp
-    machine/VisualCaptureWriter.cpp
-    machine/VisualOverrideService.cpp
-    machine/VisualPackManifest.cpp
 )
 set_target_properties(time-gamegear-core PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_link_libraries(time-gamegear-core PUBLIC ZLIB::ZLIB)
+target_link_libraries(time-gamegear-core PUBLIC time-machine-runtime-common)
 
 set_target_properties(time-gameboy-interpreter-core PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_link_libraries(time-gameboy-interpreter-core PUBLIC ZLIB::ZLIB)
+target_link_libraries(time-gameboy-interpreter-core PUBLIC time-machine-runtime-common)
 add_library(time-sdl-frontend-loader
     machine/plugins/SdlFrontendPluginLoader.cpp
 )
 target_link_libraries(time-sdl-frontend-loader ${CMAKE_DL_LIBS})
 add_library(time-emulator-config STATIC
     emulator/EmulatorConfig.cpp
+)
+add_library(time-machine-factory STATIC
+    emulator/MachineFactory.cpp
+)
+target_link_libraries(time-machine-factory
+    PUBLIC
+        time-machine-runtime-common
+        time-gameboy-interpreter-core
+        time-gamegear-core
+)
+target_link_libraries(time-emulator-config PUBLIC time-machine-factory)
+add_library(time-emulator-host STATIC
+    emulator/EmulatorHost.cpp
+)
+target_link_libraries(time-emulator-host
+    PUBLIC
+        time-machine-factory
+        time-emulator-config
 )
 set(BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE 0)
 add_library(time-sdl-audio-output STATIC
@@ -92,7 +111,7 @@ add_library(time-sdl-frontend-plugin SHARED
 )
 target_link_libraries(time-sdl-frontend-plugin PRIVATE time-gameboy-interpreter-core)
 add_executable(timeEmulator emulator.cpp)
-target_link_libraries(timeEmulator time-gameboy-interpreter-core time-sdl-frontend-loader time-emulator-config)
+target_link_libraries(timeEmulator time-emulator-host time-sdl-frontend-loader)
 if (TARGET SDL2::SDL2)
     target_link_libraries(time-sdl-audio-output PRIVATE SDL2::SDL2)
     target_link_libraries(time-sdl-video-adapter PRIVATE SDL2::SDL2)
@@ -166,6 +185,12 @@ add_test(NAME smoke_input_fallback COMMAND time-smoke-input-fallback)
 add_executable(time-smoke-emulator-config tests/smoke_emulator_config.cpp)
 target_link_libraries(time-smoke-emulator-config time-emulator-config)
 add_test(NAME smoke_emulator_config COMMAND time-smoke-emulator-config)
+add_executable(time-smoke-machine-factory tests/smoke_machine_factory.cpp)
+target_link_libraries(time-smoke-machine-factory time-machine-factory)
+add_test(NAME smoke_machine_factory COMMAND time-smoke-machine-factory)
+add_executable(time-smoke-emulator-host tests/smoke_emulator_host.cpp)
+target_link_libraries(time-smoke-emulator-host time-emulator-host)
+add_test(NAME smoke_emulator_host COMMAND time-smoke-emulator-host)
 add_executable(time-smoke-video-engine tests/smoke_video_engine.cpp)
 target_link_libraries(time-smoke-video-engine time-gameboy-interpreter-core)
 add_test(NAME smoke_video_engine COMMAND time-smoke-video-engine)

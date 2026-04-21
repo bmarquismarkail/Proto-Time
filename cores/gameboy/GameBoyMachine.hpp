@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iterator>
 #include <optional>
+#include <sstream>
 #include <string_view>
 #include <stdexcept>
 #include <vector>
@@ -225,7 +226,9 @@ private:
     bool allowFastPath_ = false;
 };
 
-class GameBoyMachine final : public BMMQ::Machine {
+class GameBoyMachine final : public BMMQ::Machine,
+                             public BMMQ::IExternalBootRomMachine,
+                             public BMMQ::IRomPathAwareMachine {
 public:
     GameBoyMachine()
         : activePolicy_(&defaultPolicy_),
@@ -263,13 +266,18 @@ public:
         (void)flushCartridgeSave();
         rom_.load(bytes);
         cartridge_.load(bytes);
-        saveManager_.clearBinding();
+        if (pendingRomSourcePath_.has_value()) {
+            saveManager_.bindRomPath(*pendingRomSourcePath_);
+            saveManager_.load(cartridge_);
+        } else {
+            saveManager_.clearBinding();
+        }
+        pendingRomSourcePath_.reset();
         finalizeRomLoad();
     }
 
     // Returns the number of bytes loaded
     std::size_t loadRomFromPath(const std::filesystem::path& path) {
-        (void)flushCartridgeSave();
         std::ifstream input(path, std::ios::binary);
         if (!input) {
             throw std::runtime_error("Unable to open ROM: " + path.string());
@@ -279,11 +287,8 @@ public:
             throw std::runtime_error("ROM is empty: " + path.string());
         }
 
-        rom_.load(bytes);
-        cartridge_.load(bytes);
-        saveManager_.bindRomPath(path);
-        saveManager_.load(cartridge_);
-        finalizeRomLoad();
+        setRomSourcePath(path);
+        loadRom(bytes);
         return bytes.size();
     }
 
@@ -310,6 +315,14 @@ public:
         bootEntryPending_ = false;
         const uint8_t bootControl = 0x00u;
         memoryMap_.storage().load(std::span<const uint8_t>(&bootControl, 1), 0xFF50);
+    }
+
+    void loadExternalBootRom(const std::vector<uint8_t>& bytes) override {
+        loadBootRom(bytes);
+    }
+
+    void setRomSourcePath(const std::optional<std::filesystem::path>& path) override {
+        pendingRomSourcePath_ = path;
     }
 
     void setJoypadState(uint8_t pressedMask) {
@@ -449,6 +462,25 @@ public:
 
     const BMMQ::Plugin::IExecutorPolicyPlugin& attachedExecutorPolicy() const override {
         return *activePolicy_;
+    }
+
+    std::string stopSummary() const override {
+        const auto pc = runtimeContext().readRegister16(GB::RegisterId::PC);
+        const auto ly = runtimeContext().read8(0xFF44);
+        const auto lcdc = runtimeContext().read8(0xFF40);
+        const auto stat = runtimeContext().read8(0xFF41);
+        const auto interruptFlags = runtimeContext().read8(0xFF0F);
+        const auto interruptEnable = runtimeContext().read8(0xFFFF);
+
+        std::ostringstream out;
+        out << "PC=0x" << std::hex << std::uppercase << pc << std::dec << '\n'
+            << "I/O state: LY=0x" << std::hex << std::uppercase << static_cast<int>(ly)
+            << " LCDC=0x" << static_cast<int>(lcdc)
+            << " STAT=0x" << static_cast<int>(stat)
+            << " IF=0x" << static_cast<int>(interruptFlags)
+            << " IE=0x" << static_cast<int>(interruptEnable)
+            << std::dec;
+        return out.str();
     }
 
 private:
@@ -835,6 +867,7 @@ private:
     std::array<uint8_t, 0x100> bootRom_ = kDefaultBootRom;
     bool bootRomMapped_ = false;
     bool bootEntryPending_ = false;
+    std::optional<std::filesystem::path> pendingRomSourcePath_{};
     GB::GameBoyCartridge cartridge_;
     GB::CartridgeSaveManager saveManager_;
     uint64_t stepCounter_ = 0;

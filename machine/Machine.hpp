@@ -2,9 +2,11 @@
 #define BMMQ_MACHINE_HPP
 
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <vector>
 
 #include "AudioService.hpp"
@@ -22,6 +24,18 @@ class IExecutorPolicyPlugin;
 }
 
 namespace BMMQ {
+
+class IExternalBootRomMachine {
+public:
+    virtual ~IExternalBootRomMachine() = default;
+    virtual void loadExternalBootRom(const std::vector<uint8_t>& bytes) = 0;
+};
+
+class IRomPathAwareMachine {
+public:
+    virtual ~IRomPathAwareMachine() = default;
+    virtual void setRomSourcePath(const std::optional<std::filesystem::path>& path) = 0;
+};
 
 class Machine {
 public:
@@ -169,6 +183,9 @@ public:
         runtimeContext().step();
     }
     virtual uint16_t readRegisterPair(std::string_view id) const = 0;
+    virtual std::string stopSummary() const {
+        return {};
+    }
 
 private:
     void bindVisualOverrideEvents()
