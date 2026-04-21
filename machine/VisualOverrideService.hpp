@@ -38,6 +38,12 @@ struct VisualOverrideDiagnostics {
     std::size_t packReloadsFailed = 0;
 };
 
+struct VisualObservedResourceStat {
+    VisualResourceDescriptor descriptor;
+    std::size_t observations = 0;
+    std::string imagePath;
+};
+
 class VisualOverrideService {
 public:
     using EventSink = std::function<void(const MachineEvent&)>;
@@ -66,6 +72,7 @@ public:
 
     [[nodiscard]] const VisualCaptureStats& captureStats() const noexcept;
     [[nodiscard]] const VisualOverrideDiagnostics& diagnostics() const noexcept;
+    [[nodiscard]] std::string authorDiagnosticsReport(std::size_t maxObservedResources = 5u) const;
     [[nodiscard]] std::string lastError() const;
     [[nodiscard]] uint64_t generation() const noexcept;
 
@@ -101,7 +108,9 @@ private:
     [[nodiscard]] std::optional<ResolvedVisualOverride> loadResolved(const ResolvedPath& resolvedPath);
     [[nodiscard]] std::optional<VisualReplacementImage> loadPng(const std::filesystem::path& path);
     [[nodiscard]] bool writeCaptureManifest() const;
+    [[nodiscard]] bool writeAuthorReport() const;
     void emitVisualEvent(MachineEventType type, uint64_t tick, std::string_view detail) const;
+    void recordObservation(const VisualResourceDescriptor& descriptor);
 
     bool enabled_ = true;
     bool captureEnabled_ = false;
@@ -112,6 +121,8 @@ private:
     mutable VisualOverrideDiagnostics diagnostics_{};
     std::set<std::string> captureSeen_;
     std::vector<VisualCaptureEntry> captureEntries_;
+    std::vector<VisualObservedResourceStat> observedResources_;
+    std::unordered_map<std::string, std::size_t> observedResourceIndices_;
     mutable bool captureManifestDirty_ = false;
     std::vector<LoadedPack> packs_;
     std::map<std::string, ResolvedPath> resolvedCache_;

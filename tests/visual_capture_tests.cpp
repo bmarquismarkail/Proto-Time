@@ -53,6 +53,8 @@ int main()
     assert(std::filesystem::exists(capturePack));
     const auto captureMetadata = dumpDir / "capture_metadata.json";
     assert(std::filesystem::exists(captureMetadata));
+    const auto captureReport = dumpDir / "author_report.txt";
+    assert(std::filesystem::exists(captureReport));
 
     const auto captureManifestText = Visual::readTextFile(captureManifest);
     assert(captureManifestText.find("\"sourceHash\"") != std::string::npos);
@@ -74,6 +76,12 @@ int main()
     assert(captureMetadataText.find("\"paletteValue\": \"0xaa\"") != std::string::npos);
     assert(captureMetadataText.find("\"paletteRegister\": \"BGP\"") != std::string::npos);
     assert(captureMetadataText.find("\"paletteRegister\": \"A\\b\\f\\u0001Z\"") != std::string::npos);
+    const auto captureReportText = Visual::readTextFile(captureReport);
+    assert(captureReportText.find("Visual capture summary") != std::string::npos);
+    assert(captureReportText.find("unique resources dumped: 2") != std::string::npos);
+    assert(captureReportText.find("duplicate resources skipped: 1") != std::string::npos);
+    assert(captureReportText.find("Top observed resources") != std::string::npos);
+    assert(captureReportText.find("observations=2 kind=Tile") != std::string::npos);
 
     BMMQ::VisualOverrideService capturedPackService;
     assert(capturedPackService.loadPackManifest(capturePack));

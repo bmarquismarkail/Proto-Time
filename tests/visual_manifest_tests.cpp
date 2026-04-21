@@ -345,6 +345,9 @@ int main()
     assert(missingAssetService.loadPackManifest(root / "pack" / "bad.json"));
     assert(!missingAssetService.resolve(resource->descriptor).has_value());
     assert(missingAssetService.diagnostics().missingReplacementImages == 1u);
+    const auto missingAssetReport = missingAssetService.authorDiagnosticsReport();
+    assert(missingAssetReport.find("missing replacement images: 1") != std::string::npos);
+    assert(missingAssetReport.find("replacement load failures: 1") != std::string::npos);
 
     Visual::writeTextFile(root / "pack" / "invalid-rules.json",
         "{\n"
@@ -365,6 +368,7 @@ int main()
     assert(invalidRuleService.loadPackManifest(root / "pack" / "invalid-rules.json"));
     assert(invalidRuleService.diagnostics().invalidRulesSkipped == 1u);
     assert(invalidRuleService.diagnostics().rulesLoaded == 0u);
+    assert(invalidRuleService.authorDiagnosticsReport().find("invalid rules skipped: 1") != std::string::npos);
 
     const auto unicodeImagePath = root / "unicode-pack" / "tile.png";
     Visual::writeBinaryFile(unicodeImagePath, Visual::makePng2x2Rgba());
@@ -554,6 +558,7 @@ int main()
     assert(reloadResolved.has_value());
     assert(reloadResolved->packId == "reload-updated.gb");
     assert(reloadService.diagnostics().packReloadsFailed == 1u);
+    assert(reloadService.authorDiagnosticsReport().find("reload failures: 1") != std::string::npos);
 
     Visual::writeTextFile(reloadManifestPath,
         "{\n"

@@ -52,6 +52,31 @@ namespace {
     return std::find(pack.targets.begin(), pack.targets.end(), machineId) != pack.targets.end();
 }
 
+[[nodiscard]] std::string describeObservedResource(const VisualObservedResourceStat& resource)
+{
+    std::ostringstream out;
+    out << "observations=" << resource.observations
+        << " kind=" << visualResourceKindName(resource.descriptor.kind)
+        << " size=" << resource.descriptor.width << "x" << resource.descriptor.height
+        << " decodedHash=" << toHexVisualHash(resource.descriptor.contentHash);
+    if (resource.descriptor.sourceHash != 0u) {
+        out << " sourceHash=" << toHexVisualHash(resource.descriptor.sourceHash);
+    }
+    if (!resource.descriptor.source.label.empty()) {
+        out << " label=" << resource.descriptor.source.label;
+    }
+    if (resource.descriptor.source.address != 0u) {
+        out << " address=0x" << std::hex << std::nouppercase << resource.descriptor.source.address << std::dec;
+    }
+    if (!resource.descriptor.source.paletteRegister.empty()) {
+        out << " paletteRegister=" << resource.descriptor.source.paletteRegister;
+    }
+    if (!resource.imagePath.empty()) {
+        out << " image=" << resource.imagePath;
+    }
+    return out.str();
+}
+
 } // namespace
 
 bool VisualOverrideService::enabled() const noexcept
@@ -228,13 +253,14 @@ bool VisualOverrideService::beginCapture(const std::filesystem::path& directory,
         captureEnabled_ = false;
         return false;
     }
-    return writeCaptureManifest();
+    return writeCaptureManifest() && writeAuthorReport();
 }
 
 void VisualOverrideService::endCapture() noexcept
 {
     if (captureManifestDirty_) {
         (void)writeCaptureManifest();
+        (void)writeAuthorReport();
     }
     captureEnabled_ = false;
 }
@@ -242,6 +268,7 @@ void VisualOverrideService::endCapture() noexcept
 bool VisualOverrideService::observe(const DecodedVisualResource& resource)
 {
     if (enabled_ && resource.descriptor.contentHash != 0u) {
+        recordObservation(resource.descriptor);
         emitVisualEvent(MachineEventType::VisualResourceObserved, 0u, "visual-resource-observed");
     }
     if (!captureEnabled_ || resource.descriptor.contentHash == 0u || resource.pixels.empty()) {
@@ -269,6 +296,9 @@ bool VisualOverrideService::observe(const DecodedVisualResource& resource)
         return false;
     }
     captureEntries_.push_back(VisualCaptureEntry{resource.descriptor, relativePath});
+    if (const auto it = observedResourceIndices_.find(key); it != observedResourceIndices_.end()) {
+        observedResources_[it->second].imagePath = relativePath;
+    }
     captureManifestDirty_ = true;
     ++captureStats_.uniqueResourcesDumped;
     return true;
@@ -305,6 +335,7 @@ const VisualCaptureStats& VisualOverrideService::captureStats() const noexcept
 {
     if (captureManifestDirty_) {
         (void)writeCaptureManifest();
+        (void)writeAuthorReport();
     }
     return captureStats_;
 }
@@ -312,6 +343,52 @@ const VisualCaptureStats& VisualOverrideService::captureStats() const noexcept
 const VisualOverrideDiagnostics& VisualOverrideService::diagnostics() const noexcept
 {
     return diagnostics_;
+}
+
+std::string VisualOverrideService::authorDiagnosticsReport(std::size_t maxObservedResources) const
+{
+    std::ostringstream out;
+    out << "Visual override summary\n"
+        << "rules loaded: " << diagnostics_.rulesLoaded << '\n'
+        << "invalid rules skipped: " << diagnostics_.invalidRulesSkipped << '\n'
+        << "missing replacement images: " << diagnostics_.missingReplacementImages << '\n'
+        << "resolve hits: " << diagnostics_.resolveHits << '\n'
+        << "resolve misses: " << diagnostics_.resolveMisses << '\n'
+        << "replacement load failures: " << diagnostics_.replacementLoadFailures << '\n'
+        << "ambiguous matches: " << diagnostics_.ambiguousMatches << '\n'
+        << "reload checks: " << diagnostics_.packReloadChecks << '\n'
+        << "reloads succeeded: " << diagnostics_.packReloadsSucceeded << '\n'
+        << "reload failures: " << diagnostics_.packReloadsFailed << '\n'
+        << '\n'
+        << "Visual capture summary\n"
+        << "unique resources dumped: " << captureStats_.uniqueResourcesDumped << '\n'
+        << "duplicate resources skipped: " << captureStats_.duplicateResourcesSkipped << '\n';
+
+    std::vector<const VisualObservedResourceStat*> sorted;
+    sorted.reserve(observedResources_.size());
+    for (const auto& resource : observedResources_) {
+        sorted.push_back(&resource);
+    }
+    std::sort(sorted.begin(), sorted.end(), [](const auto* lhs, const auto* rhs) {
+        if (lhs->observations != rhs->observations) {
+            return lhs->observations > rhs->observations;
+        }
+        if (lhs->descriptor.kind != rhs->descriptor.kind) {
+            return lhs->descriptor.kind < rhs->descriptor.kind;
+        }
+        return lhs->descriptor.contentHash < rhs->descriptor.contentHash;
+    });
+
+    out << '\n' << "Top observed resources\n";
+    const auto count = std::min(maxObservedResources, sorted.size());
+    if (count == 0u) {
+        out << "- none\n";
+        return out.str();
+    }
+    for (std::size_t i = 0; i < count; ++i) {
+        out << "- " << describeObservedResource(*sorted[i]) << '\n';
+    }
+    return out.str();
 }
 
 std::string VisualOverrideService::lastError() const
@@ -643,6 +720,20 @@ bool VisualOverrideService::writeCaptureManifest() const
     return true;
 }
 
+bool VisualOverrideService::writeAuthorReport() const
+{
+    if (captureDirectory_.empty()) {
+        return true;
+    }
+    std::ofstream out(captureDirectory_ / "author_report.txt");
+    if (!out) {
+        lastError_ = "unable to write visual author report";
+        return false;
+    }
+    out << authorDiagnosticsReport();
+    return true;
+}
+
 void VisualOverrideService::emitVisualEvent(MachineEventType type, uint64_t tick, std::string_view detail) const
 {
     if (!eventSink_) {
@@ -653,6 +744,21 @@ void VisualOverrideService::emitVisualEvent(MachineEventType type, uint64_t tick
         .category = PluginCategory::Video,
         .tick = tick,
         .detail = detail,
+    });
+}
+
+void VisualOverrideService::recordObservation(const VisualResourceDescriptor& descriptor)
+{
+    const auto key = makeDescriptorKey(descriptor);
+    if (const auto it = observedResourceIndices_.find(key); it != observedResourceIndices_.end()) {
+        ++observedResources_[it->second].observations;
+        return;
+    }
+    observedResourceIndices_.emplace(key, observedResources_.size());
+    observedResources_.push_back(VisualObservedResourceStat{
+        .descriptor = descriptor,
+        .observations = 1u,
+        .imagePath = {},
     });
 }
 

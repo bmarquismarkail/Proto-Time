@@ -333,20 +333,8 @@ int main(int argc, char** argv)
             machine.visualOverrideService().endCapture();
         }
         if (!options.visualPackPaths.empty() || options.visualCapturePath.has_value()) {
-            const auto visualDiagnostics = machine.visualOverrideService().diagnostics();
-            const auto captureStats = machine.visualOverrideService().captureStats();
-            std::cout << "Visual overrides: rules=" << visualDiagnostics.rulesLoaded
-                      << " invalidRules=" << visualDiagnostics.invalidRulesSkipped
-                      << " missingImages=" << visualDiagnostics.missingReplacementImages
-                      << " hits=" << visualDiagnostics.resolveHits
-                      << " misses=" << visualDiagnostics.resolveMisses
-                      << " loadFailures=" << visualDiagnostics.replacementLoadFailures
-                      << " ambiguous=" << visualDiagnostics.ambiguousMatches
-                      << " reloadChecks=" << visualDiagnostics.packReloadChecks
-                      << " reloads=" << visualDiagnostics.packReloadsSucceeded
-                      << " reloadFailures=" << visualDiagnostics.packReloadsFailed << '\n';
-            std::cout << "Visual capture: unique=" << captureStats.uniqueResourcesDumped
-                      << " duplicates=" << captureStats.duplicateResourcesSkipped << '\n';
+            (void)machine.visualOverrideService().captureStats();
+            std::cout << machine.visualOverrideService().authorDiagnosticsReport();
         }
 
         const auto pc = machine.runtimeContext().readRegister16(GB::RegisterId::PC);
