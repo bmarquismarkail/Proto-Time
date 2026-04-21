@@ -24,6 +24,7 @@ int main()
     auto state = Visual::makeTileState(0xFFu, 0x00u);
     auto resource = GB::decodeGameBoyTileResource(state, 0u, BMMQ::VisualResourceKind::Tile);
     assert(resource.has_value());
+    assert(resource->descriptor.source.label == "tile_data");
 
     auto identical = GB::decodeGameBoyTileResource(state, 0u, BMMQ::VisualResourceKind::Tile);
     assert(identical.has_value());
@@ -35,6 +36,7 @@ int main()
     assert(explicitPaletteRegister.has_value());
     assert(explicitPaletteRegister->descriptor.source.paletteValue == 0xAAu);
     assert(explicitPaletteRegister->descriptor.source.paletteRegister == "OBP1");
+    assert(explicitPaletteRegister->descriptor.source.label == "sprite_obj");
 
     auto escapedMetadataResource = *explicitPaletteRegister;
     escapedMetadataResource.descriptor.source.paletteRegister = std::string("A") + '\b' + '\f' + '\x01' + 'Z';
@@ -63,6 +65,7 @@ int main()
     assert(captureManifestText.find("\"sourceAddress\": \"0x8000\"") != std::string::npos);
     assert(captureManifestText.find("\"tileIndex\"") != std::string::npos);
     assert(captureManifestText.find("\"paletteRegister\"") != std::string::npos);
+    assert(captureManifestText.find("\"semanticLabel\": \"tile_data\"") != std::string::npos);
     assert(captureManifestText.find("\"paletteValue\": \"0xe4\"") != std::string::npos);
     assert(captureManifestText.find("\"paletteHash\"") != std::string::npos);
     assert(captureManifestText.find("\"paletteAwareHash\"") != std::string::npos);
@@ -73,6 +76,7 @@ int main()
     assert(captureMetadataText.find("\"sourceHash\"") != std::string::npos);
     assert(captureMetadataText.find("\"sourceBank\"") != std::string::npos);
     assert(captureMetadataText.find("\"sourceAddress\"") != std::string::npos);
+    assert(captureMetadataText.find("\"semanticLabel\": \"tile_data\"") != std::string::npos);
     assert(captureMetadataText.find("\"paletteValue\": \"0xaa\"") != std::string::npos);
     assert(captureMetadataText.find("\"paletteRegister\": \"BGP\"") != std::string::npos);
     assert(captureMetadataText.find("\"paletteRegister\": \"A\\b\\f\\u0001Z\"") != std::string::npos);
@@ -82,6 +86,7 @@ int main()
     assert(captureReportText.find("duplicate resources skipped: 1") != std::string::npos);
     assert(captureReportText.find("Top observed resources") != std::string::npos);
     assert(captureReportText.find("observations=2 kind=Tile") != std::string::npos);
+    assert(captureReportText.find("label=tile_data") != std::string::npos);
 
     BMMQ::VisualOverrideService capturedPackService;
     assert(capturedPackService.loadPackManifest(capturePack));

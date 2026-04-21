@@ -107,6 +107,9 @@ bool VisualCaptureWriter::writeManifests(const std::filesystem::path& captureDir
             out << "    {\n";
             out << "      \"match\": {\n";
             out << "        \"kind\": \"" << visualResourceKindName(entry.descriptor.kind) << "\",\n";
+            if (!entry.descriptor.source.label.empty()) {
+                out << "        \"semanticLabel\": \"" << jsonEscaped(entry.descriptor.source.label) << "\",\n";
+            }
             out << "        \"sourceHash\": \"" << toHexVisualHash(entry.descriptor.sourceHash) << "\",\n";
             out << "        \"sourceBank\": " << entry.descriptor.source.bank << ",\n";
             out << "        \"sourceAddress\": \"" << fixedHex(entry.descriptor.source.address, 4) << "\",\n";
@@ -122,6 +125,9 @@ bool VisualCaptureWriter::writeManifests(const std::filesystem::path& captureDir
             if (includeMetadata) {
                 out << "      \"metadata\": {\n";
                 out << "        \"resourceKind\": \"" << visualResourceKindName(entry.descriptor.kind) << "\",\n";
+                if (!entry.descriptor.source.label.empty()) {
+                    out << "        \"semanticLabel\": \"" << jsonEscaped(entry.descriptor.source.label) << "\",\n";
+                }
                 out << "        \"sourceBank\": " << entry.descriptor.source.bank << ",\n";
                 out << "        \"sourceAddress\": \"" << fixedHex(entry.descriptor.source.address, 4) << "\",\n";
                 out << "        \"tileIndex\": " << entry.descriptor.source.index << ",\n";
@@ -153,6 +159,9 @@ bool VisualCaptureWriter::writeManifests(const std::filesystem::path& captureDir
             out << "    {\n";
             out << "      \"image\": \"" << jsonEscaped(entry.imagePath) << "\",\n";
             out << "      \"resourceKind\": \"" << visualResourceKindName(entry.descriptor.kind) << "\",\n";
+            if (!entry.descriptor.source.label.empty()) {
+                out << "      \"semanticLabel\": \"" << jsonEscaped(entry.descriptor.source.label) << "\",\n";
+            }
             out << "      \"sourceHash\": \"" << toHexVisualHash(entry.descriptor.sourceHash) << "\",\n";
             out << "      \"decodedHash\": \"" << toHexVisualHash(entry.descriptor.contentHash) << "\",\n";
             out << "      \"paletteHash\": \"" << toHexVisualHash(entry.descriptor.paletteHash) << "\",\n";

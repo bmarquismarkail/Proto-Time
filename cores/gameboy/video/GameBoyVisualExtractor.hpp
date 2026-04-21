@@ -14,13 +14,42 @@
 
 namespace GB {
 
+struct GameBoyVisualSemanticContext {
+    std::string_view semanticLabel{};
+    bool fromWindow = false;
+    bool hasTileDataMode = false;
+    bool unsignedTileData = true;
+};
+
+[[nodiscard]] inline std::string gameBoySemanticLabel(BMMQ::VisualResourceKind kind,
+                                                      const GameBoyVisualSemanticContext& context)
+{
+    if (!context.semanticLabel.empty()) {
+        return std::string(context.semanticLabel);
+    }
+    if (kind == BMMQ::VisualResourceKind::Sprite) {
+        return "sprite_obj";
+    }
+    if (context.hasTileDataMode) {
+        if (context.fromWindow) {
+            return context.unsignedTileData ? "window_tile_unsigned" : "window_tile_signed";
+        }
+        return context.unsignedTileData ? "background_tile_unsigned" : "background_tile_signed";
+    }
+    if (kind == BMMQ::VisualResourceKind::BackgroundTile) {
+        return "background_tile";
+    }
+    return "tile_data";
+}
+
 [[nodiscard]] inline std::optional<BMMQ::DecodedVisualResource> decodeGameBoyTileResourceAtVramOffset(
     const BMMQ::VideoStateView& state,
     std::size_t vramOffset,
     uint16_t tileIndex,
     BMMQ::VisualResourceKind kind = BMMQ::VisualResourceKind::Tile,
     uint8_t paletteValue = 0,
-    std::string_view paletteRegister = {})
+    std::string_view paletteRegister = {},
+    const GameBoyVisualSemanticContext& semanticContext = {})
 {
     constexpr uint32_t kTileWidth = 8;
     constexpr uint32_t kTileHeight = 8;
@@ -51,6 +80,7 @@ namespace GB {
     }
     resource.descriptor.source.paletteValue = paletteValue;
     resource.descriptor.source.paletteRegister = std::string(paletteRegister);
+    resource.descriptor.source.label = gameBoySemanticLabel(kind, semanticContext);
     resource.stride = kTileWidth;
     resource.pixels.resize(kTileWidth * kTileHeight);
 
@@ -77,7 +107,8 @@ namespace GB {
     uint16_t tileIndex,
     BMMQ::VisualResourceKind kind = BMMQ::VisualResourceKind::Tile,
     uint8_t paletteValue = 0,
-    std::string_view paletteRegister = {})
+    std::string_view paletteRegister = {},
+    const GameBoyVisualSemanticContext& semanticContext = {})
 {
     constexpr std::size_t kBytesPerTile = 16;
     return decodeGameBoyTileResourceAtVramOffset(state,
@@ -85,7 +116,8 @@ namespace GB {
                                                  tileIndex,
                                                  kind,
                                                  paletteValue,
-                                                 paletteRegister);
+                                                 paletteRegister,
+                                                 semanticContext);
 }
 
 } // namespace GB

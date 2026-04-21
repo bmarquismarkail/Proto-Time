@@ -153,7 +153,12 @@ public:
                                                                      sample.tileX, sample.tileY,
                                                                      VisualResourceKind::Tile,
                                                                      state.bgp,
-                                                                     "BGP");
+                                                                     "BGP",
+                                                                     GB::GameBoyVisualSemanticContext{
+                                                                         .fromWindow = sample.useWindow,
+                                                                         .hasTileDataMode = true,
+                                                                         .unsignedTileData = sample.unsignedTileData,
+                                                                     });
                     replacementPixel.has_value()) {
                     frame.pixels[pixelIndex] = *replacementPixel;
                     usedVisualOverride = true;
@@ -327,6 +332,8 @@ private:
         uint8_t tileX = 0;
         uint8_t tileY = 0;
         uint8_t colorIndex = 0;
+        bool useWindow = false;
+        bool unsignedTileData = true;
     };
 
     [[nodiscard]] static BackgroundSample backgroundSample(const VideoStateView& state, int screenX, int screenY) noexcept
@@ -357,6 +364,8 @@ private:
             .tileX = tileX,
             .tileY = tileY,
             .colorIndex = sampleTileColorIndex(state, tileIndex, unsignedTileData, tileX, tileY),
+            .useWindow = useWindow,
+            .unsignedTileData = unsignedTileData,
         };
     }
 
@@ -372,13 +381,15 @@ private:
         visualTileCache_.clear();
     }
 
-    [[nodiscard]] static uint32_t visualTileCacheKey(uint16_t tileAddress,
-                                                     VisualResourceKind kind,
-                                                     uint8_t paletteValue) noexcept
+    [[nodiscard]] static std::string visualTileCacheKey(uint16_t tileAddress,
+                                                        VisualResourceKind kind,
+                                                        uint8_t paletteValue,
+                                                        std::string_view semanticLabel)
     {
-        return (static_cast<uint32_t>(kind) << 24u) |
-               (static_cast<uint32_t>(paletteValue) << 16u) |
-               static_cast<uint32_t>((tileAddress - 0x8000u) / 16u);
+        return std::to_string(tileAddress) + "|" +
+               std::to_string(static_cast<uint32_t>(kind)) + "|" +
+               std::to_string(paletteValue) + "|" +
+               std::string(semanticLabel);
     }
 
     [[nodiscard]] std::optional<uint32_t> replacementPixelForTile(const VideoStateView& state,
@@ -388,7 +399,8 @@ private:
                                                                   uint8_t tileY,
                                                                   VisualResourceKind kind,
                                                                   uint8_t paletteValue,
-                                                                  std::string_view paletteRegister) const
+                                                                  std::string_view paletteRegister,
+                                                                  const GB::GameBoyVisualSemanticContext& semanticContext = {}) const
     {
         if (visualOverrideService_ == nullptr || !visualOverrideService_->hasActiveWork()) {
             return std::nullopt;
@@ -396,7 +408,8 @@ private:
         if (tileAddress < 0x8000u) {
             return std::nullopt;
         }
-        const auto cacheKey = visualTileCacheKey(tileAddress, kind, paletteValue);
+        const auto semanticLabel = GB::gameBoySemanticLabel(kind, semanticContext);
+        const auto cacheKey = visualTileCacheKey(tileAddress, kind, paletteValue, semanticLabel);
         auto& entry = visualTileCache_[cacheKey];
 
         if (!entry.decodeAttempted) {
@@ -406,7 +419,8 @@ private:
                                                                       tileIndex,
                                                                       kind,
                                                                       paletteValue,
-                                                                      paletteRegister);
+                                                                      paletteRegister,
+                                                                      semanticContext);
             if (!resource.has_value()) {
                 return std::nullopt;
             }
@@ -633,7 +647,7 @@ private:
 
     VideoEngineConfig config_{};
     VisualOverrideService* visualOverrideService_ = nullptr;
-    mutable std::unordered_map<uint32_t, VisualTileCacheEntry> visualTileCache_;
+    mutable std::unordered_map<std::string, VisualTileCacheEntry> visualTileCache_;
     std::deque<VideoFramePacket> queuedFrames_{};
     std::optional<VideoFramePacket> lastValidFrame_{};
     VideoEngineStats stats_{};

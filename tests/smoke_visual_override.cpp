@@ -27,6 +27,7 @@ int main()
     auto state = Visual::makeTileState(0xFFu, 0x00u);
     auto resource = GB::decodeGameBoyTileResource(state, 0u, BMMQ::VisualResourceKind::Tile);
     assert(resource.has_value());
+    assert(resource->descriptor.source.label == "tile_data");
     assert(resource->descriptor.machineId == "gameboy");
     assert(resource->descriptor.kind == BMMQ::VisualResourceKind::Tile);
     assert(resource->descriptor.width == 8u);
@@ -259,6 +260,7 @@ int main()
     auto transparentSpriteResource =
         GB::decodeGameBoyTileResource(transparentSpriteState, 0u, BMMQ::VisualResourceKind::Sprite);
     assert(transparentSpriteResource.has_value());
+    assert(transparentSpriteResource->descriptor.source.label == "sprite_obj");
     BMMQ::VisualOverrideService transparentSpriteService;
     Visual::writeSingleRulePack(root / "transparent-sprite-pack" / "pack.json",
                                 "transparent-sprite.gb",
@@ -303,6 +305,75 @@ int main()
     prioritySpriteVideoService.setVisualOverrideService(&prioritySpriteService);
     auto prioritySpriteFrame = prioritySpriteVideoService.engine().buildDebugFrame(prioritySpriteState, 5u);
     assert(prioritySpriteFrame.pixels[0] == 0xFF88C070u);
+
+    BMMQ::VisualOverrideService backgroundSemanticService;
+    const auto backgroundSemanticDir = root / "background-semantic-pack";
+    Visual::writeBinaryFile(backgroundSemanticDir / "tile.png", Visual::makeSolidPng2x2Rgba(0xFFFF0000u));
+    Visual::writeTextFile(backgroundSemanticDir / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"background-semantic.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"semanticLabel\": \"background_tile_unsigned\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\"image\": \"tile.png\"}\n"
+        "  }]\n"
+        "}\n");
+    assert(backgroundSemanticService.loadPackManifest(backgroundSemanticDir / "pack.json"));
+    BMMQ::VideoService backgroundSemanticVideoService(BMMQ::VideoEngineConfig{
+        .frameWidth = 8,
+        .frameHeight = 8,
+        .queueCapacityFrames = 1,
+    });
+    backgroundSemanticVideoService.setVisualOverrideService(&backgroundSemanticService);
+    auto backgroundSemanticFrame = backgroundSemanticVideoService.engine().buildDebugFrame(state, 9u);
+    assert(backgroundSemanticFrame.pixels[0] == 0xFFFF0000u);
+
+    auto windowSignedState = Visual::makeTileState(0x00u, 0x00u);
+    windowSignedState.lcdc = 0xA1u;
+    windowSignedState.wy = 0u;
+    windowSignedState.wx = 7u;
+    for (std::size_t row = 0; row < 8u; ++row) {
+        windowSignedState.vram[0x1000u + row * 2u] = 0xFFu;
+        windowSignedState.vram[0x1000u + row * 2u + 1u] = 0x00u;
+    }
+    windowSignedState.vram[0x1800u] = 0x00u;
+    auto windowSignedResource = GB::decodeGameBoyTileResource(windowSignedState, 0x100u, BMMQ::VisualResourceKind::Tile);
+    assert(windowSignedResource.has_value());
+    BMMQ::VisualOverrideService windowSemanticService;
+    const auto windowSemanticDir = root / "window-semantic-pack";
+    Visual::writeBinaryFile(windowSemanticDir / "tile.png", Visual::makeSolidPng2x2Rgba(0xFF00FF00u));
+    Visual::writeTextFile(windowSemanticDir / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"window-semantic.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"semanticLabel\": \"window_tile_signed\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(windowSignedResource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\"image\": \"tile.png\"}\n"
+        "  }]\n"
+        "}\n");
+    assert(windowSemanticService.loadPackManifest(windowSemanticDir / "pack.json"));
+    BMMQ::VideoService windowSemanticVideoService(BMMQ::VideoEngineConfig{
+        .frameWidth = 8,
+        .frameHeight = 8,
+        .queueCapacityFrames = 1,
+    });
+    windowSemanticVideoService.setVisualOverrideService(&windowSemanticService);
+    auto windowSemanticFrame = windowSemanticVideoService.engine().buildDebugFrame(windowSignedState, 10u);
+    assert(windowSemanticFrame.pixels[0] == 0xFF00FF00u);
 
     std::filesystem::remove_all(root);
     return 0;
