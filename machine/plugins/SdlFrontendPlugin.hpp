@@ -3,21 +3,31 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "../InputTypes.hpp"
+#include "input/InputPlugin.hpp"
 #include "IoPlugin.hpp"
 
 namespace BMMQ {
 
 struct SdlFrontendConfig {
     std::string windowTitle = "T.I.M.E. SDL Frontend";
-    int windowScale = 2;
+    std::uint32_t windowScale = 2;
     int frameWidth = 160;
     int frameHeight = 144;
     int audioPreviewSampleCount = 128;
+    int audioCallbackChunkSamples = 256;
+    int testForcedAudioDeviceSampleRate = 0;
+    std::string audioBackend = "sdl";
+    std::filesystem::path audioOutputFilePath;
+    bool audioFileAppend = false;
+    std::size_t audioRingBufferCapacitySamples = 2048;
+    bool enableAudioResamplingDiagnostics = false;
     bool enableVideo = true;
     bool enableAudio = true;
     bool enableInput = true;
@@ -39,9 +49,34 @@ struct SdlFrontendStats {
     std::size_t framesPrepared = 0;
     std::size_t framesPresented = 0;
     std::size_t renderAttempts = 0;
+    std::size_t videoStateSnapshots = 0;
     std::size_t audioPreviewsBuilt = 0;
+    // Audio metrics are read from the shared AudioService/AudioEngine and are global
+    // to the machine's audio pipeline rather than frontend-local.
+    int audioSourceSampleRate = 48000;
+    int audioDeviceSampleRate = 0;
+    std::size_t audioCallbackChunkSamples = 0;
+    std::size_t audioRingBufferCapacitySamples = 0;
+    std::size_t audioBufferedHighWaterSamples = 0;
+    std::size_t audioCallbackCount = 0;
+    std::size_t audioSamplesDelivered = 0;
+    std::size_t audioUnderrunCount = 0;
+    std::size_t audioSilenceSamplesFilled = 0;
+    std::size_t audioOverrunDropCount = 0;
+    std::size_t audioDroppedSamples = 0;
+    bool audioResamplingActive = false;
+    double audioResampleRatio = 1.0;
+    std::size_t audioSourceSamplesPushed = 0;
+    std::size_t audioResampleSourceSamplesConsumed = 0;
+    std::size_t audioResampleOutputSamplesProduced = 0;
+    std::size_t audioPipelineCapacitySkipCount = 0;
     std::size_t audioQueueWrites = 0;
     std::size_t audioSamplesQueued = 0;
+    std::size_t audioQueueLowWaterHits = 0;
+    std::size_t audioQueueHighWaterSkips = 0;
+    std::size_t audioQueueRecoveryClears = 0;
+    std::uint32_t lastQueuedAudioBytes = 0;
+    std::uint32_t peakQueuedAudioBytes = 0;
     std::size_t backendInitAttempts = 0;
     std::size_t buttonTransitions = 0;
     std::size_t quitRequests = 0;
@@ -50,17 +85,6 @@ struct SdlFrontendStats {
     std::size_t eventPumpCalls = 0;
     std::size_t backendEventsTranslated = 0;
     std::size_t serviceCalls = 0;
-};
-
-enum class SdlFrontendButton : uint8_t {
-    Right = 0x01u,
-    Left = 0x02u,
-    Up = 0x04u,
-    Down = 0x08u,
-    A = 0x10u,
-    B = 0x20u,
-    Select = 0x40u,
-    Start = 0x80u,
 };
 
 enum class SdlFrontendHostEventType : uint8_t {
@@ -80,6 +104,11 @@ enum class SdlFrontendHostKey : uint8_t {
     X,
     Backspace,
     Return,
+    Pause,
+    ThrottleToggle,
+    SingleStep,
+    SpeedUp,
+    SpeedDown,
 };
 
 struct SdlFrontendHostEvent {
@@ -91,6 +120,7 @@ struct SdlFrontendHostEvent {
 struct SdlFrameBuffer {
     int width = 160;
     int height = 144;
+    std::uint64_t generation = 0;
     std::vector<uint32_t> pixels;
 
     [[nodiscard]] bool empty() const noexcept
@@ -127,7 +157,8 @@ inline constexpr const char* kSdlFrontendPluginApiEntryPoint = "bmmq_get_sdl_fro
 
 class ISdlFrontendPlugin : public IVideoPlugin,
                            public IAudioPlugin,
-                           public IDigitalInputPlugin {
+                           public IDigitalInputPlugin,
+                           public IDigitalInputSourcePlugin {
 public:
     ~ISdlFrontendPlugin() override = default;
 
@@ -157,9 +188,9 @@ public:
     virtual void setQueuedDigitalInputMask(uint32_t pressedMask) = 0;
     virtual void clearQueuedDigitalInputMask() = 0;
     [[nodiscard]] virtual std::optional<uint32_t> queuedDigitalInputMask() const noexcept = 0;
-    virtual void pressButton(SdlFrontendButton button) = 0;
-    virtual void releaseButton(SdlFrontendButton button) = 0;
-    [[nodiscard]] virtual bool isButtonPressed(SdlFrontendButton button) const noexcept = 0;
+    virtual void pressButton(InputButton button) = 0;
+    virtual void releaseButton(InputButton button) = 0;
+    [[nodiscard]] virtual bool isButtonPressed(InputButton button) const noexcept = 0;
     virtual void clearQuitRequest() noexcept = 0;
     [[nodiscard]] virtual bool quitRequested() const noexcept = 0;
     [[nodiscard]] virtual std::string_view lastHostEventSummary() const noexcept = 0;
@@ -169,6 +200,8 @@ public:
     [[nodiscard]] virtual std::string_view backendName() const noexcept = 0;
     [[nodiscard]] virtual bool backendReady() const noexcept = 0;
     [[nodiscard]] virtual bool audioOutputReady() const noexcept = 0;
+    [[nodiscard]] virtual std::size_t bufferedAudioSamples() const noexcept = 0;
+    [[nodiscard]] virtual bool audioQueueBackpressureActive() const noexcept = 0;
     [[nodiscard]] virtual uint32_t queuedAudioBytes() const noexcept = 0;
     [[nodiscard]] virtual bool tryInitializeBackend() = 0;
     [[nodiscard]] virtual std::size_t pumpBackendEvents() = 0;

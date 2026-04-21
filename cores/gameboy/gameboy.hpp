@@ -52,6 +52,15 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
     CachedRegisterRef ie{};
   };
 
+  struct CpuRegisterCache {
+    LR3592_RegisterPair *af = nullptr;
+    LR3592_RegisterPair *bc = nullptr;
+    LR3592_RegisterPair *de = nullptr;
+    LR3592_RegisterPair *hl = nullptr;
+    LR3592_Register *sp = nullptr;
+    LR3592_Register *pc = nullptr;
+  };
+
   static constexpr uint32_t kCpuClockHz = 4194304u;
   static constexpr uint32_t kApuSampleRate = 48000u;
   static constexpr std::size_t kApuHistorySamples = 4096u;
@@ -133,6 +142,7 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   DataType imeEnableDelay = 0;
   LR3592_Register *pcRegister_ = nullptr;
   LR3592_Register *spRegister_ = nullptr;
+  CpuRegisterCache cpuRegisters_{};
   HardwareRegisterCache hardwareRegisters_{};
   bool stopFlag = false, haltFlag = false;
   bool haltBugActive = false;
@@ -191,10 +201,21 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   void requestInterrupt(DataType mask);
   bool serviceInterruptIfPending();
   void initializeRegisterCache();
+  void cacheRegisterPair(LR3592_RegisterPair*& slot, std::string_view name);
   void cacheRegisterRef(CachedRegisterRef& slot, std::string_view name, AddressType address);
   [[nodiscard]] static DataType readCachedRegister(const CachedRegisterRef& slot);
   [[nodiscard]] const CachedRegisterRef* cachedIoRegisterForAddress(AddressType address) const;
   void writeCachedRegister(const CachedRegisterRef& slot, DataType value);
+  [[nodiscard]] DataType cachedReadR8(DataType regCode);
+  void cachedWriteR8(DataType regCode, DataType value);
+  [[nodiscard]] AddressType& cachedR16(DataType regCode);
+  [[nodiscard]] AddressType& cachedStackR16(DataType regCode);
+  [[nodiscard]] BMMQ::RegisterByteRef& cachedAccumulator();
+  [[nodiscard]] BMMQ::RegisterByteRef& cachedFlags();
+  [[nodiscard]] bool cachedConditionHolds(DataType conditionCode);
+  void cachedSetFlags(bool z, bool n, bool h, bool c);
+  void cachedPush16(AddressType value);
+  [[nodiscard]] AddressType cachedPop16();
   DataType readIoRegister(std::string_view name) const;
   void writeIoRegister(std::string_view name, DataType value);
   void initializeApu();
@@ -251,6 +272,7 @@ public:
   execute(const BMMQ::executionBlock<AddressType, DataType, AddressType> &block,
           BMMQ::fetchBlock<AddressType, DataType> &fb) override;
   const BMMQ::CpuFeedback &getLastFeedback() const override;
+  uint32_t clockHz() const override { return kCpuClockHz; }
 
   BMMQ::MemoryPool<AddressType, DataType, AddressType> &getMemory();
   const BMMQ::MemoryPool<AddressType, DataType, AddressType> &getMemory() const;

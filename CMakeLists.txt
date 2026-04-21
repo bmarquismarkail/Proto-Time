@@ -2,7 +2,10 @@ cmake_minimum_required(VERSION 3.10)
 
 project(timeEmulator)
 
+option(BMMQ_ENABLE_TSAN "Enable ThreadSanitizer for race detection builds" OFF)
+
 find_package(SDL2 QUIET)
+find_package(ZLIB REQUIRED)
 
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
@@ -14,32 +17,110 @@ set(CMAKE_CXX_EXTENSIONS ON)
 set (CMAKE_CXX_STANDARD_REQUIRED True)
 include_directories(. templ memory cores)
 add_compile_options(-Wall -Wextra )
+
+if (BMMQ_ENABLE_TSAN)
+    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        add_compile_options(-fsanitize=thread -fno-omit-frame-pointer -g)
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=thread")
+        set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=thread")
+        set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} -fsanitize=thread")
+        add_compile_definitions(BMMQ_TSAN_ENABLED=1)
+    else()
+        message(FATAL_ERROR "BMMQ_ENABLE_TSAN=ON requires Clang or GCC")
+    endif()
+endif()
 add_library(time-gameboy-interpreter-core
 	cores/gameboy/decode/gb_decoder.cpp
 	cores/gameboy/decode/gb_interpreter.cpp
-	cores/gameboy/gameboy.cpp
+    cores/gameboy/gameboy.cpp
+    machine/TimingService.cpp
+    machine/VisualCaptureWriter.cpp
+    machine/VisualOverrideService.cpp
+    machine/VisualPackManifest.cpp
 )
+
+
+# Sega Game Gear core (WIP)
+add_library(time-gamegear-core STATIC
+    cores/gamegear/GameGearMachine.cpp
+    cores/gamegear/Z80Interpreter.cpp
+    cores/gamegear/GameGearVDP.cpp
+    cores/gamegear/GameGearPSG.cpp
+    cores/gamegear/GameGearInput.cpp
+    cores/gamegear/GameGearCartridge.cpp
+    cores/gamegear/GameGearMemoryMap.cpp
+    machine/TimingService.cpp
+    machine/VisualCaptureWriter.cpp
+    machine/VisualOverrideService.cpp
+    machine/VisualPackManifest.cpp
+)
+set_target_properties(time-gamegear-core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(time-gamegear-core PUBLIC ZLIB::ZLIB)
+
+set_target_properties(time-gameboy-interpreter-core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(time-gameboy-interpreter-core PUBLIC ZLIB::ZLIB)
 add_library(time-sdl-frontend-loader
     machine/plugins/SdlFrontendPluginLoader.cpp
 )
 target_link_libraries(time-sdl-frontend-loader ${CMAKE_DL_LIBS})
+add_library(time-emulator-config STATIC
+    emulator/EmulatorConfig.cpp
+)
 set(BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE 0)
+add_library(time-sdl-audio-output STATIC
+    machine/plugins/sdl_frontend/SdlAudioOutput.cpp
+)
+add_library(time-dummy-audio-output STATIC
+    machine/plugins/audio_output/DummyAudioOutput.cpp
+)
+add_library(time-file-audio-output STATIC
+    machine/plugins/audio_output/FileAudioOutput.cpp
+)
+add_library(time-headless-video-adapter STATIC
+    machine/plugins/video/adapters/HeadlessFrameDumper.cpp
+)
+add_library(time-sdl-video-adapter STATIC
+    machine/plugins/video/adapters/SdlVideoPresenter.cpp
+)
+set_target_properties(time-sdl-audio-output PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set_target_properties(time-dummy-audio-output PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set_target_properties(time-file-audio-output PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set_target_properties(time-headless-video-adapter PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set_target_properties(time-sdl-video-adapter PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(time-sdl-frontend-plugin SHARED
     machine/plugins/sdl_frontend/SdlFrontendPlugin.cpp
 )
+target_link_libraries(time-sdl-frontend-plugin PRIVATE time-gameboy-interpreter-core)
 add_executable(timeEmulator emulator.cpp)
-target_link_libraries(timeEmulator time-gameboy-interpreter-core time-sdl-frontend-loader)
+target_link_libraries(timeEmulator time-gameboy-interpreter-core time-sdl-frontend-loader time-emulator-config)
 if (TARGET SDL2::SDL2)
+    target_link_libraries(time-sdl-audio-output PRIVATE SDL2::SDL2)
+    target_link_libraries(time-sdl-video-adapter PRIVATE SDL2::SDL2)
     target_link_libraries(time-sdl-frontend-plugin PRIVATE SDL2::SDL2)
     set(BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE 1)
 elseif (SDL2_FOUND)
+    target_include_directories(time-sdl-audio-output PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(time-sdl-audio-output PRIVATE ${SDL2_LIBRARIES})
+    target_include_directories(time-sdl-video-adapter PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(time-sdl-video-adapter PRIVATE ${SDL2_LIBRARIES})
     target_include_directories(time-sdl-frontend-plugin PRIVATE ${SDL2_INCLUDE_DIRS})
     target_link_libraries(time-sdl-frontend-plugin PRIVATE ${SDL2_LIBRARIES})
     set(BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE 1)
 endif()
+target_compile_definitions(time-sdl-audio-output PRIVATE BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL=${BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE})
+target_compile_definitions(time-sdl-video-adapter PUBLIC BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL=${BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE})
 target_compile_definitions(time-sdl-frontend-plugin PRIVATE BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL=${BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE})
+target_link_libraries(time-sdl-frontend-plugin PRIVATE time-sdl-audio-output time-dummy-audio-output time-file-audio-output time-sdl-video-adapter)
 
 enable_testing()
+add_executable(time-smoke-gamegear-core tests/smoke_gamegear_core.cpp)
+target_link_libraries(time-smoke-gamegear-core time-gamegear-core)
+add_test(NAME smoke_gamegear_core COMMAND time-smoke-gamegear-core)
+add_executable(time-smoke-gamegear-cartridge
+    tests/smoke_gamegear_cartridge.cpp
+    cores/gamegear/GameGearCartridge.cpp
+)
+add_test(NAME smoke_gamegear_cartridge COMMAND time-smoke-gamegear-cartridge)
 add_executable(time-smoke-snapshot tests/smoke_snapshot.cpp)
 add_test(NAME smoke_snapshot COMMAND time-smoke-snapshot)
 add_executable(time-smoke-register-snapshot tests/smoke_register_snapshot.cpp)
@@ -64,12 +145,79 @@ add_test(NAME smoke_plugin_io COMMAND time-smoke-plugin-io)
 add_executable(time-smoke-sdl-frontend-plugin tests/smoke_sdl_frontend_plugin.cpp)
 target_link_libraries(time-smoke-sdl-frontend-plugin time-gameboy-interpreter-core time-sdl-frontend-loader)
 add_test(NAME smoke_sdl_frontend_plugin COMMAND time-smoke-sdl-frontend-plugin)
+add_executable(time-smoke-sdl-audio-transport tests/smoke_sdl_audio_transport.cpp)
+target_link_libraries(time-smoke-sdl-audio-transport time-gameboy-interpreter-core time-sdl-frontend-loader)
+add_test(NAME smoke_sdl_audio_transport COMMAND time-smoke-sdl-audio-transport)
+add_executable(time-smoke-sdl-audio-resampler tests/smoke_sdl_audio_resampler.cpp)
+target_link_libraries(time-smoke-sdl-audio-resampler time-gameboy-interpreter-core)
+add_test(NAME smoke_sdl_audio_resampler COMMAND time-smoke-sdl-audio-resampler)
+add_executable(time-smoke-audio-engine tests/smoke_audio_engine.cpp)
+target_link_libraries(time-smoke-audio-engine time-gameboy-interpreter-core)
+add_test(NAME smoke_audio_engine COMMAND time-smoke-audio-engine)
+add_executable(time-smoke-input-engine tests/smoke_input_engine.cpp)
+add_test(NAME smoke_input_engine COMMAND time-smoke-input-engine)
+add_executable(time-smoke-input-service tests/smoke_input_service.cpp)
+add_test(NAME smoke_input_service COMMAND time-smoke-input-service)
+add_executable(time-smoke-input-transport tests/smoke_input_transport.cpp)
+target_link_libraries(time-smoke-input-transport time-gameboy-interpreter-core time-sdl-frontend-loader)
+add_test(NAME smoke_input_transport COMMAND time-smoke-input-transport)
+add_executable(time-smoke-input-fallback tests/smoke_input_fallback.cpp)
+add_test(NAME smoke_input_fallback COMMAND time-smoke-input-fallback)
+add_executable(time-smoke-emulator-config tests/smoke_emulator_config.cpp)
+target_link_libraries(time-smoke-emulator-config time-emulator-config)
+add_test(NAME smoke_emulator_config COMMAND time-smoke-emulator-config)
+add_executable(time-smoke-video-engine tests/smoke_video_engine.cpp)
+target_link_libraries(time-smoke-video-engine time-gameboy-interpreter-core)
+add_test(NAME smoke_video_engine COMMAND time-smoke-video-engine)
+add_executable(time-smoke-video-service tests/smoke_video_service.cpp)
+target_link_libraries(time-smoke-video-service time-gameboy-interpreter-core)
+add_test(NAME smoke_video_service COMMAND time-smoke-video-service)
+add_executable(time-smoke-video-transport tests/smoke_video_transport.cpp)
+target_link_libraries(time-smoke-video-transport time-gameboy-interpreter-core time-headless-video-adapter time-sdl-video-adapter)
+add_test(NAME smoke_video_transport COMMAND time-smoke-video-transport)
+add_executable(time-smoke-video-fallback tests/smoke_video_fallback.cpp)
+target_link_libraries(time-smoke-video-fallback time-gameboy-interpreter-core)
+add_test(NAME smoke_video_fallback COMMAND time-smoke-video-fallback)
+add_executable(time-smoke-visual-override tests/smoke_visual_override.cpp)
+target_link_libraries(time-smoke-visual-override time-gameboy-interpreter-core)
+add_test(NAME smoke_visual_override COMMAND time-smoke-visual-override)
+add_executable(time-smoke-visual-manifest-tests tests/visual_manifest_tests.cpp)
+target_link_libraries(time-smoke-visual-manifest-tests time-gameboy-interpreter-core)
+add_test(NAME visual_manifest_tests COMMAND time-smoke-visual-manifest-tests)
+add_executable(time-smoke-visual-capture-tests tests/visual_capture_tests.cpp)
+target_link_libraries(time-smoke-visual-capture-tests time-gameboy-interpreter-core)
+add_test(NAME visual_capture_tests COMMAND time-smoke-visual-capture-tests)
+add_executable(time-smoke-texture-pack-docs tests/smoke_texture_pack_docs.cpp)
+target_link_libraries(time-smoke-texture-pack-docs time-gameboy-interpreter-core)
+target_compile_definitions(time-smoke-texture-pack-docs PRIVATE PROTO_TIME_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME smoke_texture_pack_docs COMMAND time-smoke-texture-pack-docs)
+add_executable(time-smoke-audio-service tests/smoke_audio_service.cpp)
+target_link_libraries(time-smoke-audio-service time-gameboy-interpreter-core)
+add_test(NAME smoke_audio_service COMMAND time-smoke-audio-service)
+add_executable(time-smoke-audio-pipeline tests/smoke_audio_pipeline.cpp)
+target_link_libraries(time-smoke-audio-pipeline time-gameboy-interpreter-core)
+add_test(NAME smoke_audio_pipeline COMMAND time-smoke-audio-pipeline)
+add_executable(time-smoke-sdl-audio-output-backend tests/smoke_sdl_audio_output_backend.cpp)
+target_link_libraries(time-smoke-sdl-audio-output-backend time-gameboy-interpreter-core time-sdl-audio-output)
+add_test(NAME smoke_sdl_audio_output_backend COMMAND time-smoke-sdl-audio-output-backend)
+add_executable(time-smoke-dummy-audio-output tests/smoke_dummy_audio_output.cpp)
+target_link_libraries(time-smoke-dummy-audio-output time-gameboy-interpreter-core time-dummy-audio-output)
+add_test(NAME smoke_dummy_audio_output COMMAND time-smoke-dummy-audio-output)
+add_executable(time-smoke-file-audio-output tests/smoke_file_audio_output.cpp)
+target_link_libraries(time-smoke-file-audio-output time-gameboy-interpreter-core time-file-audio-output)
+add_test(NAME smoke_file_audio_output COMMAND time-smoke-file-audio-output)
+add_executable(time-smoke-sdl-audio-resampling-integration tests/smoke_sdl_audio_resampling_integration.cpp)
+target_link_libraries(time-smoke-sdl-audio-resampling-integration time-gameboy-interpreter-core time-sdl-frontend-loader)
+add_test(NAME smoke_sdl_audio_resampling_integration COMMAND time-smoke-sdl-audio-resampling-integration)
 add_executable(time-smoke-apu-audio tests/smoke_apu_audio.cpp)
 target_link_libraries(time-smoke-apu-audio time-gameboy-interpreter-core)
 add_test(NAME smoke_apu_audio COMMAND time-smoke-apu-audio)
 add_executable(time-smoke-machine-boot tests/smoke_machine_boot.cpp)
 target_link_libraries(time-smoke-machine-boot time-gameboy-interpreter-core)
 add_test(NAME smoke_machine_boot COMMAND time-smoke-machine-boot)
+add_executable(time-smoke-gameboy-cartridge-save tests/smoke_gameboy_cartridge_save.cpp)
+target_link_libraries(time-smoke-gameboy-cartridge-save time-gameboy-interpreter-core)
+add_test(NAME smoke_gameboy_cartridge_save COMMAND time-smoke-gameboy-cartridge-save)
 add_executable(time-smoke-memory-map tests/smoke_memory_map.cpp)
 target_link_libraries(time-smoke-memory-map time-gameboy-interpreter-core)
 add_test(NAME smoke_memory_map COMMAND time-smoke-memory-map)
@@ -85,3 +233,21 @@ add_test(NAME smoke_interpreter_math_i8 COMMAND time-smoke-interpreter-math-i8)
 add_executable(time-smoke-trace-executor tests/smoke_trace_executor.cpp)
 target_link_libraries(time-smoke-trace-executor time-gameboy-interpreter-core)
 add_test(NAME smoke_trace_executor COMMAND time-smoke-trace-executor)
+
+# Timing engine smoke test
+add_executable(time-smoke-timing-engine tests/smoke_timing_engine.cpp)
+target_link_libraries(time-smoke-timing-engine time-gameboy-interpreter-core)
+add_test(NAME smoke_timing_engine COMMAND time-smoke-timing-engine)
+
+add_executable(time-smoke-timing-service tests/smoke_timing_service.cpp)
+target_link_libraries(time-smoke-timing-service time-gameboy-interpreter-core)
+add_test(NAME smoke_timing_service COMMAND time-smoke-timing-service)
+
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    get_property(BMMQ_ALL_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(bmmq_target IN LISTS BMMQ_ALL_TARGETS)
+        if (bmmq_target MATCHES "^time-smoke-")
+            target_compile_options(${bmmq_target} PRIVATE -UNDEBUG)
+        endif()
+    endforeach()
+endif()

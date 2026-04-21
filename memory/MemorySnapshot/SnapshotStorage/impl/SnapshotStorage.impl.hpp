@@ -1,7 +1,10 @@
 #include <algorithm>
 #include <iterator>
 #include <cstdlib>
+#include <cstdint>
 #include <limits>
+#include <stdexcept>
+#include <type_traits>
 
 namespace BMMQ {
 
@@ -12,13 +15,40 @@ namespace BMMQ {
 	template<typename AddressType, typename DataType>
 	SnapshotAddressData<AddressType, DataType> SnapshotStorage<AddressType, DataType>::isAddressInSnapshot
 	(AddressType at) {
+		static_assert(std::is_integral_v<AddressType>, "SnapshotStorage requires an integral AddressType.");
+		using PoolSizeType = poolsizetype<AddressType>;
+		using MemIndexType = memindextype<DataType>;
+		using UnsignedAddressType = std::make_unsigned_t<AddressType>;
+		static_assert(std::numeric_limits<UnsignedAddressType>::digits <= std::numeric_limits<std::uintmax_t>::digits,
+			"SnapshotStorage address validation requires AddressType to fit in uintmax_t.");
+
+		const auto checkedNegativeGapToMemIndex = [](AddressType lower, AddressType upper) -> MemIndexType {
+			if constexpr (std::numeric_limits<AddressType>::is_signed) {
+				if (lower < 0 || upper < 0) {
+					throw std::out_of_range("SnapshotStorage does not support negative addresses.");
+				}
+			}
+
+			const auto lowerUnsigned = static_cast<std::uintmax_t>(static_cast<UnsignedAddressType>(lower));
+			const auto upperUnsigned = static_cast<std::uintmax_t>(static_cast<UnsignedAddressType>(upper));
+			const auto gap = upperUnsigned - lowerUnsigned;
+			const auto negativeLimit = static_cast<std::uintmax_t>(std::numeric_limits<MemIndexType>::max()) + 1u;
+			if (gap > negativeLimit) {
+				throw std::out_of_range("SnapshotStorage address gap exceeds memindextype range.");
+			}
+			if (gap == negativeLimit) {
+				return std::numeric_limits<MemIndexType>::min();
+			}
+			return -static_cast<MemIndexType>(gap);
+		};
+
 		bool isAddressInSnapshot = false;
-		auto entry_idx = 0;
-		auto relofs = 0;
-		auto rellength = 0;
+		PoolSizeType entry_idx = 0;
+		MemIndexType relofs = 0;
+		MemIndexType rellength = 0;
 		if (pool.empty());
 		else if (at < pool.front().first) {
-			rellength = at - pool.front().first;
+			rellength = checkedNegativeGapToMemIndex(at, pool.front().first);
 		}
 		// if the last entry doesn't have it, then none will:
 		else if (at >= pool.back().first) {
@@ -70,13 +100,16 @@ namespace BMMQ {
 	void SnapshotStorage<AddressType, DataType>::read
 	(std::span<DataType> stream, AddressType address) {
 
-		AddressType count = static_cast<AddressType>(stream.size());
-		AddressType maxaddress = std::numeric_limits<AddressType>::max();
-		AddressType bounds = maxaddress - address;
-		count = std::min(bounds, count);
+		const auto maxaddress = static_cast<std::size_t>(std::numeric_limits<AddressType>::max());
+		const auto addressOffset = static_cast<std::size_t>(address);
+		const auto remainingAfterAddress = maxaddress - addressOffset;
+		const auto remainingAddressCount = (remainingAfterAddress == std::numeric_limits<std::size_t>::max())
+			? std::numeric_limits<std::size_t>::max()
+			: remainingAfterAddress + 1u;
+		std::size_t count = std::min(remainingAddressCount, stream.size());
 		if (count == 0) return;
 
-		AddressType endAddress = address + count;
+		AddressType endAddress = static_cast<AddressType>(address + static_cast<AddressType>(count - 1u));
 		maxAccessed = std::max(maxAccessed, endAddress);
 		if (pool.empty()) {
 			store.read(stream.first(count), address);
@@ -91,25 +124,25 @@ namespace BMMQ {
 			std::advance(poolit, std::get<0>(p.info));
 			if (p.isAddressInSnapshot) {
 				auto entrycap = std::get<2>(p.info);
-				if (entrycap > count)
-					entrycap = count;
+				if (static_cast<std::size_t>(entrycap) > count)
+					entrycap = static_cast<memindextype<DataType>>(count);
 
 				auto memit = mem.begin();
 				std::advance(memit, poolit->second + std::get<1>(p.info));
 				std::for_each_n(streamIterator, entrycap, [&memit](auto& s) {s = *memit; memit++; });
 				streamIterator += entrycap;
-				index += entrycap;
-				count -= entrycap;
+				index = static_cast<AddressType>(index + static_cast<AddressType>(entrycap));
+				count -= static_cast<std::size_t>(entrycap);
 			}
 			else {
 				auto readcount = count;
 				if (std::next(poolit) != pool.end()) {
 					auto nextaddress = std::next(poolit)->first;
-					readcount = nextaddress - index;
+					readcount = static_cast<std::size_t>(nextaddress - index);
 				}
 				store.read(std::span<DataType>(streamIterator, readcount), index);
 				streamIterator += readcount;
-				index += readcount;
+				index = static_cast<AddressType>(index + static_cast<AddressType>(readcount));
 				count -= readcount;
 			}
 		}
@@ -120,13 +153,16 @@ namespace BMMQ {
 	void SnapshotStorage<AddressType, DataType>::write
 	(std::span<const DataType> stream, AddressType address) {
 
-		AddressType count = static_cast<AddressType>(stream.size());
-		AddressType maxaddress = std::numeric_limits<AddressType>::max();
-		AddressType bounds = maxaddress - address;
-		count = std::min(bounds, count);
+		const auto maxaddress = static_cast<std::size_t>(std::numeric_limits<AddressType>::max());
+		const auto addressOffset = static_cast<std::size_t>(address);
+		const auto remainingAfterAddress = maxaddress - addressOffset;
+		const auto remainingAddressCount = (remainingAfterAddress == std::numeric_limits<std::size_t>::max())
+			? std::numeric_limits<std::size_t>::max()
+			: remainingAfterAddress + 1u;
+		std::size_t count = std::min(remainingAddressCount, stream.size());
 		if (count == 0) return;
 
-		AddressType endAddress = address + count;
+		AddressType endAddress = static_cast<AddressType>(address + static_cast<AddressType>(count - 1u));
 		maxAccessed = std::max(maxAccessed, endAddress);
 		auto memit = mem.begin();
 		auto poolit = pool.begin();
@@ -149,11 +185,14 @@ namespace BMMQ {
 			if (std::abs(entrycap) != 1) {
 				poolit = pool.insert(((entrycap < 0) ? poolit : std::next(poolit)), std::make_pair(address, memindex));
 			}
+			else if (entrycap < 0) {
+				poolit->first = address;
+			}
 			std::for_each(std::next(poolit), pool.end(), [&new_alloc_len](auto& pe) {pe.second += new_alloc_len; });
 		}
 		else {
 			std::advance(poolit, pool_index);
-			if (count >= entrycap) {
+			if (count >= static_cast<std::size_t>(entrycap)) {
 				memindex = pool.at(pool_index).second + std::get<1>(info);
 				auto endaddress = address + count - 1;
 				auto address_return_data = isAddressInSnapshot(endaddress);

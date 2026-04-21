@@ -2,6 +2,7 @@
 #define EXECUTION_BLOCK_H
 
 #include <functional>
+#include <cstddef>
 #include <vector>
 
 #include "../../memory/IMemory.hpp"
@@ -33,8 +34,19 @@ namespace BMMQ
             code.push_back(std::move(step));
         }
 
+        void addCycleCharge(std::size_t notTakenCycles, std::size_t takenCycles) {
+            cyclesIfNotTaken_ += notTakenCycles;
+            cyclesIfTaken_ += takenCycles;
+        }
+
+        void addCycleCharge(std::size_t cycles) {
+            addCycleCharge(cycles, cycles);
+        }
+
         void clear() {
             code.clear();
+            cyclesIfNotTaken_ = 0;
+            cyclesIfTaken_ = 0;
         }
 
         void reserve(std::size_t count) {
@@ -45,9 +57,19 @@ namespace BMMQ
             return code;
         }
 
+        std::size_t cyclesIfNotTaken() const {
+            return cyclesIfNotTaken_;
+        }
+
+        std::size_t cyclesIfTaken() const {
+            return cyclesIfTaken_;
+        }
+
     private:
         std::vector<step_t> code;
         IMemory<AddressType, DataType, RegType>* snapshot = nullptr;
+        std::size_t cyclesIfNotTaken_ = 0;
+        std::size_t cyclesIfTaken_ = 0;
     };
 } // namespace BMMQ
 #endif

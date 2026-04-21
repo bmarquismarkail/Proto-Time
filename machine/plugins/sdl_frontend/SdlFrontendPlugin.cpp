@@ -1,8 +1,43 @@
 #include "../SdlFrontendPlugin.hpp"
+#include "../../AudioService.hpp"
+#include "../../VideoService.hpp"
+#include "../audio_output/DummyAudioOutput.hpp"
+#include "../audio_output/FileAudioOutput.hpp"
+#include "../video/adapters/SdlVideoPresenter.hpp"
+#include "SdlAudioOutput.hpp"
 
 #include <algorithm>
 #include <cstddef>
+
+    enum class ControlAction : uint8_t {
+        PauseToggle = 0,
+        ThrottleToggle,
+        SingleStep,
+        SpeedUp,
+        SpeedDown,
+    };
+
+    [[nodiscard]] static constexpr std::optional<ControlAction> mapControlKey(BMMQ::SdlFrontendHostKey key) noexcept
+    {
+        switch (key) {
+        case BMMQ::SdlFrontendHostKey::Pause:
+            return ControlAction::PauseToggle;
+        case BMMQ::SdlFrontendHostKey::ThrottleToggle:
+            return ControlAction::ThrottleToggle;
+        case BMMQ::SdlFrontendHostKey::SingleStep:
+            return ControlAction::SingleStep;
+        case BMMQ::SdlFrontendHostKey::SpeedUp:
+            return ControlAction::SpeedUp;
+        case BMMQ::SdlFrontendHostKey::SpeedDown:
+            return ControlAction::SpeedDown;
+        default:
+            return std::nullopt;
+        }
+    }
 #include <cstdint>
+#include <cctype>
+#include <limits>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -27,11 +62,16 @@
 
 namespace {
 
+constexpr std::size_t kApuFrameSamples = 256u;
+
 class SdlFrontendPluginImpl final : public BMMQ::ISdlFrontendPlugin,
                                     public BMMQ::LoggingPluginSupport {
 public:
     explicit SdlFrontendPluginImpl(BMMQ::SdlFrontendConfig config = {})
-        : config_(std::move(config)) {}
+        : config_(std::move(config))
+    {
+        setMaxEntryCount(256u);
+    }
 
     [[nodiscard]] const BMMQ::SdlFrontendConfig& config() const noexcept override
     {
@@ -40,6 +80,7 @@ public:
 
     [[nodiscard]] const BMMQ::SdlFrontendStats& stats() const noexcept override
     {
+        syncAudioTransportStats();
         return stats_;
     }
 
@@ -80,17 +121,20 @@ public:
 
     [[nodiscard]] bool windowVisible() const noexcept override
     {
-        return windowVisible_;
+        return videoPresenter_ != nullptr ? videoPresenter_->windowVisible() : windowVisible_;
     }
 
     [[nodiscard]] bool windowVisibilityRequested() const noexcept override
     {
-        return windowVisibilityRequested_;
+        return videoPresenter_ != nullptr ? videoPresenter_->windowVisibilityRequested() : windowVisibilityRequested_;
     }
 
     void requestWindowVisibility(bool visible) override
     {
         windowVisibilityRequested_ = visible;
+        if (videoPresenter_ != nullptr) {
+            videoPresenter_->requestWindowVisibility(visible);
+        }
         appendLog(std::string("sdl: window visibility requested=") + (visible ? "visible" : "hidden"));
     }
 
@@ -102,7 +146,9 @@ public:
             handledEvents = pumpBackendEvents();
         }
 
+        syncVideoTransportStats();
         const bool hadFrame = config_.enableVideo && lastFrame_.has_value();
+        const bool hasAudioState = config_.enableAudio && lastAudioState_.has_value();
         const bool hadAudioPreview = config_.enableAudio && lastAudioPreview_.has_value();
         const bool visibilityChanged = windowVisible_ != windowVisibilityRequested_;
 
@@ -111,21 +157,26 @@ public:
             presented = presentLatestFrame();
         }
 
-        const bool queuedAudio = hadAudioPreview && refillAudioQueue();
+        const bool audioActive = hasAudioState || (audioService_ != nullptr && audioService_->engine().bufferedSamples() != 0u);
         applyWindowVisibilityRequest();
-        return handledEvents != 0 || hadFrame || hadAudioPreview || visibilityChanged || presented || queuedAudio || quitRequested_;
+        return handledEvents != 0 || hadFrame || hasAudioState || hadAudioPreview || visibilityChanged || presented || audioActive || quitRequested_;
     }
 
     void setQueuedDigitalInputMask(uint32_t pressedMask) override
     {
         queuedDigitalInputMask_ = pressedMask & 0x00FFu;
+        publishQueuedInputToService();
         appendLog("sdl: queued input mask=" + BMMQ::detail::hexByte(static_cast<uint8_t>(*queuedDigitalInputMask_)));
     }
 
     void clearQueuedDigitalInputMask() override
     {
+        // Publish an explicit neutral snapshot before clearing the optional so the
+        // InputService observes "no buttons pressed" rather than only local state loss.
+        queuedDigitalInputMask_ = 0u;
+        publishQueuedInputToService();
         queuedDigitalInputMask_.reset();
-        appendLog("sdl: cleared queued input mask");
+        appendLog("sdl: published neutral input and cleared queued input mask");
     }
 
     [[nodiscard]] std::optional<uint32_t> queuedDigitalInputMask() const noexcept override
@@ -133,17 +184,17 @@ public:
         return queuedDigitalInputMask_;
     }
 
-    void pressButton(BMMQ::SdlFrontendButton button) override
+    void pressButton(BMMQ::InputButton button) override
     {
         setButtonState(button, true);
     }
 
-    void releaseButton(BMMQ::SdlFrontendButton button) override
+    void releaseButton(BMMQ::InputButton button) override
     {
         setButtonState(button, false);
     }
 
-    [[nodiscard]] bool isButtonPressed(BMMQ::SdlFrontendButton button) const noexcept override
+    [[nodiscard]] bool isButtonPressed(BMMQ::InputButton button) const noexcept override
     {
         if (!queuedDigitalInputMask_.has_value()) {
             return false;
@@ -208,17 +259,68 @@ public:
             }
 
             const auto mapped = mapHostKey(event.key);
-            if (!mapped.has_value()) {
-                lastHostEventSummary_ = "Unmapped host key";
-                appendLog("sdl: unmapped host key ignored");
-                return false;
+            if (mapped.has_value()) {
+                ++stats_.keyEventsHandled;
+                const bool pressed = event.type == BMMQ::SdlFrontendHostEventType::KeyDown;
+                setButtonState(*mapped, pressed);
+                lastHostEventSummary_ = std::string(buttonName(*mapped)) + (pressed ? " pressed from host" : " released from host");
+                return true;
             }
 
-            ++stats_.keyEventsHandled;
-            const bool pressed = event.type == BMMQ::SdlFrontendHostEventType::KeyDown;
-            setButtonState(*mapped, pressed);
-            lastHostEventSummary_ = std::string(buttonName(*mapped)) + (pressed ? " pressed from host" : " released from host");
-            return true;
+            // Check for control keys (timing/frontend controls)
+            const auto control = mapControlKey(event.key);
+            if (control.has_value() && event.type == BMMQ::SdlFrontendHostEventType::KeyDown) {
+                switch (*control) {
+                case ControlAction::PauseToggle:
+                    if (timingService_ != nullptr) {
+                        const auto s = timingService_->stats();
+                        timingService_->setPaused(!s.paused);
+                        appendLog(std::string("sdl: timing paused=") + (s.paused ? "false" : "true"));
+                        lastHostEventSummary_ = "Timing pause toggled";
+                        return true;
+                    }
+                    break;
+                case ControlAction::ThrottleToggle:
+                    if (timingService_ != nullptr) {
+                        const auto s = timingService_->stats();
+                        timingService_->setThrottled(!s.throttled);
+                        appendLog(std::string("sdl: timing throttled=") + (s.throttled ? "false" : "true"));
+                        lastHostEventSummary_ = "Timing throttle toggled";
+                        return true;
+                    }
+                    break;
+                case ControlAction::SingleStep:
+                    if (timingService_ != nullptr) {
+                        timingService_->requestSingleStep();
+                        appendLog("sdl: timing single-step requested");
+                        lastHostEventSummary_ = "Timing single-step requested";
+                        return true;
+                    }
+                    break;
+                case ControlAction::SpeedUp:
+                    if (timingService_ != nullptr) {
+                        const auto s = timingService_->stats();
+                        timingService_->setSpeedMultiplier(s.speedMultiplier * 2.0);
+                        appendLog("sdl: timing speed x2");
+                        lastHostEventSummary_ = "Timing speed increased";
+                        return true;
+                    }
+                    break;
+                case ControlAction::SpeedDown:
+                    if (timingService_ != nullptr) {
+                        const auto s = timingService_->stats();
+                        timingService_->setSpeedMultiplier(std::max(0.125, s.speedMultiplier / 2.0));
+                        appendLog("sdl: timing speed /2");
+                        lastHostEventSummary_ = "Timing speed decreased";
+                        return true;
+                    }
+                    break;
+                }
+            }
+
+            lastHostEventSummary_ = "Unmapped host key";
+            appendLog("sdl: unmapped host key ignored");
+            return false;
         }
         case BMMQ::SdlFrontendHostEventType::None:
             break;
@@ -244,23 +346,38 @@ public:
 
     [[nodiscard]] bool audioOutputReady() const noexcept override
     {
-#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
-        return audioDevice_ != 0;
-#else
-        return false;
-#endif
+        return audioOutput_ != nullptr && audioOutput_->ready();
+    }
+
+    [[nodiscard]] std::size_t bufferedAudioSamples() const noexcept override
+    {
+        const auto buffered = audioService_ != nullptr ? audioService_->engine().bufferedSamples() : 0u;
+        syncAudioTransportStats();
+        return buffered;
+    }
+
+    [[nodiscard]] bool audioQueueBackpressureActive() const noexcept override
+    {
+        if (!config_.enableAudio || audioService_ == nullptr || !audioOutputReady()) {
+            return false;
+        }
+
+        const auto capacity = audioService_->engine().bufferCapacitySamples();
+        if (capacity == 0u) {
+            return false;
+        }
+
+        const auto safetyMarginSamples = computeAudioSafetyMarginSamples();
+        const auto highWater = capacity > safetyMarginSamples ? capacity - safetyMarginSamples : capacity;
+        return audioService_->engine().bufferedSamples() >= highWater;
     }
 
     [[nodiscard]] uint32_t queuedAudioBytes() const noexcept override
     {
-#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
-        if (audioDevice_ == 0) {
-            return 0;
+        if (audioService_ == nullptr) {
+            return 0u;
         }
-        return SDL_GetQueuedAudioSize(audioDevice_);
-#else
-        return 0;
-#endif
+        return static_cast<uint32_t>(audioService_->engine().queuedBytes());
     }
 
     bool tryInitializeBackend() override
@@ -278,9 +395,6 @@ public:
         if (config_.enableAudio) {
             initFlags |= SDL_INIT_AUDIO;
         }
-        if (config_.createHiddenWindowOnInitialize && config_.enableVideo) {
-            initFlags |= SDL_INIT_VIDEO;
-        }
 
         if (SDL_InitSubSystem(initFlags) != 0) {
             lastBackendError_ = SDL_GetError();
@@ -291,21 +405,8 @@ public:
         }
 
         initializedBackendFlags_ = initFlags;
-        if ((initFlags & SDL_INIT_VIDEO) != 0u) {
-            const int width = std::max(config_.frameWidth * std::max(config_.windowScale, 1), 1);
-            const int height = std::max(config_.frameHeight * std::max(config_.windowScale, 1), 1);
-            window_ = SDL_CreateWindow(config_.windowTitle.c_str(),
-                                       SDL_WINDOWPOS_UNDEFINED,
-                                       SDL_WINDOWPOS_UNDEFINED,
-                                       width,
-                                       height,
-                                       SDL_WINDOW_HIDDEN);
-            if (window_ == nullptr) {
-                lastBackendError_ = SDL_GetError();
-                appendLog("sdl: hidden window creation failed: " + lastBackendError_);
-                shutdownBackend();
-                return false;
-            }
+        if (config_.enableVideo && !ensureVideoPresenter()) {
+            appendLog("sdl: continuing without live video output");
         }
 
         if (config_.enableAudio && !ensureAudioDevice()) {
@@ -347,19 +448,38 @@ public:
 #endif
     }
 
-    void onAttach(const BMMQ::MachineView&) override
+    void onAttach(BMMQ::MutableMachineView& view) override
     {
         ++stats_.attachCount;
+        audioService_ = &view.audioService();
+        audioService_->setBackendPausedOrClosed(true);
+        inputService_ = &view.inputService();
+        if (config_.enableInput) {
+            (void)inputService_->attachExternalAdapter(*this);
+            (void)inputService_->configureMappingProfile("sdl-default");
+            (void)inputService_->resume();
+        }
+        videoService_ = &view.videoService();
+        timingService_ = &view.timingService();
+        configureVideoService();
         appendLog("sdl: attached");
         if (config_.autoInitializeBackend) {
             tryInitializeBackend();
         }
     }
 
-    void onDetach(const BMMQ::MachineView&) override
+    void onDetach(BMMQ::MutableMachineView&) override
     {
         ++stats_.detachCount;
         shutdownBackend();
+        audioService_ = nullptr;
+        if (config_.enableInput && inputService_ != nullptr) {
+            (void)inputService_->detachAdapter(inputService_->currentGeneration() + 1u);
+        }
+        inputService_ = nullptr;
+        videoService_ = nullptr;
+        timingService_ = nullptr;
+        videoPresenter_ = nullptr;
         windowVisible_ = false;
         appendLog("sdl: detached");
     }
@@ -371,21 +491,35 @@ public:
         }
         ++stats_.videoEvents;
         const bool lcdControlWrite = event.type == BMMQ::MachineEventType::MemoryWriteObserved && event.address == 0xFF40u;
-        const bool shouldSampleVideoState =
+        const bool carriesVideoState =
+            event.type == BMMQ::MachineEventType::MemoryWriteObserved ||
             event.type == BMMQ::MachineEventType::VBlank ||
-            !lastFrame_.has_value() ||
-            lcdControlWrite;
+            event.type == BMMQ::MachineEventType::VideoScanlineReady;
+        const bool shouldSampleVideoState =
+            carriesVideoState &&
+            (event.type == BMMQ::MachineEventType::VBlank ||
+             event.type == BMMQ::MachineEventType::VideoScanlineReady ||
+             !lastFrame_.has_value() ||
+             lcdControlWrite);
 
+        bool submittedVideoFrame = false;
         if (shouldSampleVideoState) {
-            lastVideoState_ = view.videoState();
-            if (lastVideoState_.has_value()) {
-                const bool shouldRefreshFrame =
-                    event.type == BMMQ::MachineEventType::VBlank ||
-                    !lastFrame_.has_value() ||
-                    !lastVideoState_->lcdEnabled() ||
-                    lcdControlWrite;
-                if (shouldRefreshFrame) {
-                    lastFrame_ = buildDebugFrame(*lastVideoState_);
+            if (event.type == BMMQ::MachineEventType::VBlank && shouldDeferVideoFrameForAudioLowWater()) {
+                ++stats_.audioQueueLowWaterHits;
+                appendLog("sdl: skipped video frame preparation while audio buffer was low");
+                return;
+            }
+            BMMQ::VideoStateView* videoState = stateForVideoEvent(event, view);
+            if (videoState != nullptr) {
+                if (videoService_ != nullptr && videoService_->submitVideoState(event, *videoState)) {
+                    submittedVideoFrame = true;
+                    if (event.type == BMMQ::MachineEventType::VBlank) {
+                        lastVideoState_ = *videoState;
+                    }
+                    if (event.type == BMMQ::MachineEventType::VBlank) {
+                        scanlineVideoState_.reset();
+                    }
+                    syncVideoTransportStats();
                     ++stats_.framesPrepared;
                     frameDirty_ = true;
                     if (config_.autoPresentOnVideoEvent) {
@@ -395,10 +529,13 @@ public:
             } else {
                 lastFrame_.reset();
                 frameDirty_ = false;
+                scanlineVideoState_.reset();
             }
         }
 
-        if (event.type != BMMQ::MachineEventType::MemoryWriteObserved || shouldSampleVideoState) {
+        if (event.type != BMMQ::MachineEventType::MemoryWriteObserved &&
+            event.type != BMMQ::MachineEventType::VideoScanlineReady &&
+            event.type != BMMQ::MachineEventType::VBlank) {
             std::string message = std::string("sdl: video event=") + BMMQ::detail::machineEventTypeName(event.type);
             if (lastVideoState_.has_value()) {
                 message += " lcdc=" + BMMQ::detail::hexByte(lastVideoState_->lcdc);
@@ -407,6 +544,8 @@ public:
                 message += " frame=" + std::to_string(lastFrame_->width) + "x" + std::to_string(lastFrame_->height);
             }
             appendLog(std::move(message));
+        } else if (submittedVideoFrame) {
+            appendLog("sdl: scanline frame prepared");
         }
     }
 
@@ -417,31 +556,33 @@ public:
         }
         ++stats_.audioEvents;
         lastAudioState_ = view.audioState();
-        bool queuedAudio = false;
         if (lastAudioState_.has_value()) {
             lastAudioPreview_ = buildAudioPreview(*lastAudioState_);
             ++stats_.audioPreviewsBuilt;
             ++audioPreviewGeneration_;
-            queuedAudio = refillAudioQueue();
+            if (audioService_ != nullptr) {
+                audioService_->engine().appendRecentPcm(lastAudioState_->pcmSamples, lastAudioState_->frameCounter);
+            }
         } else {
             lastAudioPreview_.reset();
+            if (audioService_ != nullptr && audioService_->canPerformReset()) {
+                (void)audioService_->resetStats();
+                (void)audioService_->resetStream();
+            }
         }
 
-        std::string message = std::string("sdl: audio event=") + BMMQ::detail::machineEventTypeName(event.type);
-        if (lastAudioState_.has_value()) {
-            message += " nr12=" + BMMQ::detail::hexByte(lastAudioState_->nr12);
-            message += " nr52=" + BMMQ::detail::hexByte(lastAudioState_->nr52);
-        }
-        if (lastAudioPreview_.has_value()) {
-            message += " samples=" + std::to_string(lastAudioPreview_->sampleCount());
-        }
-        if (queuedAudio) {
-            message += " queued=" + std::to_string(queuedAudioBytes()) + "B";
-        }
-        appendLog(std::move(message));
+        (void)event;
     }
 
     std::optional<uint32_t> sampleDigitalInput(const BMMQ::MachineView&) override
+    {
+        if (const auto sample = sampleDigitalInput(); sample.has_value()) {
+            return static_cast<uint32_t>(*sample);
+        }
+        return std::nullopt;
+    }
+
+    std::optional<BMMQ::InputButtonMask> sampleDigitalInput() override
     {
         if (!config_.enableInput) {
             return std::nullopt;
@@ -452,10 +593,47 @@ public:
         }
         if (queuedDigitalInputMask_.has_value()) {
             ++stats_.inputSamplesProvided;
-            return queuedDigitalInputMask_;
+            return static_cast<BMMQ::InputButtonMask>(*queuedDigitalInputMask_ & 0x00FFu);
         }
         return std::nullopt;
     }
+
+    [[nodiscard]] BMMQ::InputPluginCapabilities capabilities() const noexcept override
+    {
+        return {
+            .pollingSafe = true,
+            .eventPumpSafe = true,
+            .deterministic = true,
+            .supportsDigital = config_.enableInput,
+            .supportsAnalog = false,
+            .fixedLogicalLayout = true,
+            .hotSwapSafe = false,
+            .liveSeek = false,
+            .nonRealtimeOnly = false,
+            .headlessSafe = true,
+        };
+    }
+
+    [[nodiscard]] std::string_view name() const noexcept override
+    {
+        return displayName();
+    }
+
+    [[nodiscard]] std::string_view lastError() const noexcept override
+    {
+        return lastBackendError();
+    }
+
+    // InputService expects open() to validate adapter availability, but this frontend
+    // performs real backend initialization through tryInitializeBackend() instead.
+    [[nodiscard]] bool open() override
+    {
+        return true;
+    }
+
+    // InputService may call close() during adapter lifecycle transitions, but actual
+    // backend teardown is owned by shutdownBackend() rather than this adapter hook.
+    void close() noexcept override {}
 
     void onDigitalInputEvent(const BMMQ::MachineEvent& event, const BMMQ::MachineView& view) override
     {
@@ -473,53 +651,65 @@ public:
     }
 
 private:
-    [[nodiscard]] static constexpr uint8_t buttonMask(BMMQ::SdlFrontendButton button) noexcept
+    [[nodiscard]] std::size_t computeAudioSafetyMarginSamples() const noexcept
     {
-        return static_cast<uint8_t>(button);
+        const auto callbackChunk =
+            static_cast<std::size_t>(std::max(config_.audioCallbackChunkSamples, 1));
+        return std::max<std::size_t>(callbackChunk * 2u, kApuFrameSamples);
     }
 
-    [[nodiscard]] static constexpr std::string_view buttonName(BMMQ::SdlFrontendButton button) noexcept
+    [[nodiscard]] static constexpr uint8_t buttonMask(BMMQ::InputButton button) noexcept
+    {
+        return BMMQ::inputButtonMask(button);
+    }
+
+    [[nodiscard]] static constexpr std::string_view buttonName(BMMQ::InputButton button) noexcept
     {
         switch (button) {
-        case BMMQ::SdlFrontendButton::Right:
+        case BMMQ::InputButton::Right:
             return "Right";
-        case BMMQ::SdlFrontendButton::Left:
+        case BMMQ::InputButton::Left:
             return "Left";
-        case BMMQ::SdlFrontendButton::Up:
+        case BMMQ::InputButton::Up:
             return "Up";
-        case BMMQ::SdlFrontendButton::Down:
+        case BMMQ::InputButton::Down:
             return "Down";
-        case BMMQ::SdlFrontendButton::A:
-            return "A";
-        case BMMQ::SdlFrontendButton::B:
-            return "B";
-        case BMMQ::SdlFrontendButton::Select:
-            return "Select";
-        case BMMQ::SdlFrontendButton::Start:
-            return "Start";
+        case BMMQ::InputButton::Button1:
+            return "Button1";
+        case BMMQ::InputButton::Button2:
+            return "Button2";
+        case BMMQ::InputButton::Meta1:
+            return "Meta1";
+        case BMMQ::InputButton::Meta2:
+            return "Meta2";
         }
         return "Unknown";
     }
 
-    [[nodiscard]] static constexpr std::optional<BMMQ::SdlFrontendButton> mapHostKey(BMMQ::SdlFrontendHostKey key) noexcept
+    [[nodiscard]] static constexpr std::optional<BMMQ::InputButton> mapHostKey(BMMQ::SdlFrontendHostKey key) noexcept
     {
         switch (key) {
         case BMMQ::SdlFrontendHostKey::Right:
-            return BMMQ::SdlFrontendButton::Right;
+            return BMMQ::InputButton::Right;
         case BMMQ::SdlFrontendHostKey::Left:
-            return BMMQ::SdlFrontendButton::Left;
+            return BMMQ::InputButton::Left;
         case BMMQ::SdlFrontendHostKey::Up:
-            return BMMQ::SdlFrontendButton::Up;
+            return BMMQ::InputButton::Up;
         case BMMQ::SdlFrontendHostKey::Down:
-            return BMMQ::SdlFrontendButton::Down;
+            return BMMQ::InputButton::Down;
         case BMMQ::SdlFrontendHostKey::Z:
-            return BMMQ::SdlFrontendButton::A;
+            return BMMQ::InputButton::Button1;
         case BMMQ::SdlFrontendHostKey::X:
-            return BMMQ::SdlFrontendButton::B;
+            return BMMQ::InputButton::Button2;
         case BMMQ::SdlFrontendHostKey::Backspace:
-            return BMMQ::SdlFrontendButton::Select;
+            return BMMQ::InputButton::Meta1;
         case BMMQ::SdlFrontendHostKey::Return:
-            return BMMQ::SdlFrontendButton::Start;
+            return BMMQ::InputButton::Meta2;
+        case BMMQ::SdlFrontendHostKey::Pause:
+        case BMMQ::SdlFrontendHostKey::ThrottleToggle:
+        case BMMQ::SdlFrontendHostKey::SingleStep:
+        case BMMQ::SdlFrontendHostKey::SpeedUp:
+        case BMMQ::SdlFrontendHostKey::SpeedDown:
         case BMMQ::SdlFrontendHostKey::Unknown:
             break;
         }
@@ -546,6 +736,16 @@ private:
             return BMMQ::SdlFrontendHostKey::Backspace;
         case SDLK_RETURN:
             return BMMQ::SdlFrontendHostKey::Return;
+        case SDLK_p:
+            return BMMQ::SdlFrontendHostKey::Pause;
+        case SDLK_o:
+            return BMMQ::SdlFrontendHostKey::ThrottleToggle;
+        case SDLK_n:
+            return BMMQ::SdlFrontendHostKey::SingleStep;
+        case SDLK_RIGHTBRACKET:
+            return BMMQ::SdlFrontendHostKey::SpeedUp;
+        case SDLK_LEFTBRACKET:
+            return BMMQ::SdlFrontendHostKey::SpeedDown;
         default:
             return std::nullopt;
         }
@@ -576,7 +776,7 @@ private:
     }
 #endif
 
-    void setButtonState(BMMQ::SdlFrontendButton button, bool pressed)
+    void setButtonState(BMMQ::InputButton button, bool pressed)
     {
         auto mask = static_cast<uint8_t>(queuedDigitalInputMask_.value_or(0u) & 0x00FFu);
         const auto bit = buttonMask(button);
@@ -588,9 +788,27 @@ private:
         }
         queuedDigitalInputMask_ = mask;
         if (mask != oldMask) {
+            publishQueuedInputToService();
             ++stats_.buttonTransitions;
             appendLog(std::string("sdl: button ") + std::string(buttonName(button)) + (pressed ? " pressed" : " released"));
         }
+    }
+
+    void publishQueuedInputToService()
+    {
+        if (inputService_ == nullptr || !config_.enableInput) {
+            return;
+        }
+
+        const auto generation = std::max<uint64_t>(inputService_->currentGeneration(), 1u);
+        if (queuedDigitalInputMask_.has_value()) {
+            inputService_->publishDigitalSnapshot(
+                static_cast<BMMQ::InputButtonMask>(*queuedDigitalInputMask_ & 0x00FFu),
+                generation);
+            return;
+        }
+
+        inputService_->applyNeutralFallback(generation);
     }
 
     void requestQuit()
@@ -598,6 +816,190 @@ private:
         quitRequested_ = true;
         ++stats_.quitRequests;
         appendLog("sdl: quit requested");
+    }
+
+    void syncAudioTransportStats() const noexcept
+    {
+        if (audioService_ == nullptr) {
+            return;
+        }
+        const auto engineStats = audioService_->engine().stats();
+        const auto outputDeviceInfo = audioOutput_ != nullptr ? audioOutput_->deviceInfo() : BMMQ::AudioOutputDeviceInfo{};
+        stats_.audioSourceSampleRate = audioService_->engine().config().sourceSampleRate;
+        stats_.audioDeviceSampleRate = audioService_->engine().config().deviceSampleRate;
+        stats_.audioCallbackChunkSamples =
+            outputDeviceInfo.callbackChunkSamples != 0u
+                ? outputDeviceInfo.callbackChunkSamples
+                : static_cast<std::size_t>(std::max(config_.audioCallbackChunkSamples, 1));
+        stats_.audioRingBufferCapacitySamples = audioService_->engine().bufferCapacitySamples();
+        stats_.audioBufferedHighWaterSamples = engineStats.bufferedHighWaterSamples;
+        stats_.audioCallbackCount = engineStats.callbackCount;
+        stats_.audioSamplesDelivered = engineStats.samplesDelivered;
+        stats_.audioUnderrunCount = engineStats.underrunCount;
+        stats_.audioSilenceSamplesFilled = engineStats.silenceSamplesFilled;
+        stats_.audioOverrunDropCount = engineStats.overrunDropCount;
+        stats_.audioDroppedSamples = engineStats.droppedSamples;
+        stats_.audioResamplingActive = engineStats.resamplingActive;
+        stats_.audioResampleRatio = engineStats.resampleRatio;
+        stats_.audioSourceSamplesPushed = engineStats.sourceSamplesPushed;
+        stats_.audioResampleSourceSamplesConsumed = engineStats.sourceSamplesConsumed;
+        stats_.audioResampleOutputSamplesProduced = engineStats.outputSamplesProduced;
+        stats_.audioPipelineCapacitySkipCount = engineStats.pipelineCapacitySkipCount;
+        stats_.lastQueuedAudioBytes = queuedAudioBytes();
+        stats_.peakQueuedAudioBytes = std::max<std::uint32_t>(
+            stats_.peakQueuedAudioBytes,
+            static_cast<std::uint32_t>(stats_.audioBufferedHighWaterSamples * sizeof(int16_t)));
+    }
+
+    [[nodiscard]] bool shouldDeferVideoFrameForAudioLowWater() const noexcept
+    {
+        if (!config_.enableAudio || audioService_ == nullptr || !audioOutputReady() || !lastFrame_.has_value()) {
+            return false;
+        }
+        if (videoService_ != nullptr &&
+            (videoService_->hasCompleteScanlineFrame() || videoService_->hasPartialScanlineFrame())) {
+            return false;
+        }
+
+        const auto safetyMarginSamples = computeAudioSafetyMarginSamples();
+        return audioService_->engine().bufferedSamples() < safetyMarginSamples;
+    }
+
+    std::optional<BMMQ::VideoStateView> snapshotVideoState(const BMMQ::MachineView& view)
+    {
+        ++stats_.videoStateSnapshots;
+        return view.videoState();
+    }
+
+    BMMQ::VideoStateView* stateForVideoEvent(const BMMQ::MachineEvent& event,
+                                             const BMMQ::MachineView& view)
+    {
+        if (event.type == BMMQ::MachineEventType::VideoScanlineReady) {
+            return stateForScanlineEvent(view);
+        }
+
+        if (event.type == BMMQ::MachineEventType::VBlank &&
+            videoService_ != nullptr &&
+            (videoService_->hasCompleteScanlineFrame() || videoService_->hasPartialScanlineFrame()) &&
+            scanlineVideoState_.has_value()) {
+            refreshVideoRegisters(*scanlineVideoState_, view);
+            return &*scanlineVideoState_;
+        }
+
+        scanlineVideoState_.reset();
+        lastVideoState_ = snapshotVideoState(view);
+        if (!lastVideoState_.has_value()) {
+            return nullptr;
+        }
+        return &*lastVideoState_;
+    }
+
+    BMMQ::VideoStateView* stateForScanlineEvent(const BMMQ::MachineView& view)
+    {
+        const auto ly = view.read8(0xFF44u);
+        if (!scanlineVideoState_.has_value() || ly == 0u || ly < scanlineVideoState_->ly) {
+            scanlineVideoState_ = snapshotVideoState(view);
+            if (!scanlineVideoState_.has_value()) {
+                return nullptr;
+            }
+            return &*scanlineVideoState_;
+        }
+
+        refreshVideoRegisters(*scanlineVideoState_, view);
+        return &*scanlineVideoState_;
+    }
+
+    static void refreshVideoRegisters(BMMQ::VideoStateView& state, const BMMQ::MachineView& view)
+    {
+        state.lcdc = view.read8(0xFF40u);
+        state.stat = view.read8(0xFF41u);
+        state.scy = view.read8(0xFF42u);
+        state.scx = view.read8(0xFF43u);
+        state.ly = view.read8(0xFF44u);
+        state.lyc = view.read8(0xFF45u);
+        state.bgp = view.read8(0xFF47u);
+        state.obp0 = view.read8(0xFF48u);
+        state.obp1 = view.read8(0xFF49u);
+        state.wy = view.read8(0xFF4Au);
+        state.wx = view.read8(0xFF4Bu);
+    }
+
+    void configureVideoService()
+    {
+        if (videoService_ == nullptr) {
+            return;
+        }
+        (void)videoService_->pause();
+        (void)videoService_->configure({
+            .frameWidth = std::max(config_.frameWidth, 1),
+            .frameHeight = std::max(config_.frameHeight, 1),
+            .queueCapacityFrames = 3,
+        });
+        (void)videoService_->configurePresenter({
+            .windowTitle = config_.windowTitle,
+            .scale = static_cast<int>(std::min<std::uint32_t>(
+                std::max(config_.windowScale, 1u),
+                static_cast<std::uint32_t>(std::numeric_limits<int>::max()))),
+            .frameWidth = std::max(config_.frameWidth, 1),
+            .frameHeight = std::max(config_.frameHeight, 1),
+            .createHiddenWindowOnOpen = true,
+            .showWindowOnPresent = config_.showWindowOnPresent,
+        });
+        if (config_.enableVideo) {
+            auto presenter = std::make_unique<BMMQ::SdlVideoPresenter>();
+            videoPresenter_ = presenter.get();
+            videoPresenter_->requestWindowVisibility(windowVisibilityRequested_);
+            (void)videoService_->attachPresenter(std::move(presenter));
+        }
+    }
+
+    bool ensureVideoPresenter()
+    {
+        if (!config_.enableVideo) {
+            return true;
+        }
+        if (videoService_ == nullptr) {
+            lastBackendError_ = "Video service unavailable";
+            appendLog("sdl: video service unavailable");
+            return false;
+        }
+        if (videoPresenter_ == nullptr) {
+            configureVideoService();
+        }
+        if (!videoService_->resume()) {
+            lastBackendError_ = videoService_->diagnostics().lastBackendError;
+            appendLog("sdl: video presenter open failed: " + lastBackendError_);
+            return false;
+        }
+        return true;
+    }
+
+    void syncVideoTransportStats() noexcept
+    {
+        if (videoService_ == nullptr) {
+            return;
+        }
+        if (const auto& frame = videoService_->engine().lastValidFrame(); frame.has_value()) {
+            const auto framesSubmitted = videoService_->engine().stats().framesSubmitted;
+            const bool frameChanged = !lastFrame_.has_value() ||
+                                      lastSyncedVideoFrameSubmission_ != framesSubmitted ||
+                                      lastFrame_->width != frame->width ||
+                                      lastFrame_->height != frame->height ||
+                                      lastFrame_->pixelCount() != frame->pixelCount();
+            if (frameChanged) {
+                BMMQ::SdlFrameBuffer compatFrame;
+                compatFrame.width = frame->width;
+                compatFrame.height = frame->height;
+                compatFrame.generation = frame->generation;
+                compatFrame.pixels = frame->pixels;
+                lastFrame_ = std::move(compatFrame);
+                lastSyncedVideoFrameSubmission_ = framesSubmitted;
+            }
+        }
+        if (videoPresenter_ != nullptr) {
+            windowVisible_ = videoPresenter_->windowVisible();
+            windowVisibilityRequested_ = videoPresenter_->windowVisibilityRequested();
+        }
     }
 
     bool presentLatestFrame()
@@ -608,317 +1010,67 @@ private:
             return false;
         }
 
-#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
-        if (!backendReady_) {
-            lastRenderSummary_ = "Frame prepared but backend not ready";
+        if (videoService_ == nullptr) {
+            lastRenderSummary_ = "Video service unavailable";
             return false;
         }
-        if (window_ == nullptr) {
-            lastRenderSummary_ = "Frame prepared without window";
+        if (!backendReady_ || videoService_->state() != BMMQ::VideoLifecycleState::Active) {
+            lastRenderSummary_ = "Frame prepared but backend not ready";
             return false;
         }
 
         if (config_.showWindowOnPresent) {
             requestWindowVisibility(true);
-            applyWindowVisibilityRequest();
         }
 
-        if (renderer_ == nullptr) {
-            SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
-            renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_SOFTWARE);
-            if (renderer_ == nullptr) {
-                lastBackendError_ = SDL_GetError();
-                lastRenderSummary_ = "Renderer creation failed";
-                appendLog("sdl: renderer creation failed: " + lastBackendError_);
-                return false;
-            }
-            SDL_RenderSetLogicalSize(renderer_, lastFrame_->width, lastFrame_->height);
-        }
-
-        if (texture_ == nullptr || textureWidth_ != lastFrame_->width || textureHeight_ != lastFrame_->height) {
-            if (texture_ != nullptr) {
-                SDL_DestroyTexture(texture_);
-                texture_ = nullptr;
-            }
-            texture_ = SDL_CreateTexture(renderer_,
-                                         SDL_PIXELFORMAT_ARGB8888,
-                                         SDL_TEXTUREACCESS_STREAMING,
-                                         lastFrame_->width,
-                                         lastFrame_->height);
-            if (texture_ == nullptr) {
-                lastBackendError_ = SDL_GetError();
-                lastRenderSummary_ = "Texture creation failed";
-                appendLog("sdl: texture creation failed: " + lastBackendError_);
-                return false;
-            }
-            textureWidth_ = lastFrame_->width;
-            textureHeight_ = lastFrame_->height;
-        }
-
-        if (SDL_UpdateTexture(texture_, nullptr, lastFrame_->pixels.data(), lastFrame_->width * static_cast<int>(sizeof(uint32_t))) != 0) {
-            lastBackendError_ = SDL_GetError();
-            lastRenderSummary_ = "Texture update failed";
-            appendLog("sdl: texture update failed: " + lastBackendError_);
+        const bool presented = videoService_->presentOneFrame();
+        syncVideoTransportStats();
+        if (!presented) {
+            lastBackendError_ = videoService_->diagnostics().lastBackendError;
+            lastRenderSummary_ = lastBackendError_.empty() ? "Video presentation failed" : lastBackendError_;
+            appendLog("sdl: video presentation failed: " + lastRenderSummary_);
             return false;
         }
-
-        SDL_RenderClear(renderer_);
-        SDL_RenderCopy(renderer_, texture_, nullptr, nullptr);
-        SDL_RenderPresent(renderer_);
         ++stats_.framesPresented;
         frameDirty_ = false;
         lastRenderSummary_ = "Presented frame " + std::to_string(lastFrame_->width) + "x" + std::to_string(lastFrame_->height);
         return true;
-#else
-        lastRenderSummary_ = "Frame prepared in skeleton mode";
-        return false;
-#endif
     }
 
     void applyWindowVisibilityRequest() noexcept
     {
-#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
-        if (window_ != nullptr) {
-            if (windowVisibilityRequested_) {
-                SDL_ShowWindow(window_);
-            } else {
-                SDL_HideWindow(window_);
-            }
+        if (videoPresenter_ != nullptr) {
+            videoPresenter_->requestWindowVisibility(windowVisibilityRequested_);
+            windowVisible_ = videoPresenter_->windowVisible();
+            return;
         }
-#endif
         windowVisible_ = windowVisibilityRequested_;
     }
 
     void shutdownBackend() noexcept
     {
+        if (audioService_ != nullptr) {
+            audioService_->setBackendPausedOrClosed(true);
+        }
+        if (videoService_ != nullptr) {
+            (void)videoService_->pause();
+            (void)videoService_->detachPresenter();
+            videoPresenter_ = nullptr;
+        }
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
-        if (audioDevice_ != 0) {
-            SDL_ClearQueuedAudio(audioDevice_);
-            SDL_CloseAudioDevice(audioDevice_);
-            audioDevice_ = 0;
-        }
-        lastQueuedAudioFrameCounter_ = 0;
-        lastQueuedAudioPreviewGeneration_ = 0;
-        if (texture_ != nullptr) {
-            SDL_DestroyTexture(texture_);
-            texture_ = nullptr;
-        }
-        textureWidth_ = 0;
-        textureHeight_ = 0;
-        if (renderer_ != nullptr) {
-            SDL_DestroyRenderer(renderer_);
-            renderer_ = nullptr;
-        }
-        if (window_ != nullptr) {
-            SDL_DestroyWindow(window_);
-            window_ = nullptr;
+        if (audioOutput_ != nullptr) {
+            audioOutput_->close();
         }
         if (initializedBackendFlags_ != 0u) {
             SDL_QuitSubSystem(initializedBackendFlags_);
             initializedBackendFlags_ = 0u;
         }
 #endif
+        if (audioService_ != nullptr) {
+            (void)audioService_->resetStats();
+            (void)audioService_->resetStream();
+        }
         backendReady_ = false;
-    }
-
-    static uint32_t paletteColor(uint8_t shade) noexcept
-    {
-        switch (shade & 0x03u) {
-        case 0:
-            return 0xFFE0F8D0u;
-        case 1:
-            return 0xFF88C070u;
-        case 2:
-            return 0xFF346856u;
-        default:
-            return 0xFF081820u;
-        }
-    }
-
-    [[nodiscard]] static uint8_t mapPaletteShade(uint8_t palette, uint8_t colorIndex) noexcept
-    {
-        return static_cast<uint8_t>((palette >> (colorIndex * 2u)) & 0x03u);
-    }
-
-    [[nodiscard]] static uint8_t readVramByte(const BMMQ::VideoStateView& state, uint16_t address) noexcept
-    {
-        if (address < 0x8000u || address >= 0xA000u) {
-            return 0xFFu;
-        }
-        const auto index = static_cast<std::size_t>(address - 0x8000u);
-        if (index >= state.vram.size()) {
-            return 0xFFu;
-        }
-        return state.vram[index];
-    }
-
-    [[nodiscard]] static uint8_t readOamByte(const BMMQ::VideoStateView& state, std::size_t index) noexcept
-    {
-        if (index >= state.oam.size()) {
-            return 0xFFu;
-        }
-        return state.oam[index];
-    }
-
-    [[nodiscard]] static uint8_t sampleTileColorIndex(const BMMQ::VideoStateView& state,
-                                                      uint8_t tileIndex,
-                                                      bool unsignedTileData,
-                                                      uint8_t tileX,
-                                                      uint8_t tileY) noexcept
-    {
-        uint16_t tileAddress = 0x8000u;
-        if (unsignedTileData) {
-            tileAddress = static_cast<uint16_t>(0x8000u + static_cast<uint16_t>(tileIndex) * 16u);
-        } else {
-            tileAddress = static_cast<uint16_t>(0x9000 + static_cast<int16_t>(static_cast<int8_t>(tileIndex)) * 16);
-        }
-
-        const auto rowAddress = static_cast<uint16_t>(tileAddress + static_cast<uint16_t>(tileY) * 2u);
-        const auto low = readVramByte(state, rowAddress);
-        const auto high = readVramByte(state, static_cast<uint16_t>(rowAddress + 1u));
-        const auto bit = static_cast<uint8_t>(7u - (tileX & 0x07u));
-        return static_cast<uint8_t>((((high >> bit) & 0x01u) << 1u) | ((low >> bit) & 0x01u));
-    }
-
-    [[nodiscard]] static uint8_t backgroundColorIndex(const BMMQ::VideoStateView& state, int screenX, int screenY) noexcept
-    {
-        const bool windowEnabled = (state.lcdc & 0x20u) != 0u;
-        const int windowLeft = static_cast<int>(state.wx) - 7;
-        const bool useWindow = windowEnabled && screenY >= static_cast<int>(state.wy) && screenX >= windowLeft;
-
-        int mapX = (screenX + static_cast<int>(state.scx)) & 0xFF;
-        int mapY = (screenY + static_cast<int>(state.scy)) & 0xFF;
-        uint16_t mapBase = (state.lcdc & 0x08u) != 0u ? 0x9C00u : 0x9800u;
-
-        if (useWindow) {
-            mapBase = (state.lcdc & 0x40u) != 0u ? 0x9C00u : 0x9800u;
-            mapX = std::max(0, screenX - windowLeft);
-            mapY = std::max(0, screenY - static_cast<int>(state.wy));
-        }
-
-        const auto tileMapAddress = static_cast<uint16_t>(
-            mapBase + static_cast<uint16_t>(((mapY >> 3) & 0x1Fu) * 32 + ((mapX >> 3) & 0x1Fu)));
-        const auto tileIndex = readVramByte(state, tileMapAddress);
-        const bool unsignedTileData = (state.lcdc & 0x10u) != 0u;
-        return sampleTileColorIndex(state,
-                                    tileIndex,
-                                    unsignedTileData,
-                                    static_cast<uint8_t>(mapX & 0x07),
-                                    static_cast<uint8_t>(mapY & 0x07));
-    }
-
-    void compositeSprites(BMMQ::SdlFrameBuffer& frame,
-                          const BMMQ::VideoStateView& state,
-                          std::span<const uint8_t> backgroundColorIndices) const
-    {
-        if ((state.lcdc & 0x02u) == 0u || state.oam.empty()) {
-            return;
-        }
-
-        const bool tallSprites = (state.lcdc & 0x04u) != 0u;
-        const int spriteHeight = tallSprites ? 16 : 8;
-        for (int spriteIndex = 39; spriteIndex >= 0; --spriteIndex) {
-            const auto base = static_cast<std::size_t>(spriteIndex) * 4u;
-            if (base + 3u >= state.oam.size()) {
-                continue;
-            }
-
-            const int spriteY = static_cast<int>(readOamByte(state, base)) - 16;
-            const int spriteX = static_cast<int>(readOamByte(state, base + 1u)) - 8;
-            uint8_t tileIndex = readOamByte(state, base + 2u);
-            const uint8_t attributes = readOamByte(state, base + 3u);
-            if (spriteX <= -8 || spriteX >= frame.width || spriteY <= -spriteHeight || spriteY >= frame.height) {
-                continue;
-            }
-
-            if (tallSprites) {
-                tileIndex = static_cast<uint8_t>(tileIndex & 0xFEu);
-            }
-
-            const bool xFlip = (attributes & 0x20u) != 0u;
-            const bool yFlip = (attributes & 0x40u) != 0u;
-            const bool behindBackground = (attributes & 0x80u) != 0u;
-            const uint8_t palette = (attributes & 0x10u) != 0u ? state.obp1 : state.obp0;
-
-            for (int localY = 0; localY < spriteHeight; ++localY) {
-                const int screenY = spriteY + localY;
-                if (screenY < 0 || screenY >= frame.height) {
-                    continue;
-                }
-
-                int spriteRow = yFlip ? (spriteHeight - 1 - localY) : localY;
-                uint8_t effectiveTile = tileIndex;
-                if (tallSprites && spriteRow >= 8) {
-                    effectiveTile = static_cast<uint8_t>(tileIndex + 1u);
-                    spriteRow -= 8;
-                }
-
-                for (int localX = 0; localX < 8; ++localX) {
-                    const int screenX = spriteX + localX;
-                    if (screenX < 0 || screenX >= frame.width) {
-                        continue;
-                    }
-
-                    const auto pixelIndex = static_cast<std::size_t>(screenY) * static_cast<std::size_t>(frame.width)
-                                          + static_cast<std::size_t>(screenX);
-                    const uint8_t spriteColumn = static_cast<uint8_t>(xFlip ? (7 - localX) : localX);
-                    const uint8_t colorIndex = sampleTileColorIndex(state,
-                                                                    effectiveTile,
-                                                                    true,
-                                                                    spriteColumn,
-                                                                    static_cast<uint8_t>(spriteRow));
-                    if (colorIndex == 0u) {
-                        continue;
-                    }
-                    if (behindBackground && backgroundColorIndices[pixelIndex] != 0u) {
-                        continue;
-                    }
-
-                    const uint8_t shade = mapPaletteShade(palette, colorIndex);
-                    frame.pixels[pixelIndex] = paletteColor(shade);
-                }
-            }
-        }
-    }
-
-    [[nodiscard]] BMMQ::SdlFrameBuffer buildDebugFrame(const BMMQ::VideoStateView& state) const
-    {
-        BMMQ::SdlFrameBuffer frame;
-        frame.width = std::max(config_.frameWidth, 1);
-        frame.height = std::max(config_.frameHeight, 1);
-
-        const auto pixelCount = static_cast<std::size_t>(frame.width) * static_cast<std::size_t>(frame.height);
-        frame.pixels.resize(pixelCount, paletteColor(0));
-        if (state.vram.empty()) {
-            return frame;
-        }
-
-        const bool lcdEnabled = state.lcdEnabled();
-        const bool backgroundEnabled = (state.lcdc & 0x01u) != 0u;
-        std::vector<uint8_t> backgroundColorIndices(pixelCount, 0u);
-        for (int y = 0; y < frame.height; ++y) {
-            for (int x = 0; x < frame.width; ++x) {
-                const auto pixelIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(frame.width)
-                                      + static_cast<std::size_t>(x);
-                if (!lcdEnabled) {
-                    frame.pixels[pixelIndex] = paletteColor(0);
-                    continue;
-                }
-
-                uint8_t shade = 0;
-                if (backgroundEnabled) {
-                    const auto colorIndex = backgroundColorIndex(state, x, y);
-                    backgroundColorIndices[pixelIndex] = colorIndex;
-                    shade = mapPaletteShade(state.bgp, colorIndex);
-                }
-                frame.pixels[pixelIndex] = paletteColor(shade);
-            }
-        }
-
-        if (lcdEnabled) {
-            compositeSprites(frame, state, std::span<const uint8_t>(backgroundColorIndices.data(), backgroundColorIndices.size()));
-        }
-        return frame;
     }
 
     [[nodiscard]] bool hasAudibleChannelOneState(const BMMQ::AudioStateView& state) const noexcept
@@ -959,119 +1111,102 @@ private:
     bool ensureAudioDevice()
     {
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
-        if (!config_.enableAudio || audioDevice_ != 0) {
+        if (!config_.enableAudio || audioOutputReady()) {
             return true;
         }
 
-        SDL_AudioSpec desired{};
-        desired.freq = audioSampleRate_;
-        desired.format = AUDIO_S16SYS;
-        desired.channels = 1;
-        desired.samples = 1024;
-        desired.callback = nullptr;
+        constexpr int kSourceAudioSampleRate = 48000;
+        if (audioService_ == nullptr) {
+            lastBackendError_ = "Audio service unavailable";
+            appendLog("sdl: audio service unavailable");
+            return false;
+        }
+        audioService_->setBackendPausedOrClosed(true);
+        if (!audioService_->configureEngine({
+            .sourceSampleRate = kSourceAudioSampleRate,
+            .deviceSampleRate = kSourceAudioSampleRate,
+            .ringBufferCapacitySamples = config_.audioRingBufferCapacitySamples,
+            .frameChunkSamples = kApuFrameSamples,
+        })) {
+            lastBackendError_ = "Audio engine configure rejected while backend active";
+            appendLog("sdl: " + lastBackendError_);
+            return false;
+        }
 
-        SDL_AudioSpec obtained{};
-        audioDevice_ = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
-        if (audioDevice_ == 0) {
-            lastBackendError_ = SDL_GetError();
+        const auto normalizedBackend = normalizeAudioBackend(config_.audioBackend);
+        if (audioOutput_ == nullptr || selectedAudioBackend_ != normalizedBackend) {
+            if (audioOutput_ != nullptr) {
+                audioOutput_->close();
+            }
+            auto replacement = makeAudioOutputBackend(normalizedBackend);
+            audioOutput_ = std::move(replacement);
+            if (audioOutput_ != nullptr) {
+                selectedAudioBackend_ = normalizedBackend;
+            }
+        }
+        if (audioOutput_ == nullptr) {
+            lastBackendError_ = "Unsupported audio backend '" + config_.audioBackend + "'";
+            appendLog("sdl: " + lastBackendError_);
+            return false;
+        }
+
+        if (!audioOutput_->open(audioService_->engine(), {
+                .backend = selectedAudioBackend_,
+                .requestedSampleRate = kSourceAudioSampleRate,
+                .callbackChunkSamples = static_cast<std::size_t>(std::max(config_.audioCallbackChunkSamples, 1)),
+                .channels = 1,
+                .testForcedDeviceSampleRate = config_.enableAudioResamplingDiagnostics
+                                                ? config_.testForcedAudioDeviceSampleRate
+                                                : 0,
+                .filePath = config_.audioOutputFilePath,
+                .appendToFile = config_.audioFileAppend,
+                .audioService = audioService_,
+            })) {
+            lastBackendError_ = std::string(audioOutput_->lastError());
             appendLog("sdl: audio device open failed: " + lastBackendError_);
             return false;
         }
 
-        if (obtained.freq > 0) {
-            audioSampleRate_ = obtained.freq;
-        }
-        lastQueuedAudioFrameCounter_ = 0;
-        lastQueuedAudioPreviewGeneration_ = 0;
-        SDL_PauseAudioDevice(audioDevice_, 0);
-        appendLog("sdl: audio device opened at " + std::to_string(audioSampleRate_) + " Hz");
+        audioService_->setBackendPausedOrClosed(false);
+
+        syncAudioTransportStats();
+        appendLog("sdl: audio device opened at " + std::to_string(audioService_->engine().config().deviceSampleRate) + " Hz");
         return true;
 #else
         return false;
 #endif
     }
 
-    bool refillAudioQueue()
+    [[nodiscard]] static std::string normalizeAudioBackend(std::string backend)
     {
-#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
-        if (!config_.enableAudio || audioDevice_ == 0 || !lastAudioState_.has_value()) {
-            return false;
+        if (backend.empty()) {
+            return "sdl";
         }
+        std::transform(backend.begin(), backend.end(), backend.begin(), [](unsigned char ch) {
+            return static_cast<char>(std::tolower(ch));
+        });
+        return backend;
+    }
 
-        const auto& state = *lastAudioState_;
-        if (!hasAudibleChannelOneState(state)) {
-            SDL_ClearQueuedAudio(audioDevice_);
-            lastQueuedAudioFrameCounter_ = state.frameCounter;
-            return false;
+    [[nodiscard]] static std::unique_ptr<BMMQ::IAudioOutputBackend> makeAudioOutputBackend(const std::string& backend)
+    {
+        if (backend == "sdl") {
+            return std::make_unique<BMMQ::SdlAudioOutputBackend>();
         }
-        if (state.frameCounter < lastQueuedAudioFrameCounter_) {
-            lastQueuedAudioFrameCounter_ = 0;
+        if (backend == "file") {
+            return std::make_unique<BMMQ::FileAudioOutputBackend>();
         }
-
-        constexpr uint32_t kHardQueueMs = 120u;
-        const auto hardQueueBytes = static_cast<uint32_t>((static_cast<uint64_t>(audioSampleRate_) * sizeof(int16_t) * kHardQueueMs) / 1000u);
-        if (SDL_GetQueuedAudioSize(audioDevice_) > hardQueueBytes) {
-            SDL_ClearQueuedAudio(audioDevice_);
+        if (backend == "dummy") {
+            return std::make_unique<BMMQ::DummyAudioOutputBackend>();
         }
-
-        if (state.hasPcmSamples()) {
-            constexpr std::size_t kApuFrameSamples = 256u;
-            if (state.frameCounter <= lastQueuedAudioFrameCounter_) {
-                return false;
-            }
-
-            const auto frameDelta = state.frameCounter - lastQueuedAudioFrameCounter_;
-            lastQueuedAudioFrameCounter_ = state.frameCounter;
-
-            const auto desiredSampleCount = static_cast<std::size_t>(std::min<uint64_t>(
-                static_cast<uint64_t>(state.pcmSamples.size()),
-                frameDelta * static_cast<uint64_t>(kApuFrameSamples)));
-            if (desiredSampleCount == 0u) {
-                return false;
-            }
-
-            const auto startIndex = state.pcmSamples.size() - desiredSampleCount;
-            const auto* chunkData = state.pcmSamples.data() + static_cast<std::ptrdiff_t>(startIndex);
-            const auto chunkBytes = static_cast<uint32_t>(desiredSampleCount * sizeof(int16_t));
-            if (SDL_QueueAudio(audioDevice_, chunkData, chunkBytes) != 0) {
-                lastBackendError_ = SDL_GetError();
-                appendLog("sdl: audio queue failed: " + lastBackendError_);
-                return false;
-            }
-
-            ++stats_.audioQueueWrites;
-            stats_.audioSamplesQueued += desiredSampleCount;
-            return true;
-        }
-
-        if (!lastAudioPreview_.has_value() || lastAudioPreview_->empty()) {
-            return false;
-        }
-        if (audioPreviewGeneration_ == 0u || lastQueuedAudioPreviewGeneration_ == audioPreviewGeneration_) {
-            return false;
-        }
-
-        const auto previewBytes = static_cast<uint32_t>(lastAudioPreview_->samples.size() * sizeof(int16_t));
-
-        if (SDL_QueueAudio(audioDevice_, lastAudioPreview_->samples.data(), previewBytes) != 0) {
-            lastBackendError_ = SDL_GetError();
-            appendLog("sdl: audio queue failed: " + lastBackendError_);
-            return false;
-        }
-
-        lastQueuedAudioPreviewGeneration_ = audioPreviewGeneration_;
-        ++stats_.audioQueueWrites;
-        stats_.audioSamplesQueued += lastAudioPreview_->samples.size();
-        return true;
-#else
-        return false;
-#endif
+        return nullptr;
     }
 
     [[nodiscard]] BMMQ::SdlAudioPreviewBuffer buildAudioPreview(const BMMQ::AudioStateView& state)
     {
         BMMQ::SdlAudioPreviewBuffer preview;
-        preview.sampleRate = state.sampleRate != 0u ? static_cast<int>(state.sampleRate) : audioSampleRate_;
+        const int defaultSampleRate = audioService_ != nullptr ? audioService_->engine().config().deviceSampleRate : 48000;
+        preview.sampleRate = state.sampleRate != 0u ? static_cast<int>(state.sampleRate) : defaultSampleRate;
         const auto sampleCount = std::max(config_.audioPreviewSampleCount, 8);
         preview.samples.resize(static_cast<std::size_t>(sampleCount), 0);
 
@@ -1131,13 +1266,15 @@ private:
     }
 
     BMMQ::SdlFrontendConfig config_;
-    BMMQ::SdlFrontendStats stats_;
+    mutable BMMQ::SdlFrontendStats stats_;
     bool backendReady_ = false;
     std::optional<BMMQ::VideoStateView> lastVideoState_;
+    std::optional<BMMQ::VideoStateView> scanlineVideoState_;
     std::optional<BMMQ::AudioStateView> lastAudioState_;
     std::optional<BMMQ::SdlAudioPreviewBuffer> lastAudioPreview_;
     std::optional<BMMQ::DigitalInputStateView> lastInputState_;
     std::optional<BMMQ::SdlFrameBuffer> lastFrame_;
+    std::size_t lastSyncedVideoFrameSubmission_ = 0;
     bool frameDirty_ = false;
     std::optional<uint32_t> queuedDigitalInputMask_;
     bool quitRequested_ = false;
@@ -1147,19 +1284,15 @@ private:
     std::string lastRenderSummary_;
     std::string lastBackendError_;
     uint32_t initializedBackendFlags_ = 0;
-    int audioSampleRate_ = 48000;
     double audioPhase_ = 0.0;
     uint64_t audioPreviewGeneration_ = 0;
-    uint64_t lastQueuedAudioFrameCounter_ = 0;
-    uint64_t lastQueuedAudioPreviewGeneration_ = 0;
-#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
-    SDL_Window* window_ = nullptr;
-    SDL_Renderer* renderer_ = nullptr;
-    SDL_Texture* texture_ = nullptr;
-    SDL_AudioDeviceID audioDevice_ = 0;
-#endif
-    int textureWidth_ = 0;
-    int textureHeight_ = 0;
+    BMMQ::AudioService* audioService_ = nullptr;
+    BMMQ::InputService* inputService_ = nullptr;
+    BMMQ::VideoService* videoService_ = nullptr;
+    BMMQ::TimingService* timingService_ = nullptr;
+    BMMQ::SdlVideoPresenter* videoPresenter_ = nullptr;
+    std::unique_ptr<BMMQ::IAudioOutputBackend> audioOutput_ = std::make_unique<BMMQ::SdlAudioOutputBackend>();
+    std::string selectedAudioBackend_ = "sdl";
 };
 
 BMMQ::ISdlFrontendPlugin* createSdlFrontendPlugin(const BMMQ::SdlFrontendConfig* config)

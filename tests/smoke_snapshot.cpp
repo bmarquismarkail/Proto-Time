@@ -1,5 +1,6 @@
 #include <cassert>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <stdexcept>
 
@@ -44,6 +45,51 @@ int main()
         threw = true;
     }
     assert(threw);
+
+    BMMQ::MemoryStorage<AddressType, DataType> upperStore;
+    upperStore.addMemBlock(std::make_tuple(
+        static_cast<AddressType>(0xFF00),
+        static_cast<AddressType>(0x0100),
+        BMMQ::memAccess::ReadWrite));
+    BMMQ::SnapshotStorage<AddressType, DataType> upperSnapshot(upperStore);
+
+    DataType lastAddressValue = 0xAB;
+    upperSnapshot.write(std::span<const DataType>(&lastAddressValue, 1), static_cast<AddressType>(0xFFFF));
+
+    DataType lastAddressObserved = 0x00;
+    upperSnapshot.read(std::span<DataType>(&lastAddressObserved, 1), static_cast<AddressType>(0xFFFF));
+    assert(lastAddressObserved == lastAddressValue);
+
+    const DataType boundaryValues[] = {0xCD, 0xEF};
+    upperSnapshot.write(std::span<const DataType>(boundaryValues, 2), static_cast<AddressType>(0xFFFE));
+
+    DataType boundaryObserved[] = {0x00, 0x00};
+    upperSnapshot.read(std::span<DataType>(boundaryObserved, 2), static_cast<AddressType>(0xFFFE));
+    assert(boundaryObserved[0] == boundaryValues[0]);
+    assert(boundaryObserved[1] == boundaryValues[1]);
+
+    {
+        using LargeAddressType = std::uint64_t;
+        BMMQ::MemoryStorage<LargeAddressType, DataType> largeStore;
+        const auto hugeBase = static_cast<LargeAddressType>(std::numeric_limits<memindextype<DataType>>::max()) + 8ull;
+        largeStore.addMemBlock(std::make_tuple(
+            hugeBase,
+            static_cast<LargeAddressType>(1),
+            BMMQ::memAccess::ReadWrite));
+
+        BMMQ::SnapshotStorage<LargeAddressType, DataType> largeSnapshot(largeStore);
+        const DataType hugeValue = 0x5A;
+        largeSnapshot.write(std::span<const DataType>(&hugeValue, 1), hugeBase);
+
+        DataType lowObserved = 0x00;
+        bool rangeThrew = false;
+        try {
+            largeSnapshot.read(std::span<DataType>(&lowObserved, 1), static_cast<LargeAddressType>(0));
+        } catch (const std::out_of_range&) {
+            rangeThrew = true;
+        }
+        assert(rangeThrew);
+    }
 
     return 0;
 }

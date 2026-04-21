@@ -54,6 +54,12 @@ public:
     using ExecutionBlock = BMMQ::executionBlock<AddressType, DataType, RegType>;
 
     virtual ~RuntimeContext() = default;
+    RuntimeContext() = default;
+    RuntimeContext(const RuntimeContext&) = delete;
+    RuntimeContext& operator=(const RuntimeContext&) = delete;
+    RuntimeContext(RuntimeContext&&) = delete;
+    RuntimeContext& operator=(RuntimeContext&&) = delete;
+
     virtual FetchBlock fetch() = 0;
     virtual ExecutionBlock decode(FetchBlock& fetchBlock) = 0;
     virtual void execute(const ExecutionBlock& block, FetchBlock& fetchBlock) = 0;
@@ -97,6 +103,7 @@ public:
     }
     virtual void commitVisibleState() {}
     virtual const CpuFeedback& getLastFeedback() const = 0;
+    virtual uint32_t clockHz() const = 0;
     virtual ExecutionGuarantee guarantee() const = 0;
     virtual const Plugin::PluginMetadata* attachedPolicyMetadata() const = 0;
     virtual const Plugin::IExecutorPolicyPlugin& attachedExecutorPolicy() const = 0;

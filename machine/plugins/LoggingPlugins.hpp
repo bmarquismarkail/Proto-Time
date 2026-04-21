@@ -46,6 +46,20 @@ inline const char* machineEventTypeName(MachineEventType type)
         return "BootRomVisibilityChanged";
     case MachineEventType::RomLoaded:
         return "RomLoaded";
+    case MachineEventType::VideoScanlineReady:
+        return "VideoScanlineReady";
+    case MachineEventType::VisualResourceObserved:
+        return "VisualResourceObserved";
+    case MachineEventType::VisualResourceDecoded:
+        return "VisualResourceDecoded";
+    case MachineEventType::VisualOverrideResolved:
+        return "VisualOverrideResolved";
+    case MachineEventType::VisualPackMiss:
+        return "VisualPackMiss";
+    case MachineEventType::FrameCompositionStarted:
+        return "FrameCompositionStarted";
+    case MachineEventType::FrameCompositionCompleted:
+        return "FrameCompositionCompleted";
     }
     return "Unknown";
 }
@@ -113,9 +127,16 @@ public:
     }
 
 protected:
+    void setMaxEntryCount(std::size_t maxEntryCount) noexcept
+    {
+        maxEntryCount_ = maxEntryCount;
+        trimEntries();
+    }
+
     void appendLog(std::string entry)
     {
         entries_.push_back(entry);
+        trimEntries();
         if (sink_) {
             sink_(entry);
         }
@@ -126,9 +147,19 @@ protected:
     }
 
 private:
+    void trimEntries()
+    {
+        if (maxEntryCount_ == 0u || entries_.size() <= maxEntryCount_) {
+            return;
+        }
+        const auto overflow = entries_.size() - maxEntryCount_;
+        entries_.erase(entries_.begin(), entries_.begin() + static_cast<std::ptrdiff_t>(overflow));
+    }
+
     std::vector<std::string> entries_;
     LogSink sink_;
     std::string logFilePath_;
+    std::size_t maxEntryCount_ = 0;
 };
 
 class LoggingVideoPlugin final : public IVideoPlugin, public LoggingPluginSupport {
@@ -143,12 +174,12 @@ public:
         return "Logging Video Plugin";
     }
 
-    void onAttach(const MachineView&) override
+    void onAttach(MutableMachineView&) override
     {
         appendLog("video: attached");
     }
 
-    void onDetach(const MachineView&) override
+    void onDetach(MutableMachineView&) override
     {
         appendLog("video: detached");
     }
@@ -179,12 +210,12 @@ public:
         return "Logging Audio Plugin";
     }
 
-    void onAttach(const MachineView&) override
+    void onAttach(MutableMachineView&) override
     {
         appendLog("audio: attached");
     }
 
-    void onDetach(const MachineView&) override
+    void onDetach(MutableMachineView&) override
     {
         appendLog("audio: detached");
     }
@@ -215,12 +246,12 @@ public:
         return "Logging Digital Input Plugin";
     }
 
-    void onAttach(const MachineView&) override
+    void onAttach(MutableMachineView&) override
     {
         appendLog("input: attached");
     }
 
-    void onDetach(const MachineView&) override
+    void onDetach(MutableMachineView&) override
     {
         appendLog("input: detached");
     }

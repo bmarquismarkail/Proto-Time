@@ -28,7 +28,9 @@
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+#include "emulator/EmulatorConfig.hpp"
 #include "machine/plugins/SdlFrontendPluginLoader.hpp"
+#include "machine/TimingService.hpp"
 
 namespace {
 
@@ -39,101 +41,33 @@ void handleSignal(int)
     gStopRequested = 1;
 }
 
-struct EmulatorOptions {
-    std::filesystem::path romPath;
-    std::optional<std::filesystem::path> bootRomPath;
-    std::optional<std::filesystem::path> pluginPath;
-    std::optional<std::uint64_t> stepLimit;
-    int windowScale = 3;
-    bool headless = false;
-};
-
 void printUsage(std::string_view program)
 {
     std::cerr << "Usage: " << program << " --rom <path.gb> [options]\n"
               << "   or: " << program << " <path.gb> [options]\n\n"
               << "Options:\n"
+              << "  --config <path>    Optional INI-style emulator configuration file\n"
               << "  --rom <path>       Cartridge ROM to load\n"
               << "  --boot-rom <path>  Optional 256-byte DMG boot ROM\n"
               << "  --plugin <path>    Optional SDL frontend shared object override\n"
               << "  --steps <count>    Stop after a fixed number of instruction steps\n"
               << "  --scale <n>        SDL window scale factor (default: 3)\n"
+              << "  --unthrottled      Run unthrottled (no wall-clock pacing)\n"
+              << "  --speed <mult>     Start with speed multiplier (e.g. 2.0)\n"
+              << "  --pause            Start paused (use single-step to advance)\n"
+              << "  --no-audio         Disable frontend audio output\n"
+              << "  --audio-backend <name>\n"
+              << "                     Frontend audio backend: sdl, dummy, or file (default: sdl)\n"
+              << "  --visual-pack <path>\n"
+              << "                     Load a visual override pack.json; repeat to load multiple packs\n"
+              << "  --visual-capture <dir>\n"
+              << "                     Capture observed decoded visual resources for pack authoring\n"
+              << "  --visual-pack-reload\n"
+              << "                     Poll visual pack manifests/assets and reload changed packs\n"
               << "  --headless         Run without the SDL frontend plugin\n"
               << "  -h, --help         Show this help text\n\n"
               << "Controls:\n"
               << "  Arrow keys = D-pad, Z = A, X = B, Backspace = Select, Enter = Start\n";
-}
-
-void assignRomPath(EmulatorOptions& options, const char* value)
-{
-    if (!options.romPath.empty()) {
-        throw std::invalid_argument("ROM path was provided more than once");
-    }
-    options.romPath = value;
-}
-
-std::uint64_t parseUnsignedArgument(const char* value, std::string_view optionName)
-{
-    try {
-        std::size_t parsedChars = 0;
-        const auto parsedValue = std::stoull(value, &parsedChars, 0);
-        if (parsedChars != std::string(value).size()) {
-            throw std::invalid_argument("trailing characters");
-        }
-        return static_cast<std::uint64_t>(parsedValue);
-    } catch (const std::exception&) {
-        throw std::invalid_argument("Invalid value for " + std::string(optionName) + ": " + value);
-    }
-}
-
-EmulatorOptions parseArguments(int argc, char** argv)
-{
-    EmulatorOptions options;
-
-    for (int i = 1; i < argc; ++i) {
-        const std::string arg = argv[i];
-        if (arg == "--rom") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--rom requires a path");
-            }
-            assignRomPath(options, argv[++i]);
-        } else if (arg == "--boot-rom") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--boot-rom requires a path");
-            }
-            options.bootRomPath = std::filesystem::path(argv[++i]);
-        } else if (arg == "--plugin") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--plugin requires a path");
-            }
-            options.pluginPath = std::filesystem::path(argv[++i]);
-        } else if (arg == "--steps") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--steps requires a count");
-            }
-            options.stepLimit = parseUnsignedArgument(argv[++i], "--steps");
-        } else if (arg == "--scale") {
-            if (i + 1 >= argc) {
-                throw std::invalid_argument("--scale requires a positive integer");
-            }
-            options.windowScale = static_cast<int>(std::max<std::uint64_t>(1u, parseUnsignedArgument(argv[++i], "--scale")));
-        } else if (arg == "--headless") {
-            options.headless = true;
-        } else if (arg == "-h" || arg == "--help") {
-            printUsage(argv[0]);
-            std::exit(EXIT_SUCCESS);
-        } else if (!arg.empty() && arg.front() == '-') {
-            throw std::invalid_argument("Unknown option: " + arg);
-        } else {
-            assignRomPath(options, argv[i]);
-        }
-    }
-
-    if (options.romPath.empty()) {
-        throw std::invalid_argument("Missing ROM path. Use --rom <file.gb>.");
-    }
-
-    return options;
 }
 
 std::vector<std::uint8_t> readBinaryFile(const std::filesystem::path& path)
@@ -157,7 +91,12 @@ std::vector<std::uint8_t> readBinaryFile(const std::filesystem::path& path)
 int main(int argc, char** argv)
 {
     try {
-        const auto options = parseArguments(argc, argv);
+        const auto parsedArguments = BMMQ::parseEmulatorArguments(argc, argv);
+        if (parsedArguments.helpRequested) {
+            printUsage((argc > 0 && argv != nullptr) ? argv[0] : "timeEmulator");
+            return EXIT_SUCCESS;
+        }
+        const auto options = BMMQ::resolveEmulatorConfig(parsedArguments);
 
         std::signal(SIGINT, handleSignal);
 #ifdef SIGTERM
@@ -170,20 +109,39 @@ int main(int argc, char** argv)
             machine.loadBootRom(readBinaryFile(*options.bootRomPath));
         }
 
-        const auto romBytes = readBinaryFile(options.romPath);
-        machine.loadRom(romBytes);
+        std::size_t romSize = machine.loadRomFromPath(options.romPath);
+
+        for (const auto& visualPackPath : options.visualPackPaths) {
+            if (!machine.visualOverrideService().loadPackManifest(visualPackPath)) {
+                throw std::runtime_error(
+                    "Unable to load visual pack: " + visualPackPath.string() +
+                    " (" + machine.visualOverrideService().lastError() + ")");
+            }
+        }
+
+        bool captureStarted = false;
+        if (options.visualCapturePath.has_value()) {
+            if (!machine.visualOverrideService().beginCapture(*options.visualCapturePath, "gameboy")) {
+                throw std::runtime_error(
+                    "Unable to start visual resource capture: " + options.visualCapturePath->string() +
+                    " (" + machine.visualOverrideService().lastError() + ")");
+            }
+            captureStarted = true;
+        }
 
         BMMQ::ISdlFrontendPlugin* frontend = nullptr;
         std::unique_ptr<BMMQ::ISdlFrontendPlugin> frontendPlugin;
         if (!options.headless) {
             BMMQ::SdlFrontendConfig config;
             config.windowTitle = "Proto-Time - " + options.romPath.filename().string();
-            config.windowScale = std::max(options.windowScale, 1);
+            config.windowScale = std::max(options.windowScale, 1u);
             config.autoInitializeBackend = true;
             config.createHiddenWindowOnInitialize = true;
             config.pumpBackendEventsOnInputSample = false;
             config.autoPresentOnVideoEvent = false;
             config.showWindowOnPresent = true;
+            config.enableAudio = options.audioEnabled;
+            config.audioBackend = options.audioBackend;
 
             const auto pluginPath = options.pluginPath.value_or(
                 BMMQ::defaultSdlFrontendPluginPath((argc > 0 && argv != nullptr)
@@ -193,7 +151,7 @@ int main(int argc, char** argv)
                 frontendPlugin = BMMQ::loadSdlFrontendPlugin(pluginPath, config);
                 frontend = frontendPlugin.get();
                 machine.pluginManager().add(std::move(frontendPlugin));
-                machine.pluginManager().initialize(machine.view());
+                machine.pluginManager().initialize(machine.mutableView());
                 frontend->requestWindowVisibility(true);
                 frontend->serviceFrontend();
             } catch (const std::exception& ex) {
@@ -201,9 +159,19 @@ int main(int argc, char** argv)
             }
         }
 
-        std::cout << "Loaded ROM: " << options.romPath << " (" << romBytes.size() << " bytes)\n";
+        std::cout << "Loaded ROM: " << options.romPath << " ("
+            << romSize << " bytes)\n";
         if (options.bootRomPath.has_value()) {
             std::cout << "Loaded boot ROM: " << *options.bootRomPath << '\n';
+        }
+        for (const auto& visualPackPath : options.visualPackPaths) {
+            std::cout << "Loaded visual pack: " << visualPackPath << '\n';
+        }
+        if (options.visualPackReload) {
+            std::cout << "Visual pack reload polling enabled\n";
+        }
+        if (options.visualCapturePath.has_value()) {
+            std::cout << "Capturing visual resources to: " << *options.visualCapturePath << '\n';
         }
         if (frontend != nullptr) {
             std::cout << "Frontend: " << frontend->backendStatusSummary() << '\n';
@@ -215,31 +183,160 @@ int main(int argc, char** argv)
         }
 
         std::uint64_t steps = 0;
-        constexpr std::uint64_t kFrontendServiceInterval = 512;
-        constexpr std::uint64_t kYieldInterval = 8192;
+        const auto cpuClockHz = machine.clockHz();
+        using SteadyClock = std::chrono::steady_clock;
+        constexpr auto kFrontendServicePeriod = std::chrono::milliseconds(1);
+        constexpr auto kMaxCatchUpWindow = std::chrono::milliseconds(8);
+        constexpr auto kMinSleepQuantum = std::chrono::milliseconds(1);
+        const double kMinInstructionCycles = 4.0;
+        const double kExecutionSliceSeconds = 0.001;
+        const double kFrontendServiceSliceSeconds = 0.001;
+
+        BMMQ::TimingService timingService;
+        BMMQ::TimingConfig timingConfig;
+        timingConfig.baseClockHz = static_cast<double>(cpuClockHz);
+        timingConfig.speedMultiplier = options.speedMultiplier;
+        timingConfig.minInstructionCycles = kMinInstructionCycles;
+        timingConfig.executionSliceSeconds = kExecutionSliceSeconds;
+        timingConfig.frontendServiceSliceSeconds = kFrontendServiceSliceSeconds;
+        timingConfig.maxCatchUp = kMaxCatchUpWindow;
+        timingConfig.minSleepQuantum = kMinSleepQuantum;
+        timingConfig.throttled = !options.unthrottled;
+        timingService.configure(timingConfig);
+        BMMQ::TimingEngine timingEngine(timingConfig);
+
+        auto initialNow = SteadyClock::now();
+        auto nextFrontendService = initialNow + kFrontendServicePeriod;
+        timingService.start(initialNow);
+        timingEngine.start(initialNow);
+        if (options.startPaused) {
+            timingService.setPaused(true);
+        }
+
+        auto pollVisualPackReload = [&]() {
+            if (!options.visualPackReload) {
+                return;
+            }
+            const bool reloaded = machine.visualOverrideService().reloadChangedPacks();
+            if (!reloaded) {
+                if (const auto warning = machine.visualOverrideService().takeReloadWarning(); warning.has_value()) {
+                    std::cerr << "warning: " << *warning << '\n';
+                }
+            }
+        };
+
+        auto serviceFrontend = [&]() -> bool {
+            if (frontend == nullptr) {
+                return false;
+            }
+            frontend->serviceFrontend();
+            pollVisualPackReload();
+            return frontend->quitRequested();
+        };
+
+        auto serviceFrontendUntil = [&](SteadyClock::time_point now) -> bool {
+            bool servicedFrontend = false;
+            if (frontend == nullptr || now < nextFrontendService) {
+                return false;
+            }
+            if (now - nextFrontendService > kMaxCatchUpWindow) {
+                nextFrontendService = now;
+            }
+            do {
+                servicedFrontend = true;
+                if (serviceFrontend()) {
+                    return true;
+                }
+                nextFrontendService += kFrontendServicePeriod;
+            } while (nextFrontendService <= now);
+            if (servicedFrontend) {
+                timingEngine.applyControl(timingService.takeControlSnapshot());
+                machine.serviceInput();
+            }
+            return false;
+        };
 
         while (gStopRequested == 0) {
             if (options.stepLimit.has_value() && steps >= *options.stepLimit) {
                 break;
             }
 
-            machine.step();
-            ++steps;
+            const auto now = SteadyClock::now();
+            if (serviceFrontendUntil(now)) {
+                break;
+            }
 
-            if (frontend != nullptr && (steps % kFrontendServiceInterval) == 0u) {
-                frontend->serviceFrontend();
-                if (frontend->quitRequested()) {
+            timingEngine.applyControl(timingService.takeControlSnapshot());
+            timingEngine.update(now);
+
+            bool executedInstruction = false;
+            bool executionSliceActive = false;
+            while (timingEngine.canExecute() && gStopRequested == 0) {
+                if (options.stepLimit.has_value() && steps >= *options.stepLimit) {
+                    break;
+                }
+
+                if (!executionSliceActive) {
+                    timingEngine.beginExecutionSlice();
+                    executionSliceActive = true;
+                }
+
+                machine.step();
+                ++steps;
+                executedInstruction = true;
+
+                const auto retiredCycles = static_cast<double>(machine.runtimeContext().getLastFeedback().retiredCycles);
+                const auto chargedCycles = std::max(kMinInstructionCycles, retiredCycles);
+                timingEngine.charge(retiredCycles);
+                const auto sliceDecision = timingEngine.recordExecutionSliceCycles(chargedCycles);
+
+                if (sliceDecision.frontendServiceDue && serviceFrontendUntil(SteadyClock::now())) {
+                    gStopRequested = 1;
+                    break;
+                }
+                if (sliceDecision.executionSliceComplete) {
                     break;
                 }
             }
+            timingService.publishEngineStats(timingEngine.stats());
 
-            if ((steps % kYieldInterval) == 0u) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            if (gStopRequested != 0) {
+                break;
+            }
+
+            const auto idleNow = SteadyClock::now();
+            if (serviceFrontendUntil(idleNow)) {
+                break;
+            }
+            if (frontend == nullptr) {
+                pollVisualPackReload();
+            }
+
+            if (!executedInstruction) {
+                const auto nextStepTime = timingEngine.nextWakeTime(idleNow);
+                const auto frontendWakeTime = (frontend != nullptr) ? nextFrontendService : idleNow;
+                const auto nextWakeTime = (frontend != nullptr)
+                    ? std::min(frontendWakeTime, nextStepTime)
+                    : nextStepTime;
+
+                const bool frontendSleepDue = (frontend != nullptr) && (frontendWakeTime > idleNow);
+                const bool timingSleepDue = timingEngine.shouldSleep(idleNow) && (nextStepTime > idleNow);
+
+                if (timingSleepDue || frontendSleepDue) {
+                    if (nextWakeTime > idleNow) {
+                        std::this_thread::sleep_until(nextWakeTime);
+                    }
+                }
             }
         }
 
-        if (frontend != nullptr) {
-            frontend->serviceFrontend();
+        serviceFrontend();
+        if (captureStarted) {
+            machine.visualOverrideService().endCapture();
+        }
+        if (!options.visualPackPaths.empty() || options.visualCapturePath.has_value()) {
+            (void)machine.visualOverrideService().captureStats();
+            std::cout << machine.visualOverrideService().authorDiagnosticsReport();
         }
 
         const auto pc = machine.runtimeContext().readRegister16(GB::RegisterId::PC);

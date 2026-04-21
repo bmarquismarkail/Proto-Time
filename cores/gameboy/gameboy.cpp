@@ -29,6 +29,86 @@ constexpr DataType kInterruptSerial = 0x08;
 constexpr DataType kInterruptJoypad = 0x10;
 constexpr DataType kInterruptMask = 0x1F;
 
+constexpr std::array<BMMQ::OpcodeCycles, 256> kUnprefixedOpcodeCycles {{
+    {4, 4}, {12, 12}, {8, 8}, {8, 8}, {4, 4}, {4, 4}, {8, 8}, {4, 4},
+    {20, 20}, {8, 8}, {8, 8}, {8, 8}, {4, 4}, {4, 4}, {8, 8}, {4, 4},
+    {4, 4}, {12, 12}, {8, 8}, {8, 8}, {4, 4}, {4, 4}, {8, 8}, {4, 4},
+    {12, 12}, {8, 8}, {8, 8}, {8, 8}, {4, 4}, {4, 4}, {8, 8}, {4, 4},
+    {8, 12}, {12, 12}, {8, 8}, {8, 8}, {4, 4}, {4, 4}, {8, 8}, {4, 4},
+    {8, 12}, {8, 8}, {8, 8}, {8, 8}, {4, 4}, {4, 4}, {8, 8}, {4, 4},
+    {8, 12}, {12, 12}, {8, 8}, {8, 8}, {12, 12}, {12, 12}, {12, 12}, {4, 4},
+    {8, 12}, {8, 8}, {8, 8}, {8, 8}, {4, 4}, {4, 4}, {8, 8}, {4, 4},
+    {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {8, 8}, {4, 4},
+    {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {8, 8}, {4, 4},
+    {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {8, 8}, {4, 4},
+    {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {8, 8}, {4, 4},
+    {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {8, 8}, {4, 4},
+    {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {8, 8}, {4, 4},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {4, 4}, {8, 8},
+    {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {8, 8}, {4, 4},
+    {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {8, 8}, {4, 4},
+    {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {8, 8}, {4, 4},
+    {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {8, 8}, {4, 4},
+    {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {8, 8}, {4, 4},
+    {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {8, 8}, {4, 4},
+    {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {8, 8}, {4, 4},
+    {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {8, 8}, {4, 4},
+    {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {4, 4}, {8, 8}, {4, 4},
+    {8, 20}, {12, 12}, {12, 16}, {16, 16}, {12, 24}, {16, 16}, {8, 8}, {16, 16},
+    {8, 20}, {16, 16}, {12, 16}, {4, 4}, {12, 24}, {24, 24}, {8, 8}, {16, 16},
+    {8, 20}, {12, 12}, {12, 16}, {4, 4}, {12, 24}, {16, 16}, {8, 8}, {16, 16},
+    {8, 20}, {16, 16}, {12, 16}, {4, 4}, {12, 24}, {4, 4}, {8, 8}, {16, 16},
+    {12, 12}, {12, 12}, {8, 8}, {4, 4}, {4, 4}, {16, 16}, {8, 8}, {16, 16},
+    {16, 16}, {4, 4}, {16, 16}, {4, 4}, {4, 4}, {4, 4}, {8, 8}, {16, 16},
+    {12, 12}, {12, 12}, {8, 8}, {4, 4}, {4, 4}, {16, 16}, {8, 8}, {16, 16},
+    {12, 12}, {8, 8}, {16, 16}, {4, 4}, {4, 4}, {4, 4}, {8, 8}, {16, 16},
+}};
+
+constexpr std::array<BMMQ::OpcodeCycles, 256> kCbPrefixedOpcodeCycles {{
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {16, 16}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {16, 16}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {16, 16}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {16, 16}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {16, 16}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {16, 16}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {16, 16}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {16, 16}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {12, 12}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {12, 12}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {12, 12}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {12, 12}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {12, 12}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {12, 12}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {12, 12}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {12, 12}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {16, 16}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {16, 16}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {16, 16}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {16, 16}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {16, 16}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {16, 16}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {16, 16}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {16, 16}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {16, 16}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {16, 16}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {16, 16}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {16, 16}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {16, 16}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {16, 16}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {16, 16}, {8, 8},
+    {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {8, 8}, {16, 16}, {8, 8},
+}};
+
+constexpr BMMQ::OpcodeCycles opcodeCyclesFor(DataType opcode)
+{
+    return kUnprefixedOpcodeCycles[opcode];
+}
+
+constexpr BMMQ::OpcodeCycles cbOpcodeCyclesFor(DataType opcode)
+{
+    return kCbPrefixedOpcodeCycles[opcode];
+}
+
 uint16_t timerBitMaskForTac(DataType tac)
 {
     switch (tac & 0x03u) {
@@ -275,191 +355,6 @@ void updateControlFlowPc(MemoryView& snapshot, AddressType target, DataType inst
     pc->value = static_cast<AddressType>(target - instructionLength);
 }
 
-std::size_t instructionCyclesFor(const BMMQ::fetchBlock<AddressType, DataType>& fetchBlock,
-                                 AddressType pcBefore,
-                                 AddressType pcAfter)
-{
-    const auto& blockData = fetchBlock.getblockData();
-    if (blockData.empty() || blockData.front().data.empty()) {
-        return 0;
-    }
-
-    const auto& data = blockData.front().data;
-    const DataType opcode = data.front();
-    const auto sequentialPc = static_cast<AddressType>(pcBefore + data.size());
-    const bool tookBranch = pcAfter != sequentialPc;
-
-    if (opcode >= 0x40u && opcode <= 0x7Fu && opcode != 0x76u) {
-        const auto src = GB::Decode::decodeR8Src(opcode);
-        const auto dest = GB::Decode::decodeR8Dest(opcode);
-        return (src == GB::Decode::R8::HLIndirect || dest == GB::Decode::R8::HLIndirect) ? 8u : 4u;
-    }
-
-    if (opcode >= 0x80u && opcode <= 0xBFu) {
-        return GB::Decode::decodeR8Src(opcode) == GB::Decode::R8::HLIndirect ? 8u : 4u;
-    }
-
-    switch (opcode) {
-    case 0x00:
-    case 0x07:
-    case 0x0F:
-    case 0x17:
-    case 0x1F:
-    case 0x27:
-    case 0x2F:
-    case 0x37:
-    case 0x3F:
-    case 0x76:
-    case 0xE9:
-    case 0xF3:
-    case 0xFB:
-        return 4u;
-
-    case 0x01:
-    case 0x11:
-    case 0x21:
-    case 0x31:
-    case 0xC2:
-    case 0xCA:
-    case 0xD2:
-    case 0xDA:
-        return tookBranch ? 16u : 12u;
-
-    case 0x03:
-    case 0x13:
-    case 0x23:
-    case 0x33:
-    case 0x0B:
-    case 0x1B:
-    case 0x2B:
-    case 0x3B:
-    case 0x09:
-    case 0x19:
-    case 0x29:
-    case 0x39:
-    case 0xE2:
-    case 0xF2:
-    case 0xF9:
-        return 8u;
-
-    case 0x04:
-    case 0x0C:
-    case 0x14:
-    case 0x1C:
-    case 0x24:
-    case 0x2C:
-    case 0x34:
-    case 0x3C:
-    case 0x05:
-    case 0x0D:
-    case 0x15:
-    case 0x1D:
-    case 0x25:
-    case 0x2D:
-    case 0x35:
-    case 0x3D:
-        return GB::Decode::decodeR8Dest(opcode) == GB::Decode::R8::HLIndirect ? 12u : 4u;
-
-    case 0x06:
-    case 0x0E:
-    case 0x16:
-    case 0x1E:
-    case 0x26:
-    case 0x2E:
-    case 0x36:
-    case 0x3E:
-        return GB::Decode::decodeR8Dest(opcode) == GB::Decode::R8::HLIndirect ? 12u : 8u;
-
-    case 0x08:
-        return 20u;
-
-    case 0x02:
-    case 0x12:
-    case 0x22:
-    case 0x32:
-    case 0x0A:
-    case 0x1A:
-    case 0x2A:
-    case 0x3A:
-    case 0x18:
-    case 0xC6:
-    case 0xCE:
-    case 0xD6:
-    case 0xDE:
-    case 0xE6:
-    case 0xEE:
-    case 0xF6:
-    case 0xFE:
-        return 8u;
-
-    case 0x20:
-    case 0x28:
-    case 0x30:
-    case 0x38:
-        return tookBranch ? 12u : 8u;
-
-    case 0xC0:
-    case 0xC8:
-    case 0xD0:
-    case 0xD8:
-        return tookBranch ? 20u : 8u;
-
-    case 0xC1:
-    case 0xD1:
-    case 0xE1:
-    case 0xF1:
-        return 12u;
-
-    case 0xC3:
-    case 0xEA:
-    case 0xFA:
-        return 16u;
-
-    case 0xC4:
-    case 0xCC:
-    case 0xD4:
-    case 0xDC:
-        return tookBranch ? 24u : 12u;
-
-    case 0xC5:
-    case 0xD5:
-    case 0xE5:
-    case 0xF5:
-        return 16u;
-
-    case 0xC7:
-    case 0xCF:
-    case 0xD7:
-    case 0xDF:
-    case 0xE7:
-    case 0xEF:
-    case 0xF7:
-    case 0xFF:
-        return 16u;
-
-    case 0xC9:
-    case 0xD9:
-    case 0xE8:
-        return 16u;
-
-    case 0xCD:
-        return 24u;
-
-    case 0xCB:
-        if (data.size() > 1 && GB::Decode::decodeR8(data[1]) == GB::Decode::R8::HLIndirect) {
-            return 16u;
-        }
-        return 8u;
-
-    case 0xE0:
-    case 0xF0:
-    case 0xF8:
-        return 12u;
-    }
-
-    return static_cast<std::size_t>(data.size()) * 4u;
-}
-
 AddressType pop16(MemoryView& snapshot)
 {
     auto* sp = getRegister(snapshot, GB::RegisterId::SP);
@@ -577,18 +472,19 @@ bool isControlFlowOpcode(DataType opcode)
     }
 }
 
-template <typename Emit>
-auto makeOpcode(DataType length, Emit&& emit)
+template <typename CycleResolver, typename Emit>
+auto makeOpcode(DataType length, CycleResolver&& cycleResolver, Emit&& emit)
 {
     return BMMQ::make_opcode<AddressType, DataType, AddressType>(
         length,
+        std::forward<CycleResolver>(cycleResolver),
         BMMQ::make_microcode<AddressType, DataType, AddressType>(std::forward<Emit>(emit)));
 }
 
 template <typename Step>
-auto emitStep(DataType length, Step&& step)
+auto emitStep(DataType length, BMMQ::OpcodeCycles cycles, Step&& step)
 {
-    return makeOpcode(length, [fn = std::forward<Step>(step)](auto& block, const auto& fetchData, std::size_t opcodeIndex) {
+    return makeOpcode(length, cycles, [fn = std::forward<Step>(step)](auto& block, const auto& fetchData, std::size_t opcodeIndex) {
         const DataType opcode = fetchData.data[opcodeIndex];
         fn(block, fetchData, opcodeIndex, opcode);
     });
@@ -682,14 +578,29 @@ void LR3592_DMG::cacheRegisterRef(CachedRegisterRef& slot, std::string_view name
     }
 }
 
+void LR3592_DMG::cacheRegisterPair(LR3592_RegisterPair*& slot, std::string_view name)
+{
+    if (auto* entry = mem.file.findRegister(name); entry != nullptr && entry->reg != nullptr) {
+        auto* regPair = dynamic_cast<LR3592_RegisterPair*>(entry->reg.get());
+        assert(regPair != nullptr && "Register entry is not LR3592_RegisterPair");
+        slot = regPair;
+    }
+}
+
 void LR3592_DMG::initializeRegisterCache()
 {
     if (auto* entry = mem.file.findRegister(GB::RegisterId::PC); entry != nullptr && entry->reg != nullptr) {
         pcRegister_ = entry->reg.get();
+        cpuRegisters_.pc = pcRegister_;
     }
     if (auto* entry = mem.file.findRegister(GB::RegisterId::SP); entry != nullptr && entry->reg != nullptr) {
         spRegister_ = entry->reg.get();
+        cpuRegisters_.sp = spRegister_;
     }
+    cacheRegisterPair(cpuRegisters_.af, GB::RegisterId::AF);
+    cacheRegisterPair(cpuRegisters_.bc, GB::RegisterId::BC);
+    cacheRegisterPair(cpuRegisters_.de, GB::RegisterId::DE);
+    cacheRegisterPair(cpuRegisters_.hl, GB::RegisterId::HL);
 
     cacheRegisterRef(hardwareRegisters_.joyp, "JOYP", 0xFF00u);
     cacheRegisterRef(hardwareRegisters_.sb, "SB", 0xFF01u);
@@ -705,6 +616,151 @@ void LR3592_DMG::initializeRegisterCache()
     cacheRegisterRef(hardwareRegisters_.lyc, "LYC", 0xFF45u);
     cacheRegisterRef(hardwareRegisters_.dma, "DMA", 0xFF46u);
     cacheRegisterRef(hardwareRegisters_.ie, GB::RegisterId::IE, 0xFFFFu);
+}
+
+DataType LR3592_DMG::cachedReadR8(DataType regCode)
+{
+    switch (regCode & 0x07u) {
+    case 0:
+        return cpuRegisters_.bc != nullptr ? static_cast<DataType>(cpuRegisters_.bc->hi) : 0;
+    case 1:
+        return cpuRegisters_.bc != nullptr ? static_cast<DataType>(cpuRegisters_.bc->lo) : 0;
+    case 2:
+        return cpuRegisters_.de != nullptr ? static_cast<DataType>(cpuRegisters_.de->hi) : 0;
+    case 3:
+        return cpuRegisters_.de != nullptr ? static_cast<DataType>(cpuRegisters_.de->lo) : 0;
+    case 4:
+        return cpuRegisters_.hl != nullptr ? static_cast<DataType>(cpuRegisters_.hl->hi) : 0;
+    case 5:
+        return cpuRegisters_.hl != nullptr ? static_cast<DataType>(cpuRegisters_.hl->lo) : 0;
+    case 6:
+        return cpuRegisters_.hl != nullptr ? read8(mem, cpuRegisters_.hl->value) : 0;
+    case 7:
+        return static_cast<DataType>(cachedAccumulator());
+    }
+    return 0;
+}
+
+void LR3592_DMG::cachedWriteR8(DataType regCode, DataType value)
+{
+    switch (regCode & 0x07u) {
+    case 0:
+        if (cpuRegisters_.bc != nullptr) cpuRegisters_.bc->hi = value;
+        break;
+    case 1:
+        if (cpuRegisters_.bc != nullptr) cpuRegisters_.bc->lo = value;
+        break;
+    case 2:
+        if (cpuRegisters_.de != nullptr) cpuRegisters_.de->hi = value;
+        break;
+    case 3:
+        if (cpuRegisters_.de != nullptr) cpuRegisters_.de->lo = value;
+        break;
+    case 4:
+        if (cpuRegisters_.hl != nullptr) cpuRegisters_.hl->hi = value;
+        break;
+    case 5:
+        if (cpuRegisters_.hl != nullptr) cpuRegisters_.hl->lo = value;
+        break;
+    case 6:
+        if (cpuRegisters_.hl != nullptr) write8(mem, cpuRegisters_.hl->value, value);
+        break;
+    case 7:
+        cachedAccumulator() = value;
+        break;
+    }
+}
+
+AddressType& LR3592_DMG::cachedR16(DataType regCode)
+{
+    switch (regCode & 0x03u) {
+    case 0:
+        assert(cpuRegisters_.bc != nullptr);
+        return cpuRegisters_.bc->value;
+    case 1:
+        assert(cpuRegisters_.de != nullptr);
+        return cpuRegisters_.de->value;
+    case 2:
+        assert(cpuRegisters_.hl != nullptr);
+        return cpuRegisters_.hl->value;
+    default:
+        assert(cpuRegisters_.sp != nullptr);
+        return cpuRegisters_.sp->value;
+    }
+}
+
+AddressType& LR3592_DMG::cachedStackR16(DataType regCode)
+{
+    switch (regCode & 0x03u) {
+    case 0:
+        assert(cpuRegisters_.bc != nullptr);
+        return cpuRegisters_.bc->value;
+    case 1:
+        assert(cpuRegisters_.de != nullptr);
+        return cpuRegisters_.de->value;
+    case 2:
+        assert(cpuRegisters_.hl != nullptr);
+        return cpuRegisters_.hl->value;
+    default:
+        assert(cpuRegisters_.af != nullptr);
+        return cpuRegisters_.af->value;
+    }
+}
+
+BMMQ::RegisterByteRef& LR3592_DMG::cachedAccumulator()
+{
+    assert(cpuRegisters_.af != nullptr);
+    return cpuRegisters_.af->hi;
+}
+
+BMMQ::RegisterByteRef& LR3592_DMG::cachedFlags()
+{
+    assert(cpuRegisters_.af != nullptr);
+    return cpuRegisters_.af->lo;
+}
+
+bool LR3592_DMG::cachedConditionHolds(DataType conditionCode)
+{
+    const DataType flagReg = cachedFlags();
+    switch (conditionCode & 0x03u) {
+    case 0:
+        return (flagReg & kFlagZ) == 0;
+    case 1:
+        return (flagReg & kFlagZ) != 0;
+    case 2:
+        return (flagReg & kFlagC) == 0;
+    case 3:
+        return (flagReg & kFlagC) != 0;
+    }
+    return false;
+}
+
+void LR3592_DMG::cachedSetFlags(bool z, bool n, bool h, bool c)
+{
+    cachedFlags() = static_cast<DataType>(
+        (z ? kFlagZ : 0) |
+        (n ? kFlagN : 0) |
+        (h ? kFlagH : 0) |
+        (c ? kFlagC : 0));
+}
+
+void LR3592_DMG::cachedPush16(AddressType value)
+{
+    assert(cpuRegisters_.sp != nullptr);
+    cpuRegisters_.sp->value = static_cast<AddressType>(cpuRegisters_.sp->value - 2);
+    const std::array<DataType, 2> bytes{{
+        static_cast<DataType>(value & 0x00FFu),
+        static_cast<DataType>((value >> 8u) & 0x00FFu),
+    }};
+    mem.write(std::span<const DataType>(bytes.data(), bytes.size()), static_cast<AddressType>(cpuRegisters_.sp->value));
+}
+
+AddressType LR3592_DMG::cachedPop16()
+{
+    assert(cpuRegisters_.sp != nullptr);
+    const AddressType value = read16(mem, static_cast<AddressType>(cpuRegisters_.sp->value));
+    cpuRegisters_.sp->value = static_cast<AddressType>(cpuRegisters_.sp->value + 2);
+    return value;
 }
 
 DataType LR3592_DMG::readCachedRegister(const CachedRegisterRef& slot)
@@ -1773,6 +1829,8 @@ void LR3592_DMG::decodeInto(BMMQ::fetchBlock<AddressType, DataType>& fetchData,
                 throw std::runtime_error("truncated opcode stream");
             }
 
+            const auto opcodeCycles = entry->cycles(dataBlock, i);
+            block.addCycleCharge(opcodeCycles.notTaken, opcodeCycles.taken);
             entry->emit(block, dataBlock, i);
             i += opcodeLength;
             consumedBytes += opcodeLength;
@@ -1800,6 +1858,7 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
         : 0;
     feedback.isControlFlow = isControlFlowOpcode(opcode);
     feedback.segmentBoundaryHint = feedback.isControlFlow;
+    feedback.retiredCycles = 0;
 
     auto finalizeFast = [&](std::size_t executedByteCount) {
         std::size_t pcAdvance = executedByteCount;
@@ -1820,19 +1879,23 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
         std::size_t retiredCycles = pendingCycleCharge_;
         pendingCycleCharge_ = 0;
         if (retiredCycles == 0) {
-            retiredCycles = instructionCyclesFor(
-                fb,
-                static_cast<AddressType>(feedback.pcBefore),
-                static_cast<AddressType>(feedback.pcAfter));
+            if (const auto& entry = opcodeTable[opcode]; entry.has_value()) {
+                const auto cycles = entry->cycles(blocks.front(), 0);
+                const auto sequentialPc = static_cast<AddressType>(feedback.pcBefore + executedByteCount);
+                retiredCycles = (static_cast<AddressType>(feedback.pcAfter) != sequentialPc)
+                    ? cycles.taken
+                    : cycles.notTaken;
+            }
         }
+        feedback.retiredCycles = static_cast<uint32_t>(retiredCycles);
         retireInstruction(retiredCycles);
         return true;
     };
 
     auto executeMathOp = [&](DataType code, DataType rhs) {
-        auto& a = accumulator(mem);
+        auto& a = cachedAccumulator();
         const DataType lhs = a;
-        const bool carryIn = (flags(mem) & kFlagC) != 0;
+        const bool carryIn = (cachedFlags() & kFlagC) != 0;
 
         DataType result = lhs;
         bool z = false;
@@ -1883,22 +1946,22 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
             c = lhs < rhs;
             z = lhs == rhs;
             n = true;
-            setFlags(mem, z, n, h, c);
+            cachedSetFlags(z, n, h, c);
             return;
         }
 
         a = result;
         z = (a == 0);
-        setFlags(mem, z, n, h, c);
+        cachedSetFlags(z, n, h, c);
     };
 
     if (opcode >= 0x40u && opcode <= 0x7Fu && opcode != 0x76u) {
-        writeR8(mem, GB::Decode::decodeR8Dest(opcode), readR8(mem, GB::Decode::decodeR8Src(opcode)));
+        cachedWriteR8(static_cast<DataType>((opcode >> 3u) & 0x07u), cachedReadR8(static_cast<DataType>(opcode & 0x07u)));
         return finalizeFast(1);
     }
 
     if (opcode >= 0x80u && opcode <= 0xBFu) {
-        executeMathOp(opcode, readR8(mem, GB::Decode::decodeR8Src(opcode)));
+        executeMathOp(opcode, cachedReadR8(static_cast<DataType>(opcode & 0x07u)));
         return finalizeFast(1);
     }
 
@@ -1915,13 +1978,13 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
     case 0x11:
     case 0x21:
     case 0x31:
-        accessR16(mem, GB::Decode::decodeR16(opcode)) = fetchImm16(blocks.front(), 0);
+        cachedR16(static_cast<DataType>((opcode >> 4u) & 0x03u)) = fetchImm16(blocks.front(), 0);
         return finalizeFast(3);
     case 0x03:
     case 0x13:
     case 0x23:
     case 0x33: {
-        auto& reg = accessR16(mem, GB::Decode::decodeR16(opcode));
+        auto& reg = cachedR16(static_cast<DataType>((opcode >> 4u) & 0x03u));
         reg = static_cast<AddressType>(reg + 1u);
         return finalizeFast(1);
     }
@@ -1929,147 +1992,146 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
     case 0x1B:
     case 0x2B:
     case 0x3B: {
-        auto& reg = accessR16(mem, GB::Decode::decodeR16(opcode));
+        auto& reg = cachedR16(static_cast<DataType>((opcode >> 4u) & 0x03u));
         reg = static_cast<AddressType>(reg - 1u);
         return finalizeFast(1);
     }
     case 0x08:
-        write16(mem, fetchImm16(blocks.front(), 0), static_cast<AddressType>(getRegister(mem, GB::RegisterId::SP)->value));
+        write16(mem, fetchImm16(blocks.front(), 0), static_cast<AddressType>(cpuRegisters_.sp->value));
         return finalizeFast(3);
     case 0x09:
     case 0x19:
     case 0x29:
     case 0x39: {
-        auto& hl = getRegisterPair(mem, GB::RegisterId::HL)->value;
+        auto& hl = cpuRegisters_.hl->value;
         const AddressType lhs = hl;
-        const AddressType rhs = accessR16(mem, GB::Decode::decodeR16(opcode));
+        const AddressType rhs = cachedR16(static_cast<DataType>((opcode >> 4u) & 0x03u));
         hl = static_cast<AddressType>(lhs + rhs);
         const bool h = ((lhs & 0x0FFFu) + (rhs & 0x0FFFu)) > 0x0FFFu;
         const bool c = static_cast<uint32_t>(lhs) + static_cast<uint32_t>(rhs) > 0xFFFFu;
-        const bool z = (flags(mem) & kFlagZ) != 0;
-        setFlags(mem, z, false, h, c);
+        const bool z = (cachedFlags() & kFlagZ) != 0;
+        cachedSetFlags(z, false, h, c);
         return finalizeFast(1);
     }
     case 0x18: {
         const int8_t offset = static_cast<int8_t>(fetchImm8(blocks.front(), 0));
         const auto target = static_cast<AddressType>(static_cast<int32_t>(feedback.pcBefore) + 2 + offset);
-        updateControlFlowPc(mem, target, 2);
+        pcRegister_->value = static_cast<AddressType>(target - 2u);
         return finalizeFast(2);
     }
     case 0x20:
     case 0x28:
     case 0x30:
     case 0x38: {
-        if (conditionHolds(mem, GB::Decode::decodeCondition(opcode))) {
+        if (cachedConditionHolds(static_cast<DataType>((opcode >> 3u) & 0x03u))) {
             const int8_t offset = static_cast<int8_t>(fetchImm8(blocks.front(), 0));
             const auto target = static_cast<AddressType>(static_cast<int32_t>(feedback.pcBefore) + 2 + offset);
-            updateControlFlowPc(mem, target, 2);
+            pcRegister_->value = static_cast<AddressType>(target - 2u);
         }
         return finalizeFast(2);
     }
     case 0xC3:
-        updateControlFlowPc(mem, fetchImm16(blocks.front(), 0), 3);
+        pcRegister_->value = static_cast<AddressType>(fetchImm16(blocks.front(), 0) - 3u);
         return finalizeFast(3);
     case 0xC2:
     case 0xCA:
     case 0xD2:
     case 0xDA:
-        if (conditionHolds(mem, GB::Decode::decodeCondition(opcode))) {
-            updateControlFlowPc(mem, fetchImm16(blocks.front(), 0), 3);
+        if (cachedConditionHolds(static_cast<DataType>((opcode >> 3u) & 0x03u))) {
+            pcRegister_->value = static_cast<AddressType>(fetchImm16(blocks.front(), 0) - 3u);
         }
         return finalizeFast(3);
     case 0xC9:
-        updateControlFlowPc(mem, pop16(mem), 1);
+        pcRegister_->value = static_cast<AddressType>(cachedPop16() - 1u);
         return finalizeFast(1);
     case 0xD9:
-        updateControlFlowPc(mem, pop16(mem), 1);
+        pcRegister_->value = static_cast<AddressType>(cachedPop16() - 1u);
         setIme(true);
         return finalizeFast(1);
     case 0xC0:
     case 0xC8:
     case 0xD0:
     case 0xD8:
-        if (conditionHolds(mem, GB::Decode::decodeCondition(opcode))) {
-            updateControlFlowPc(mem, pop16(mem), 1);
+        if (cachedConditionHolds(static_cast<DataType>((opcode >> 3u) & 0x03u))) {
+            pcRegister_->value = static_cast<AddressType>(cachedPop16() - 1u);
         }
         return finalizeFast(1);
     case 0xCD: {
         const AddressType target = fetchImm16(blocks.front(), 0);
-        push16(mem, static_cast<AddressType>(feedback.pcBefore + 3u));
-        updateControlFlowPc(mem, target, 3);
+        cachedPush16(static_cast<AddressType>(feedback.pcBefore + 3u));
+        pcRegister_->value = static_cast<AddressType>(target - 3u);
         return finalizeFast(3);
     }
     case 0xC4:
     case 0xCC:
     case 0xD4:
     case 0xDC:
-        if (conditionHolds(mem, GB::Decode::decodeCondition(opcode))) {
-            push16(mem, static_cast<AddressType>(feedback.pcBefore + 3u));
-            updateControlFlowPc(mem, fetchImm16(blocks.front(), 0), 3);
+        if (cachedConditionHolds(static_cast<DataType>((opcode >> 3u) & 0x03u))) {
+            cachedPush16(static_cast<AddressType>(feedback.pcBefore + 3u));
+            pcRegister_->value = static_cast<AddressType>(fetchImm16(blocks.front(), 0) - 3u);
         }
         return finalizeFast(3);
     case 0xC1:
     case 0xD1:
     case 0xE1:
     case 0xF1: {
-        const auto target = GB::Decode::decodeR16Stack(opcode);
-        AddressType value = pop16(mem);
-        if (target == GB::Decode::R16Stack::AF) {
+        const DataType target = static_cast<DataType>((opcode >> 4u) & 0x03u);
+        AddressType value = cachedPop16();
+        if (target == 3u) {
             value = static_cast<AddressType>(value & 0xFFF0u);
         }
-        accessStackR16(mem, target) = value;
+        cachedStackR16(target) = value;
         return finalizeFast(1);
     }
     case 0xC5:
     case 0xD5:
     case 0xE5:
     case 0xF5:
-        push16(mem, accessStackR16(mem, GB::Decode::decodeR16Stack(opcode)));
+        cachedPush16(cachedStackR16(static_cast<DataType>((opcode >> 4u) & 0x03u)));
         return finalizeFast(1);
     case 0xE9:
-        updateControlFlowPc(mem, getRegisterPair(mem, GB::RegisterId::HL)->value, 1);
+        pcRegister_->value = static_cast<AddressType>(cpuRegisters_.hl->value - 1u);
         return finalizeFast(1);
     case 0xE0:
-        write8(mem, static_cast<AddressType>(0xFF00u + fetchImm8(blocks.front(), 0)), accumulator(mem));
+        write8(mem, static_cast<AddressType>(0xFF00u + fetchImm8(blocks.front(), 0)), cachedAccumulator());
         return finalizeFast(2);
     case 0xF0:
-        accumulator(mem) = read8(mem, static_cast<AddressType>(0xFF00u + fetchImm8(blocks.front(), 0)));
+        cachedAccumulator() = read8(mem, static_cast<AddressType>(0xFF00u + fetchImm8(blocks.front(), 0)));
         return finalizeFast(2);
     case 0xE2:
-        write8(mem, static_cast<AddressType>(0xFF00u + getRegisterPair(mem, GB::RegisterId::BC)->lo), accumulator(mem));
+        write8(mem, static_cast<AddressType>(0xFF00u + static_cast<DataType>(cpuRegisters_.bc->lo)), cachedAccumulator());
         return finalizeFast(1);
     case 0xF2:
-        accumulator(mem) = read8(mem, static_cast<AddressType>(0xFF00u + getRegisterPair(mem, GB::RegisterId::BC)->lo));
+        cachedAccumulator() = read8(mem, static_cast<AddressType>(0xFF00u + static_cast<DataType>(cpuRegisters_.bc->lo)));
         return finalizeFast(1);
     case 0xE8: {
         const int8_t offset = static_cast<int8_t>(fetchImm8(blocks.front(), 0));
-        auto* sp = getRegister(mem, GB::RegisterId::SP);
-        const AddressType original = sp->value;
-        sp->value = static_cast<AddressType>(static_cast<int32_t>(original) + offset);
+        const AddressType original = cpuRegisters_.sp->value;
+        cpuRegisters_.sp->value = static_cast<AddressType>(static_cast<int32_t>(original) + offset);
         const uint8_t low = static_cast<uint8_t>(original & 0xFFu);
         const uint8_t imm = static_cast<uint8_t>(offset);
-        setFlags(mem, false, false, ((low & 0x0Fu) + (imm & 0x0Fu)) > 0x0Fu,
-                 static_cast<uint16_t>(low) + static_cast<uint16_t>(imm) > 0xFFu);
+        cachedSetFlags(false, false, ((low & 0x0Fu) + (imm & 0x0Fu)) > 0x0Fu,
+                       static_cast<uint16_t>(low) + static_cast<uint16_t>(imm) > 0xFFu);
         return finalizeFast(2);
     }
     case 0xF8: {
         const int8_t offset = static_cast<int8_t>(fetchImm8(blocks.front(), 0));
-        const AddressType sp = static_cast<AddressType>(getRegister(mem, GB::RegisterId::SP)->value);
+        const AddressType sp = static_cast<AddressType>(cpuRegisters_.sp->value);
         const uint8_t low = static_cast<uint8_t>(sp & 0xFFu);
         const uint8_t imm = static_cast<uint8_t>(offset);
-        getRegisterPair(mem, GB::RegisterId::HL)->value = static_cast<AddressType>(static_cast<int32_t>(sp) + offset);
-        setFlags(mem, false, false, ((low & 0x0Fu) + (imm & 0x0Fu)) > 0x0Fu,
-                 static_cast<uint16_t>(low) + static_cast<uint16_t>(imm) > 0xFFu);
+        cpuRegisters_.hl->value = static_cast<AddressType>(static_cast<int32_t>(sp) + offset);
+        cachedSetFlags(false, false, ((low & 0x0Fu) + (imm & 0x0Fu)) > 0x0Fu,
+                       static_cast<uint16_t>(low) + static_cast<uint16_t>(imm) > 0xFFu);
         return finalizeFast(2);
     }
     case 0xF9:
-        getRegister(mem, GB::RegisterId::SP)->value = getRegisterPair(mem, GB::RegisterId::HL)->value;
+        cpuRegisters_.sp->value = cpuRegisters_.hl->value;
         return finalizeFast(1);
     case 0xEA:
-        write8(mem, fetchImm16(blocks.front(), 0), accumulator(mem));
+        write8(mem, fetchImm16(blocks.front(), 0), cachedAccumulator());
         return finalizeFast(3);
     case 0xFA:
-        accumulator(mem) = read8(mem, fetchImm16(blocks.front(), 0));
+        cachedAccumulator() = read8(mem, fetchImm16(blocks.front(), 0));
         return finalizeFast(3);
     case 0xF3:
         setIme(false);
@@ -2081,32 +2143,32 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
     case 0x0F:
     case 0x17:
     case 0x1F: {
-        auto& a = accumulator(mem);
-        const bool carryIn = (flags(mem) & kFlagC) != 0;
+        auto& a = cachedAccumulator();
+        const bool carryIn = (cachedFlags() & kFlagC) != 0;
         const DataType oldValue = a;
         switch ((opcode >> 3) & 0x03u) {
         case 0:
             a = static_cast<DataType>((a << 1) | (a >> 7));
-            setFlags(mem, false, false, false, (oldValue & 0x80u) != 0);
+            cachedSetFlags(false, false, false, (oldValue & 0x80u) != 0);
             break;
         case 1:
             a = static_cast<DataType>((a >> 1) | (a << 7));
-            setFlags(mem, false, false, false, (oldValue & 0x01u) != 0);
+            cachedSetFlags(false, false, false, (oldValue & 0x01u) != 0);
             break;
         case 2:
             a = static_cast<DataType>((a << 1) | (carryIn ? 1 : 0));
-            setFlags(mem, false, false, false, (oldValue & 0x80u) != 0);
+            cachedSetFlags(false, false, false, (oldValue & 0x80u) != 0);
             break;
         case 3:
             a = static_cast<DataType>((a >> 1) | (carryIn ? 0x80u : 0u));
-            setFlags(mem, false, false, false, (oldValue & 0x01u) != 0);
+            cachedSetFlags(false, false, false, (oldValue & 0x01u) != 0);
             break;
         }
         return finalizeFast(1);
     }
     case 0x27: {
-        auto& a = accumulator(mem);
-        const DataType flagReg = flags(mem);
+        auto& a = cachedAccumulator();
+        const DataType flagReg = cachedFlags();
         const bool n = (flagReg & kFlagN) != 0;
         const bool h = (flagReg & kFlagH) != 0;
         const bool c = (flagReg & kFlagC) != 0;
@@ -2121,20 +2183,20 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
             if (c) adjust |= 0x60u;
             a = static_cast<DataType>(a - adjust);
         }
-        flags(mem) = static_cast<DataType>(((a == 0) ? kFlagZ : 0) | (n ? kFlagN : 0) | (carry ? kFlagC : 0));
+        cachedFlags() = static_cast<DataType>(((a == 0) ? kFlagZ : 0) | (n ? kFlagN : 0) | (carry ? kFlagC : 0));
         return finalizeFast(1);
     }
     case 0x2F:
-        accumulator(mem) = static_cast<DataType>(~accumulator(mem));
-        flags(mem) = static_cast<DataType>((flags(mem) & (kFlagZ | kFlagC)) | kFlagN | kFlagH);
+        cachedAccumulator() = static_cast<DataType>(~cachedAccumulator());
+        cachedFlags() = static_cast<DataType>((cachedFlags() & (kFlagZ | kFlagC)) | kFlagN | kFlagH);
         return finalizeFast(1);
     case 0x37:
-        flags(mem) = static_cast<DataType>((flags(mem) & kFlagZ) | kFlagC);
+        cachedFlags() = static_cast<DataType>((cachedFlags() & kFlagZ) | kFlagC);
         return finalizeFast(1);
     case 0x3F: {
-        const bool carry = (flags(mem) & kFlagC) == 0;
-        flags(mem) = static_cast<DataType>(flags(mem) & kFlagZ);
-        if (carry) flags(mem) = static_cast<DataType>(flags(mem) | kFlagC);
+        const bool carry = (cachedFlags() & kFlagC) == 0;
+        cachedFlags() = static_cast<DataType>(cachedFlags() & kFlagZ);
+        if (carry) cachedFlags() = static_cast<DataType>(cachedFlags() | kFlagC);
         return finalizeFast(1);
     }
     case 0xC6:
@@ -2147,61 +2209,73 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
     case 0xFE:
         executeMathOp(opcode, fetchImm8(blocks.front(), 0));
         return finalizeFast(2);
+    case 0xC7:
+    case 0xCF:
+    case 0xD7:
+    case 0xDF:
+    case 0xE7:
+    case 0xEF:
+    case 0xF7:
+    case 0xFF: {
+        const AddressType target = static_cast<AddressType>(opcode & 0x38u);
+        cachedPush16(static_cast<AddressType>(feedback.pcBefore + 1u));
+        pcRegister_->value = static_cast<AddressType>(target - 1u);
+        return finalizeFast(1);
+    }
     default:
         break;
     }
 
     if ((opcode & 0xC7u) == 0x04u) {
-        const auto reg = GB::Decode::decodeR8Dest(opcode);
-        const DataType oldValue = readR8(mem, reg);
+        const DataType reg = static_cast<DataType>((opcode >> 3u) & 0x07u);
+        const DataType oldValue = cachedReadR8(reg);
         const DataType newValue = static_cast<DataType>(oldValue + 1u);
-        writeR8(mem, reg, newValue);
-        const bool c = (flags(mem) & kFlagC) != 0;
-        setFlags(mem, newValue == 0, false, ((oldValue & 0x0Fu) + 1u) > 0x0Fu, c);
+        cachedWriteR8(reg, newValue);
+        const bool c = (cachedFlags() & kFlagC) != 0;
+        cachedSetFlags(newValue == 0, false, ((oldValue & 0x0Fu) + 1u) > 0x0Fu, c);
         return finalizeFast(1);
     }
 
     if ((opcode & 0xC7u) == 0x05u) {
-        const auto reg = GB::Decode::decodeR8Dest(opcode);
-        const DataType oldValue = readR8(mem, reg);
+        const DataType reg = static_cast<DataType>((opcode >> 3u) & 0x07u);
+        const DataType oldValue = cachedReadR8(reg);
         const DataType newValue = static_cast<DataType>(oldValue - 1u);
-        writeR8(mem, reg, newValue);
-        const bool c = (flags(mem) & kFlagC) != 0;
-        setFlags(mem, newValue == 0, true, (oldValue & 0x0Fu) == 0, c);
+        cachedWriteR8(reg, newValue);
+        const bool c = (cachedFlags() & kFlagC) != 0;
+        cachedSetFlags(newValue == 0, true, (oldValue & 0x0Fu) == 0, c);
         return finalizeFast(1);
     }
 
     if ((opcode & 0xC7u) == 0x06u) {
-        writeR8(mem, GB::Decode::decodeR8Dest(opcode), fetchImm8(blocks.front(), 0));
+        cachedWriteR8(static_cast<DataType>((opcode >> 3u) & 0x07u), fetchImm8(blocks.front(), 0));
         return finalizeFast(2);
     }
 
     if (opcode == 0x02 || opcode == 0x12 || opcode == 0x22 || opcode == 0x32 ||
         opcode == 0x0A || opcode == 0x1A || opcode == 0x2A || opcode == 0x3A) {
-        auto* hl = getRegisterPair(mem, GB::RegisterId::HL);
         AddressType address = 0;
         switch (opcode) {
         case 0x02:
         case 0x0A:
-            address = getRegisterPair(mem, GB::RegisterId::BC)->value;
+            address = cpuRegisters_.bc->value;
             break;
         case 0x12:
         case 0x1A:
-            address = getRegisterPair(mem, GB::RegisterId::DE)->value;
+            address = cpuRegisters_.de->value;
             break;
         default:
-            address = hl->value;
+            address = cpuRegisters_.hl->value;
             break;
         }
         if ((opcode & 0x08u) == 0) {
-            write8(mem, address, accumulator(mem));
+            write8(mem, address, cachedAccumulator());
         } else {
-            accumulator(mem) = read8(mem, address);
+            cachedAccumulator() = read8(mem, address);
         }
         if (opcode == 0x22 || opcode == 0x2A) {
-            hl->value = static_cast<AddressType>(hl->value + 1u);
+            cpuRegisters_.hl->value = static_cast<AddressType>(cpuRegisters_.hl->value + 1u);
         } else if (opcode == 0x32 || opcode == 0x3A) {
-            hl->value = static_cast<AddressType>(hl->value - 1u);
+            cpuRegisters_.hl->value = static_cast<AddressType>(cpuRegisters_.hl->value - 1u);
         }
         return finalizeFast(1);
     }
@@ -2226,6 +2300,7 @@ void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, Addre
     }
     feedback.segmentBoundaryHint = feedback.isControlFlow;
     feedback.executionPath = BMMQ::ExecutionPathHint::CanonicalFetchDecodeExecute;
+    feedback.retiredCycles = 0;
 
     auto* snapshot = block.getSnapshot();
     if (snapshot == nullptr) return;
@@ -2254,12 +2329,13 @@ void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, Addre
         if (executedByteCount == 0 && (haltFlag || stopFlag || dmaActive)) {
             retiredCycles = 4u;
         } else {
-            retiredCycles = instructionCyclesFor(
-                fb,
-                static_cast<AddressType>(feedback.pcBefore),
-                static_cast<AddressType>(feedback.pcAfter));
+            const auto sequentialPc = static_cast<AddressType>(feedback.pcBefore + executedByteCount);
+            retiredCycles = (static_cast<AddressType>(feedback.pcAfter) != sequentialPc)
+                ? block.cyclesIfTaken()
+                : block.cyclesIfNotTaken();
         }
     }
+    feedback.retiredCycles = static_cast<uint32_t>(retiredCycles);
     retireInstruction(retiredCycles);
 }
 
@@ -2467,25 +2543,29 @@ void LR3592_DMG::populateOpcodes()
         opcodeTable[opcode] = std::forward<decltype(value)>(value);
     };
 
-    setOpcode(0x00, emitStep(1, [](auto& block, const auto&, std::size_t, DataType) {
+    auto emitOpcodeStep = [](DataType opcode, DataType length, auto&& step) {
+        return emitStep(length, opcodeCyclesFor(opcode), std::forward<decltype(step)>(step));
+    };
+
+    setOpcode(0x00, emitOpcodeStep(0x00, 1, [](auto& block, const auto&, std::size_t, DataType) {
         block.addStep([](auto&, auto&) {
         });
     }));
 
-    setOpcode(0x10, emitStep(2, [this](auto& block, const auto&, std::size_t, DataType) {
+    setOpcode(0x10, emitOpcodeStep(0x10, 2, [this](auto& block, const auto&, std::size_t, DataType) {
         block.addStep([this](auto&, auto&) {
             setStopFlag(true);
         });
     }));
 
-    setOpcode(0x76, emitStep(1, [this](auto& block, const auto&, std::size_t, DataType) {
+    setOpcode(0x76, emitOpcodeStep(0x76, 1, [this](auto& block, const auto&, std::size_t, DataType) {
         block.addStep([this](auto&, auto&) {
             setHaltFlag(true);
         });
     }));
 
     for (DataType opcode : {0x01, 0x11, 0x21, 0x31}) {
-        setOpcode(opcode, emitStep(3, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType code) {
+        setOpcode(opcode, emitOpcodeStep(opcode, 3, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType code) {
             const AddressType imm = fetchImm16(fetchData, opcodeIndex);
             block.addStep([code, imm](auto& snapshot, auto&) {
                 accessR16(snapshot, GB::Decode::decodeR16(code)) = imm;
@@ -2494,7 +2574,7 @@ void LR3592_DMG::populateOpcodes()
     }
 
     for (DataType opcode : {0x03, 0x13, 0x23, 0x33}) {
-        setOpcode(opcode, emitStep(1, [](auto& block, const auto&, std::size_t, DataType code) {
+        setOpcode(opcode, emitOpcodeStep(opcode, 1, [](auto& block, const auto&, std::size_t, DataType code) {
             block.addStep([code](auto& snapshot, auto&) {
                 auto& reg = accessR16(snapshot, GB::Decode::decodeR16(code));
                 reg = static_cast<AddressType>(reg + 1);
@@ -2503,7 +2583,7 @@ void LR3592_DMG::populateOpcodes()
     }
 
     for (DataType opcode : {0x0B, 0x1B, 0x2B, 0x3B}) {
-        setOpcode(opcode, emitStep(1, [](auto& block, const auto&, std::size_t, DataType code) {
+        setOpcode(opcode, emitOpcodeStep(opcode, 1, [](auto& block, const auto&, std::size_t, DataType code) {
             block.addStep([code](auto& snapshot, auto&) {
                 auto& reg = accessR16(snapshot, GB::Decode::decodeR16(code));
                 reg = static_cast<AddressType>(reg - 1);
@@ -2511,7 +2591,7 @@ void LR3592_DMG::populateOpcodes()
         }));
     }
 
-    setOpcode(0x08, emitStep(3, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
+    setOpcode(0x08, emitOpcodeStep(0x08, 3, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
         const AddressType address = fetchImm16(fetchData, opcodeIndex);
         block.addStep([address](auto& snapshot, auto&) {
             write16(snapshot, address, static_cast<AddressType>(getRegister(snapshot, GB::RegisterId::SP)->value));
@@ -2519,7 +2599,7 @@ void LR3592_DMG::populateOpcodes()
     }));
 
     for (DataType opcode : {0x09, 0x19, 0x29, 0x39}) {
-        setOpcode(opcode, emitStep(1, [](auto& block, const auto&, std::size_t, DataType code) {
+        setOpcode(opcode, emitOpcodeStep(opcode, 1, [](auto& block, const auto&, std::size_t, DataType code) {
             block.addStep([code](auto& snapshot, auto&) {
                 auto& hl = getRegisterPair(snapshot, GB::RegisterId::HL)->value;
                 const AddressType lhs = hl;
@@ -2537,7 +2617,7 @@ void LR3592_DMG::populateOpcodes()
     }
 
     for (DataType opcode : {0x04, 0x0C, 0x14, 0x1C, 0x24, 0x2C, 0x34, 0x3C}) {
-        setOpcode(opcode, emitStep(1, [](auto& block, const auto&, std::size_t, DataType code) {
+        setOpcode(opcode, emitOpcodeStep(opcode, 1, [](auto& block, const auto&, std::size_t, DataType code) {
             block.addStep([code](auto& snapshot, auto&) {
                 const auto reg = GB::Decode::decodeR8Dest(code);
                 const DataType oldValue = readR8(snapshot, reg);
@@ -2553,7 +2633,7 @@ void LR3592_DMG::populateOpcodes()
     }
 
     for (DataType opcode : {0x05, 0x0D, 0x15, 0x1D, 0x25, 0x2D, 0x35, 0x3D}) {
-        setOpcode(opcode, emitStep(1, [](auto& block, const auto&, std::size_t, DataType code) {
+        setOpcode(opcode, emitOpcodeStep(opcode, 1, [](auto& block, const auto&, std::size_t, DataType code) {
             block.addStep([code](auto& snapshot, auto&) {
                 const auto reg = GB::Decode::decodeR8Dest(code);
                 const DataType oldValue = readR8(snapshot, reg);
@@ -2569,7 +2649,7 @@ void LR3592_DMG::populateOpcodes()
     }
 
     for (DataType opcode : {0x06, 0x0E, 0x16, 0x1E, 0x26, 0x2E, 0x36, 0x3E}) {
-        setOpcode(opcode, emitStep(2, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType code) {
+        setOpcode(opcode, emitOpcodeStep(opcode, 2, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType code) {
             const DataType imm = fetchImm8(fetchData, opcodeIndex);
             block.addStep([code, imm](auto& snapshot, auto&) {
                 writeR8(snapshot, GB::Decode::decodeR8Dest(code), imm);
@@ -2578,7 +2658,7 @@ void LR3592_DMG::populateOpcodes()
     }
 
     for (DataType opcode : {0x07, 0x0F, 0x17, 0x1F}) {
-        setOpcode(opcode, emitStep(1, [](auto& block, const auto&, std::size_t, DataType code) {
+        setOpcode(opcode, emitOpcodeStep(opcode, 1, [](auto& block, const auto&, std::size_t, DataType code) {
             block.addStep([code](auto& snapshot, auto&) {
                 auto& a = accumulator(snapshot);
                 const bool carryIn = (flags(snapshot) & kFlagC) != 0;
@@ -2606,7 +2686,7 @@ void LR3592_DMG::populateOpcodes()
         }));
     }
 
-    setOpcode(0x27, emitStep(1, [](auto& block, const auto&, std::size_t, DataType) {
+    setOpcode(0x27, emitOpcodeStep(0x27, 1, [](auto& block, const auto&, std::size_t, DataType) {
         block.addStep([](auto& snapshot, auto&) {
             auto& a = accumulator(snapshot);
             const DataType flagReg = flags(snapshot);
@@ -2644,21 +2724,21 @@ void LR3592_DMG::populateOpcodes()
         });
     }));
 
-    setOpcode(0x2F, emitStep(1, [](auto& block, const auto&, std::size_t, DataType) {
+    setOpcode(0x2F, emitOpcodeStep(0x2F, 1, [](auto& block, const auto&, std::size_t, DataType) {
         block.addStep([](auto& snapshot, auto&) {
             accumulator(snapshot) = static_cast<DataType>(~accumulator(snapshot));
             flags(snapshot) = static_cast<DataType>((flags(snapshot) & (kFlagZ | kFlagC)) | kFlagN | kFlagH);
         });
     }));
 
-    setOpcode(0x37, emitStep(1, [](auto& block, const auto&, std::size_t, DataType) {
+    setOpcode(0x37, emitOpcodeStep(0x37, 1, [](auto& block, const auto&, std::size_t, DataType) {
         block.addStep([](auto& snapshot, auto&) {
             flags(snapshot) = static_cast<DataType>(flags(snapshot) & kFlagZ);
             flags(snapshot) = static_cast<DataType>(flags(snapshot) | kFlagC);
         });
     }));
 
-    setOpcode(0x3F, emitStep(1, [](auto& block, const auto&, std::size_t, DataType) {
+    setOpcode(0x3F, emitOpcodeStep(0x3F, 1, [](auto& block, const auto&, std::size_t, DataType) {
         block.addStep([](auto& snapshot, auto&) {
             const bool carry = (flags(snapshot) & kFlagC) == 0;
             flags(snapshot) = static_cast<DataType>(flags(snapshot) & kFlagZ);
@@ -2666,7 +2746,7 @@ void LR3592_DMG::populateOpcodes()
         });
     }));
 
-    setOpcode(0x18, emitStep(2, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
+    setOpcode(0x18, emitOpcodeStep(0x18, 2, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
         const int8_t offset = static_cast<int8_t>(fetchImm8(fetchData, opcodeIndex));
         block.addStep([offset](auto& snapshot, auto&) {
             const AddressType pc = static_cast<AddressType>(getRegister(snapshot, GB::RegisterId::PC)->value);
@@ -2676,7 +2756,7 @@ void LR3592_DMG::populateOpcodes()
     }));
 
     for (DataType opcode : {0x20, 0x28, 0x30, 0x38}) {
-        setOpcode(opcode, emitStep(2, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType code) {
+        setOpcode(opcode, emitOpcodeStep(opcode, 2, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType code) {
             const int8_t offset = static_cast<int8_t>(fetchImm8(fetchData, opcodeIndex));
             block.addStep([code, offset](auto& snapshot, auto&) {
                 if (!conditionHolds(snapshot, GB::Decode::decodeCondition(code))) return;
@@ -2689,7 +2769,7 @@ void LR3592_DMG::populateOpcodes()
 
     for (DataType opcode = 0x40; opcode <= 0x7F; ++opcode) {
         if (opcode == 0x76) continue;
-        setOpcode(opcode, emitStep(1, [](auto& block, const auto&, std::size_t, DataType code) {
+        setOpcode(opcode, emitOpcodeStep(opcode, 1, [](auto& block, const auto&, std::size_t, DataType code) {
             block.addStep([code](auto& snapshot, auto&) {
                 const auto src = GB::Decode::decodeR8Src(code);
                 const auto dest = GB::Decode::decodeR8Dest(code);
@@ -2699,7 +2779,7 @@ void LR3592_DMG::populateOpcodes()
     }
 
     for (DataType opcode : {0x02, 0x12, 0x22, 0x32, 0x0A, 0x1A, 0x2A, 0x3A}) {
-        setOpcode(opcode, emitStep(1, [](auto& block, const auto&, std::size_t, DataType code) {
+        setOpcode(opcode, emitOpcodeStep(opcode, 1, [](auto& block, const auto&, std::size_t, DataType code) {
             block.addStep([code](auto& snapshot, auto&) {
                 auto* hl = getRegisterPair(snapshot, GB::RegisterId::HL);
                 AddressType address = 0;
@@ -2737,7 +2817,7 @@ void LR3592_DMG::populateOpcodes()
     }
 
     auto addMathOp = [this, &setOpcode](DataType opcode, DataType length, auto readValue) {
-        setOpcode(opcode, emitStep(length, [readValue](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType code) {
+        setOpcode(opcode, emitStep(length, opcodeCyclesFor(opcode), [readValue](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType code) {
             const auto operand = readValue(fetchData, opcodeIndex, code);
             block.addStep([code, operand](auto& snapshot, auto&) {
                 auto& a = accumulator(snapshot);
@@ -2839,7 +2919,7 @@ void LR3592_DMG::populateOpcodes()
     }
 
     for (DataType opcode : {0xC0, 0xC8, 0xD0, 0xD8}) {
-        setOpcode(opcode, emitStep(1, [](auto& block, const auto&, std::size_t, DataType code) {
+        setOpcode(opcode, emitOpcodeStep(opcode, 1, [](auto& block, const auto&, std::size_t, DataType code) {
             block.addStep([code](auto& snapshot, auto&) {
                 if (!conditionHolds(snapshot, GB::Decode::decodeCondition(code))) return;
                 updateControlFlowPc(snapshot, pop16(snapshot), 1);
@@ -2847,13 +2927,13 @@ void LR3592_DMG::populateOpcodes()
         }));
     }
 
-    setOpcode(0xC9, emitStep(1, [](auto& block, const auto&, std::size_t, DataType) {
+    setOpcode(0xC9, emitOpcodeStep(0xC9, 1, [](auto& block, const auto&, std::size_t, DataType) {
         block.addStep([](auto& snapshot, auto&) {
             updateControlFlowPc(snapshot, pop16(snapshot), 1);
         });
     }));
 
-    setOpcode(0xD9, emitStep(1, [this](auto& block, const auto&, std::size_t, DataType) {
+    setOpcode(0xD9, emitOpcodeStep(0xD9, 1, [this](auto& block, const auto&, std::size_t, DataType) {
         block.addStep([this](auto& snapshot, auto&) {
             updateControlFlowPc(snapshot, pop16(snapshot), 1);
             setIme(true);
@@ -2861,7 +2941,7 @@ void LR3592_DMG::populateOpcodes()
     }));
 
     for (DataType opcode : {0xC1, 0xD1, 0xE1, 0xF1}) {
-        setOpcode(opcode, emitStep(1, [](auto& block, const auto&, std::size_t, DataType code) {
+        setOpcode(opcode, emitOpcodeStep(opcode, 1, [](auto& block, const auto&, std::size_t, DataType code) {
             block.addStep([code](auto& snapshot, auto&) {
                 const auto target = GB::Decode::decodeR16Stack(code);
                 AddressType value = pop16(snapshot);
@@ -2874,7 +2954,7 @@ void LR3592_DMG::populateOpcodes()
     }
 
     for (DataType opcode : {0xC5, 0xD5, 0xE5, 0xF5}) {
-        setOpcode(opcode, emitStep(1, [](auto& block, const auto&, std::size_t, DataType code) {
+        setOpcode(opcode, emitOpcodeStep(opcode, 1, [](auto& block, const auto&, std::size_t, DataType code) {
             block.addStep([code](auto& snapshot, auto&) {
                 push16(snapshot, accessStackR16(snapshot, GB::Decode::decodeR16Stack(code)));
             });
@@ -2882,7 +2962,7 @@ void LR3592_DMG::populateOpcodes()
     }
 
     for (DataType opcode : {0xC2, 0xCA, 0xD2, 0xDA}) {
-        setOpcode(opcode, emitStep(3, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType code) {
+        setOpcode(opcode, emitOpcodeStep(opcode, 3, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType code) {
             const AddressType target = fetchImm16(fetchData, opcodeIndex);
             block.addStep([code, target](auto& snapshot, auto&) {
                 if (!conditionHolds(snapshot, GB::Decode::decodeCondition(code))) return;
@@ -2891,21 +2971,21 @@ void LR3592_DMG::populateOpcodes()
         }));
     }
 
-    setOpcode(0xC3, emitStep(3, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
+    setOpcode(0xC3, emitOpcodeStep(0xC3, 3, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
         const AddressType target = fetchImm16(fetchData, opcodeIndex);
         block.addStep([target](auto& snapshot, auto&) {
             updateControlFlowPc(snapshot, target, 3);
         });
     }));
 
-    setOpcode(0xE9, emitStep(1, [](auto& block, const auto&, std::size_t, DataType) {
+    setOpcode(0xE9, emitOpcodeStep(0xE9, 1, [](auto& block, const auto&, std::size_t, DataType) {
         block.addStep([](auto& snapshot, auto&) {
             updateControlFlowPc(snapshot, getRegisterPair(snapshot, GB::RegisterId::HL)->value, 1);
         });
     }));
 
     for (DataType opcode : {0xC4, 0xCC, 0xD4, 0xDC}) {
-        setOpcode(opcode, emitStep(3, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType code) {
+        setOpcode(opcode, emitOpcodeStep(opcode, 3, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType code) {
             const AddressType target = fetchImm16(fetchData, opcodeIndex);
             block.addStep([code, target](auto& snapshot, auto&) {
                 if (!conditionHolds(snapshot, GB::Decode::decodeCondition(code))) return;
@@ -2916,7 +2996,7 @@ void LR3592_DMG::populateOpcodes()
         }));
     }
 
-    setOpcode(0xCD, emitStep(3, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
+    setOpcode(0xCD, emitOpcodeStep(0xCD, 3, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
         const AddressType target = fetchImm16(fetchData, opcodeIndex);
         block.addStep([target](auto& snapshot, auto&) {
             const AddressType pc = static_cast<AddressType>(getRegister(snapshot, GB::RegisterId::PC)->value);
@@ -2926,7 +3006,7 @@ void LR3592_DMG::populateOpcodes()
     }));
 
     for (DataType opcode : {0xC7, 0xCF, 0xD7, 0xDF, 0xE7, 0xEF, 0xF7, 0xFF}) {
-        setOpcode(opcode, emitStep(1, [](auto& block, const auto&, std::size_t, DataType code) {
+        setOpcode(opcode, emitOpcodeStep(opcode, 1, [](auto& block, const auto&, std::size_t, DataType code) {
             const AddressType target = static_cast<AddressType>(code & 0x38u);
             block.addStep([target](auto& snapshot, auto&) {
                 const AddressType pc = static_cast<AddressType>(getRegister(snapshot, GB::RegisterId::PC)->value);
@@ -2936,42 +3016,46 @@ void LR3592_DMG::populateOpcodes()
         }));
     }
 
-    setOpcode(0xCB, emitStep(2, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
-        const DataType cbOpcode = fetchData.data[opcodeIndex + 1];
-        block.addStep([cbOpcode](auto& snapshot, auto&) {
-            executeCbOpcode(snapshot, cbOpcode);
-        });
-    }));
+    setOpcode(0xCB, makeOpcode(2,
+        [](const auto& fetchData, std::size_t opcodeIndex) {
+            return cbOpcodeCyclesFor(fetchData.data[opcodeIndex + 1]);
+        },
+        [](auto& block, const auto& fetchData, std::size_t opcodeIndex) {
+            const DataType cbOpcode = fetchData.data[opcodeIndex + 1];
+            block.addStep([cbOpcode](auto& snapshot, auto&) {
+                executeCbOpcode(snapshot, cbOpcode);
+            });
+        }));
 
-    setOpcode(0xE0, emitStep(2, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
+    setOpcode(0xE0, emitOpcodeStep(0xE0, 2, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
         const AddressType address = static_cast<AddressType>(0xFF00u + fetchImm8(fetchData, opcodeIndex));
         block.addStep([address](auto& snapshot, auto&) {
             write8(snapshot, address, accumulator(snapshot));
         });
     }));
 
-    setOpcode(0xF0, emitStep(2, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
+    setOpcode(0xF0, emitOpcodeStep(0xF0, 2, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
         const AddressType address = static_cast<AddressType>(0xFF00u + fetchImm8(fetchData, opcodeIndex));
         block.addStep([address](auto& snapshot, auto&) {
             accumulator(snapshot) = read8(snapshot, address);
         });
     }));
 
-    setOpcode(0xE2, emitStep(1, [](auto& block, const auto&, std::size_t, DataType) {
+    setOpcode(0xE2, emitOpcodeStep(0xE2, 1, [](auto& block, const auto&, std::size_t, DataType) {
         block.addStep([](auto& snapshot, auto&) {
             const AddressType address = static_cast<AddressType>(0xFF00u + getRegisterPair(snapshot, GB::RegisterId::BC)->lo);
             write8(snapshot, address, accumulator(snapshot));
         });
     }));
 
-    setOpcode(0xF2, emitStep(1, [](auto& block, const auto&, std::size_t, DataType) {
+    setOpcode(0xF2, emitOpcodeStep(0xF2, 1, [](auto& block, const auto&, std::size_t, DataType) {
         block.addStep([](auto& snapshot, auto&) {
             const AddressType address = static_cast<AddressType>(0xFF00u + getRegisterPair(snapshot, GB::RegisterId::BC)->lo);
             accumulator(snapshot) = read8(snapshot, address);
         });
     }));
 
-    setOpcode(0xE8, emitStep(2, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
+    setOpcode(0xE8, emitOpcodeStep(0xE8, 2, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
         const int8_t offset = static_cast<int8_t>(fetchImm8(fetchData, opcodeIndex));
         block.addStep([offset](auto& snapshot, auto&) {
             auto* sp = getRegister(snapshot, GB::RegisterId::SP);
@@ -2986,7 +3070,7 @@ void LR3592_DMG::populateOpcodes()
         });
     }));
 
-    setOpcode(0xF8, emitStep(2, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
+    setOpcode(0xF8, emitOpcodeStep(0xF8, 2, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
         const int8_t offset = static_cast<int8_t>(fetchImm8(fetchData, opcodeIndex));
         block.addStep([offset](auto& snapshot, auto&) {
             const AddressType sp = static_cast<AddressType>(getRegister(snapshot, GB::RegisterId::SP)->value);
@@ -3000,34 +3084,34 @@ void LR3592_DMG::populateOpcodes()
         });
     }));
 
-    setOpcode(0xF9, emitStep(1, [](auto& block, const auto&, std::size_t, DataType) {
+    setOpcode(0xF9, emitOpcodeStep(0xF9, 1, [](auto& block, const auto&, std::size_t, DataType) {
         block.addStep([](auto& snapshot, auto&) {
             getRegister(snapshot, GB::RegisterId::SP)->value =
                 getRegisterPair(snapshot, GB::RegisterId::HL)->value;
         });
     }));
 
-    setOpcode(0xEA, emitStep(3, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
+    setOpcode(0xEA, emitOpcodeStep(0xEA, 3, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
         const AddressType address = fetchImm16(fetchData, opcodeIndex);
         block.addStep([address](auto& snapshot, auto&) {
             write8(snapshot, address, accumulator(snapshot));
         });
     }));
 
-    setOpcode(0xFA, emitStep(3, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
+    setOpcode(0xFA, emitOpcodeStep(0xFA, 3, [](auto& block, const auto& fetchData, std::size_t opcodeIndex, DataType) {
         const AddressType address = fetchImm16(fetchData, opcodeIndex);
         block.addStep([address](auto& snapshot, auto&) {
             accumulator(snapshot) = read8(snapshot, address);
         });
     }));
 
-    setOpcode(0xF3, emitStep(1, [this](auto& block, const auto&, std::size_t, DataType) {
+    setOpcode(0xF3, emitOpcodeStep(0xF3, 1, [this](auto& block, const auto&, std::size_t, DataType) {
         block.addStep([this](auto&, auto&) {
             setIme(false);
         });
     }));
 
-    setOpcode(0xFB, emitStep(1, [this](auto& block, const auto&, std::size_t, DataType) {
+    setOpcode(0xFB, emitOpcodeStep(0xFB, 1, [this](auto& block, const auto&, std::size_t, DataType) {
         block.addStep([this](auto&, auto&) {
             scheduleImeEnable();
         });

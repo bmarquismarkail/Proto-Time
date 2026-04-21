@@ -28,12 +28,12 @@ struct RecordingVideoPlugin final : BMMQ::IVideoPlugin {
         return "test.video.recorder";
     }
 
-    void onAttach(const BMMQ::MachineView& view) override {
+    void onAttach(BMMQ::MutableMachineView& view) override {
         ++attachCount;
         assert(!view.ioRegions.empty());
     }
 
-    void onDetach(const BMMQ::MachineView&) override {
+    void onDetach(BMMQ::MutableMachineView&) override {
         ++detachCount;
     }
 
@@ -129,7 +129,7 @@ struct ThrowingPlugin final : BMMQ::IPlugin {
         return "test.plugin.throwing";
     }
 
-    void onAttach(const BMMQ::MachineView&) override {
+    void onAttach(BMMQ::MutableMachineView&) override {
         ++attachCount;
     }
 
@@ -217,7 +217,7 @@ int main()
     assert(machine.pluginManager().size() == 12);
     assert(!machine.describeIoRegions().empty());
 
-    machine.pluginManager().initialize(machine.view());
+    machine.pluginManager().initialize(machine.mutableView());
     assert(video->attachCount == 1);
     assert(throwing->attachCount == 1);
 
@@ -226,6 +226,17 @@ int main()
     assert(*sampledInput == 0x0Fu);
     assert(firstInput->sampleCalls == 1);
     assert(secondInput->sampleCalls == 0);
+
+    machine.step();
+    assert(firstInput->sampleCalls == 1);
+    assert(secondInput->sampleCalls == 0);
+    assert(!machine.currentDigitalInputMask().has_value());
+
+    machine.serviceInput();
+    assert(firstInput->sampleCalls == 2);
+    assert(secondInput->sampleCalls == 0);
+    assert(machine.currentDigitalInputMask().has_value());
+    assert(*machine.currentDigitalInputMask() == 0x0Fu);
 
     machine.setJoypadState(0x03u);
     assert(video->machineEventCount >= 1);
@@ -236,9 +247,13 @@ int main()
     assert(inputRecorder->lastInputState->directionPressed());
     assert(loggingInput->entryCount() >= 1);
 
+    const auto videoEventsBeforeVramWrite = video->videoEventCount;
     machine.runtimeContext().write8(0x8000, 0x42u);
+    assert(video->videoEventCount == videoEventsBeforeVramWrite);
+    machine.runtimeContext().write8(0xFF42, 0x12u);
+    assert(video->videoEventCount == videoEventsBeforeVramWrite);
     machine.runtimeContext().write8(0xFF40, 0x91u);
-    assert(video->videoEventCount >= 2);
+    assert(video->videoEventCount == videoEventsBeforeVramWrite + 1);
     assert(video->lastVideoEvent.type == BMMQ::MachineEventType::MemoryWriteObserved);
     assert(video->lastVideoEvent.category == BMMQ::PluginCategory::Video);
     assert(video->lastObservedValue == 0x91u);
@@ -250,6 +265,26 @@ int main()
     assert(video->lastVideoState->vram[0] == 0x42u);
     assert(loggingVideo->entryCount() >= 2);
     assert(!sinkEntries.empty());
+
+    GameBoyMachine scanlineMachine;
+    scanlineMachine.loadRom(cartridgeRom);
+    auto scanlinePlugin = std::make_unique<RecordingVideoPlugin>();
+    auto* scanlineVideo = scanlinePlugin.get();
+    scanlineMachine.pluginManager().add(std::move(scanlinePlugin));
+    scanlineMachine.pluginManager().initialize(scanlineMachine.mutableView());
+    scanlineMachine.runtimeContext().write8(0xFF44u, 0x00u);
+    scanlineMachine.runtimeContext().write8(0xFF43u, 0x08u);
+
+    bool observedLineZeroScanline = false;
+    for (int i = 0; i < 10000; ++i) {
+        scanlineMachine.step();
+        if (scanlineVideo->lastVideoEvent.type == BMMQ::MachineEventType::VideoScanlineReady) {
+            observedLineZeroScanline = scanlineVideo->lastVideoEvent.value == 0u;
+            break;
+        }
+        assert(scanlineMachine.runtimeContext().read8(0xFF44u) < 144u);
+    }
+    assert(observedLineZeroScanline);
 
     machine.runtimeContext().write8(0xFF12, 0xF3u);
     assert(audio->audioEventCount >= 1);
@@ -302,7 +337,7 @@ int main()
     assert(machine.pluginManager().hasDisabledPlugins());
     assert(throwing->machineEventCount == 1);
     assert(firstInput->sampleCalls == 2);
-    assert(video->lastMachineEvent.type == BMMQ::MachineEventType::StepCompleted);
+    assert(video->lastMachineEvent.type != BMMQ::MachineEventType::StepCompleted);
 
     const auto status = machine.pluginManager().statusFor("test.plugin.throwing");
     assert(status.has_value());
@@ -320,14 +355,23 @@ int main()
     assert(reenabled);
     assert(!machine.pluginManager().statusFor("test.plugin.throwing")->disabled);
 
-    machine.step();
+    // Intentionally uses NetworkActivity with System to route a generic machine event through ThrowingPlugin.
+    machine.pluginManager().emit(machine.view(), BMMQ::MachineEvent{
+        BMMQ::MachineEventType::NetworkActivity,
+        BMMQ::PluginCategory::System,
+        0,
+        0,
+        0,
+        nullptr,
+        "explicit generic plugin re-enable check"
+    });
     assert(throwing->machineEventCount == 2);
 
     machine.pluginManager().resetFailures();
     assert(machine.pluginManager().disabledCount() == 0);
     assert(!machine.pluginManager().hasDisabledPlugins());
 
-    machine.pluginManager().shutdown(machine.view());
+    machine.pluginManager().shutdown(machine.mutableView());
     assert(video->detachCount == 1);
 
     fs::remove(logPath);

@@ -12,11 +12,26 @@
 namespace BMMQ {
 
 class Machine;
+class AudioService;
+class InputService;
+class VideoService;
+class VisualOverrideService;
+class TimingService;
 struct CpuFeedback;
 std::optional<uint32_t> queryDigitalInputMask(const Machine& machine);
+AudioService& queryAudioService(Machine& machine);
+const AudioService& queryAudioService(const Machine& machine);
+InputService& queryInputService(Machine& machine);
+const InputService& queryInputService(const Machine& machine);
+VideoService& queryVideoService(Machine& machine);
+const VideoService& queryVideoService(const Machine& machine);
+VisualOverrideService& queryVisualOverrideService(Machine& machine);
+const VisualOverrideService& queryVisualOverrideService(const Machine& machine);
 std::vector<int16_t> queryRecentAudioSamples(const Machine& machine);
 uint32_t queryAudioSampleRate(const Machine& machine);
 uint64_t queryAudioFrameCounter(const Machine& machine);
+TimingService& queryTimingService(Machine& machine);
+const TimingService& queryTimingService(const Machine& machine);
 
 enum class PluginCategory : uint8_t {
     System = 0,
@@ -43,6 +58,13 @@ enum class MachineEventType : uint8_t {
     MemoryWriteObserved = 10,
     BootRomVisibilityChanged = 11,
     RomLoaded = 12,
+    VideoScanlineReady = 13,
+    VisualResourceObserved = 14,
+    VisualResourceDecoded = 15,
+    VisualOverrideResolved = 16,
+    VisualPackMiss = 17,
+    FrameCompositionStarted = 18,
+    FrameCompositionCompleted = 19,
 };
 
 struct IoRegionDescriptor {
@@ -177,7 +199,27 @@ struct ParallelStateView {
 struct MachineView {
     const Machine& machine;
     const RuntimeContext& runtime;
-    std::span<const IoRegionDescriptor> ioRegions;
+    std::vector<IoRegionDescriptor> ioRegions;
+
+    [[nodiscard]] const AudioService& audioService() const {
+        return queryAudioService(machine);
+    }
+
+    [[nodiscard]] const InputService& inputService() const {
+        return queryInputService(machine);
+    }
+
+    [[nodiscard]] const VideoService& videoService() const {
+        return queryVideoService(machine);
+    }
+
+    [[nodiscard]] const VisualOverrideService& visualOverrideService() const {
+        return queryVisualOverrideService(machine);
+    }
+
+    [[nodiscard]] const TimingService& timingService() const {
+        return queryTimingService(machine);
+    }
 
     [[nodiscard]] uint8_t read8(uint16_t address) const {
         return runtime.peek8(address);
@@ -329,6 +371,52 @@ struct MachineView {
     }
 };
 
+struct MutableMachineView : MachineView {
+    Machine& mutableMachine;
+
+    MutableMachineView(Machine& machine,
+                       RuntimeContext& runtime,
+                       std::vector<IoRegionDescriptor> ioRegionsIn)
+        : MachineView{machine, runtime, std::move(ioRegionsIn)},
+          mutableMachine(machine) {}
+
+    [[nodiscard]] AudioService& audioService() {
+        return queryAudioService(mutableMachine);
+    }
+
+    [[nodiscard]] const AudioService& audioService() const {
+        return queryAudioService(mutableMachine);
+    }
+
+    [[nodiscard]] VideoService& videoService() {
+        return queryVideoService(mutableMachine);
+    }
+
+    [[nodiscard]] const VideoService& videoService() const {
+        return queryVideoService(mutableMachine);
+    }
+
+    [[nodiscard]] VisualOverrideService& visualOverrideService() {
+        return queryVisualOverrideService(mutableMachine);
+    }
+
+    [[nodiscard]] const VisualOverrideService& visualOverrideService() const {
+        return queryVisualOverrideService(mutableMachine);
+    }
+
+    [[nodiscard]] InputService& inputService() {
+        return queryInputService(mutableMachine);
+    }
+
+    [[nodiscard]] const InputService& inputService() const {
+        return queryInputService(mutableMachine);
+    }
+
+    [[nodiscard]] TimingService& timingService() {
+        return queryTimingService(mutableMachine);
+    }
+};
+
 struct MachineEvent {
     MachineEventType type = MachineEventType::StepCompleted;
     PluginCategory category = PluginCategory::System;
@@ -346,8 +434,8 @@ public:
     virtual std::string_view displayName() const {
         return id();
     }
-    virtual void onAttach(const MachineView&) {}
-    virtual void onDetach(const MachineView&) {}
+    virtual void onAttach(MutableMachineView&) {}
+    virtual void onDetach(MutableMachineView&) {}
     virtual void onMachineEvent(const MachineEvent&, const MachineView&) {}
 };
 

@@ -5,10 +5,11 @@
 	
 		class LR3592_Interpreter_Decode: public LR3592_Decode {
 		private:
-			BMMQ::MemorySnapshot<AddressType, DataType, AddressType> *snap;
+			BMMQ::MemorySnapshot<AddressType, DataType, AddressType> *snap = nullptr;
 			DataType scratchReadA = 0;
 			DataType scratchReadB = 0;
 			bool scratchToggle = false;
+			BMMQ::MemorySnapshot<AddressType, DataType, AddressType>& snapshot();
 			DataType* readTempByte(AddressType address);
 			DataType readImmediate8();
 			AddressType readImmediate16();

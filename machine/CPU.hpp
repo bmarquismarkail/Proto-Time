@@ -20,6 +20,7 @@ struct CpuFeedback {
     bool isControlFlow = false;
     uint32_t pcBefore = 0;
     uint32_t pcAfter = 0;
+    uint32_t retiredCycles = 0;
     ExecutionPathHint executionPath = ExecutionPathHint::Unknown;
 };
 
@@ -28,10 +29,18 @@ struct CpuFeedback {
 template<typename AddressType, typename DataType, typename RegType>
 class CPU {
 public:
+    CPU() = default;
+    virtual ~CPU() = default;
+    CPU(const CPU&) = delete;
+    CPU& operator=(const CPU&) = delete;
+    CPU(CPU&&) = delete;
+    CPU& operator=(CPU&&) = delete;
+
     virtual fetchBlock<AddressType, DataType> fetch()=0;
     virtual executionBlock<AddressType, DataType, RegType> decode(fetchBlock<AddressType, DataType>& fetchData)=0;
     virtual void execute(const executionBlock<AddressType, DataType, RegType>& block, BMMQ::fetchBlock<AddressType, DataType> &fb)=0;
     virtual const CpuFeedback& getLastFeedback() const = 0;
+    virtual uint32_t clockHz() const = 0;
 };
 }
 

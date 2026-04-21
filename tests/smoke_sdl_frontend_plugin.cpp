@@ -1,11 +1,61 @@
 #include <cassert>
 #include <cstdlib>
 #include <filesystem>
+#include <span>
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
 #include "machine/plugins/SdlFrontendPlugin.hpp"
 #include "machine/plugins/SdlFrontendPluginLoader.hpp"
+
+namespace {
+
+bool stepUntilAudioFrames(GameBoyMachine& machine, uint64_t targetFrameCounter)
+{
+    for (int i = 0; i < 200000; ++i) {
+        machine.step();
+        if (machine.audioFrameCounter() >= targetFrameCounter) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool frameHasVisiblePixels(const BMMQ::SdlFrameBuffer& frame)
+{
+    for (const auto pixel : frame.pixels) {
+        if (pixel != 0xFF000000u) {
+            return true;
+        }
+    }
+    return false;
+}
+
+BMMQ::VideoStateView makeFrontendScanlineState(uint8_t ly, uint8_t scx)
+{
+    BMMQ::VideoStateView state;
+    state.vram.resize(0x2000u, 0);
+    state.oam.resize(0x00A0u, 0);
+    state.lcdc = 0x91u;
+    state.ly = ly;
+    state.scx = scx;
+    state.bgp = 0xE4u;
+
+    for (std::size_t row = 0; row < 8u; ++row) {
+        const auto tile0 = row * 2u;
+        state.vram[tile0] = 0xFFu;
+        state.vram[tile0 + 1u] = 0x00u;
+
+        const auto tile1 = 0x10u + row * 2u;
+        state.vram[tile1] = 0xFFu;
+        state.vram[tile1 + 1u] = 0xFFu;
+    }
+    state.vram[0x1800u] = 0x00u;
+    state.vram[0x1801u] = 0x01u;
+    return state;
+}
+
+} // namespace
 
 int main(int argc, char** argv)
 {
@@ -16,7 +66,7 @@ int main(int argc, char** argv)
 
     BMMQ::SdlFrontendConfig config;
     config.windowTitle = "Proto-Time SDL Smoke";
-    config.windowScale = 3;
+    config.windowScale = 3u;
     config.frameWidth = 32;
     config.frameHeight = 24;
     config.audioPreviewSampleCount = 64;
@@ -45,9 +95,10 @@ int main(int argc, char** argv)
     } catch (const std::runtime_error&) {
         missingLoadThrew = true;
     }
+    (void)missingLoadThrew;
     assert(missingLoadThrew);
 
-    machine.pluginManager().initialize(machine.view());
+    machine.pluginManager().initialize(machine.mutableView());
     assert(frontend->config().windowTitle == "Proto-Time SDL Smoke");
     assert(frontend->stats().attachCount == 1);
     assert(!frontend->backendReady());
@@ -64,12 +115,27 @@ int main(int argc, char** argv)
     frontend->requestWindowVisibility(true);
     assert(frontend->windowVisibilityRequested());
 
-    frontend->pressButton(BMMQ::SdlFrontendButton::Right);
-    frontend->pressButton(BMMQ::SdlFrontendButton::Up);
-    frontend->pressButton(BMMQ::SdlFrontendButton::A);
+    const auto earlySnapshotsBeforeVisualObservation = frontend->stats().videoStateSnapshots;
+    const auto earlyFramesPreparedBeforeVisualObservation = frontend->stats().framesPrepared;
+    frontend->onVideoEvent(BMMQ::MachineEvent{
+        BMMQ::MachineEventType::VisualResourceObserved,
+        BMMQ::PluginCategory::Video,
+        0,
+        0,
+        0,
+        nullptr,
+        "early visual observation should not sample video state"
+    }, machine.view());
+    assert(frontend->stats().videoStateSnapshots == earlySnapshotsBeforeVisualObservation);
+    assert(frontend->stats().framesPrepared == earlyFramesPreparedBeforeVisualObservation);
+
+    frontend->pressButton(BMMQ::InputButton::Right);
+    frontend->pressButton(BMMQ::InputButton::Up);
+    frontend->pressButton(BMMQ::InputButton::Button1);
     assert(frontend->queuedDigitalInputMask().has_value());
     assert(*frontend->queuedDigitalInputMask() == 0x15u);
-    assert(frontend->isButtonPressed(BMMQ::SdlFrontendButton::A));
+    assert(frontend->isButtonPressed(BMMQ::InputButton::Button1));
+    machine.serviceInput();
 
     GameBoyMachine dmaVisibilityMachine;
     dmaVisibilityMachine.loadRom(cartridgeRom);
@@ -107,12 +173,23 @@ int main(int argc, char** argv)
     machine.runtimeContext().write8(0xFF40, 0x93u);
     machine.runtimeContext().write8(0xFF12, 0xF3u);
     if (initResult && frontend->audioOutputReady()) {
-        const auto queueWritesAfterEvent = frontend->stats().audioQueueWrites;
-        const auto queuedSamplesAfterEvent = frontend->stats().audioSamplesQueued;
         assert(frontend->serviceFrontend());
-        assert(frontend->stats().audioQueueWrites == queueWritesAfterEvent);
-        assert(frontend->stats().audioSamplesQueued == queuedSamplesAfterEvent);
+        assert(frontend->bufferedAudioSamples() <= frontend->stats().audioRingBufferCapacitySamples);
     }
+    const auto snapshotsBeforeVisualObservation = frontend->stats().videoStateSnapshots;
+    const auto framesPreparedBeforeVisualObservation = frontend->stats().framesPrepared;
+    frontend->onVideoEvent(BMMQ::MachineEvent{
+        BMMQ::MachineEventType::VisualResourceObserved,
+        BMMQ::PluginCategory::Video,
+        0,
+        0,
+        0,
+        nullptr,
+        "visual observation should not sample video state"
+    }, machine.view());
+    assert(frontend->stats().videoStateSnapshots == snapshotsBeforeVisualObservation);
+    assert(frontend->stats().framesPrepared == framesPreparedBeforeVisualObservation);
+
     const auto pumpedBeforeStep = frontend->pumpBackendEvents();
     (void)pumpedBeforeStep;
     for (int i = 0; i < 20000; ++i) {
@@ -124,6 +201,7 @@ int main(int argc, char** argv)
     assert(frontend->serviceFrontend());
 
     const auto& stats = frontend->stats();
+    (void)stats;
     assert(stats.videoEvents >= 1);
     assert(stats.audioEvents >= 1);
     assert(stats.inputEvents >= 1);
@@ -131,6 +209,7 @@ int main(int argc, char** argv)
     assert(stats.inputSamplesProvided >= 1);
     assert(stats.framesPrepared >= 1);
     assert(stats.renderAttempts >= 1);
+    assert(stats.videoStateSnapshots <= stats.framesPrepared + 10u);
     assert(stats.audioPreviewsBuilt >= 1);
     assert(stats.buttonTransitions >= 3);
     assert(stats.eventPumpCalls >= 2);
@@ -138,16 +217,91 @@ int main(int argc, char** argv)
     assert(!frontend->diagnostics().empty());
     assert(frontend->lastVideoState().has_value());
     assert(frontend->lastVideoState()->lcdc == 0x93u);
+    assert(frontend->lastFrame().has_value());
+    assert(frameHasVisiblePixels(*frontend->lastFrame()));
+    const auto shade1 = 0xFF88C070u;
+    const auto shade3 = 0xFF081820u;
+    (void)shade1;
+    (void)shade3;
+    assert(frontend->lastFrame()->pixels[0] == shade1);
+    assert(frontend->lastFrame()->pixels[1] == shade1);
+    assert(frontend->lastFrame()->pixels[7] == shade1);
+    assert(frontend->lastFrame()->pixels[8] == shade1);
+    assert(frontend->lastFrame()->pixels[16 * 32 + 8] == shade3);
+    assert(frontend->lastFrame()->pixels[16 * 32 + 15] == shade3);
     assert(frontend->lastAudioPreview().has_value());
     assert(frontend->lastAudioPreview()->sampleCount() == 64u);
     if (initResult && frontend->audioOutputReady()) {
-        assert(stats.audioQueueWrites >= 1);
-        assert(stats.audioSamplesQueued >= frontend->lastAudioPreview()->sampleCount());
-        const auto queueWritesBefore = stats.audioQueueWrites;
-        const auto samplesQueuedBefore = stats.audioSamplesQueued;
-        assert(frontend->serviceFrontend());
-        assert(stats.audioQueueWrites == queueWritesBefore);
-        assert(stats.audioSamplesQueued == samplesQueuedBefore);
+        assert(stats.audioSourceSampleRate == 48000);
+        assert(stats.audioDeviceSampleRate == 48000);
+        assert(stats.audioCallbackChunkSamples == 256u);
+        assert(stats.audioRingBufferCapacitySamples == 2048u);
+        assert(!stats.audioResamplingActive);
+        assert(stats.audioResampleRatio == 1.0);
+        assert(frontend->bufferedAudioSamples() <= stats.audioRingBufferCapacitySamples);
+        assert(stats.audioOverrunDropCount == 0u);
+        assert(stats.audioQueueRecoveryClears == 0u);
+
+        std::vector<int16_t> drain(stats.audioRingBufferCapacitySamples + stats.audioCallbackChunkSamples, 0);
+        machine.audioService().renderForOutput(drain);
+        assert(frontend->bufferedAudioSamples() == 0u);
+        assert(!frontend->audioQueueBackpressureActive());
+
+        const auto lowWaterBefore = frontend->stats().audioQueueLowWaterHits;
+        const auto framesPreparedBefore = frontend->stats().framesPrepared;
+        const auto audioEventsBeforeLowWater = frontend->stats().audioEvents;
+        frontend->onVideoEvent(BMMQ::MachineEvent{
+            BMMQ::MachineEventType::VBlank,
+            BMMQ::PluginCategory::Video,
+            0,
+            0xFF44u,
+            machine.runtimeContext().read8(0xFF44u),
+            nullptr,
+            "audio-low-water video pressure regression"
+        }, machine.view());
+        assert(frontend->stats().audioQueueLowWaterHits == lowWaterBefore + 1u);
+        assert(frontend->stats().framesPrepared == framesPreparedBefore);
+
+        for (uint8_t y = 0; y < 24u; ++y) {
+            auto scanlineState = makeFrontendScanlineState(y, y == 0u ? 0u : 8u);
+            assert(!machine.videoService().submitVideoState(BMMQ::MachineEvent{
+                BMMQ::MachineEventType::VideoScanlineReady,
+                BMMQ::PluginCategory::Video,
+                0,
+                0xFF44u,
+                y,
+                nullptr,
+                "pending scanline low-water regression"
+            }, scanlineState));
+        }
+        assert(machine.videoService().hasCompleteScanlineFrame());
+        const auto lowWaterBeforePendingScanline = frontend->stats().audioQueueLowWaterHits;
+        const auto framesPreparedBeforePendingScanline = frontend->stats().framesPrepared;
+        const auto videoStateSnapshotsBeforePendingScanline = frontend->stats().videoStateSnapshots;
+        frontend->onVideoEvent(BMMQ::MachineEvent{
+            BMMQ::MachineEventType::VBlank,
+            BMMQ::PluginCategory::Video,
+            0,
+            0xFF44u,
+            machine.runtimeContext().read8(0xFF44u),
+            nullptr,
+            "pending scanline low-water regression"
+        }, machine.view());
+        assert(frontend->stats().audioQueueLowWaterHits == lowWaterBeforePendingScanline);
+        assert(frontend->stats().framesPrepared == framesPreparedBeforePendingScanline + 1u);
+        assert(frontend->stats().videoStateSnapshots <= videoStateSnapshotsBeforePendingScanline + 2u);
+
+        const auto nextAudioFrame = machine.audioFrameCounter() + 1u;
+        assert(stepUntilAudioFrames(machine, nextAudioFrame));
+        assert(frontend->stats().audioEvents >= audioEventsBeforeLowWater + 1u);
+        assert(frontend->bufferedAudioSamples() > 0u);
+
+        const auto highWaterStartFrame = machine.audioFrameCounter() + 1u;
+        std::vector<int16_t> highWaterChunk(256u, 700);
+        for (uint64_t frame = highWaterStartFrame; frame < highWaterStartFrame + 32u; ++frame) {
+            machine.audioService().engine().appendRecentPcm(highWaterChunk, frame);
+        }
+        assert(frontend->audioQueueBackpressureActive());
     }
     assert(frontend->lastInputState().has_value());
     assert(frontend->lastInputState()->pressedMask == 0x15u);
@@ -155,27 +309,19 @@ int main(int argc, char** argv)
     assert(frontend->lastFrame()->width == 32);
     assert(frontend->lastFrame()->height == 24);
     assert(frontend->lastFrame()->pixelCount() == 32u * 24u);
-    const auto shade1 = 0xFF88C070u;
-    const auto shade3 = 0xFF081820u;
-    assert(frontend->lastFrame()->pixels[0] == shade1);
-    assert(frontend->lastFrame()->pixels[1] == shade1);
-    assert(frontend->lastFrame()->pixels[7] == shade1);
-    assert(frontend->lastFrame()->pixels[8] == shade1);
-    assert(frontend->lastFrame()->pixels[16 * 32 + 8] == shade3);
-    assert(frontend->lastFrame()->pixels[16 * 32 + 15] == shade3);
     assert(!frontend->lastRenderSummary().empty());
     assert(frontend->windowVisible());
 
-    frontend->releaseButton(BMMQ::SdlFrontendButton::Up);
+    frontend->releaseButton(BMMQ::InputButton::Up);
     assert(frontend->queuedDigitalInputMask().has_value());
     assert(*frontend->queuedDigitalInputMask() == 0x11u);
 
     assert(frontend->handleHostEvent({BMMQ::SdlFrontendHostEventType::KeyDown, BMMQ::SdlFrontendHostKey::Return, false}));
-    assert(frontend->isButtonPressed(BMMQ::SdlFrontendButton::Start));
+    assert(frontend->isButtonPressed(BMMQ::InputButton::Meta2));
     assert(frontend->handleHostEvent({BMMQ::SdlFrontendHostEventType::KeyDown, BMMQ::SdlFrontendHostKey::X, false}));
-    assert(frontend->isButtonPressed(BMMQ::SdlFrontendButton::B));
+    assert(frontend->isButtonPressed(BMMQ::InputButton::Button2));
     assert(frontend->handleHostEvent({BMMQ::SdlFrontendHostEventType::KeyUp, BMMQ::SdlFrontendHostKey::X, false}));
-    assert(!frontend->isButtonPressed(BMMQ::SdlFrontendButton::B));
+    assert(!frontend->isButtonPressed(BMMQ::InputButton::Button2));
     assert(frontend->stats().hostEventsHandled >= 3);
     assert(frontend->stats().keyEventsHandled >= 3);
     assert(!frontend->lastHostEventSummary().empty());
@@ -188,7 +334,7 @@ int main(int argc, char** argv)
     frontend->clearQueuedDigitalInputMask();
     assert(!frontend->queuedDigitalInputMask().has_value());
 
-    machine.pluginManager().shutdown(machine.view());
+    machine.pluginManager().shutdown(machine.mutableView());
     assert(frontend->stats().detachCount == 1);
 
     return 0;

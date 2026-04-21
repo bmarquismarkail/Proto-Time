@@ -10,11 +10,20 @@ namespace {
 
 using RegisterPair = BMMQ::CPU_RegisterPair<uint16_t>;
 
-void step(LR3592_DMG& cpu)
+BMMQ::CpuFeedback step(LR3592_DMG& cpu)
 {
     auto fetchBlock = cpu.fetch();
     auto execBlock = cpu.decode(fetchBlock);
     cpu.execute(execBlock, fetchBlock);
+    return cpu.getLastFeedback();
+}
+
+BMMQ::CpuFeedback fastStep(LR3592_DMG& cpu)
+{
+    auto fetchBlock = cpu.fetch();
+    const bool executed = cpu.tryFastExecute(fetchBlock);
+    assert(executed);
+    return cpu.getLastFeedback();
 }
 
 RegisterPair* pair(LR3592_DMG& cpu, BMMQ::RegisterId id)
@@ -80,10 +89,64 @@ int main()
 {
     {
         LR3592_DMG cpu;
+        if (cpu.clockHz() != 4194304u) {
+            throw std::runtime_error("LR3592 clock contract should expose 4194304 Hz");
+        }
+    }
+
+    {
+        LR3592_DMG cpu;
         cpu.loadProgram({0x00, 0x00, 0x00});
-        step(cpu);
+        auto fetchBlock = cpu.fetch();
+        auto execBlock = cpu.decode(fetchBlock);
+        if (execBlock.cyclesIfNotTaken() != 4 || execBlock.cyclesIfTaken() != 4) {
+            throw std::runtime_error("NOP should decode to 4 cycles");
+        }
+    }
+
+    {
+        LR3592_DMG cpu;
+        cpu.loadProgram({0x20, 0x02, 0x00});
+        auto fetchBlock = cpu.fetch();
+        auto execBlock = cpu.decode(fetchBlock);
+        if (execBlock.cyclesIfNotTaken() != 8 || execBlock.cyclesIfTaken() != 12) {
+            throw std::runtime_error("JR NZ should decode to 8/12 cycles");
+        }
+    }
+
+    {
+        LR3592_DMG cpu;
+        pair(cpu, GB::RegisterId::HL)->value = 0xC000;
+        cpu.loadProgram({0xCB, 0x06, 0x00});
+        auto fetchBlock = cpu.fetch();
+        auto execBlock = cpu.decode(fetchBlock);
+        if (execBlock.cyclesIfNotTaken() != 16 || execBlock.cyclesIfTaken() != 16) {
+            throw std::runtime_error("RLC (HL) should decode to 16 cycles");
+        }
+    }
+
+    {
+        LR3592_DMG cpu;
+        cpu.loadProgram({0x00, 0x00, 0x00});
+        const auto feedback = step(cpu);
+        if (feedback.retiredCycles != 4u) {
+            throw std::runtime_error("NOP should retire 4 cycles");
+        }
         assert(pair(cpu, GB::RegisterId::AF)->hi == 0x00);
         assert(scalar(cpu, GB::RegisterId::PC) == 1);
+    }
+
+    {
+        LR3592_DMG cpu;
+        loadAndSetPc(cpu, 0x0200, {0xEF, 0x00, 0x00});
+        scalar(cpu, GB::RegisterId::SP, 0xD000);
+        const auto feedback = fastStep(cpu);
+        assert(feedback.executionPath == BMMQ::ExecutionPathHint::CpuOptimizedFastPath);
+        assert(feedback.retiredCycles == 16u);
+        assert(scalar(cpu, GB::RegisterId::PC) == 0x0028u);
+        assert(scalar(cpu, GB::RegisterId::SP) == 0xCFFEu);
+        assert(readByte(cpu, 0xCFFE) == 0x01u);
+        assert(readByte(cpu, 0xCFFF) == 0x02u);
     }
 
     {
@@ -141,7 +204,10 @@ int main()
     {
         LR3592_DMG cpu;
         cpu.loadProgram({0x18, 0x02, 0x00}, 0);
-        step(cpu);
+        const auto feedback = step(cpu);
+        if (feedback.retiredCycles != 12u) {
+            throw std::runtime_error("JR should retire 12 cycles when taken");
+        }
         assert(scalar(cpu, GB::RegisterId::PC) == 4);
     }
 
@@ -149,8 +215,22 @@ int main()
         LR3592_DMG cpu;
         pair(cpu, GB::RegisterId::AF)->lo = 0x80;
         cpu.loadProgram({0x28, 0x02, 0x00}, 0);
-        step(cpu);
+        const auto feedback = step(cpu);
+        if (feedback.retiredCycles != 12u) {
+            throw std::runtime_error("JR Z should retire 12 cycles when taken");
+        }
         assert(scalar(cpu, GB::RegisterId::PC) == 4);
+    }
+
+    {
+        LR3592_DMG cpu;
+        pair(cpu, GB::RegisterId::AF)->lo = 0x00;
+        cpu.loadProgram({0x28, 0x02, 0x00}, 0);
+        const auto feedback = step(cpu);
+        if (feedback.retiredCycles != 8u) {
+            throw std::runtime_error("JR Z should retire 8 cycles when not taken");
+        }
+        assert(scalar(cpu, GB::RegisterId::PC) == 2);
     }
 
     {

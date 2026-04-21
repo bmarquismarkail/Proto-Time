@@ -55,12 +55,12 @@ public:
         }
     }
 
-    void onAttach(const BMMQ::MachineView& view) override
+    void onAttach(BMMQ::MutableMachineView& view) override
     {
         implementation_->onAttach(view);
     }
 
-    void onDetach(const BMMQ::MachineView& view) override
+    void onDetach(BMMQ::MutableMachineView& view) override
     {
         implementation_->onDetach(view);
     }
@@ -82,7 +82,12 @@ public:
 
     std::optional<uint32_t> sampleDigitalInput(const BMMQ::MachineView& view) override
     {
-        return implementation_->sampleDigitalInput(view);
+        return static_cast<BMMQ::IDigitalInputPlugin&>(*implementation_).sampleDigitalInput(view);
+    }
+
+    std::optional<BMMQ::InputButtonMask> sampleDigitalInput() override
+    {
+        return static_cast<BMMQ::IDigitalInputSourcePlugin&>(*implementation_).sampleDigitalInput();
     }
 
     void onDigitalInputEvent(const BMMQ::MachineEvent& event, const BMMQ::MachineView& view) override
@@ -93,6 +98,31 @@ public:
     [[nodiscard]] const BMMQ::SdlFrontendConfig& config() const noexcept override
     {
         return implementation_->config();
+    }
+
+    [[nodiscard]] BMMQ::InputPluginCapabilities capabilities() const noexcept override
+    {
+        return implementation_->capabilities();
+    }
+
+    [[nodiscard]] std::string_view name() const noexcept override
+    {
+        return implementation_->name();
+    }
+
+    [[nodiscard]] bool open() override
+    {
+        return implementation_->open();
+    }
+
+    void close() noexcept override
+    {
+        implementation_->close();
+    }
+
+    [[nodiscard]] std::string_view lastError() const noexcept override
+    {
+        return implementation_->lastError();
     }
 
     [[nodiscard]] const BMMQ::SdlFrontendStats& stats() const noexcept override
@@ -170,17 +200,17 @@ public:
         return implementation_->queuedDigitalInputMask();
     }
 
-    void pressButton(BMMQ::SdlFrontendButton button) override
+    void pressButton(BMMQ::InputButton button) override
     {
         implementation_->pressButton(button);
     }
 
-    void releaseButton(BMMQ::SdlFrontendButton button) override
+    void releaseButton(BMMQ::InputButton button) override
     {
         implementation_->releaseButton(button);
     }
 
-    [[nodiscard]] bool isButtonPressed(BMMQ::SdlFrontendButton button) const noexcept override
+    [[nodiscard]] bool isButtonPressed(BMMQ::InputButton button) const noexcept override
     {
         return implementation_->isButtonPressed(button);
     }
@@ -228,6 +258,16 @@ public:
     [[nodiscard]] bool audioOutputReady() const noexcept override
     {
         return implementation_->audioOutputReady();
+    }
+
+    [[nodiscard]] std::size_t bufferedAudioSamples() const noexcept override
+    {
+        return implementation_->bufferedAudioSamples();
+    }
+
+    [[nodiscard]] bool audioQueueBackpressureActive() const noexcept override
+    {
+        return implementation_->audioQueueBackpressureActive();
     }
 
     [[nodiscard]] uint32_t queuedAudioBytes() const noexcept override
