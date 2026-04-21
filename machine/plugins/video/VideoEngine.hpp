@@ -440,12 +440,15 @@ private:
         if (!entry.resolveAttempted) {
             entry.resolveAttempted = true;
             auto resolved = visualOverrideService_->resolve(entry.resource->descriptor);
-            if ((!resolved.has_value() || resolved->image.empty()) && kind != VisualResourceKind::Tile) {
+            if ((!resolved.has_value() ||
+                 (resolved->mode == VisualOverrideMode::ReplaceImage && resolved->image.empty())) &&
+                kind != VisualResourceKind::Tile) {
                 auto fallbackDescriptor = entry.resource->descriptor;
                 fallbackDescriptor.kind = VisualResourceKind::Tile;
                 resolved = visualOverrideService_->resolve(fallbackDescriptor);
             }
-            if (!resolved.has_value() || resolved->image.empty()) {
+            if (!resolved.has_value() ||
+                (resolved->mode == VisualOverrideMode::ReplaceImage && resolved->image.empty())) {
                 return std::nullopt;
             }
             entry.resolved = std::move(*resolved);
@@ -454,30 +457,40 @@ private:
         if (!entry.resolved.has_value()) {
             return std::nullopt;
         }
-        return sampleReplacementPixel(*entry.resolved, entry.resource->descriptor, tileX, tileY);
+        return sampleReplacementPixel(*entry.resolved, *entry.resource, tileX, tileY);
     }
 
     [[nodiscard]] static std::optional<uint32_t> sampleReplacementPixel(const ResolvedVisualOverride& resolved,
-                                                                        const VisualResourceDescriptor& descriptor,
+                                                                        const DecodedVisualResource& resource,
                                                                         uint8_t tileX,
                                                                         uint8_t tileY) noexcept
     {
+        if (resolved.mode == VisualOverrideMode::ReplacePalette) {
+            if (tileX >= resource.descriptor.width || tileY >= resource.descriptor.height || resource.stride == 0u) {
+                return std::nullopt;
+            }
+            const auto index = static_cast<std::size_t>(tileY) * resource.stride + tileX;
+            if (index >= resource.pixels.size()) {
+                return std::nullopt;
+            }
+            return resolved.palette[resource.pixels[index] & 0x03u];
+        }
         if (resolved.image.empty()) {
             return std::nullopt;
         }
         if (resolved.scalePolicy == "exact" &&
-            (resolved.image.width != descriptor.width || resolved.image.height != descriptor.height)) {
+            (resolved.image.width != resource.descriptor.width || resolved.image.height != resource.descriptor.height)) {
             return std::nullopt;
         }
 
         if (resolved.scalePolicy == "crop") {
             return sampleNearest(resolved.image,
-                                 cropCoordinate(tileX, resolved.image.width, descriptor.width, resolved.anchor),
-                                 cropCoordinate(tileY, resolved.image.height, descriptor.height, resolved.anchor));
+                                 cropCoordinate(tileX, resolved.image.width, resource.descriptor.width, resolved.anchor),
+                                 cropCoordinate(tileY, resolved.image.height, resource.descriptor.height, resolved.anchor));
         }
 
-        const auto x = scaledCoordinate(tileX, resolved.image.width, descriptor.width);
-        const auto y = scaledCoordinate(tileY, resolved.image.height, descriptor.height);
+        const auto x = scaledCoordinate(tileX, resolved.image.width, resource.descriptor.width);
+        const auto y = scaledCoordinate(tileY, resolved.image.height, resource.descriptor.height);
         if (resolved.filterPolicy == "linear") {
             return sampleLinear(resolved.image, x, y);
         }

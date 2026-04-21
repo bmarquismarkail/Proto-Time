@@ -29,6 +29,7 @@ struct VisualOverrideRule {
     std::optional<uint32_t> paletteValue;
     std::string paletteRegister;
     std::filesystem::path image;
+    std::optional<VisualReplacementPalette> palette;
     std::string scalePolicy;
     std::string filterPolicy;
     std::string anchor;

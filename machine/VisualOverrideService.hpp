@@ -36,6 +36,8 @@ struct VisualOverrideDiagnostics {
     std::size_t packReloadsSkipped = 0;
     std::size_t packReloadsSucceeded = 0;
     std::size_t packReloadsFailed = 0;
+    std::size_t suppressedReloadWarnings = 0;
+    std::size_t replacementCacheEvictions = 0;
 };
 
 struct VisualObservedResourceStat {
@@ -59,6 +61,7 @@ public:
     [[nodiscard]] bool loadPackManifest(const std::filesystem::path& manifestPath);
     [[nodiscard]] bool reloadChangedPacks();
     [[nodiscard]] std::optional<ResolvedVisualOverride> resolve(const VisualResourceDescriptor& descriptor);
+    [[nodiscard]] std::optional<std::string> takeReloadWarning();
 
     [[nodiscard]] bool beginCapture(const std::filesystem::path& directory, std::string machineId);
     void endCapture() noexcept;
@@ -80,9 +83,16 @@ private:
     struct ResolvedPath {
         std::string packId;
         std::filesystem::path path;
+        std::optional<VisualReplacementPalette> palette;
         std::string scalePolicy;
         std::string filterPolicy;
         std::string anchor;
+    };
+
+    struct CachedReplacementImage {
+        VisualReplacementImage image;
+        std::size_t bytes = 0;
+        uint64_t lastUseSerial = 0;
     };
 
     struct WatchedPathStamp {
@@ -107,6 +117,7 @@ private:
     [[nodiscard]] static bool matches(const VisualOverrideRule& rule, const VisualResourceDescriptor& descriptor) noexcept;
     [[nodiscard]] std::optional<ResolvedVisualOverride> loadResolved(const ResolvedPath& resolvedPath);
     [[nodiscard]] std::optional<VisualReplacementImage> loadPng(const std::filesystem::path& path);
+    bool evictImageCacheFor(std::size_t bytesNeeded);
     [[nodiscard]] bool writeCaptureManifest() const;
     [[nodiscard]] bool writeAuthorReport() const;
     void emitVisualEvent(MachineEventType type, uint64_t tick, std::string_view detail) const;
@@ -126,8 +137,11 @@ private:
     mutable bool captureManifestDirty_ = false;
     std::vector<LoadedPack> packs_;
     std::map<std::string, ResolvedPath> resolvedCache_;
-    std::unordered_map<std::string, VisualReplacementImage> imageCache_;
+    std::unordered_map<std::string, CachedReplacementImage> imageCache_;
     std::size_t imageCacheBytes_ = 0;
+    uint64_t imageCacheUseSerial_ = 0;
+    std::optional<std::string> pendingReloadWarning_;
+    std::string lastReloadWarning_;
     mutable std::string lastError_;
     EventSink eventSink_;
 };

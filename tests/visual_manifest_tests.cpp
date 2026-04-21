@@ -326,6 +326,52 @@ int main()
     assert(!paletteHashService.resolve(differentPalette->descriptor).has_value());
     assert(paletteHashService.diagnostics().resolveMisses == 1u);
 
+    Visual::writeTextFile(root / "palette-replace-pack" / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"palette-replace.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"palette\": [\"0xff000000\", \"0xff112233\", \"0xff445566\", \"0xff778899\"]\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    BMMQ::VisualOverrideService paletteReplaceService;
+    assert(paletteReplaceService.loadPackManifest(root / "palette-replace-pack" / "pack.json"));
+    const auto paletteReplaceResolved = paletteReplaceService.resolve(resource->descriptor);
+    assert(paletteReplaceResolved.has_value());
+    assert(paletteReplaceResolved->palette[1] == 0xFF112233u);
+    assert(paletteReplaceResolved->image.empty());
+
+    Visual::writeTextFile(root / "palette-replace-invalid-pack" / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"palette-replace-invalid.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"palette\": [\"0xff000000\", \"0xff112233\", \"0xff445566\"]\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    BMMQ::VisualOverrideService paletteReplaceInvalidService;
+    assert(paletteReplaceInvalidService.loadPackManifest(root / "palette-replace-invalid-pack" / "pack.json"));
+    assert(paletteReplaceInvalidService.diagnostics().invalidRulesSkipped == 1u);
+    assert(paletteReplaceInvalidService.diagnostics().rulesLoaded == 0u);
+
     Visual::writeTextFile(root / "pack" / "bad.json",
         "{\n"
         "  \"schemaVersion\": 1,\n"
@@ -559,6 +605,10 @@ int main()
     assert(reloadResolved->packId == "reload-updated.gb");
     assert(reloadService.diagnostics().packReloadsFailed == 1u);
     assert(reloadService.authorDiagnosticsReport().find("reload failures: 1") != std::string::npos);
+    const auto firstReloadWarning = reloadService.takeReloadWarning();
+    assert(firstReloadWarning.has_value());
+    assert(firstReloadWarning->find("visual pack reload failed") != std::string::npos);
+    assert(!reloadService.takeReloadWarning().has_value());
 
     Visual::writeTextFile(reloadManifestPath,
         "{\n"
@@ -667,6 +717,58 @@ int main()
     assert(!diagnosticReloadService.reloadChangedPacks());
     assert(diagnosticReloadService.diagnostics().invalidRulesSkipped == invalidBeforeFailedBatch);
     assert(diagnosticReloadService.diagnostics().missingReplacementImages == missingBeforeFailedBatch);
+
+    const auto repeatFailureWarning = diagnosticReloadService.takeReloadWarning();
+    assert(repeatFailureWarning.has_value());
+    advanceWriteTime(diagnosticPackB / "pack.json");
+    assert(!diagnosticReloadService.reloadChangedPacks());
+    assert(!diagnosticReloadService.takeReloadWarning().has_value());
+    assert(diagnosticReloadService.authorDiagnosticsReport().find("suppressed reload warnings: 1") != std::string::npos);
+
+    std::vector<BMMQ::DecodedVisualResource> cacheResources;
+    std::vector<std::filesystem::path> cachePaths;
+    const auto cacheRoot = root / "cache-pack";
+    for (uint32_t i = 0; i < 5u; ++i) {
+        auto cacheState = Visual::makeTileState(static_cast<uint8_t>(0xFFu - i), static_cast<uint8_t>(i));
+        auto cacheResource = GB::decodeGameBoyTileResource(cacheState, 0u, BMMQ::VisualResourceKind::Tile);
+        assert(cacheResource.has_value());
+        cacheResources.push_back(*cacheResource);
+        const auto imagePath = cacheRoot / ("tile" + std::to_string(i) + ".png");
+        cachePaths.push_back(imagePath);
+        std::vector<uint32_t> pixels(2047u * 2047u, 0xFF000000u | (i * 0x00010101u));
+        Visual::writeBinaryFile(imagePath, Visual::makeRgbaPng(2047u, 2047u, pixels));
+    }
+
+    std::string cacheManifest =
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"cache-pack.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [\n";
+    for (std::size_t i = 0; i < cacheResources.size(); ++i) {
+        cacheManifest +=
+            "    {\n"
+            "      \"match\": {\n"
+            "        \"kind\": \"Tile\",\n"
+            "        \"decodedHash\": \"" + BMMQ::toHexVisualHash(cacheResources[i].descriptor.contentHash) + "\",\n"
+            "        \"width\": 8,\n"
+            "        \"height\": 8\n"
+            "      },\n"
+            "      \"replace\": {\n"
+            "        \"image\": \"" + cachePaths[i].filename().string() + "\"\n"
+            "      }\n"
+            "    }" + std::string(i + 1u < cacheResources.size() ? "," : "") + "\n";
+    }
+    cacheManifest += "  ]\n}\n";
+    Visual::writeTextFile(cacheRoot / "pack.json", cacheManifest);
+    BMMQ::VisualOverrideService cacheService;
+    assert(cacheService.loadPackManifest(cacheRoot / "pack.json"));
+    for (const auto& cacheResource : cacheResources) {
+        auto cacheResolved = cacheService.resolve(cacheResource.descriptor);
+        assert(cacheResolved.has_value());
+    }
+    assert(cacheService.diagnostics().replacementCacheEvictions != 0u);
+    assert(cacheService.resolve(cacheResources.front().descriptor).has_value());
 
     std::filesystem::remove_all(root);
     return 0;

@@ -218,8 +218,10 @@ int main(int argc, char** argv)
                 return;
             }
             const bool reloaded = machine.visualOverrideService().reloadChangedPacks();
-            if (!reloaded && !machine.visualOverrideService().lastError().empty()) {
-                std::cerr << "warning: " << machine.visualOverrideService().lastError() << '\n';
+            if (!reloaded) {
+                if (const auto warning = machine.visualOverrideService().takeReloadWarning(); warning.has_value()) {
+                    std::cerr << "warning: " << *warning << '\n';
+                }
             }
         };
 

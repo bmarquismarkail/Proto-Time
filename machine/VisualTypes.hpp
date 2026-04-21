@@ -1,6 +1,7 @@
 #ifndef BMMQ_VISUAL_TYPES_HPP
 #define BMMQ_VISUAL_TYPES_HPP
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <iomanip>
@@ -79,13 +80,28 @@ struct VisualReplacementImage {
     }
 };
 
+using VisualReplacementPalette = std::array<uint32_t, 4>;
+
+enum class VisualOverrideMode : uint8_t {
+    None = 0,
+    ReplaceImage,
+    ReplacePalette,
+};
+
 struct ResolvedVisualOverride {
+    VisualOverrideMode mode = VisualOverrideMode::None;
     std::string packId;
     std::string assetPath;
     std::string scalePolicy;
     std::string filterPolicy;
     std::string anchor;
     VisualReplacementImage image;
+    VisualReplacementPalette palette{
+        0xFF000000u,
+        0xFF000000u,
+        0xFF000000u,
+        0xFF000000u,
+    };
 };
 
 [[nodiscard]] inline constexpr const char* visualResourceKindName(VisualResourceKind kind) noexcept

@@ -397,6 +397,34 @@ private:
     return std::nullopt;
 }
 
+[[nodiscard]] std::optional<VisualReplacementPalette> jsonPalette(const JsonValue::Object& object, const std::string& key)
+{
+    const auto* value = findMember(object, key);
+    if (value == nullptr || value->array() == nullptr || value->array()->size() != 4u) {
+        return std::nullopt;
+    }
+
+    VisualReplacementPalette palette{};
+    for (std::size_t i = 0; i < 4u; ++i) {
+        const auto& entry = (*value->array())[i];
+        std::optional<uint32_t> parsed;
+        if (entry.number() != nullptr && *entry.number() >= 0.0 &&
+            *entry.number() <= static_cast<double>(std::numeric_limits<uint32_t>::max())) {
+            parsed = static_cast<uint32_t>(*entry.number());
+        } else if (entry.string() != nullptr) {
+            const auto hash = parseVisualHashString(*entry.string());
+            if (hash.has_value() && *hash <= std::numeric_limits<uint32_t>::max()) {
+                parsed = static_cast<uint32_t>(*hash);
+            }
+        }
+        if (!parsed.has_value()) {
+            return std::nullopt;
+        }
+        palette[i] = *parsed;
+    }
+    return palette;
+}
+
 [[nodiscard]] bool jsonUInt32Equals(const JsonValue::Object& object, const std::string& key, uint32_t expected)
 {
     const auto* value = findMember(object, key);
@@ -534,17 +562,18 @@ VisualPackManifestLoadResult loadVisualPackManifest(const std::filesystem::path&
             rule.paletteRegister = jsonString(*matchValue->object(), "paletteRegister").value_or("");
             rule.paletteValue = jsonFlexibleUInt32(*matchValue->object(), "paletteValue");
             rule.image = jsonString(*replaceValue->object(), "image").value_or("");
+            rule.palette = jsonPalette(*replaceValue->object(), "palette");
             rule.scalePolicy = jsonString(*replaceValue->object(), "scalePolicy").value_or("");
             rule.filterPolicy = jsonString(*replaceValue->object(), "filterPolicy").value_or("");
             rule.anchor = jsonString(*replaceValue->object(), "anchor").value_or("");
             if (rule.kind == VisualResourceKind::Unknown ||
                 (rule.sourceHash == 0u && rule.decodedHash == 0u && rule.paletteAwareHash == 0u) ||
-                rule.image.empty()) {
+                (rule.image.empty() && !rule.palette.has_value())) {
                 ++result.invalidRulesSkipped;
                 continue;
             }
             std::error_code existsEc;
-            if (!std::filesystem::exists(pack.root / rule.image, existsEc)) {
+            if (!rule.image.empty() && !std::filesystem::exists(pack.root / rule.image, existsEc)) {
                 ++result.missingReplacementImages;
             }
             rule.specificity = 1u +

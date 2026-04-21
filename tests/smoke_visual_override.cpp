@@ -122,6 +122,66 @@ int main()
                      visualEvents.end(),
                      BMMQ::MachineEventType::VisualOverrideResolved) != visualEvents.end());
 
+    BMMQ::VisualOverrideService paletteReplaceService;
+    const auto paletteReplaceDir = root / "palette-replace-pack";
+    Visual::writeTextFile(paletteReplaceDir / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"palette-replace.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"palette\": [\"0xff101112\", \"0xffdd0000\", \"0xff00dd00\", \"0xff0000dd\"]\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    assert(paletteReplaceService.loadPackManifest(paletteReplaceDir / "pack.json"));
+    BMMQ::VideoService paletteReplaceVideoService(BMMQ::VideoEngineConfig{
+        .frameWidth = 8,
+        .frameHeight = 8,
+        .queueCapacityFrames = 1,
+    });
+    paletteReplaceVideoService.setVisualOverrideService(&paletteReplaceService);
+    auto paletteReplaceFrame = paletteReplaceVideoService.engine().buildDebugFrame(state, 11u);
+    assert(paletteReplaceFrame.pixels[0] == 0xFFDD0000u);
+
+    BMMQ::VisualOverrideService imagePrecedenceService;
+    const auto imagePrecedenceDir = root / "image-precedence-pack";
+    Visual::writeBinaryFile(imagePrecedenceDir / "tile.png", Visual::makeSolidPng2x2Rgba(0xFF00FFFFu));
+    Visual::writeTextFile(imagePrecedenceDir / "pack.json",
+        "{\n"
+        "  \"schemaVersion\": 1,\n"
+        "  \"id\": \"image-precedence.gb\",\n"
+        "  \"targets\": [\"gameboy\"],\n"
+        "  \"rules\": [{\n"
+        "    \"match\": {\n"
+        "      \"kind\": \"Tile\",\n"
+        "      \"decodedHash\": \"" + BMMQ::toHexVisualHash(resource->descriptor.contentHash) + "\",\n"
+        "      \"width\": 8,\n"
+        "      \"height\": 8\n"
+        "    },\n"
+        "    \"replace\": {\n"
+        "      \"image\": \"tile.png\",\n"
+        "      \"palette\": [\"0xff101112\", \"0xffdd0000\", \"0xff00dd00\", \"0xff0000dd\"]\n"
+        "    }\n"
+        "  }]\n"
+        "}\n");
+    assert(imagePrecedenceService.loadPackManifest(imagePrecedenceDir / "pack.json"));
+    BMMQ::VideoService imagePrecedenceVideoService(BMMQ::VideoEngineConfig{
+        .frameWidth = 8,
+        .frameHeight = 8,
+        .queueCapacityFrames = 1,
+    });
+    imagePrecedenceVideoService.setVisualOverrideService(&imagePrecedenceService);
+    auto imagePrecedenceFrame = imagePrecedenceVideoService.engine().buildDebugFrame(state, 12u);
+    assert(imagePrecedenceFrame.pixels[0] == 0xFF00FFFFu);
+
     BMMQ::VisualOverrideService exactPolicyService;
     const auto exactPolicyDir = root / "exact-policy-pack";
     Visual::writeBinaryFile(exactPolicyDir / "tile.png", Visual::makeSolidPng2x2Rgba(0xFFFF0000u));

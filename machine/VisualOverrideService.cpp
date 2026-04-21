@@ -147,6 +147,12 @@ bool VisualOverrideService::reloadChangedPacks()
         if (!loadResult.manifest.has_value()) {
             ++diagnostics_.packReloadsFailed;
             lastError_ = "visual pack reload failed: " + loadedPack.manifestPath.string() + ": " + loadResult.error;
+            if (lastReloadWarning_ != lastError_) {
+                pendingReloadWarning_ = lastError_;
+                lastReloadWarning_ = lastError_;
+            } else {
+                ++diagnostics_.suppressedReloadWarnings;
+            }
             failed = true;
             reloadedPacks.push_back(loadedPack);
             continue;
@@ -173,6 +179,8 @@ bool VisualOverrideService::reloadChangedPacks()
     ++diagnostics_.packReloadsSucceeded;
     ++generation_;
     clearResolutionCaches();
+    pendingReloadWarning_.reset();
+    lastReloadWarning_.clear();
     lastError_.clear();
     return true;
 }
@@ -223,7 +231,8 @@ std::optional<ResolvedVisualOverride> VisualOverrideService::resolve(const Visua
         return std::nullopt;
     }
     ResolvedPath resolvedPath{bestPack->manifest.id,
-                              bestPack->manifest.root / bestRule->image,
+                              bestRule->image.empty() ? std::filesystem::path{} : bestPack->manifest.root / bestRule->image,
+                              bestRule->palette,
                               bestRule->scalePolicy,
                               bestRule->filterPolicy,
                               bestRule->anchor};
@@ -345,6 +354,13 @@ const VisualOverrideDiagnostics& VisualOverrideService::diagnostics() const noex
     return diagnostics_;
 }
 
+std::optional<std::string> VisualOverrideService::takeReloadWarning()
+{
+    auto warning = pendingReloadWarning_;
+    pendingReloadWarning_.reset();
+    return warning;
+}
+
 std::string VisualOverrideService::authorDiagnosticsReport(std::size_t maxObservedResources) const
 {
     std::ostringstream out;
@@ -359,10 +375,15 @@ std::string VisualOverrideService::authorDiagnosticsReport(std::size_t maxObserv
         << "reload checks: " << diagnostics_.packReloadChecks << '\n'
         << "reloads succeeded: " << diagnostics_.packReloadsSucceeded << '\n'
         << "reload failures: " << diagnostics_.packReloadsFailed << '\n'
+        << "suppressed reload warnings: " << diagnostics_.suppressedReloadWarnings << '\n'
+        << "replacement cache evictions: " << diagnostics_.replacementCacheEvictions << '\n'
         << '\n'
         << "Visual capture summary\n"
         << "unique resources dumped: " << captureStats_.uniqueResourcesDumped << '\n'
         << "duplicate resources skipped: " << captureStats_.duplicateResourcesSkipped << '\n';
+    if (!lastReloadWarning_.empty()) {
+        out << "last reload warning: " << lastReloadWarning_ << '\n';
+    }
 
     std::vector<const VisualObservedResourceStat*> sorted;
     sorted.reserve(observedResources_.size());
@@ -544,25 +565,45 @@ bool VisualOverrideService::matches(const VisualOverrideRule& rule, const Visual
 
 std::optional<ResolvedVisualOverride> VisualOverrideService::loadResolved(const ResolvedPath& resolvedPath)
 {
-    auto image = loadPng(resolvedPath.path);
-    if (!image.has_value() || image->empty()) {
+    if (!resolvedPath.path.empty()) {
+        auto image = loadPng(resolvedPath.path);
+        if (!image.has_value() || image->empty()) {
+            return std::nullopt;
+        }
+        return ResolvedVisualOverride{
+            .mode = VisualOverrideMode::ReplaceImage,
+            .packId = resolvedPath.packId,
+            .assetPath = resolvedPath.path.string(),
+            .scalePolicy = resolvedPath.scalePolicy,
+            .filterPolicy = resolvedPath.filterPolicy,
+            .anchor = resolvedPath.anchor,
+            .image = std::move(*image),
+            .palette = resolvedPath.palette.value_or(VisualReplacementPalette{
+                0xFF000000u, 0xFF000000u, 0xFF000000u, 0xFF000000u,
+            }),
+        };
+    }
+    if (!resolvedPath.palette.has_value()) {
         return std::nullopt;
     }
     return ResolvedVisualOverride{
+        .mode = VisualOverrideMode::ReplacePalette,
         .packId = resolvedPath.packId,
-        .assetPath = resolvedPath.path.string(),
+        .assetPath = {},
         .scalePolicy = resolvedPath.scalePolicy,
         .filterPolicy = resolvedPath.filterPolicy,
         .anchor = resolvedPath.anchor,
-        .image = std::move(*image),
+        .image = {},
+        .palette = *resolvedPath.palette,
     };
 }
 
 std::optional<VisualReplacementImage> VisualOverrideService::loadPng(const std::filesystem::path& path)
 {
     const auto key = path.lexically_normal().string();
-    if (const auto cached = imageCache_.find(key); cached != imageCache_.end()) {
-        return cached->second;
+    if (auto cached = imageCache_.find(key); cached != imageCache_.end()) {
+        cached->second.lastUseSerial = ++imageCacheUseSerial_;
+        return cached->second.image;
     }
 
     std::error_code sizeEc;
@@ -687,8 +728,7 @@ std::optional<VisualReplacementImage> VisualOverrideService::loadPng(const std::
     image.height = height;
     const auto pixelCount = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
     const auto imageBytes = pixelCount * sizeof(uint32_t);
-    if (imageBytes > VisualPackLimits::kMaxReplacementCacheBytes ||
-        imageCacheBytes_ > VisualPackLimits::kMaxReplacementCacheBytes - imageBytes) {
+    if (imageBytes > VisualPackLimits::kMaxReplacementCacheBytes || !evictImageCacheFor(imageBytes)) {
         lastError_ = "replacement image cache budget exceeded: requested=" + std::to_string(imageBytes) +
             " current=" + std::to_string(imageCacheBytes_) +
             " max=" + std::to_string(VisualPackLimits::kMaxReplacementCacheBytes);
@@ -706,9 +746,35 @@ std::optional<VisualReplacementImage> VisualOverrideService::loadPng(const std::
                                    (static_cast<uint32_t>(g) << 8u) |
                                    static_cast<uint32_t>(b));
     }
-    imageCache_.emplace(key, image);
+    imageCache_.emplace(key, CachedReplacementImage{
+        .image = image,
+        .bytes = imageBytes,
+        .lastUseSerial = ++imageCacheUseSerial_,
+    });
     imageCacheBytes_ += imageBytes;
     return image;
+}
+
+bool VisualOverrideService::evictImageCacheFor(std::size_t bytesNeeded)
+{
+    if (bytesNeeded > VisualPackLimits::kMaxReplacementCacheBytes) {
+        return false;
+    }
+    while (imageCacheBytes_ > VisualPackLimits::kMaxReplacementCacheBytes - bytesNeeded) {
+        auto victim = imageCache_.end();
+        for (auto it = imageCache_.begin(); it != imageCache_.end(); ++it) {
+            if (victim == imageCache_.end() || it->second.lastUseSerial < victim->second.lastUseSerial) {
+                victim = it;
+            }
+        }
+        if (victim == imageCache_.end()) {
+            return false;
+        }
+        imageCacheBytes_ -= victim->second.bytes;
+        imageCache_.erase(victim);
+        ++diagnostics_.replacementCacheEvictions;
+    }
+    return true;
 }
 
 bool VisualOverrideService::writeCaptureManifest() const
