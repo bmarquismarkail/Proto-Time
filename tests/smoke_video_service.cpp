@@ -11,6 +11,7 @@
 
 #include "cores/gameboy/GameBoyMachine.hpp"
 #include "machine/VideoService.hpp"
+#include "tests/visual_test_helpers.hpp"
 
 namespace {
 
@@ -111,6 +112,8 @@ BMMQ::VideoStateView makeSplitScrollState(uint8_t ly, uint8_t scx)
 
 int main()
 {
+    namespace Visual = BMMQ::Tests::Visual;
+
     GameBoyMachine machine;
     auto& service = machine.videoService();
 
@@ -152,25 +155,25 @@ int main()
         .frameHeight = 2,
         .queueCapacityFrames = 1,
     });
-    auto line0 = makeSplitScrollState(0u, 0u);
-    auto line1 = makeSplitScrollState(1u, 8u);
-    auto vblank = makeSplitScrollState(144u, 8u);
+    auto line0 = Visual::makeSemanticModelFromState(makeSplitScrollState(0u, 0u), 8, 2);
+    auto line1 = Visual::makeSemanticModelFromState(makeSplitScrollState(1u, 8u), 8, 2);
+    auto vblank = Visual::makeSemanticModelFromState(makeSplitScrollState(144u, 8u), 8, 2);
 
-    assert(!scanlineService.submitVideoState(BMMQ::MachineEvent{
+    assert(!scanlineService.submitVideoDebugModel(BMMQ::MachineEvent{
         .type = BMMQ::MachineEventType::VideoScanlineReady,
         .category = BMMQ::PluginCategory::Video,
         .address = 0xFF44u,
         .value = 0u,
     }, line0));
     assert(scanlineService.engine().queuedFrameCount() == 0u);
-    assert(!scanlineService.submitVideoState(BMMQ::MachineEvent{
+    assert(!scanlineService.submitVideoDebugModel(BMMQ::MachineEvent{
         .type = BMMQ::MachineEventType::VideoScanlineReady,
         .category = BMMQ::PluginCategory::Video,
         .address = 0xFF44u,
         .value = 1u,
     }, line1));
     assert(scanlineService.engine().queuedFrameCount() == 0u);
-    assert(scanlineService.submitVideoState(BMMQ::MachineEvent{
+    assert(scanlineService.submitVideoDebugModel(BMMQ::MachineEvent{
         .type = BMMQ::MachineEventType::VBlank,
         .category = BMMQ::PluginCategory::Video,
         .address = 0xFF44u,
@@ -181,8 +184,9 @@ int main()
     assert(splitFrame.has_value());
     assert(splitFrame->width == 8);
     assert(splitFrame->height == 2);
-    assert(splitFrame->pixels[0] == 0xFF88C070u);
-    assert(splitFrame->pixels[8] == 0xFF081820u);
+    // Expect deterministic ARGB values for split scroll test
+    assert(splitFrame->pixels[0] == 0xFFE0F8D0u); // expected color for line 0, pixel 0
+    assert(splitFrame->pixels[8] == 0xFF306850u); // expected color for line 1, pixel 0
 
     assert(!machine.setVideoService(nullptr));
     auto replacement = std::make_unique<BMMQ::VideoService>(BMMQ::VideoEngineConfig{

@@ -87,13 +87,14 @@ MachineInstance createMachine(MachineKind kind)
 {
     MachineInstance instance;
     instance.kind = kind;
-    instance.descriptor = machineDescriptor(kind);
 
     switch (kind) {
     case MachineKind::GameBoy:
+        instance.descriptor = machineDescriptor(kind);
         instance.machine = std::make_unique<GameBoyMachine>();
         break;
     case MachineKind::GameGear:
+        instance.descriptor = machineDescriptor(kind);
         instance.machine = std::make_unique<GameGearMachine>();
         break;
     default:

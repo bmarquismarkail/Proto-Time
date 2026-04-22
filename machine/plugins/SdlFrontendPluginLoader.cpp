@@ -135,9 +135,9 @@ public:
         return implementation_->diagnostics();
     }
 
-    [[nodiscard]] const std::optional<BMMQ::VideoStateView>& lastVideoState() const noexcept override
+    [[nodiscard]] const std::optional<BMMQ::VideoDebugFrameModel>& lastVideoDebugModel() const noexcept override
     {
-        return implementation_->lastVideoState();
+        return implementation_->lastVideoDebugModel();
     }
 
     [[nodiscard]] const std::optional<BMMQ::AudioStateView>& lastAudioState() const noexcept override

@@ -10,10 +10,10 @@
 #include <span>
 #include <vector>
 
-#include "cores/gameboy/video/GameBoyVisualDebugAdapter.hpp"
 #include "machine/VisualOverrideService.hpp"
 #include "machine/plugins/AudioEngine.hpp"
 #include "machine/plugins/video/VideoEngine.hpp"
+#include "tests/visual_test_helpers.hpp"
 
 namespace {
 
@@ -92,10 +92,35 @@ BMMQ::VideoStateView makeDenseVideoState()
     return state;
 }
 
+BMMQ::VideoDebugFrameModel makeGenericDebugModel()
+{
+    BMMQ::VideoDebugFrameModel model;
+    model.width = 4;
+    model.height = 2;
+    model.displayEnabled = true;
+    model.argbPixels = {
+        0xFF112233u, 0xFF445566u, 0xFF778899u, 0xFFAABBCCu,
+        0xFF010203u, 0xFF040506u, 0xFF070809u, 0xFF0A0B0Cu,
+    };
+    model.semantics.resize(model.argbPixels.size());
+    return model;
+}
+
 } // namespace
 
 int main()
 {
+    namespace Visual = BMMQ::Tests::Visual;
+
+    BMMQ::VideoEngine genericEngine({
+        .frameWidth = 4,
+        .frameHeight = 2,
+        .queueCapacityFrames = 1,
+    });
+    const auto genericModel = makeGenericDebugModel();
+    const auto genericFrame = genericEngine.buildDebugFrame(genericModel, 1u);
+    assert(genericFrame.pixels == genericModel.argbPixels);
+
     BMMQ::VideoEngine engine({
         .frameWidth = 32,
         .frameHeight = 24,
@@ -103,7 +128,8 @@ int main()
     });
 
     const auto state = makeDebugVideoState();
-    auto frame = engine.buildDebugFrame(state, 7u);
+    const auto model = Visual::makeSemanticModelFromState(state, 32, 24);
+    auto frame = engine.buildDebugFrame(model, 7u);
     assert(frame.width == 32);
     assert(frame.height == 24);
     assert(frame.pixelCount() == 32u * 24u);
@@ -173,6 +199,7 @@ int main()
         .frameChunkSamples = 256,
     });
     const auto denseState = makeDenseVideoState();
+    const auto denseModel = Visual::makeSemanticModelFromState(denseState, 160, 144);
     std::vector<int16_t> audioChunk(256u, 1200);
     std::vector<int16_t> audioOutput(256u, 0);
 
@@ -180,7 +207,7 @@ int main()
     const auto maxPerfTime = std::chrono::milliseconds(perfTestTimeoutMs());
     const auto start = std::chrono::steady_clock::now();
     for (int i = 0; i < kFramesToBuild; ++i) {
-        const auto denseFrame = fullFrameEngine.buildDebugFrame(denseState, static_cast<uint64_t>(i + 1));
+        const auto denseFrame = fullFrameEngine.buildDebugFrame(denseModel, static_cast<uint64_t>(i + 1));
         assert(denseFrame.pixelCount() == 160u * 144u);
         audioEngine.appendRecentPcm(audioChunk, static_cast<uint64_t>(i + 1));
         audioEngine.render(audioOutput);
@@ -196,11 +223,10 @@ int main()
         .frameHeight = 144,
         .queueCapacityFrames = 1,
     });
-    inactiveVisualEngine.setVisualDebugAdapter(&GB::gameBoyVisualDebugAdapter());
     inactiveVisualEngine.setVisualOverrideService(&inactiveVisualService);
     const auto inactiveStart = std::chrono::steady_clock::now();
     for (int i = 0; i < kFramesToBuild; ++i) {
-        const auto denseFrame = inactiveVisualEngine.buildDebugFrame(denseState, static_cast<uint64_t>(i + 1));
+        const auto denseFrame = inactiveVisualEngine.buildDebugFrame(denseModel, static_cast<uint64_t>(i + 1));
         assert(denseFrame.pixelCount() == 160u * 144u);
     }
     const auto inactiveElapsed = std::chrono::steady_clock::now() - inactiveStart;
@@ -215,11 +241,10 @@ int main()
         .frameHeight = 144,
         .queueCapacityFrames = 1,
     });
-    captureVisualEngine.setVisualDebugAdapter(&GB::gameBoyVisualDebugAdapter());
     captureVisualEngine.setVisualOverrideService(&captureVisualService);
     const auto captureStart = std::chrono::steady_clock::now();
     for (int i = 0; i < 3; ++i) {
-        const auto denseFrame = captureVisualEngine.buildDebugFrame(denseState, static_cast<uint64_t>(i + 1));
+        const auto denseFrame = captureVisualEngine.buildDebugFrame(denseModel, static_cast<uint64_t>(i + 1));
         assert(denseFrame.pixelCount() == 160u * 144u);
     }
     const auto captureElapsed = std::chrono::steady_clock::now() - captureStart;

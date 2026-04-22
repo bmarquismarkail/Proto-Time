@@ -175,7 +175,7 @@ public:
     [[nodiscard]] virtual const SdlFrontendConfig& config() const noexcept = 0;
     [[nodiscard]] virtual const SdlFrontendStats& stats() const noexcept = 0;
     [[nodiscard]] virtual const std::vector<std::string>& diagnostics() const noexcept = 0;
-    [[nodiscard]] virtual const std::optional<VideoStateView>& lastVideoState() const noexcept = 0;
+    [[nodiscard]] virtual const std::optional<VideoDebugFrameModel>& lastVideoDebugModel() const noexcept = 0;
     [[nodiscard]] virtual const std::optional<AudioStateView>& lastAudioState() const noexcept = 0;
     [[nodiscard]] virtual const std::optional<SdlAudioPreviewBuffer>& lastAudioPreview() const noexcept = 0;
     [[nodiscard]] virtual const std::optional<DigitalInputStateView>& lastInputState() const noexcept = 0;

@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "VisualDebugAdapter.hpp"
 #include "VisualOverrideService.hpp"
 #include "plugins/IoPlugin.hpp"
 #include "plugins/video/VideoEngine.hpp"
@@ -67,7 +68,6 @@ public:
     void setVisualDebugAdapter(const IVisualDebugAdapter* adapter) noexcept
     {
         visualDebugAdapter_ = adapter;
-        engine_.setVisualDebugAdapter(adapter);
     }
 
     [[nodiscard]] const IVisualDebugAdapter* visualDebugAdapter() const noexcept
@@ -208,7 +208,7 @@ public:
         return true;
     }
 
-    [[nodiscard]] bool submitVideoState(const MachineEvent& event, const VideoStateView& state)
+    [[nodiscard]] bool submitVideoDebugModel(const MachineEvent& event, const VideoDebugFrameModel& model)
     {
         if (event.type == MachineEventType::RomLoaded) {
             engine_.advanceGeneration();
@@ -217,17 +217,16 @@ public:
         }
 
         if (event.type == MachineEventType::VideoScanlineReady) {
-            captureScanline(state);
+            captureScanline(model);
             syncEngineDiagnostics();
             return false;
         }
 
-        const bool lcdControlWrite = event.type == MachineEventType::MemoryWriteObserved && event.address == 0xFF40u;
         const bool shouldBuildFrame =
             event.type == MachineEventType::VBlank ||
             engine_.lastValidFrame().has_value() == false ||
-            !state.lcdEnabled() ||
-            lcdControlWrite;
+            !model.displayEnabled ||
+            event.type == MachineEventType::MemoryWriteObserved;
         if (!shouldBuildFrame) {
             syncEngineDiagnostics();
             return false;
@@ -240,14 +239,14 @@ public:
             return submitFrame(frame);
         }
         if (event.type == MachineEventType::VBlank && hasPartialScanlineFrame()) {
-            auto frame = engine_.buildDebugFrame(state, generation);
+            auto frame = engine_.buildDebugFrame(model, generation);
             overlayCapturedScanlines(frame);
             resetScanlineCapture();
             return submitFrame(frame);
         }
 
         resetScanlineCapture();
-        return submitFrame(engine_.buildDebugFrame(state, generation));
+        return submitFrame(engine_.buildDebugFrame(model, generation));
     }
 
     [[nodiscard]] bool submitFrame(const VideoFramePacket& frame)
@@ -363,18 +362,20 @@ private:
     {
         scanlineFrame_.reset();
         scanlinesCaptured_.clear();
-        scanlineBackgroundColorIndices_.clear();
         scanlineCaptureCount_ = 0;
     }
 
-    void captureScanline(const VideoStateView& state)
+    void captureScanline(const VideoDebugFrameModel& model)
     {
-        if (!state.lcdEnabled() || state.ly >= 144u) {
+        if (!model.displayEnabled || model.inVBlank || !model.scanlineIndex.has_value()) {
             resetScanlineCapture();
+            lastScanlineSourceFrame_.reset();
+            lastScanlineModelHash_ = 0;
+            lastScanlineGeneration_ = 0;
             return;
         }
 
-        const int screenY = static_cast<int>(state.ly);
+        const int screenY = static_cast<int>(*model.scanlineIndex);
         if (screenY < 0 || screenY >= engine_.config().frameHeight) {
             return;
         }
@@ -384,7 +385,31 @@ private:
             return;
         }
 
-        engine_.renderScanline(*scanlineFrame_, state, screenY, scanlineBackgroundColorIndices_);
+        // Compute a simple hash of the model and generation to detect changes.
+        // For a more robust solution, a proper hash function should be used.
+        std::size_t modelHash = reinterpret_cast<std::size_t>(&model); // fallback: address-based
+        std::uint64_t generation = engine_.currentGeneration();
+
+        if (!lastScanlineSourceFrame_.has_value() ||
+            lastScanlineModelHash_ != modelHash ||
+            lastScanlineGeneration_ != generation) {
+            lastScanlineSourceFrame_ = engine_.buildDebugFrame(model, generation);
+            lastScanlineModelHash_ = modelHash;
+            lastScanlineGeneration_ = generation;
+        }
+
+        const auto& sourceFrame = *lastScanlineSourceFrame_;
+        if (sourceFrame.width != scanlineFrame_->width || sourceFrame.height != scanlineFrame_->height) {
+            return;
+        }
+        const auto rowStart = static_cast<std::size_t>(screenY) * static_cast<std::size_t>(sourceFrame.width);
+        const auto rowEnd = rowStart + static_cast<std::size_t>(sourceFrame.width);
+        if (rowEnd > sourceFrame.pixels.size() || rowEnd > scanlineFrame_->pixels.size()) {
+            return;
+        }
+        std::copy(sourceFrame.pixels.begin() + static_cast<std::ptrdiff_t>(rowStart),
+                  sourceFrame.pixels.begin() + static_cast<std::ptrdiff_t>(rowEnd),
+                  scanlineFrame_->pixels.begin() + static_cast<std::ptrdiff_t>(rowStart));
         const auto lineIndex = static_cast<std::size_t>(screenY);
         if (lineIndex < scanlinesCaptured_.size() && !scanlinesCaptured_[lineIndex]) {
             scanlinesCaptured_[lineIndex] = true;
@@ -434,6 +459,10 @@ private:
     }
 
     VideoEngine engine_{};
+    // Cache for scanline frame/model/generation
+    mutable std::optional<VideoFramePacket> lastScanlineSourceFrame_;
+    mutable std::size_t lastScanlineModelHash_ = 0;
+    mutable std::uint64_t lastScanlineGeneration_ = 0;
     VisualOverrideService* visualOverrideService_ = nullptr;
     const IVisualDebugAdapter* visualDebugAdapter_ = nullptr;
     VideoPresenterConfig presenterConfig_{};
@@ -445,7 +474,6 @@ private:
     mutable std::mutex nonRealTimeMutex_;
     std::optional<VideoFramePacket> scanlineFrame_{};
     std::vector<bool> scanlinesCaptured_{};
-    std::vector<uint8_t> scanlineBackgroundColorIndices_{};
     std::size_t scanlineCaptureCount_ = 0;
 };
 

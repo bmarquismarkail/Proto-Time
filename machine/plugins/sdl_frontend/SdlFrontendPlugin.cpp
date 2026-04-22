@@ -89,9 +89,9 @@ public:
         return entries();
     }
 
-    [[nodiscard]] const std::optional<BMMQ::VideoStateView>& lastVideoState() const noexcept override
+    [[nodiscard]] const std::optional<BMMQ::VideoDebugFrameModel>& lastVideoDebugModel() const noexcept override
     {
-        return lastVideoState_;
+        return lastVideoDebugModel_;
     }
 
     [[nodiscard]] const std::optional<BMMQ::AudioStateView>& lastAudioState() const noexcept override
@@ -490,7 +490,6 @@ public:
             return;
         }
         ++stats_.videoEvents;
-        const bool lcdControlWrite = event.type == BMMQ::MachineEventType::MemoryWriteObserved && event.address == 0xFF40u;
         const bool carriesVideoState =
             event.type == BMMQ::MachineEventType::MemoryWriteObserved ||
             event.type == BMMQ::MachineEventType::VBlank ||
@@ -499,8 +498,7 @@ public:
             carriesVideoState &&
             (event.type == BMMQ::MachineEventType::VBlank ||
              event.type == BMMQ::MachineEventType::VideoScanlineReady ||
-             !lastFrame_.has_value() ||
-             lcdControlWrite);
+             !lastFrame_.has_value());
 
         bool submittedVideoFrame = false;
         if (shouldSampleVideoState) {
@@ -509,15 +507,13 @@ public:
                 appendLog("sdl: skipped video frame preparation while audio buffer was low");
                 return;
             }
-            BMMQ::VideoStateView* videoState = stateForVideoEvent(event, view);
-            if (videoState != nullptr) {
-                if (videoService_ != nullptr && videoService_->submitVideoState(event, *videoState)) {
+            BMMQ::VideoDebugFrameModel* videoModel = modelForVideoEvent(event, view);
+            if (videoModel != nullptr) {
+                if (videoService_ != nullptr && videoService_->submitVideoDebugModel(event, *videoModel)) {
                     submittedVideoFrame = true;
                     if (event.type == BMMQ::MachineEventType::VBlank) {
-                        lastVideoState_ = *videoState;
-                    }
-                    if (event.type == BMMQ::MachineEventType::VBlank) {
-                        scanlineVideoState_.reset();
+                        lastVideoDebugModel_ = *videoModel;
+                        scanlineVideoDebugModel_.reset();
                     }
                     syncVideoTransportStats();
                     ++stats_.framesPrepared;
@@ -529,7 +525,7 @@ public:
             } else {
                 lastFrame_.reset();
                 frameDirty_ = false;
-                scanlineVideoState_.reset();
+                scanlineVideoDebugModel_.reset();
             }
         }
 
@@ -537,8 +533,11 @@ public:
             event.type != BMMQ::MachineEventType::VideoScanlineReady &&
             event.type != BMMQ::MachineEventType::VBlank) {
             std::string message = std::string("sdl: video event=") + BMMQ::detail::machineEventTypeName(event.type);
-            if (lastVideoState_.has_value()) {
-                message += " lcdc=" + BMMQ::detail::hexByte(lastVideoState_->lcdc);
+            if (lastVideoDebugModel_.has_value()) {
+                message += lastVideoDebugModel_->displayEnabled ? " display=on" : " display=off";
+                if (lastVideoDebugModel_->scanlineIndex.has_value()) {
+                    message += " scanline=" + std::to_string(*lastVideoDebugModel_->scanlineIndex);
+                }
             }
             if (lastFrame_.has_value()) {
                 message += " frame=" + std::to_string(lastFrame_->width) + "x" + std::to_string(lastFrame_->height);
@@ -865,63 +864,48 @@ private:
         return audioService_->engine().bufferedSamples() < safetyMarginSamples;
     }
 
-    std::optional<BMMQ::VideoStateView> snapshotVideoState(const BMMQ::MachineView& view)
+    std::optional<BMMQ::VideoDebugFrameModel> snapshotVideoDebugModel(const BMMQ::MachineView& view)
     {
         ++stats_.videoStateSnapshots;
-        return view.videoState();
+        return view.videoDebugFrameModel({
+            .frameWidth = std::max(config_.frameWidth, 1),
+            .frameHeight = std::max(config_.frameHeight, 1),
+        });
     }
 
-    BMMQ::VideoStateView* stateForVideoEvent(const BMMQ::MachineEvent& event,
-                                             const BMMQ::MachineView& view)
+    BMMQ::VideoDebugFrameModel* modelForVideoEvent(const BMMQ::MachineEvent& event,
+                                                   const BMMQ::MachineView& view)
     {
         if (event.type == BMMQ::MachineEventType::VideoScanlineReady) {
-            return stateForScanlineEvent(view);
+            return modelForScanlineEvent(view);
         }
 
         if (event.type == BMMQ::MachineEventType::VBlank &&
             videoService_ != nullptr &&
             (videoService_->hasCompleteScanlineFrame() || videoService_->hasPartialScanlineFrame()) &&
-            scanlineVideoState_.has_value()) {
-            refreshVideoRegisters(*scanlineVideoState_, view);
-            return &*scanlineVideoState_;
-        }
-
-        scanlineVideoState_.reset();
-        lastVideoState_ = snapshotVideoState(view);
-        if (!lastVideoState_.has_value()) {
-            return nullptr;
-        }
-        return &*lastVideoState_;
-    }
-
-    BMMQ::VideoStateView* stateForScanlineEvent(const BMMQ::MachineView& view)
-    {
-        const auto ly = view.read8(0xFF44u);
-        if (!scanlineVideoState_.has_value() || ly == 0u || ly < scanlineVideoState_->ly) {
-            scanlineVideoState_ = snapshotVideoState(view);
-            if (!scanlineVideoState_.has_value()) {
+            scanlineVideoDebugModel_.has_value()) {
+            scanlineVideoDebugModel_ = snapshotVideoDebugModel(view);
+            if (!scanlineVideoDebugModel_.has_value()) {
                 return nullptr;
             }
-            return &*scanlineVideoState_;
+            return &*scanlineVideoDebugModel_;
         }
 
-        refreshVideoRegisters(*scanlineVideoState_, view);
-        return &*scanlineVideoState_;
+        scanlineVideoDebugModel_.reset();
+        lastVideoDebugModel_ = snapshotVideoDebugModel(view);
+        if (!lastVideoDebugModel_.has_value()) {
+            return nullptr;
+        }
+        return &*lastVideoDebugModel_;
     }
 
-    static void refreshVideoRegisters(BMMQ::VideoStateView& state, const BMMQ::MachineView& view)
+    BMMQ::VideoDebugFrameModel* modelForScanlineEvent(const BMMQ::MachineView& view)
     {
-        state.lcdc = view.read8(0xFF40u);
-        state.stat = view.read8(0xFF41u);
-        state.scy = view.read8(0xFF42u);
-        state.scx = view.read8(0xFF43u);
-        state.ly = view.read8(0xFF44u);
-        state.lyc = view.read8(0xFF45u);
-        state.bgp = view.read8(0xFF47u);
-        state.obp0 = view.read8(0xFF48u);
-        state.obp1 = view.read8(0xFF49u);
-        state.wy = view.read8(0xFF4Au);
-        state.wx = view.read8(0xFF4Bu);
+        scanlineVideoDebugModel_ = snapshotVideoDebugModel(view);
+        if (!scanlineVideoDebugModel_.has_value()) {
+            return nullptr;
+        }
+        return &*scanlineVideoDebugModel_;
     }
 
     void configureVideoService()
@@ -1268,8 +1252,8 @@ private:
     BMMQ::SdlFrontendConfig config_;
     mutable BMMQ::SdlFrontendStats stats_;
     bool backendReady_ = false;
-    std::optional<BMMQ::VideoStateView> lastVideoState_;
-    std::optional<BMMQ::VideoStateView> scanlineVideoState_;
+    std::optional<BMMQ::VideoDebugFrameModel> lastVideoDebugModel_;
+    std::optional<BMMQ::VideoDebugFrameModel> scanlineVideoDebugModel_;
     std::optional<BMMQ::AudioStateView> lastAudioState_;
     std::optional<BMMQ::SdlAudioPreviewBuffer> lastAudioPreview_;
     std::optional<BMMQ::DigitalInputStateView> lastInputState_;

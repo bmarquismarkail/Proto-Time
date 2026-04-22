@@ -13,7 +13,9 @@
 
 #include <zlib.h>
 
+#include "cores/gameboy/GameBoyMachine.hpp"
 #include "cores/gameboy/video/GameBoyVisualExtractor.hpp"
+#include "machine/VideoDebugModel.hpp"
 #include "machine/VisualTypes.hpp"
 #include "machine/plugins/IoPlugin.hpp"
 
@@ -198,6 +200,54 @@ inline void writeSingleRulePack(const std::filesystem::path& manifestPath,
         "    }\n"
         "  ]\n"
         "}\n");
+}
+
+[[nodiscard]] inline BMMQ::VideoDebugFrameModel makeSemanticModelFromState(const VideoStateView& state,
+                                                                           int width,
+                                                                           int height)
+{
+    GameBoyMachine machine;
+    std::vector<uint8_t> rom(0x8000u, 0x00u);
+    rom[0x0100u] = 0x00u;
+    machine.loadRom(rom);
+
+    auto& runtime = machine.runtimeContext();
+    runtime.write8(0xFF40u, 0x00u);
+    runtime.write8(0xFF41u, state.stat);
+    runtime.write8(0xFF42u, state.scy);
+    runtime.write8(0xFF43u, state.scx);
+    runtime.write8(0xFF44u, state.ly);
+    runtime.write8(0xFF45u, state.lyc);
+    runtime.write8(0xFF47u, state.bgp);
+    runtime.write8(0xFF48u, state.obp0);
+    runtime.write8(0xFF49u, state.obp1);
+    runtime.write8(0xFF4Au, state.wy);
+    runtime.write8(0xFF4Bu, state.wx);
+
+    // VRAM: 0x8000 - 0x9FFF (0x2000 bytes)
+    assert(state.vram.size() <= 0x2000 && "state.vram.size() must not exceed 0x2000 (8 KiB)");
+    for (std::size_t i = 0; i < state.vram.size(); ++i) {
+        assert(i < 0x2000 && "VRAM write index out of bounds");
+        std::uint16_t addr = static_cast<std::uint16_t>(0x8000u + i);
+        assert(addr >= 0x8000u && addr <= 0x9FFFu && "VRAM address out of range");
+        runtime.write8(addr, state.vram[i]);
+    }
+    // OAM: 0xFE00 - 0xFE9F (0xA0 bytes)
+    assert(state.oam.size() <= 0x00A0 && "state.oam.size() must not exceed 0xA0 (160 bytes)");
+    for (std::size_t i = 0; i < state.oam.size(); ++i) {
+        assert(i < 0x00A0 && "OAM write index out of bounds");
+        std::uint16_t addr = static_cast<std::uint16_t>(0xFE00u + i);
+        assert(addr >= 0xFE00u && addr <= 0xFE9Fu && "OAM address out of range");
+        runtime.write8(addr, state.oam[i]);
+    }
+    runtime.write8(0xFF40u, state.lcdc);
+
+    auto model = machine.videoDebugFrameModel({
+        .frameWidth = width,
+        .frameHeight = height,
+    });
+    assert(model.has_value());
+    return *model;
 }
 
 } // namespace BMMQ::Tests::Visual

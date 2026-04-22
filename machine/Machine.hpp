@@ -15,6 +15,7 @@
 #include "RuntimeContext.hpp"
 #include "VideoService.hpp"
 #include "VisualDebugAdapter.hpp"
+#include "VideoDebugModel.hpp"
 #include "VisualOverrideService.hpp"
 #include "TimingService.hpp"
 #include "plugins/IoPlugin.hpp"
@@ -179,6 +180,13 @@ public:
     virtual const IVisualDebugAdapter* visualDebugAdapter() const noexcept {
         return nullptr;
     }
+    virtual std::optional<VideoDebugFrameModel> videoDebugFrameModel(const VideoDebugRenderRequest& request) const {
+        const auto* adapter = visualDebugAdapter();
+        if (adapter == nullptr) {
+            return std::nullopt;
+        }
+        return adapter->buildFrameModel(*this, request);
+    }
     virtual bool supportsVisualPacks() const noexcept {
         return visualDebugAdapter() != nullptr && !visualTargetId().empty();
     }
@@ -219,6 +227,11 @@ private:
 
 inline std::optional<uint32_t> queryDigitalInputMask(const Machine& machine) {
     return machine.currentDigitalInputMask();
+}
+
+inline std::optional<VideoDebugFrameModel> queryVideoDebugFrameModel(const Machine& machine,
+                                                                     const VideoDebugRenderRequest& request) {
+    return machine.videoDebugFrameModel(request);
 }
 
 inline AudioService& queryAudioService(Machine& machine) {

@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 
+#include "../VideoDebugModel.hpp"
 #include "../RuntimeContext.hpp"
 
 namespace BMMQ {
@@ -19,6 +20,8 @@ class VisualOverrideService;
 class TimingService;
 struct CpuFeedback;
 std::optional<uint32_t> queryDigitalInputMask(const Machine& machine);
+std::optional<VideoDebugFrameModel> queryVideoDebugFrameModel(const Machine& machine,
+                                                              const VideoDebugRenderRequest& request);
 AudioService& queryAudioService(Machine& machine);
 const AudioService& queryAudioService(const Machine& machine);
 InputService& queryInputService(Machine& machine);
@@ -286,6 +289,12 @@ struct MachineView {
         state.wy = read8(0xFF4Au);
         state.wx = read8(0xFF4Bu);
         return state;
+    }
+
+    [[nodiscard]] std::optional<VideoDebugFrameModel> videoDebugFrameModel(
+        const VideoDebugRenderRequest& request) const
+    {
+        return queryVideoDebugFrameModel(machine, request);
     }
 
     [[nodiscard]] std::optional<AudioStateView> audioState() const {

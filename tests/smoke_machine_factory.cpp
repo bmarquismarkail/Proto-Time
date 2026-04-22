@@ -27,6 +27,16 @@ int main()
     assert(gameBoyInstance.machine->supportsVisualCapture());
     assert(gameBoyInstance.machine->visualTargetId() == "gameboy");
     assert(gameBoyInstance.machine->visualDebugAdapter() != nullptr);
+    std::vector<std::uint8_t> gameBoyRom(0x8000u, 0x00u);
+    gameBoyRom[0x0100u] = 0x00u;
+    gameBoyInstance.machine->loadRom(gameBoyRom);
+    auto gameBoyModel = gameBoyInstance.machine->videoDebugFrameModel({
+        .frameWidth = 8,
+        .frameHeight = 8,
+    });
+    assert(gameBoyModel.has_value());
+    assert(gameBoyModel->width == 8);
+    assert(gameBoyModel->height == 8);
 
     auto gameGearInstance = BMMQ::createMachine(MachineKind::GameGear);
     assert(gameGearInstance.machine != nullptr);
@@ -37,6 +47,10 @@ int main()
     assert(!gameGearInstance.machine->supportsVisualCapture());
     assert(gameGearInstance.machine->visualTargetId().empty());
     assert(gameGearInstance.machine->visualDebugAdapter() == nullptr);
+    assert(!gameGearInstance.machine->videoDebugFrameModel({
+        .frameWidth = 160,
+        .frameHeight = 144,
+    }).has_value());
 
     bool invalidKindRejected = false;
     try {

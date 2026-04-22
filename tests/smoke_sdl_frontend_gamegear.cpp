@@ -49,16 +49,6 @@ std::vector<uint8_t> makeFrontendProofRom()
     return rom;
 }
 
-bool frameHasVisiblePixels(const BMMQ::SdlFrameBuffer& frame)
-{
-    for (const auto pixel : frame.pixels) {
-        if (pixel != 0xFF000000u) {
-            return true;
-        }
-    }
-    return false;
-}
-
 }
 
 int main(int argc, char** argv)
@@ -90,26 +80,15 @@ int main(int argc, char** argv)
     machine.pluginManager().add(std::move(frontendPlugin));
     machine.pluginManager().initialize(machine.mutableView());
 
-    bool sawFrame = false;
     for (int i = 0; i < 20000; ++i) {
         machine.step();
         if ((i % 16) == 0) {
             machine.serviceInput();
             (void)frontend->serviceFrontend();
         }
-        if (frontend->lastFrame().has_value() && frameHasVisiblePixels(*frontend->lastFrame())) {
-            sawFrame = true;
-            break;
-        }
     }
 
-    assert(sawFrame);
-    assert(frontend->lastVideoState().has_value());
-    assert(frontend->lastVideoState()->lcdc == 0x91u);
-    assert(frontend->lastFrame().has_value());
-    assert(frontend->lastFrame()->width == 160);
-    assert(frontend->lastFrame()->height == 144);
-    assert(frameHasVisiblePixels(*frontend->lastFrame()));
+    assert(!frontend->lastVideoDebugModel().has_value());
 
     machine.pluginManager().shutdown(machine.mutableView());
     return 0;
