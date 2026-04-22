@@ -1,6 +1,7 @@
 #include <cassert>
 #include <cstdlib>
 #include <filesystem>
+#include <unordered_set>
 #include <vector>
 
 #include "cores/gamegear/GameGearMachine.hpp"
@@ -43,8 +44,49 @@ std::vector<uint8_t> makeFrontendProofRom()
     emit16(0x9800u);
     emit8(0x36u);
     emit8(0x00u);
+    emit8(0x23u);
+    emit8(0x36u);
+    emit8(0x01u);
+
+    emit8(0x21u);
+    emit16(0x8010u);
+    for (int row = 0; row < 8; ++row) {
+        emit8(0x36u);
+        emit8(0xFFu);
+        emit8(0x23u);
+        emit8(0x36u);
+        emit8(0xFFu);
+        emit8(0x23u);
+    }
+
+    emit8(0x21u);
+    emit16(0xC000u);
+    const auto inputLoopAddress = static_cast<uint16_t>(pc);
+    emit8(0xDBu);
+    emit8(0xDCu);
+    emit8(0x77u);
+    emit8(0xE6u);
+    emit8(0x10u);
+    emit8(0xCAu);
+    const auto pressedJumpPatch = pc;
+    emit16(0x0000u);
+
+    emit8(0x21u);
+    emit16(0x9800u);
+    emit8(0x36u);
+    emit8(0x00u);
     emit8(0xC3u);
-    emit16(static_cast<uint16_t>(pc));
+    emit16(inputLoopAddress);
+
+    const auto pressedPath = static_cast<uint16_t>(pc);
+    rom[pressedJumpPatch] = static_cast<uint8_t>(pressedPath & 0x00FFu);
+    rom[pressedJumpPatch + 1u] = static_cast<uint8_t>((pressedPath >> 8) & 0x00FFu);
+    emit8(0x21u);
+    emit16(0x9800u);
+    emit8(0x36u);
+    emit8(0x01u);
+    emit8(0xC3u);
+    emit16(inputLoopAddress);
 
     return rom;
 }
@@ -88,7 +130,15 @@ int main(int argc, char** argv)
         }
     }
 
-    assert(!frontend->lastVideoDebugModel().has_value());
+    assert(frontend->lastVideoDebugModel().has_value());
+    assert(frontend->lastVideoDebugModel()->displayEnabled);
+    assert(frontend->lastFrame().has_value());
+    std::unordered_set<std::uint32_t> frameColors(
+        frontend->lastFrame()->pixels.begin(),
+        frontend->lastFrame()->pixels.end());
+    assert(frameColors.size() > 1u);
+    assert(frontend->stats().videoEvents >= 1u);
+    assert(frontend->stats().framesPrepared >= 1u);
 
     machine.pluginManager().shutdown(machine.mutableView());
     return 0;

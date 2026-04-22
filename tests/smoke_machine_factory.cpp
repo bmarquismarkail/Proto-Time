@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <memory>
 #include <stdexcept>
+#include <unordered_set>
 #include <vector>
 
 #include "emulator/MachineFactory.hpp"
@@ -46,11 +47,59 @@ int main()
     assert(!gameGearInstance.machine->supportsVisualPacks());
     assert(!gameGearInstance.machine->supportsVisualCapture());
     assert(gameGearInstance.machine->visualTargetId().empty());
-    assert(gameGearInstance.machine->visualDebugAdapter() == nullptr);
-    assert(!gameGearInstance.machine->videoDebugFrameModel({
+    std::vector<std::uint8_t> gameGearRom(0x4000u, 0x00u);
+    std::size_t pc = 0u;
+    auto emit8 = [&](std::uint8_t value) {
+        gameGearRom[pc++] = value;
+    };
+    auto emit16 = [&](std::uint16_t value) {
+        emit8(static_cast<std::uint8_t>(value & 0x00FFu));
+        emit8(static_cast<std::uint8_t>((value >> 8) & 0x00FFu));
+    };
+    auto emitLdHlImm = [&](std::uint16_t address) {
+        emit8(0x21u);
+        emit16(address);
+    };
+    auto emitLdMemHlImm8 = [&](std::uint8_t value) {
+        emit8(0x36u);
+        emit8(value);
+    };
+
+    emitLdHlImm(0xFF40u);
+    emitLdMemHlImm8(0x91u);
+    emitLdHlImm(0xFF47u);
+    emitLdMemHlImm8(0xE4u);
+    emitLdHlImm(0x8000u);
+    for (int row = 0; row < 8; ++row) {
+        emitLdMemHlImm8(0xFFu);
+        emit8(0x23u);
+        emitLdMemHlImm8(0x00u);
+        emit8(0x23u);
+    }
+    emitLdHlImm(0x9810u);
+    emitLdMemHlImm8(0x00u);
+    emitLdHlImm(0x9801u);
+    emitLdMemHlImm8(0x01u);
+    const std::uint16_t jpTarget = static_cast<std::uint16_t>(pc);
+    emit8(0xC3u);
+    emit16(jpTarget);
+
+    gameGearInstance.machine->loadRom(gameGearRom);
+    for (int i = 0; i < 512; ++i) {
+        gameGearInstance.machine->step();
+    }
+    auto gameGearModel = gameGearInstance.machine->videoDebugFrameModel({
         .frameWidth = 160,
         .frameHeight = 144,
-    }).has_value());
+    });
+    assert(gameGearModel.has_value());
+    assert(gameGearModel->width == 160);
+    assert(gameGearModel->height == 144);
+    assert(gameGearModel->displayEnabled);
+    std::unordered_set<std::uint32_t> uniquePixels(
+        gameGearModel->argbPixels.begin(),
+        gameGearModel->argbPixels.end());
+    assert(uniquePixels.size() > 1u);
 
     bool invalidKindRejected = false;
     try {

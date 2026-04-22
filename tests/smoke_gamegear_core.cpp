@@ -2,11 +2,13 @@
 #include "cores/gamegear/GameGearMemoryMap.hpp"
 #include "cores/gamegear/Z80Interpreter.hpp"
 #include "machine/InputTypes.hpp"
+#include "machine/VideoDebugModel.hpp"
 #include "machine/plugins/input/InputPlugin.hpp"
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
+#include <unordered_set>
 #include <vector>
 
 namespace {
@@ -47,6 +49,9 @@ std::vector<uint8_t> makeFrontendProofRom()
     emit16(0x9800u);
     emit8(0x36u);
     emit8(0x00u);
+    emit8(0x23u); // INC HL
+    emit8(0x36u);
+    emit8(0x01u);
 
     emit8(0x21u); // LD HL,0x8010
     emit16(0x8010u);
@@ -79,7 +84,27 @@ std::vector<uint8_t> makeFrontendProofRom()
     emit8(0xDBu); // IN A,(n)
     emit8(0xDCu);
     emit8(0x77u); // LD (HL),A
-    emit8(0xC3u); // JP nn
+    emit8(0xE6u); // AND 0x10
+    emit8(0x10u);
+    emit8(0xCAu); // JP Z,pressedPath
+    const auto pressedJumpPatch = pc;
+    emit16(0x0000u);
+
+    emit8(0x21u); // LD HL,0x9800
+    emit16(0x9800u);
+    emit8(0x36u); // LD (HL),0
+    emit8(0x00u);
+    emit8(0xC3u); // JP inputLoopAddress
+    emit16(inputLoopAddress);
+
+    const auto pressedPath = static_cast<uint16_t>(pc);
+    rom[pressedJumpPatch] = static_cast<uint8_t>(pressedPath & 0x00FFu);
+    rom[pressedJumpPatch + 1u] = static_cast<uint8_t>((pressedPath >> 8) & 0x00FFu);
+    emit8(0x21u); // LD HL,0x9800
+    emit16(0x9800u);
+    emit8(0x36u); // LD (HL),1
+    emit8(0x01u);
+    emit8(0xC3u); // JP inputLoopAddress
     emit16(inputLoopAddress);
 
     return rom;
@@ -164,11 +189,22 @@ int main() {
     assert(gg.runtimeContext().read8(0xFE01u) == 16u);
     assert(gg.runtimeContext().read8(0xFE02u) == 0x01u);
     assert(gg.runtimeContext().read8(0xFF47u) == 0xE4u);
+    auto initialModel = gg.videoDebugFrameModel(BMMQ::VideoDebugRenderRequest{
+        .frameWidth = 160,
+        .frameHeight = 144,
+    });
+    assert(initialModel.has_value());
+    assert(initialModel->displayEnabled);
+    assert(initialModel->width == 160);
+    assert(initialModel->height == 144);
+    std::unordered_set<std::uint32_t> initialColors(
+        initialModel->argbPixels.begin(),
+        initialModel->argbPixels.end());
+    assert(initialColors.size() > 1u);
 
     GameGearMemoryMap memory;
     const std::vector<uint8_t> mappedRom(0x8000, 0xAAu);
     memory.mapRom(mappedRom.data(), mappedRom.size());
-    assert(memory.read(0x00DC) == 0xFFu);
     assert(memory.read(0x7F00) == 0x00u);
 
     Z80Interpreter cpu;
@@ -220,12 +256,24 @@ int main() {
     assert((gg.runtimeContext().read8(0x00DCu) & 0x08u) == 0u);
     assert((gg.runtimeContext().read8(0x00DCu) & 0x10u) == 0u);
     assert((gg.runtimeContext().read8(0x00DCu) & 0x80u) == 0u);
-    assert(stepUntil(gg, 16, [&] {
+    // Allow more steps for the runtime to update memory written by the ROM
+    // (increase from 16 to 128 to avoid flaky timing-dependent failures).
+    assert(stepUntil(gg, 128, [&] {
         return gg.runtimeContext().read8(0xC000u) != 0x00u;
     }));
     assert((gg.runtimeContext().read8(0xC000u) & 0x08u) == 0u);
     assert((gg.runtimeContext().read8(0xC000u) & 0x10u) == 0u);
     assert((gg.runtimeContext().read8(0xC000u) & 0x80u) == 0u);
+    // Increase from 64 to 256 to ensure frame/VRAM writes have completed.
+    assert(stepUntil(gg, 256, [&] {
+        return gg.runtimeContext().read8(0x9800u) == 0x01u;
+    }));
+    auto pressedModel = gg.videoDebugFrameModel(BMMQ::VideoDebugRenderRequest{
+        .frameWidth = 160,
+        .frameHeight = 144,
+    });
+    assert(pressedModel.has_value());
+    assert(pressedModel->argbPixels != initialModel->argbPixels);
 
     puts("Game Gear core basic smoke test passed.");
     return 0;

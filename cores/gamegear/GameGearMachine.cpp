@@ -19,13 +19,13 @@ namespace BMMQ {
 
 namespace {
 constexpr std::size_t kMaxRomSize = 1024u * 1024u;
-constexpr std::array<IoRegionDescriptor, 6> kIoRegions{{
+// Expose only true Game Gear memory regions and port-based IO descriptors.
+// Remove Game Boy memory-mapped video/input descriptors so tools see port IO.
+constexpr std::array<IoRegionDescriptor, 4> kIoRegions{{
     {PluginCategory::System, 0x0000u, 0x8000u, "ROM", true, false},
     {PluginCategory::System, 0xC000u, 0x2000u, "RAM", true, true},
-    {PluginCategory::Video, 0x8000u, 0x2000u, "VRAM", true, true},
-    {PluginCategory::Video, 0xFE00u, 0x00A0u, "OAM", true, true},
-    {PluginCategory::Video, 0xFF40u, 0x000Cu, "LCD Registers", true, true},
-    {PluginCategory::DigitalInput, 0xFF00u, 0x0001u, "Joypad", true, false},
+    {PluginCategory::Video, 0x00BEu, 0x0002u, "VDP Ports (IO)", true, true},
+    {PluginCategory::DigitalInput, 0x00DCu, 0x0002u, "Input Ports (0xDC/0xDD)", true, false},
 }};
 
 class GameGearRuntimeContext final : public RuntimeContext {
@@ -307,9 +307,9 @@ void GameGearMachine::serviceInput() {
     if (inputService().state() == InputLifecycleState::Active) {
         (void)inputService().pollActiveAdapter(impl->inputGeneration);
         if (const auto committedInput = inputService().committedDigitalMask(); committedInput.has_value()) {
-            const auto pressedMask = static_cast<uint8_t>(*committedInput & 0x00FFu);
+            const auto pressedMask = *committedInput;
             impl->input.setLogicalButtons(pressedMask);
-            impl->lastDigitalInputMask = static_cast<uint32_t>(pressedMask);
+            impl->lastDigitalInputMask = pressedMask;
             return;
         }
     }
@@ -319,14 +319,20 @@ void GameGearMachine::serviceInput() {
     }
 
     if (const auto sampledInput = impl->pluginManager.sampleDigitalInput(view()); sampledInput.has_value()) {
-        const auto pressedMask = static_cast<uint8_t>(*sampledInput & 0x00FFu);
+        const auto pressedMask = *sampledInput;
         impl->input.setLogicalButtons(pressedMask);
-        impl->lastDigitalInputMask = static_cast<uint32_t>(pressedMask);
+        impl->lastDigitalInputMask = pressedMask;
     }
 }
 
 std::optional<uint32_t> GameGearMachine::currentDigitalInputMask() const {
     return impl->lastDigitalInputMask;
+}
+
+std::optional<VideoDebugFrameModel> GameGearMachine::videoDebugFrameModel(
+    const VideoDebugRenderRequest& request) const
+{
+    return impl->vdp.buildFrameModel(request);
 }
 
 uint32_t GameGearMachine::clockHz() const {

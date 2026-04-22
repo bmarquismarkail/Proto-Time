@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 #include "VideoDebugModel.hpp"
 #include "VisualTypes.hpp"
@@ -36,12 +37,7 @@ public:
         const Machine& machine,
         const VideoDebugRenderRequest& request) const = 0;
     [[nodiscard]] virtual std::optional<DecodedVisualResource> decodeTile(
-#include <cstdint>
-#include <optional>
-#include <string_view>
-#include <vector>
-
-#include "VideoDebugModel.hpp"
+        const std::vector<std::uint8_t>& vram,
         std::uint8_t bgp,
         std::uint8_t obp0,
         std::uint8_t obp1,

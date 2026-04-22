@@ -42,6 +42,16 @@ public:
     bool IME = false;
 
 private:
+    // Z80 F register flags (canonical bit positions):
+    // S  Z  -  H  -  P/V  N  C
+    // 7  6  5  4  3    2  1  0 (bit indices)
+    static constexpr uint8_t kFlagS = 0x80u;   // Sign (bit 7)
+    static constexpr uint8_t kFlagZ = 0x40u;   // Zero (bit 6)
+    static constexpr uint8_t kFlagH = 0x10u;   // Half-carry (bit 4)
+    static constexpr uint8_t kFlagPV = 0x04u;  // Parity/Overflow (bit 2)
+    static constexpr uint8_t kFlagN = 0x02u;   // Add/Subtract (bit 1)
+    static constexpr uint8_t kFlagC = 0x01u;   // Carry (bit 0)
+
     MemRead memRead;
     MemWrite memWrite;
     IoRead ioRead;
@@ -53,6 +63,12 @@ private:
     void writeIo(uint8_t port, uint8_t value) const;
     uint8_t fetch8();
     uint16_t fetch16();
+    [[nodiscard]] uint8_t regA() const noexcept;
+    void setRegA(uint8_t value) noexcept;
+    [[nodiscard]] uint8_t regF() const noexcept;
+    void setRegF(uint8_t value) noexcept;
+    void setZeroFlag(bool set) noexcept;
+    [[nodiscard]] bool zeroFlag() const noexcept;
     [[nodiscard]] uint32_t executeOpcode(uint8_t opcode);
     void handleInterrupts();
     // TODO: Add full opcode decode/execute tables
