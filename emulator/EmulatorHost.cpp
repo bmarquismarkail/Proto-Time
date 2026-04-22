@@ -62,19 +62,29 @@ BootstrappedMachine bootstrapMachine(const EmulatorConfig& options)
     const auto romBytes = readBinaryFile(options.romPath);
     instance.machine->loadRom(romBytes);
 
-    for (const auto& visualPackPath : options.visualPackPaths) {
-        if (!instance.machine->visualOverrideService().loadPackManifest(visualPackPath)) {
-            throw std::runtime_error(
-                "Unable to load visual pack: " + visualPackPath.string() +
-                " (" + instance.machine->visualOverrideService().lastError() + ")");
+    if (!options.visualPackPaths.empty()) {
+        if (!instance.machine->supportsVisualPacks()) {
+            throw std::invalid_argument(
+                std::string(instance.descriptor.displayName) + " does not support visual packs");
+        }
+        for (const auto& visualPackPath : options.visualPackPaths) {
+            if (!instance.machine->visualOverrideService().loadPackManifest(visualPackPath)) {
+                throw std::runtime_error(
+                    "Unable to load visual pack: " + visualPackPath.string() +
+                    " (" + instance.machine->visualOverrideService().lastError() + ")");
+            }
         }
     }
 
     bool captureStarted = false;
     if (options.visualCapturePath.has_value()) {
+        if (!instance.machine->supportsVisualCapture()) {
+            throw std::invalid_argument(
+                std::string(instance.descriptor.displayName) + " does not support visual capture");
+        }
         if (!instance.machine->visualOverrideService().beginCapture(
                 *options.visualCapturePath,
-                std::string(instance.descriptor.captureTargetId))) {
+                std::string(instance.machine->visualTargetId()))) {
             throw std::runtime_error(
                 "Unable to start visual resource capture: " + options.visualCapturePath->string() +
                 " (" + instance.machine->visualOverrideService().lastError() + ")");

@@ -10,6 +10,7 @@
 #include <span>
 #include <vector>
 
+#include "cores/gameboy/video/GameBoyVisualDebugAdapter.hpp"
 #include "machine/VisualOverrideService.hpp"
 #include "machine/plugins/AudioEngine.hpp"
 #include "machine/plugins/video/VideoEngine.hpp"
@@ -195,6 +196,7 @@ int main()
         .frameHeight = 144,
         .queueCapacityFrames = 1,
     });
+    inactiveVisualEngine.setVisualDebugAdapter(&GB::gameBoyVisualDebugAdapter());
     inactiveVisualEngine.setVisualOverrideService(&inactiveVisualService);
     const auto inactiveStart = std::chrono::steady_clock::now();
     for (int i = 0; i < kFramesToBuild; ++i) {
@@ -213,6 +215,7 @@ int main()
         .frameHeight = 144,
         .queueCapacityFrames = 1,
     });
+    captureVisualEngine.setVisualDebugAdapter(&GB::gameBoyVisualDebugAdapter());
     captureVisualEngine.setVisualOverrideService(&captureVisualService);
     const auto captureStart = std::chrono::steady_clock::now();
     for (int i = 0; i < 3; ++i) {

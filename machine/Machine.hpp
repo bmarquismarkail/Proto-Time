@@ -14,6 +14,7 @@
 #include "RegisterId.hpp"
 #include "RuntimeContext.hpp"
 #include "VideoService.hpp"
+#include "VisualDebugAdapter.hpp"
 #include "VisualOverrideService.hpp"
 #include "TimingService.hpp"
 #include "plugins/IoPlugin.hpp"
@@ -102,6 +103,7 @@ public:
         }
         videoService_ = std::move(service);
         videoService_->setVisualOverrideService(visualOverrideService_.get());
+        videoService_->setVisualDebugAdapter(visualDebugAdapter());
         return true;
     }
     [[nodiscard]] bool setVisualOverrideService(std::unique_ptr<VisualOverrideService> service) {
@@ -170,6 +172,18 @@ public:
     }
     virtual uint64_t audioFrameCounter() const {
         return 0u;
+    }
+    virtual std::string_view visualTargetId() const noexcept {
+        return {};
+    }
+    virtual const IVisualDebugAdapter* visualDebugAdapter() const noexcept {
+        return nullptr;
+    }
+    virtual bool supportsVisualPacks() const noexcept {
+        return visualDebugAdapter() != nullptr && !visualTargetId().empty();
+    }
+    virtual bool supportsVisualCapture() const noexcept {
+        return visualDebugAdapter() != nullptr && !visualTargetId().empty();
     }
     virtual uint32_t clockHz() const {
         return runtimeContext().clockHz();

@@ -25,34 +25,27 @@ namespace {
 constexpr MachineDescriptor kGameBoyDescriptor{
     "gameboy",
     "Game Boy",
-    "gameboy",
     160,
     144,
-    true,
-    true,
-    true,
 };
 
 constexpr MachineDescriptor kGameGearDescriptor{
     "gamegear",
     "Game Gear",
-    "gamegear",
     160,
     144,
-    false,
-    false,
-    false,
 };
 
 [[noreturn]] void unreachableMachineDescriptor(MachineKind kind) noexcept
 {
     (void)kind;
-#ifndef NDEBUG
     assert(false && "Unhandled MachineKind in machineDescriptor");
-#endif
-    std::abort();
-#if defined(__clang__) || defined(__GNUC__)
+#if defined(NDEBUG)
+#  if defined(__clang__) || defined(__GNUC__)
     __builtin_unreachable();
+#  else
+    std::abort();
+#  endif
 #endif
 }
 
@@ -94,14 +87,13 @@ MachineInstance createMachine(MachineKind kind)
 {
     MachineInstance instance;
     instance.kind = kind;
+    instance.descriptor = machineDescriptor(kind);
 
     switch (kind) {
     case MachineKind::GameBoy:
-        instance.descriptor = machineDescriptor(kind);
         instance.machine = std::make_unique<GameBoyMachine>();
         break;
     case MachineKind::GameGear:
-        instance.descriptor = machineDescriptor(kind);
         instance.machine = std::make_unique<GameGearMachine>();
         break;
     default:

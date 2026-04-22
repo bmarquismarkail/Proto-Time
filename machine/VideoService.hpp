@@ -64,6 +64,17 @@ public:
         engine_.setVisualOverrideService(service);
     }
 
+    void setVisualDebugAdapter(const IVisualDebugAdapter* adapter) noexcept
+    {
+        visualDebugAdapter_ = adapter;
+        engine_.setVisualDebugAdapter(adapter);
+    }
+
+    [[nodiscard]] const IVisualDebugAdapter* visualDebugAdapter() const noexcept
+    {
+        return visualDebugAdapter_;
+    }
+
     [[nodiscard]] VideoLifecycleState state() const noexcept
     {
         return state_;
@@ -424,6 +435,7 @@ private:
 
     VideoEngine engine_{};
     VisualOverrideService* visualOverrideService_ = nullptr;
+    const IVisualDebugAdapter* visualDebugAdapter_ = nullptr;
     VideoPresenterConfig presenterConfig_{};
     std::unique_ptr<IVideoPresenterPlugin> presenter_{};
     std::vector<std::unique_ptr<IVideoFrameProcessorPlugin>> processors_{};

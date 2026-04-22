@@ -14,7 +14,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "../../../cores/gameboy/video/GameBoyVisualExtractor.hpp"
+#include "../../VisualDebugAdapter.hpp"
 #include "../../VisualOverrideService.hpp"
 #include "../IoPlugin.hpp"
 #include "VideoFrame.hpp"
@@ -69,6 +69,11 @@ public:
     void setVisualOverrideService(VisualOverrideService* service) noexcept
     {
         visualOverrideService_ = service;
+    }
+
+    void setVisualDebugAdapter(const IVisualDebugAdapter* adapter) noexcept
+    {
+        visualDebugAdapter_ = adapter;
     }
 
     uint64_t advanceGeneration() noexcept
@@ -150,17 +155,21 @@ public:
                 const auto sample = backgroundSample(state, x, screenY);
                 const auto colorIndex = sample.colorIndex;
                 backgroundColorIndices[static_cast<std::size_t>(x)] = colorIndex;
-                if (auto replacementPixel = replacementPixelForTile(state, sample.tileIndex, sample.tileAddress,
-                                                                     sample.tileX, sample.tileY,
-                                                                     VisualResourceKind::Tile,
-                                                                     state.bgp,
-                                                                     "BGP",
-                                                                     frame.generation,
-                                                                     GB::GameBoyVisualSemanticContext{
-                                                                         .fromWindow = sample.useWindow,
-                                                                         .hasTileDataMode = true,
-                                                                         .unsignedTileData = sample.unsignedTileData,
-                                                                     });
+                if (auto replacementPixel = replacementPixelForTile(state,
+                                                                     VisualTileDecodeRequest{
+                                                                         .tileIndex = sample.tileIndex,
+                                                                         .tileAddress = sample.tileAddress,
+                                                                         .tileX = sample.tileX,
+                                                                         .tileY = sample.tileY,
+                                                                         .kind = VisualResourceKind::Tile,
+                                                                         .paletteValue = state.bgp,
+                                                                         .paletteRegister = "BGP",
+                                                                         .semanticContext = VisualTileSemanticContext{
+                                                                             .fromWindow = sample.useWindow,
+                                                                             .unsignedTileData = sample.unsignedTileData,
+                                                                         },
+                                                                     },
+                                                                     frame.generation);
                     replacementPixel.has_value()) {
                     frame.pixels[pixelIndex] = *replacementPixel;
                     usedVisualOverride = true;
@@ -383,47 +392,36 @@ private:
         visualTileCache_.clear();
     }
 
-    [[nodiscard]] static std::string visualTileCacheKey(uint16_t tileAddress,
-                                                        VisualResourceKind kind,
-                                                        uint8_t paletteValue,
-                                                        std::string_view semanticLabel)
+    [[nodiscard]] static std::string visualTileCacheKey(const VisualTileDecodeRequest& request)
     {
-        return std::to_string(tileAddress) + "|" +
-               std::to_string(static_cast<uint32_t>(kind)) + "|" +
-               std::to_string(paletteValue) + "|" +
-               std::string(semanticLabel);
+        return std::to_string(request.tileAddress) + "|" +
+               std::to_string(static_cast<uint32_t>(request.kind)) + "|" +
+               std::to_string(request.paletteValue) + "|" +
+               std::string(request.paletteRegister) + "|" +
+               std::string(request.semanticContext.semanticLabel) + "|" +
+               (request.semanticContext.fromWindow ? "window" : "bg") + "|" +
+               (request.semanticContext.unsignedTileData.has_value()
+                    ? (*request.semanticContext.unsignedTileData ? "unsigned" : "signed")
+                    : "default");
     }
 
     [[nodiscard]] std::optional<uint32_t> replacementPixelForTile(const VideoStateView& state,
-                                                                  uint8_t tileIndex,
-                                                                  uint16_t tileAddress,
-                                                                  uint8_t tileX,
-                                                                  uint8_t tileY,
-                                                                  VisualResourceKind kind,
-                                                                  uint8_t paletteValue,
-                                                                  std::string_view paletteRegister,
-                                                                  uint64_t generation,
-                                                                  const GB::GameBoyVisualSemanticContext& semanticContext = {}) const
+                                                                  const VisualTileDecodeRequest& request,
+                                                                  uint64_t generation) const
     {
-        if (visualOverrideService_ == nullptr || !visualOverrideService_->hasActiveWork()) {
+        if (visualOverrideService_ == nullptr || !visualOverrideService_->hasActiveWork() ||
+            visualDebugAdapter_ == nullptr) {
             return std::nullopt;
         }
-        if (tileAddress < 0x8000u) {
+        if (request.tileAddress < 0x8000u) {
             return std::nullopt;
         }
-        const auto semanticLabel = GB::gameBoySemanticLabel(kind, semanticContext);
-        const auto cacheKey = visualTileCacheKey(tileAddress, kind, paletteValue, semanticLabel);
+        const auto cacheKey = visualTileCacheKey(request);
         auto& entry = visualTileCache_[cacheKey];
 
         if (!entry.decodeAttempted) {
             entry.decodeAttempted = true;
-            auto resource = GB::decodeGameBoyTileResourceAtVramOffset(state,
-                                                                      static_cast<std::size_t>(tileAddress - 0x8000u),
-                                                                      tileIndex,
-                                                                      kind,
-                                                                      paletteValue,
-                                                                      paletteRegister,
-                                                                      semanticContext);
+            auto resource = visualDebugAdapter_->decodeTile(state, request);
             if (!resource.has_value()) {
                 return std::nullopt;
             }
@@ -466,7 +464,7 @@ private:
             entry.resolveAttempted = true;
             auto resolved = visualOverrideService_->resolve(entry.resource->descriptor);
             if ((!resolved.has_value() || !hasResolvedPayload(*resolved)) &&
-                kind != VisualResourceKind::Tile) {
+                request.kind != VisualResourceKind::Tile) {
                 auto fallbackDescriptor = entry.resource->descriptor;
                 fallbackDescriptor.kind = VisualResourceKind::Tile;
                 resolved = visualOverrideService_->resolve(fallbackDescriptor);
@@ -480,7 +478,7 @@ private:
         if (!entry.resolved.has_value()) {
             return std::nullopt;
         }
-        return sampleReplacementPixel(*entry.resolved, *entry.resource, tileX, tileY, generation);
+        return sampleReplacementPixel(*entry.resolved, *entry.resource, request.tileX, request.tileY, generation);
     }
 
     [[nodiscard]] static std::optional<uint32_t> sampleReplacementPixel(const ResolvedVisualOverride& resolved,
@@ -820,15 +818,18 @@ private:
 
                 const uint8_t shade = mapPaletteShade(palette, colorIndex);
                 const auto spriteTileAddress = tileDataAddress(effectiveTile, true);
-                if (const auto replacementPixel = replacementPixelForTile(state,
-                                                                           effectiveTile,
-                                                                           spriteTileAddress,
-                                                                           spriteColumn,
-                                                                           static_cast<uint8_t>(spriteRow),
-                                                                           VisualResourceKind::Sprite,
-                                                                           palette,
-                                                                           (attributes & 0x10u) != 0u ? "OBP1" : "OBP0",
-                                                                           frame.generation);
+                if (const auto replacementPixel = replacementPixelForTile(
+                        state,
+                        VisualTileDecodeRequest{
+                            .tileIndex = effectiveTile,
+                            .tileAddress = spriteTileAddress,
+                            .tileX = spriteColumn,
+                            .tileY = static_cast<uint8_t>(spriteRow),
+                            .kind = VisualResourceKind::Sprite,
+                            .paletteValue = palette,
+                            .paletteRegister = (attributes & 0x10u) != 0u ? "OBP1" : "OBP0",
+                        },
+                        frame.generation);
                     replacementPixel.has_value()) {
                     frame.pixels[pixelIndex] = *replacementPixel;
                     continue;
@@ -840,6 +841,7 @@ private:
 
     VideoEngineConfig config_{};
     VisualOverrideService* visualOverrideService_ = nullptr;
+    const IVisualDebugAdapter* visualDebugAdapter_ = nullptr;
     mutable std::unordered_map<std::string, VisualTileCacheEntry> visualTileCache_;
     std::deque<VideoFramePacket> queuedFrames_{};
     std::optional<VideoFramePacket> lastValidFrame_{};

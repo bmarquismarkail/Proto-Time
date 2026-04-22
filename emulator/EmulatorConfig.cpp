@@ -284,20 +284,24 @@ void validateEmulatorConfig(const EmulatorConfig& config)
         throw std::invalid_argument("Missing core selection. Use --core <gameboy|gamegear>.");
     }
     const auto kind = parseMachineKind(*config.machineKind);
-    const auto& descriptor = machineDescriptor(kind);
+    auto instance = createMachine(kind);
+    const auto& descriptor = instance.descriptor;
 
     if (config.romPath.empty()) {
         throw std::invalid_argument("Missing ROM path. Use --rom <file.gb>.");
     }
-    if (config.bootRomPath.has_value() && !descriptor.supportsExternalBootRom) {
+    if (config.bootRomPath.has_value() &&
+        dynamic_cast<IExternalBootRomMachine*>(instance.machine.get()) == nullptr) {
         throw std::invalid_argument(
             std::string(descriptor.displayName) + " does not support external boot ROM loading");
     }
-    if ((!config.visualPackPaths.empty() || config.visualPackReload) && !descriptor.supportsVisualPacks) {
+    if ((!config.visualPackPaths.empty() || config.visualPackReload) &&
+        !instance.machine->supportsVisualPacks()) {
         throw std::invalid_argument(
             std::string(descriptor.displayName) + " does not support visual packs");
     }
-    if (config.visualCapturePath.has_value() && !descriptor.supportsVisualCapture) {
+    if (config.visualCapturePath.has_value() &&
+        !instance.machine->supportsVisualCapture()) {
         throw std::invalid_argument(
             std::string(descriptor.displayName) + " does not support visual capture");
     }

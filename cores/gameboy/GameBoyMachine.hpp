@@ -24,6 +24,7 @@
 #include "hardware_registers.hpp"
 #include "gameboy_plugin_runtime.hpp"
 #include "cartridge/CartridgeSaveManager.hpp"
+#include "video/GameBoyVisualDebugAdapter.hpp"
 
 class GameBoyRuntimeContext final : public BMMQ::RuntimeContext {
 public:
@@ -237,6 +238,7 @@ public:
         BMMQ::Plugin::validateExecutorPolicyStartup(defaultPolicy_);
         configureMemoryMap();
         cpu_.attachMemory(memoryMap_.storage());
+        videoService().setVisualDebugAdapter(visualDebugAdapter());
     }
 
     ~GameBoyMachine() override {
@@ -448,6 +450,14 @@ public:
 
     uint64_t audioFrameCounter() const override {
         return cpu_.cpu().audioFrameCounter();
+    }
+
+    std::string_view visualTargetId() const noexcept override {
+        return "gameboy";
+    }
+
+    const BMMQ::IVisualDebugAdapter* visualDebugAdapter() const noexcept override {
+        return &GB::gameBoyVisualDebugAdapter();
     }
 
     uint32_t clockHz() const override {

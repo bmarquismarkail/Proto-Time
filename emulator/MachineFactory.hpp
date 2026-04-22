@@ -18,12 +18,8 @@ enum class MachineKind : std::uint8_t {
 struct MachineDescriptor {
     std::string_view id;
     std::string_view displayName;
-    std::string_view captureTargetId;
     int defaultFrameWidth = 160;
     int defaultFrameHeight = 144;
-    bool supportsExternalBootRom = false;
-    bool supportsVisualPacks = false;
-    bool supportsVisualCapture = false;
 };
 
 struct MachineInstance {

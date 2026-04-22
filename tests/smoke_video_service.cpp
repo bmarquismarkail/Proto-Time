@@ -116,6 +116,7 @@ int main()
 
     assert(service.state() == BMMQ::VideoLifecycleState::Headless);
     assert(service.diagnostics().headlessModeActive);
+    assert(service.visualDebugAdapter() == machine.visualDebugAdapter());
     assert(service.configure({
         .frameWidth = 32,
         .frameHeight = 24,
@@ -191,6 +192,7 @@ int main()
     });
     assert(machine.setVideoService(std::move(replacement)));
     assert(machine.videoService().engine().config().frameWidth == 4);
+    assert(machine.videoService().visualDebugAdapter() == machine.visualDebugAdapter());
 
     machine.pluginManager().initialize(machine.mutableView());
     auto* beforeRejectedSwap = &machine.videoService();
