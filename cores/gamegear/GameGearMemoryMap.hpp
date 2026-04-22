@@ -9,6 +9,7 @@
 #include <array>
 
 class GameGearInput;
+class GameGearVDP;
 class GameGearMemoryMap {
 public:
     GameGearMemoryMap();
@@ -23,9 +24,13 @@ public:
     void clearRom();
 
     void setInput(GameGearInput* inputPtr);
+    void setVdp(GameGearVDP* vdpPtr);
+    [[nodiscard]] uint8_t readIoPort(uint8_t port) const;
+    void writeIoPort(uint8_t port, uint8_t value);
 
 private:
     GameGearInput* input = nullptr;
+    GameGearVDP* vdp = nullptr;
     std::vector<uint8_t> rom;
     std::array<uint8_t, 0x2000> ram{}; // 8KB RAM
 };

@@ -9,6 +9,8 @@ class Z80Interpreter {
 public:
     using MemRead = std::function<uint8_t(uint16_t)>;
     using MemWrite = std::function<void(uint16_t, uint8_t)>;
+    using IoRead = std::function<uint8_t(uint8_t)>;
+    using IoWrite = std::function<void(uint8_t, uint8_t)>;
 
     Z80Interpreter();
     ~Z80Interpreter();
@@ -18,6 +20,7 @@ public:
 
     // Register interface
     void setMemoryInterface(MemRead reader, MemWrite writer);
+    void setIoInterface(IoRead reader, IoWrite writer);
 
     // Z80 registers
     uint16_t AF = 0;
@@ -41,12 +44,16 @@ public:
 private:
     MemRead memRead;
     MemWrite memWrite;
+    IoRead ioRead;
+    IoWrite ioWrite;
 
     // Internal helpers
     void requireMemoryInterface() const;
+    uint8_t readIo(uint8_t port) const;
+    void writeIo(uint8_t port, uint8_t value) const;
     uint8_t fetch8();
     uint16_t fetch16();
-    void executeOpcode(uint8_t opcode);
+    [[nodiscard]] uint32_t executeOpcode(uint8_t opcode);
     void handleInterrupts();
     // TODO: Add full opcode decode/execute tables
 };

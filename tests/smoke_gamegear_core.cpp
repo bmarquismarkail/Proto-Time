@@ -11,6 +11,91 @@
 
 namespace {
 
+std::vector<uint8_t> makeFrontendProofRom()
+{
+    std::vector<uint8_t> rom(0x4000u, 0x00u);
+    std::size_t pc = 0u;
+    auto emit8 = [&](uint8_t value) {
+        rom[pc++] = value;
+    };
+    auto emit16 = [&](uint16_t value) {
+        emit8(static_cast<uint8_t>(value & 0x00FFu));
+        emit8(static_cast<uint8_t>((value >> 8) & 0x00FFu));
+    };
+    auto emitLoadHlAndByte = [&](uint16_t address, uint8_t value) {
+        emit8(0x21u); // LD HL,nn
+        emit16(address);
+        emit8(0x36u); // LD (HL),n
+        emit8(value);
+    };
+
+    emitLoadHlAndByte(0xFF40u, 0x91u);
+    emitLoadHlAndByte(0xFF47u, 0xE4u);
+
+    emit8(0x21u); // LD HL,0x8000
+    emit16(0x8000u);
+    for (int row = 0; row < 8; ++row) {
+        emit8(0x36u);
+        emit8(0xFFu);
+        emit8(0x23u); // INC HL
+        emit8(0x36u);
+        emit8(0x00u);
+        emit8(0x23u); // INC HL
+    }
+
+    emit8(0x21u); // LD HL,0x9800
+    emit16(0x9800u);
+    emit8(0x36u);
+    emit8(0x00u);
+
+    emit8(0x21u); // LD HL,0x8010
+    emit16(0x8010u);
+    for (int row = 0; row < 8; ++row) {
+        emit8(0x36u);
+        emit8(0xFFu);
+        emit8(0x23u); // INC HL
+        emit8(0x36u);
+        emit8(0xFFu);
+        emit8(0x23u); // INC HL
+    }
+
+    emit8(0x21u); // LD HL,0xFE00
+    emit16(0xFE00u);
+    emit8(0x36u);
+    emit8(32u);
+    emit8(0x23u);
+    emit8(0x36u);
+    emit8(16u);
+    emit8(0x23u);
+    emit8(0x36u);
+    emit8(0x01u);
+    emit8(0x23u);
+    emit8(0x36u);
+    emit8(0x00u);
+
+    emit8(0x21u); // LD HL,0xC000
+    emit16(0xC000u);
+    const uint16_t inputLoopAddress = static_cast<uint16_t>(pc);
+    emit8(0xDBu); // IN A,(n)
+    emit8(0xDCu);
+    emit8(0x77u); // LD (HL),A
+    emit8(0xC3u); // JP nn
+    emit16(inputLoopAddress);
+
+    return rom;
+}
+
+bool stepUntil(BMMQ::GameGearMachine& machine, int maxSteps, auto&& predicate)
+{
+    for (int i = 0; i < maxSteps; ++i) {
+        machine.step();
+        if (predicate()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 class FixedInputPlugin final : public BMMQ::IDigitalInputSourcePlugin {
 public:
     explicit FixedInputPlugin(BMMQ::InputButtonMask value)
@@ -58,16 +143,27 @@ private:
 
 int main() {
     BMMQ::GameGearMachine gg;
-    const std::vector<uint8_t> rom = {0x00u, 0x00u, 0x00u, 0x00u};
+    const std::vector<uint8_t> rom = makeFrontendProofRom();
     gg.loadRom(rom);
-    // Step a few cycles to ensure no crash
-    for (int i = 0; i < 10; ++i) gg.step();
-    assert(gg.runtimeContext().readRegister16("PC") == 10u);
+    assert(stepUntil(gg, 256, [&] {
+        return gg.runtimeContext().read8(0xFF40u) == 0x91u;
+    }));
+    assert(gg.runtimeContext().readRegister16("PC") != 0u);
     gg.runtimeContext().writeRegister16("SP", 0xD123u);
     assert(gg.runtimeContext().readRegister16("SP") == 0xD123u);
-    gg.runtimeContext().write8(0xC000u, 0x5Au);
-    assert(gg.runtimeContext().read8(0xC000u) == 0x5Au);
     assert(gg.readRegisterPair("SP") == 0xD123u);
+    assert(stepUntil(gg, 2048, [&] {
+        return gg.runtimeContext().read8(0xFE02u) == 0x01u;
+    }));
+    assert(gg.runtimeContext().read8(0x8000u) == 0xFFu);
+    assert(gg.runtimeContext().read8(0x8001u) == 0x00u);
+    assert(gg.runtimeContext().read8(0x8010u) == 0xFFu);
+    assert(gg.runtimeContext().read8(0x8011u) == 0xFFu);
+    assert(gg.runtimeContext().read8(0x9800u) == 0x00u);
+    assert(gg.runtimeContext().read8(0xFE00u) == 32u);
+    assert(gg.runtimeContext().read8(0xFE01u) == 16u);
+    assert(gg.runtimeContext().read8(0xFE02u) == 0x01u);
+    assert(gg.runtimeContext().read8(0xFF47u) == 0xE4u);
 
     GameGearMemoryMap memory;
     const std::vector<uint8_t> mappedRom(0x8000, 0xAAu);
@@ -124,6 +220,12 @@ int main() {
     assert((gg.runtimeContext().read8(0x00DCu) & 0x08u) == 0u);
     assert((gg.runtimeContext().read8(0x00DCu) & 0x10u) == 0u);
     assert((gg.runtimeContext().read8(0x00DCu) & 0x80u) == 0u);
+    assert(stepUntil(gg, 16, [&] {
+        return gg.runtimeContext().read8(0xC000u) != 0x00u;
+    }));
+    assert((gg.runtimeContext().read8(0xC000u) & 0x08u) == 0u);
+    assert((gg.runtimeContext().read8(0xC000u) & 0x10u) == 0u);
+    assert((gg.runtimeContext().read8(0xC000u) & 0x80u) == 0u);
 
     puts("Game Gear core basic smoke test passed.");
     return 0;

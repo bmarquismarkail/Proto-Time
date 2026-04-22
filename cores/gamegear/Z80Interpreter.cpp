@@ -10,9 +10,24 @@ void Z80Interpreter::setMemoryInterface(MemRead reader, MemWrite writer) {
     memWrite = std::move(writer);
 }
 
+void Z80Interpreter::setIoInterface(IoRead reader, IoWrite writer) {
+    ioRead = std::move(reader);
+    ioWrite = std::move(writer);
+}
+
 void Z80Interpreter::requireMemoryInterface() const {
     if (!memRead || !memWrite) {
         throw std::runtime_error("Z80 memory interface not set");
+    }
+}
+
+uint8_t Z80Interpreter::readIo(uint8_t port) const {
+    return ioRead ? ioRead(port) : 0xFFu;
+}
+
+void Z80Interpreter::writeIo(uint8_t port, uint8_t value) const {
+    if (ioWrite) {
+        ioWrite(port, value);
     }
 }
 
@@ -44,12 +59,48 @@ uint16_t Z80Interpreter::fetch16() {
     return lo | (hi << 8);
 }
 
-void Z80Interpreter::executeOpcode(uint8_t opcode) {
-    // TODO: Implement full Z80 opcode table
-    // For now, NOP (0x00) only
+uint32_t Z80Interpreter::executeOpcode(uint8_t opcode) {
     switch (opcode) {
-        case 0x00: /* NOP */ break;
-        default: /* Unimplemented */ break;
+        case 0x00: // NOP
+            return 4u;
+        case 0x21: // LD HL,nn
+            HL = fetch16();
+            return 10u;
+        case 0x23: // INC HL
+            HL = static_cast<uint16_t>(HL + 1u);
+            return 6u;
+        case 0x36: { // LD (HL),n
+            const uint8_t value = fetch8();
+            memWrite(HL, value);
+            return 10u;
+        }
+        case 0x3E: { // LD A,n
+            const uint8_t value = fetch8();
+            AF = static_cast<uint16_t>((static_cast<uint16_t>(value) << 8) | (AF & 0x00FFu));
+            return 7u;
+        }
+        case 0x77: { // LD (HL),A
+            const uint8_t value = static_cast<uint8_t>((AF >> 8) & 0x00FFu);
+            memWrite(HL, value);
+            return 7u;
+        }
+        case 0xC3: // JP nn
+            PC = fetch16();
+            return 10u;
+        case 0xDB: { // IN A,(n)
+            const uint8_t port = fetch8();
+            const uint8_t value = readIo(port);
+            AF = static_cast<uint16_t>((static_cast<uint16_t>(value) << 8) | (AF & 0x00FFu));
+            return 11u;
+        }
+        case 0xD3: { // OUT (n),A
+            const uint8_t port = fetch8();
+            const uint8_t value = static_cast<uint8_t>((AF >> 8) & 0x00FFu);
+            writeIo(port, value);
+            return 11u;
+        }
+        default:
+            return 4u;
     }
 }
 
@@ -61,6 +112,5 @@ uint32_t Z80Interpreter::step() {
     requireMemoryInterface();
     handleInterrupts();
     const uint8_t opcode = fetch8();
-    executeOpcode(opcode);
-    return 4u;
+    return executeOpcode(opcode);
 }

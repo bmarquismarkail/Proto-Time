@@ -1,8 +1,25 @@
 #include "GameGearMemoryMap.hpp"
 #include "GameGearInput.hpp"
+#include "GameGearVDP.hpp"
 
 void GameGearMemoryMap::setInput(GameGearInput* inputPtr) {
     input = inputPtr;
+}
+
+void GameGearMemoryMap::setVdp(GameGearVDP* vdpPtr) {
+    vdp = vdpPtr;
+}
+
+uint8_t GameGearMemoryMap::readIoPort(uint8_t port) const {
+    if (port == 0xDCu) {
+        return input ? input->readInputs() : 0xFFu;
+    }
+    return 0xFFu;
+}
+
+void GameGearMemoryMap::writeIoPort(uint8_t port, uint8_t value) {
+    (void)port;
+    (void)value;
 }
 
 
@@ -22,7 +39,18 @@ void GameGearMemoryMap::clearRom() {
 }
 
 uint8_t GameGearMemoryMap::read(uint16_t addr) const {
-    // Input port and I/O stubs must override the broad ROM window.
+    if (addr >= 0x8000u && addr < 0xA000u && vdp != nullptr) {
+        return vdp->readVram(addr);
+    }
+    if (addr >= 0xFE00u && addr < 0xFEA0u && vdp != nullptr) {
+        return vdp->readOam(addr);
+    }
+    if (addr >= 0xFF40u && addr <= 0xFF4Bu && vdp != nullptr) {
+        return vdp->readRegister(addr);
+    }
+    if (addr == 0xFF00u) {
+        return input ? input->readInputs() : 0xFFu;
+    }
     if (addr == 0x00DC) {
         return input ? input->readInputs() : 0xFF;
     }
@@ -49,6 +77,18 @@ uint8_t GameGearMemoryMap::read(uint16_t addr) const {
 }
 
 void GameGearMemoryMap::write(uint16_t addr, uint8_t value) {
+    if (addr >= 0x8000u && addr < 0xA000u && vdp != nullptr) {
+        vdp->writeVram(addr, value);
+        return;
+    }
+    if (addr >= 0xFE00u && addr < 0xFEA0u && vdp != nullptr) {
+        vdp->writeOam(addr, value);
+        return;
+    }
+    if (addr >= 0xFF40u && addr <= 0xFF4Bu && vdp != nullptr) {
+        vdp->writeRegister(addr, value);
+        return;
+    }
     // 0xC000-0xDFFF: RAM (8KB)
     if (addr >= 0xC000 && addr < 0xE000) {
         ram[addr - 0xC000] = value;
@@ -59,10 +99,7 @@ void GameGearMemoryMap::write(uint16_t addr, uint8_t value) {
         ram[addr - 0xE000] = value;
         return;
     }
-    // VDP/PSG I/O stub (future: real mapping)
     if ((addr & 0xFF00) == 0x7F00) {
-        // Ignore writes for now
         return;
     }
-    // TODO: Add ROM banking, I/O, and mapper support
 }

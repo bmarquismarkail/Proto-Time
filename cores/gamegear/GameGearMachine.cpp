@@ -19,10 +19,13 @@ namespace BMMQ {
 
 namespace {
 constexpr std::size_t kMaxRomSize = 1024u * 1024u;
-constexpr std::array<IoRegionDescriptor, 3> kIoRegions{{
-    {PluginCategory::System, 0x0000u, 0xC000u, "rom", true, false},
-    {PluginCategory::System, 0xC000u, 0x2000u, "ram", true, true},
-    {PluginCategory::DigitalInput, 0x00DCu, 0x0001u, "input", true, false},
+constexpr std::array<IoRegionDescriptor, 6> kIoRegions{{
+    {PluginCategory::System, 0x0000u, 0x8000u, "ROM", true, false},
+    {PluginCategory::System, 0xC000u, 0x2000u, "RAM", true, true},
+    {PluginCategory::Video, 0x8000u, 0x2000u, "VRAM", true, true},
+    {PluginCategory::Video, 0xFE00u, 0x00A0u, "OAM", true, true},
+    {PluginCategory::Video, 0xFF40u, 0x000Cu, "LCD Registers", true, true},
+    {PluginCategory::DigitalInput, 0xFF00u, 0x0001u, "Joypad", true, false},
 }};
 
 class GameGearRuntimeContext final : public RuntimeContext {
@@ -177,6 +180,7 @@ struct GameGearMachine::Impl {
     bool romLoaded = false;
     std::optional<uint32_t> lastDigitalInputMask;
     uint64_t inputGeneration = 0u;
+    uint64_t stepCounter = 0u;
     GameGearRuntimeContext context{cpu, mem, romLoaded, activePolicy};
 };
 
@@ -203,8 +207,15 @@ GameGearMachine::GameGearMachine() : impl(std::make_unique<Impl>()) {
         [this](uint16_t addr) { return impl->mem.read(addr); },
         [this](uint16_t addr, uint8_t val) { impl->mem.write(addr, val); }
     );
+    impl->cpu.setIoInterface(
+        [this](uint8_t port) { return impl->mem.readIoPort(port); },
+        [this](uint8_t port, uint8_t value) { impl->mem.writeIoPort(port, value); }
+    );
     impl->mem.setInput(&impl->input);
+    impl->mem.setVdp(&impl->vdp);
     Plugin::validateExecutorPolicyStartup(impl->defaultPolicy);
+    impl->vdp.reset();
+    impl->input.reset();
     impl->cpu.reset();
 }
 GameGearMachine::~GameGearMachine() {
@@ -222,10 +233,14 @@ void GameGearMachine::loadRom(const std::vector<uint8_t>& bytes) {
     }
     impl->mem.mapRom(bytes.data(), bytes.size());
     impl->cart.load(bytes.data(), bytes.size());
+    impl->mem.reset();
+    impl->vdp.reset();
+    impl->input.reset();
     impl->romLoaded = true;
     ++impl->inputGeneration;
     inputService().advanceGeneration(impl->inputGeneration);
     impl->lastDigitalInputMask.reset();
+    impl->stepCounter = 0u;
     impl->cpu.reset();
     if (impl->pluginManager.size() != 0u) {
         impl->pluginManager.emit(view(), MachineEvent{
@@ -260,9 +275,32 @@ void GameGearMachine::step() {
     if (!impl->romLoaded) {
         return;
     }
-    impl->context.step();
-    impl->vdp.step();
+    const auto feedback = impl->context.step();
+    ++impl->stepCounter;
+    impl->vdp.step(feedback.retiredCycles);
     impl->psg.step();
+    if (impl->vdp.takeScanlineReady() && impl->pluginManager.size() != 0u) {
+        impl->pluginManager.emit(view(), MachineEvent{
+            MachineEventType::VideoScanlineReady,
+            PluginCategory::Video,
+            impl->stepCounter,
+            0xFF44u,
+            runtimeContext().read8(0xFF44u),
+            &runtimeContext().getLastFeedback(),
+            "scanline ready"
+        });
+    }
+    if (impl->vdp.takeVBlankEntered() && impl->pluginManager.size() != 0u) {
+        impl->pluginManager.emit(view(), MachineEvent{
+            MachineEventType::VBlank,
+            PluginCategory::Video,
+            impl->stepCounter,
+            0xFF44u,
+            runtimeContext().read8(0xFF44u),
+            &runtimeContext().getLastFeedback(),
+            "entered VBlank"
+        });
+    }
 }
 
 void GameGearMachine::serviceInput() {
@@ -300,6 +338,7 @@ std::string GameGearMachine::stopSummary() const {
     out << "PC=0x" << std::hex << std::uppercase << impl->cpu.PC
         << " SP=0x" << impl->cpu.SP
         << " AF=0x" << impl->cpu.AF
+        << " LY=0x" << static_cast<int>(runtimeContext().read8(0xFF44u))
         << std::dec << '\n'
         << "Input port=0x" << std::hex << std::uppercase << static_cast<int>(impl->input.readInputs())
         << std::dec;
