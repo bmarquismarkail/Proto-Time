@@ -1,5 +1,6 @@
 #include "cores/gamegear/GameGearMachine.hpp"
 #include "cores/gamegear/GameGearMemoryMap.hpp"
+#include "cores/gamegear/GameGearVDP.hpp"
 #include "cores/gamegear/Z80Interpreter.hpp"
 #include "machine/InputTypes.hpp"
 #include "machine/VideoDebugModel.hpp"
@@ -31,81 +32,65 @@ std::vector<uint8_t> makeFrontendProofRom()
         emit8(value);
     };
 
-    emitLoadHlAndByte(0xFF40u, 0x91u);
-    emitLoadHlAndByte(0xFF47u, 0xE4u);
+    auto emitOutA = [&](uint8_t port) {
+        emit8(0xD3u); // OUT (n),A
+        emit8(port);
+    };
+    auto emitRegWrite = [&](uint8_t reg, uint8_t value) {
+        emit8(0x3Eu);
+        emit8(value);
+        emitOutA(0xBFu);
+        emit8(0x3Eu);
+        emit8(static_cast<uint8_t>(0x80u | (reg & 0x0Fu)));
+        emitOutA(0xBFu);
+    };
+    auto emitSetVramWriteAddress = [&](uint16_t address) {
+        emit8(0x3Eu);
+        emit8(static_cast<uint8_t>(address & 0x00FFu));
+        emitOutA(0xBFu);
+        emit8(0x3Eu);
+        emit8(static_cast<uint8_t>(0x40u | ((address >> 8) & 0x3Fu)));
+        emitOutA(0xBFu);
+    };
+    auto emitRel8 = [&](int opcode, std::size_t target) {
+        emit8(static_cast<uint8_t>(opcode));
+        const auto baseAfterOperand = static_cast<int>(pc + 1u);
+        const auto delta = static_cast<int>(target) - baseAfterOperand;
+        emit8(static_cast<uint8_t>(static_cast<int8_t>(delta)));
+    };
 
-    emit8(0x21u); // LD HL,0x8000
-    emit16(0x8000u);
-    for (int row = 0; row < 8; ++row) {
-        emit8(0x36u);
-        emit8(0xFFu);
-        emit8(0x23u); // INC HL
-        emit8(0x36u);
-        emit8(0x00u);
-        emit8(0x23u); // INC HL
-    }
+    emitRegWrite(1u, 0x40u); // display enable
+    emitRegWrite(7u, 0xE4u); // simple palette
 
-    emit8(0x21u); // LD HL,0x9800
-    emit16(0x9800u);
-    emit8(0x36u);
-    emit8(0x00u);
-    emit8(0x23u); // INC HL
-    emit8(0x36u);
-    emit8(0x01u);
+    emitSetVramWriteAddress(0x0010u); // tile 1 pattern data
+    emit8(0x3Eu); emit8(0xFFu); // LD A,0xFF
+    emit8(0x06u); emit8(0x10u); // LD B,16
+    const auto fillTileLoop = pc;
+    emitOutA(0xBEu);
+    emitRel8(0x10u, fillTileLoop); // DJNZ fillTileLoop
 
-    emit8(0x21u); // LD HL,0x8010
-    emit16(0x8010u);
-    for (int row = 0; row < 8; ++row) {
-        emit8(0x36u);
-        emit8(0xFFu);
-        emit8(0x23u); // INC HL
-        emit8(0x36u);
-        emit8(0xFFu);
-        emit8(0x23u); // INC HL
-    }
+    emitLoadHlAndByte(0xFE00u, 24u); // sprite y
+    emitLoadHlAndByte(0xFE01u, 24u); // sprite x
+    emitLoadHlAndByte(0xFE02u, 0x01u); // sprite tile index
+    emitLoadHlAndByte(0xFE03u, 0x00u); // sprite flags
+    emitLoadHlAndByte(0xC000u, 0x00u); // observed input state byte
 
-    emit8(0x21u); // LD HL,0xFE00
-    emit16(0xFE00u);
-    emit8(0x36u);
-    emit8(32u);
-    emit8(0x23u);
-    emit8(0x36u);
-    emit8(16u);
-    emit8(0x23u);
-    emit8(0x36u);
-    emit8(0x01u);
-    emit8(0x23u);
-    emit8(0x36u);
-    emit8(0x00u);
-
-    emit8(0x21u); // LD HL,0xC000
-    emit16(0xC000u);
-    const uint16_t inputLoopAddress = static_cast<uint16_t>(pc);
-    emit8(0xDBu); // IN A,(n)
-    emit8(0xDCu);
+    const std::size_t inputLoop = pc;
+    emit8(0xDBu); emit8(0xDCu); // IN A,(0xDC)
+    emitLoadHlAndByte(0xC000u, 0x00u); // default
+    emit8(0x21u); emit16(0xC000u); // LD HL,0xC000
     emit8(0x77u); // LD (HL),A
-    emit8(0xE6u); // AND 0x10
-    emit8(0x10u);
-    emit8(0xCAu); // JP Z,pressedPath
-    const auto pressedJumpPatch = pc;
-    emit16(0x0000u);
-
-    emit8(0x21u); // LD HL,0x9800
-    emit16(0x9800u);
-    emit8(0x36u); // LD (HL),0
+    emit8(0xE6u); emit8(0x10u); // AND 0x10
+    emit8(0x20u); // JR NZ,notPressed
+    const auto notPressedPatch = pc;
     emit8(0x00u);
-    emit8(0xC3u); // JP inputLoopAddress
-    emit16(inputLoopAddress);
-
-    const auto pressedPath = static_cast<uint16_t>(pc);
-    rom[pressedJumpPatch] = static_cast<uint8_t>(pressedPath & 0x00FFu);
-    rom[pressedJumpPatch + 1u] = static_cast<uint8_t>((pressedPath >> 8) & 0x00FFu);
-    emit8(0x21u); // LD HL,0x9800
-    emit16(0x9800u);
-    emit8(0x36u); // LD (HL),1
-    emit8(0x01u);
-    emit8(0xC3u); // JP inputLoopAddress
-    emit16(inputLoopAddress);
+    emitLoadHlAndByte(0xFE01u, 40u); // pressed -> move sprite right
+    emitRel8(0x18u, inputLoop); // JR inputLoop
+    const auto notPressed = pc;
+    rom[notPressedPatch] = static_cast<uint8_t>(static_cast<int8_t>(
+        static_cast<int>(notPressed) - static_cast<int>(notPressedPatch + 1u)));
+    emitLoadHlAndByte(0xFE01u, 24u); // not pressed -> left position
+    emitRel8(0x18u, inputLoop); // JR inputLoop
 
     return rom;
 }
@@ -167,11 +152,29 @@ private:
 }
 
 int main() {
+    GameGearVDP vdp;
+    GameGearMemoryMap ioMemory;
+    ioMemory.setVdp(&vdp);
+    vdp.reset();
+    ioMemory.writeIoPort(0xBFu, 0x34u);
+    ioMemory.writeIoPort(0xBFu, 0x81u);
+    assert(ioMemory.read(0xFF41u) == 0x34u);
+    ioMemory.writeIoPort(0xBFu, 0x10u);
+    ioMemory.writeIoPort(0xBFu, 0x40u);
+    ioMemory.writeIoPort(0xBEu, 0x12u);
+    ioMemory.writeIoPort(0xBEu, 0x34u);
+    assert(ioMemory.read(0x8010u) == 0x12u);
+    assert(ioMemory.read(0x8011u) == 0x34u);
+    ioMemory.writeIoPort(0xBFu, 0x10u);
+    ioMemory.writeIoPort(0xBFu, 0x00u);
+    assert(ioMemory.readIoPort(0xBEu) == 0x12u);
+    assert(ioMemory.readIoPort(0xBEu) == 0x34u);
+
     BMMQ::GameGearMachine gg;
     const std::vector<uint8_t> rom = makeFrontendProofRom();
     gg.loadRom(rom);
     assert(stepUntil(gg, 256, [&] {
-        return gg.runtimeContext().read8(0xFF40u) == 0x91u;
+        return gg.runtimeContext().read8(0xFF41u) == 0x40u;
     }));
     assert(gg.runtimeContext().readRegister16("PC") != 0u);
     gg.runtimeContext().writeRegister16("SP", 0xD123u);
@@ -180,13 +183,10 @@ int main() {
     assert(stepUntil(gg, 2048, [&] {
         return gg.runtimeContext().read8(0xFE02u) == 0x01u;
     }));
-    assert(gg.runtimeContext().read8(0x8000u) == 0xFFu);
-    assert(gg.runtimeContext().read8(0x8001u) == 0x00u);
     assert(gg.runtimeContext().read8(0x8010u) == 0xFFu);
-    assert(gg.runtimeContext().read8(0x8011u) == 0xFFu);
-    assert(gg.runtimeContext().read8(0x9800u) == 0x00u);
-    assert(gg.runtimeContext().read8(0xFE00u) == 32u);
-    assert(gg.runtimeContext().read8(0xFE01u) == 16u);
+    assert(gg.runtimeContext().read8(0x801Fu) == 0xFFu);
+    assert(gg.runtimeContext().read8(0xFE00u) == 24u);
+    assert(gg.runtimeContext().read8(0xFE01u) == 24u);
     assert(gg.runtimeContext().read8(0xFE02u) == 0x01u);
     assert(gg.runtimeContext().read8(0xFF47u) == 0xE4u);
     auto initialModel = gg.videoDebugFrameModel(BMMQ::VideoDebugRenderRequest{
@@ -201,6 +201,11 @@ int main() {
         initialModel->argbPixels.begin(),
         initialModel->argbPixels.end());
     assert(initialColors.size() > 1u);
+    const auto initialSpritePixel =
+        initialModel->argbPixels[24u * 160u + 24u];
+    const auto backgroundPixel =
+        initialModel->argbPixels[24u * 160u + 8u];
+    assert(initialSpritePixel != backgroundPixel);
 
     GameGearMemoryMap memory;
     const std::vector<uint8_t> mappedRom(0x8000, 0xAAu);
@@ -240,8 +245,20 @@ int main() {
         [&](uint16_t address, uint8_t value) { z80Memory[address] = value; }
     );
     cpu.reset();
+    z80Memory[0x0000u] = 0x06u; // LD B,3
+    z80Memory[0x0001u] = 0x03u;
+    z80Memory[0x0002u] = 0x3Cu; // INC A
+    z80Memory[0x0003u] = 0x10u; // DJNZ -3 (to INC A)
+    z80Memory[0x0004u] = 0xFDu;
+    z80Memory[0x0005u] = 0x18u; // JR -2
+    z80Memory[0x0006u] = 0xFEu;
+    assert(cpu.step() == 7u);
     assert(cpu.step() == 4u);
-    assert(cpu.PC == 0x0001u);
+    assert(cpu.step() == 13u);
+    assert(cpu.step() == 4u);
+    assert(cpu.step() == 13u);
+    assert(static_cast<uint8_t>((cpu.AF >> 8) & 0x00FFu) == 0x03u);
+    assert(cpu.PC == 0x0002u);
 
     const auto logicalMask = static_cast<BMMQ::InputButtonMask>(
         BMMQ::inputButtonMask(BMMQ::InputButton::Right) |
@@ -256,17 +273,14 @@ int main() {
     assert((gg.runtimeContext().read8(0x00DCu) & 0x08u) == 0u);
     assert((gg.runtimeContext().read8(0x00DCu) & 0x10u) == 0u);
     assert((gg.runtimeContext().read8(0x00DCu) & 0x80u) == 0u);
-    // Allow more steps for the runtime to update memory written by the ROM
-    // (increase from 16 to 128 to avoid flaky timing-dependent failures).
     assert(stepUntil(gg, 128, [&] {
         return gg.runtimeContext().read8(0xC000u) != 0x00u;
     }));
     assert((gg.runtimeContext().read8(0xC000u) & 0x08u) == 0u);
     assert((gg.runtimeContext().read8(0xC000u) & 0x10u) == 0u);
     assert((gg.runtimeContext().read8(0xC000u) & 0x80u) == 0u);
-    // Increase from 64 to 256 to ensure frame/VRAM writes have completed.
     assert(stepUntil(gg, 256, [&] {
-        return gg.runtimeContext().read8(0x9800u) == 0x01u;
+        return gg.runtimeContext().read8(0xFE01u) == 40u;
     }));
     auto pressedModel = gg.videoDebugFrameModel(BMMQ::VideoDebugRenderRequest{
         .frameWidth = 160,
@@ -274,6 +288,9 @@ int main() {
     });
     assert(pressedModel.has_value());
     assert(pressedModel->argbPixels != initialModel->argbPixels);
+    const auto movedSpritePixel =
+        pressedModel->argbPixels[24u * 160u + 40u];
+    assert(movedSpritePixel == initialSpritePixel);
 
     puts("Game Gear core basic smoke test passed.");
     return 0;

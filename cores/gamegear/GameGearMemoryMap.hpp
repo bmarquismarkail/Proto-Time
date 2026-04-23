@@ -25,7 +25,7 @@ public:
 
     void setInput(GameGearInput* inputPtr);
     void setVdp(GameGearVDP* vdpPtr);
-    [[nodiscard]] uint8_t readIoPort(uint8_t port) const;
+    [[nodiscard]] uint8_t readIoPort(uint8_t port);
     void writeIoPort(uint8_t port, uint8_t value);
 
 private:

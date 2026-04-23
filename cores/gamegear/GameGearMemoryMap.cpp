@@ -10,7 +10,13 @@ void GameGearMemoryMap::setVdp(GameGearVDP* vdpPtr) {
     vdp = vdpPtr;
 }
 
-uint8_t GameGearMemoryMap::readIoPort(uint8_t port) const {
+uint8_t GameGearMemoryMap::readIoPort(uint8_t port) {
+    if (port == 0xBEu) {
+        return vdp ? vdp->readDataPort() : 0xFFu;
+    }
+    if (port == 0xBFu) {
+        return vdp ? vdp->readControlPort() : 0xFFu;
+    }
     if (port == 0xDCu) {
         return input ? input->readInputs() : 0xFFu;
     }
@@ -18,8 +24,18 @@ uint8_t GameGearMemoryMap::readIoPort(uint8_t port) const {
 }
 
 void GameGearMemoryMap::writeIoPort(uint8_t port, uint8_t value) {
-    (void)port;
-    (void)value;
+    if (port == 0xBEu) {
+        if (vdp) {
+            vdp->writeDataPort(value);
+        }
+        return;
+    }
+    if (port == 0xBFu) {
+        if (vdp) {
+            vdp->writeControlPort(value);
+        }
+        return;
+    }
 }
 
 

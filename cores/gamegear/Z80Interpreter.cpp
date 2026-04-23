@@ -91,12 +91,65 @@ uint32_t Z80Interpreter::executeOpcode(uint8_t opcode) {
     switch (opcode) {
         case 0x00: // NOP
             return 4u;
+        case 0x06: { // LD B,n
+            const uint8_t value = fetch8();
+            BC = static_cast<uint16_t>((static_cast<uint16_t>(value) << 8) | (BC & 0x00FFu));
+            return 7u;
+        }
+        case 0x0E: { // LD C,n
+            const uint8_t value = fetch8();
+            BC = static_cast<uint16_t>((BC & 0xFF00u) | value);
+            return 7u;
+        }
+        case 0x10: { // DJNZ e
+            const int8_t displacement = static_cast<int8_t>(fetch8());
+            auto b = static_cast<uint8_t>((BC >> 8) & 0x00FFu);
+            b = static_cast<uint8_t>(b - 1u);
+            BC = static_cast<uint16_t>((static_cast<uint16_t>(b) << 8) | (BC & 0x00FFu));
+            if (b != 0u) {
+                PC = static_cast<uint16_t>(PC + displacement);
+                return 13u;
+            }
+            return 8u;
+        }
+        case 0x18: { // JR e
+            const int8_t displacement = static_cast<int8_t>(fetch8());
+            PC = static_cast<uint16_t>(PC + displacement);
+            return 12u;
+        }
+        case 0x20: { // JR NZ,e
+            const int8_t displacement = static_cast<int8_t>(fetch8());
+            if (!zeroFlag()) {
+                PC = static_cast<uint16_t>(PC + displacement);
+            }
+            return 12u;
+        }
         case 0x21: // LD HL,nn
             HL = fetch16();
             return 10u;
         case 0x23: // INC HL
             HL = static_cast<uint16_t>(HL + 1u);
             return 6u;
+        case 0x3C: { // INC A
+            const auto before = regA();
+            const auto result = static_cast<uint8_t>(before + 1u);
+            setRegA(result);
+            uint8_t newFlags = static_cast<uint8_t>(regF() & kFlagC);
+            if (result == 0u) {
+                newFlags = static_cast<uint8_t>(newFlags | kFlagZ);
+            }
+            if ((result & 0x80u) != 0u) {
+                newFlags = static_cast<uint8_t>(newFlags | kFlagS);
+            }
+            if (((before & 0x0Fu) + 1u) > 0x0Fu) {
+                newFlags = static_cast<uint8_t>(newFlags | kFlagH);
+            }
+            if (before == 0x7Fu) {
+                newFlags = static_cast<uint8_t>(newFlags | kFlagPV);
+            }
+            setRegF(newFlags);
+            return 4u;
+        }
         case 0x36: { // LD (HL),n
             const uint8_t value = fetch8();
             memWrite(HL, value);
@@ -111,6 +164,11 @@ uint32_t Z80Interpreter::executeOpcode(uint8_t opcode) {
             const uint8_t value = regA();
             memWrite(HL, value);
             return 7u;
+        }
+        case 0xAF: { // XOR A
+            setRegA(0u);
+            setRegF(static_cast<uint8_t>(kFlagZ | kFlagPV));
+            return 4u;
         }
         case 0xC3: // JP nn
             PC = fetch16();

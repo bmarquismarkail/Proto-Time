@@ -28,65 +28,49 @@ std::vector<uint8_t> makeFrontendProofRom()
         emit8(value);
     };
 
-    emitLoadHlAndByte(0xFF40u, 0x91u);
-    emitLoadHlAndByte(0xFF47u, 0xE4u);
-    emit8(0x21u);
-    emit16(0x8000u);
-    for (int row = 0; row < 8; ++row) {
-        emit8(0x36u);
-        emit8(0xFFu);
-        emit8(0x23u);
-        emit8(0x36u);
-        emit8(0x00u);
-        emit8(0x23u);
-    }
-    emit8(0x21u);
-    emit16(0x9800u);
-    emit8(0x36u);
-    emit8(0x00u);
-    emit8(0x23u);
-    emit8(0x36u);
-    emit8(0x01u);
+    auto emitOutA = [&](uint8_t port) {
+        emit8(0xD3u);
+        emit8(port);
+    };
+    auto emitRegWrite = [&](uint8_t reg, uint8_t value) {
+        emit8(0x3Eu);
+        emit8(value);
+        emitOutA(0xBFu);
+        emit8(0x3Eu);
+        emit8(static_cast<uint8_t>(0x80u | (reg & 0x0Fu)));
+        emitOutA(0xBFu);
+    };
+    auto emitSetVramWriteAddress = [&](uint16_t address) {
+        emit8(0x3Eu);
+        emit8(static_cast<uint8_t>(address & 0x00FFu));
+        emitOutA(0xBFu);
+        emit8(0x3Eu);
+        emit8(static_cast<uint8_t>(0x40u | ((address >> 8) & 0x3Fu)));
+        emitOutA(0xBFu);
+    };
+    auto emitRel8 = [&](int opcode, std::size_t target) {
+        emit8(static_cast<uint8_t>(opcode));
+        const auto baseAfterOperand = static_cast<int>(pc + 1u);
+        const auto delta = static_cast<int>(target) - baseAfterOperand;
+        emit8(static_cast<uint8_t>(static_cast<int8_t>(delta)));
+    };
 
-    emit8(0x21u);
-    emit16(0x8010u);
-    for (int row = 0; row < 8; ++row) {
-        emit8(0x36u);
-        emit8(0xFFu);
-        emit8(0x23u);
-        emit8(0x36u);
-        emit8(0xFFu);
-        emit8(0x23u);
-    }
+    emitRegWrite(1u, 0x40u);
+    emitRegWrite(7u, 0xE4u);
+    emitSetVramWriteAddress(0x0010u);
+    emit8(0x3Eu); emit8(0xFFu);
+    emit8(0x06u); emit8(0x10u);
+    const auto fillTileLoop = pc;
+    emitOutA(0xBEu);
+    emitRel8(0x10u, fillTileLoop);
 
-    emit8(0x21u);
-    emit16(0xC000u);
-    const auto inputLoopAddress = static_cast<uint16_t>(pc);
-    emit8(0xDBu);
-    emit8(0xDCu);
-    emit8(0x77u);
-    emit8(0xE6u);
-    emit8(0x10u);
-    emit8(0xCAu);
-    const auto pressedJumpPatch = pc;
-    emit16(0x0000u);
+    emitLoadHlAndByte(0xFE00u, 24u);
+    emitLoadHlAndByte(0xFE01u, 24u);
+    emitLoadHlAndByte(0xFE02u, 0x01u);
+    emitLoadHlAndByte(0xFE03u, 0x00u);
 
-    emit8(0x21u);
-    emit16(0x9800u);
-    emit8(0x36u);
-    emit8(0x00u);
-    emit8(0xC3u);
-    emit16(inputLoopAddress);
-
-    const auto pressedPath = static_cast<uint16_t>(pc);
-    rom[pressedJumpPatch] = static_cast<uint8_t>(pressedPath & 0x00FFu);
-    rom[pressedJumpPatch + 1u] = static_cast<uint8_t>((pressedPath >> 8) & 0x00FFu);
-    emit8(0x21u);
-    emit16(0x9800u);
-    emit8(0x36u);
-    emit8(0x01u);
-    emit8(0xC3u);
-    emit16(inputLoopAddress);
+    const auto idleLoop = pc;
+    emitRel8(0x18u, idleLoop);
 
     return rom;
 }
@@ -137,6 +121,9 @@ int main(int argc, char** argv)
         frontend->lastFrame()->pixels.begin(),
         frontend->lastFrame()->pixels.end());
     assert(frameColors.size() > 1u);
+    const auto spritePixel = frontend->lastFrame()->pixels[24u * 160u + 24u];
+    const auto backgroundPixel = frontend->lastFrame()->pixels[24u * 160u + 8u];
+    assert(spritePixel != backgroundPixel);
     assert(frontend->stats().videoEvents >= 1u);
     assert(frontend->stats().framesPrepared >= 1u);
 
