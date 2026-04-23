@@ -226,6 +226,14 @@ uint32_t Z80Interpreter::executeOpcode(uint8_t opcode) {
             setRegF(static_cast<uint8_t>(preserved | newFlags));
             return 7u;
         }
+        case 0xF3: { // DI
+            IME = false;
+            return 4u;
+        }
+        case 0xFB: { // EI (simple immediate enable)
+            IME = true;
+            return 4u;
+        }
         default:
             return 4u;
     }

@@ -52,6 +52,10 @@ void GameGearVDP::step(uint32_t cpuCycles) {
             vblankPending_ = true;
         }
     }
+    // Update a defensible H counter value (0-255) reflecting position
+    // within the current scanline. This is an approximate value suitable
+    // for software that polls an H counter.
+    registers_[0x0Au] = static_cast<uint8_t>((pendingCycles_ * 256u) / kCyclesPerScanline);
 }
 
 uint8_t GameGearVDP::readVram(uint16_t address) const {
@@ -146,6 +150,10 @@ uint8_t GameGearVDP::readControlPort() {
     if (vblankPending_ || registers_[4] >= kVisibleScanlines) {
         status = static_cast<uint8_t>(status | 0x80u);
     }
+    // Reading the control port clears the VBlank pending flag on real
+    // hardware; emulate that behavior so software that polls the VDP
+    // status sees the flag cleared after a read.
+    vblankPending_ = false;
     return status;
 }
 
