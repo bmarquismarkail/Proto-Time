@@ -1,5 +1,3 @@
-    // Helper for INC flag calculation (preserves C, computes Z, S, H, PV)
-    [[nodiscard]] uint8_t computeIncFlags(uint8_t before, uint8_t result) const noexcept;
 #pragma once
 // Sega Game Gear Z80 CPU interpreter stub
 // References: SMS Power, MAME, Emulicious, Genesis Plus GX
@@ -25,13 +23,16 @@ public:
     void setMemoryInterface(MemRead reader, MemWrite writer);
     void setIoInterface(IoRead reader, IoWrite writer);
 
-    // Install a provider that returns true when an external IRQ should be
-    // serviced. The provider MUST atomically clear the pending request when
-    // it returns true; the interpreter will call it from the CPU thread.
+    // Install a provider for setInterruptRequestProvider that returns a
+    // std::optional<uint8_t> containing the interrupt vector byte when an
+    // external IRQ should be serviced (for example, an IM2 vector). The
+    // provider MUST atomically clear the pending request when it returns a
+    // value, and the interpreter will call it from the CPU thread.
     void setInterruptRequestProvider(std::function<std::optional<uint8_t>()> provider);
 
-    // Programmatic setter for interrupt mode (0,1,2). Default is 1.
-    void setInterruptMode(uint8_t mode) { interruptMode_ = mode; }
+    // Programmatic setter for interrupt mode (0,1,2). Invalid values fall
+    // back to IM1 so interrupt handling stays in a defined state.
+    void setInterruptMode(uint8_t mode) { interruptMode_ = (mode <= 2u) ? mode : 1u; }
 
     // Z80 registers
     uint16_t AF = 0;
@@ -51,14 +52,17 @@ public:
     bool IFF1 = false;
     bool IFF2 = false;
     bool IME = false;
+
+private:
     // Set by EI; becomes effective only after the instruction following
     // the `EI` instruction completes (deferred IME enable semantics).
-    // Replaced boolean pending flag with an integer delay counter.
     // When >0, it is decremented each `step()` and when it reaches 0
     // IME is promoted to true. Initialize to 0 (no pending enable).
     int imeEnableDelay_ = 0;
 
-private:
+    // True if the CPU is in HALT state (waiting for interrupt)
+    bool halted_ = false;
+
     // Z80 F register flags (canonical bit positions):
     // S  Z  -  H  -  P/V  N  C
     // 7  6  5  4  3    2  1  0 (bit indices)
@@ -86,13 +90,22 @@ private:
     void setRegF(uint8_t value) noexcept;
     void setZeroFlag(bool set) noexcept;
     [[nodiscard]] bool zeroFlag() const noexcept;
+    [[nodiscard]] uint8_t computeIncFlags(uint8_t before, uint8_t result) const noexcept;
+    [[nodiscard]] uint8_t computeDecFlags(uint8_t before, uint8_t result) const noexcept;
+    [[nodiscard]] uint8_t readReg8(int idx) const;
+    void writeReg8(int idx, uint8_t value);
+    [[nodiscard]] static bool parityEven(uint8_t value) noexcept;
+    [[nodiscard]] uint8_t computeAddFlags(uint8_t lhs, uint8_t rhs, uint8_t carryIn, uint8_t result) const noexcept;
+    [[nodiscard]] uint8_t computeSubFlags(uint8_t lhs, uint8_t rhs, uint8_t carryIn, uint8_t result) const noexcept;
     [[nodiscard]] uint32_t executeOpcode(uint8_t opcode);
     // Handle any external interrupts. Returns consumed cycles (0 if none).
     uint32_t handleInterrupts();
     // TODO: Add full opcode decode/execute tables
-    // Interrupt request provider: returns true if a pending external IRQ
-    // should be serviced; the provider is expected to atomically consume
-    // the request when returning true.
+    // Interrupt request provider: returns a std::optional<uint8_t>
+    // containing the IRQ byte/vector when a pending external IRQ should be
+    // serviced; an empty optional means no pending IRQ. The provider is
+    // expected to atomically consume the request when returning a non-empty
+    // optional.
     std::function<std::optional<uint8_t>()> interruptRequestProvider;
     // Interrupt mode (0,1,2). Defaults to IM1.
     uint8_t interruptMode_ = 1u;
