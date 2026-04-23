@@ -60,19 +60,34 @@ std::vector<uint8_t> makeFrontendProofRom()
     };
 
     emitRegWrite(1u, 0x40u); // display enable
-    emitRegWrite(7u, 0xE4u); // simple palette
+    emitRegWrite(5u, 0xFFu); // SAT base 0x3F00
+    emitRegWrite(6u, 0xFFu); // sprite generator base 0x2000
+    emitRegWrite(7u, 0x00u); // backdrop color code 0
 
-    emitSetVramWriteAddress(0x0010u); // tile 1 pattern data
-    emit8(0x3Eu); emit8(0xFFu); // LD A,0xFF
-    emit8(0x06u); emit8(0x10u); // LD B,16
+    emit8(0x3Eu); emit8(0x22u); emitOutA(0xBFu); // CRAM palette1 color1 addr
+    emit8(0x3Eu); emit8(0xC0u); emitOutA(0xBFu);
+    emit8(0x3Eu); emit8(0x0Fu); emitOutA(0xBEu); // red
+    emit8(0x3Eu); emit8(0x00u); emitOutA(0xBEu);
+
+    emitSetVramWriteAddress(0x2020u); // tile 1 pattern data
+    emit8(0x06u); emit8(0x08u); // LD B,8
     const auto fillTileLoop = pc;
-    emitOutA(0xBEu);
+    emit8(0x3Eu); emit8(0xFFu); emitOutA(0xBEu);
+    emit8(0x3Eu); emit8(0x00u); emitOutA(0xBEu);
+    emit8(0x3Eu); emit8(0x00u); emitOutA(0xBEu);
+    emit8(0x3Eu); emit8(0x00u); emitOutA(0xBEu);
     emitRel8(0x10u, fillTileLoop); // DJNZ fillTileLoop
 
-    emitLoadHlAndByte(0xFE00u, 24u); // sprite y
-    emitLoadHlAndByte(0xFE01u, 24u); // sprite x
-    emitLoadHlAndByte(0xFE02u, 0x01u); // sprite tile index
-    emitLoadHlAndByte(0xFE03u, 0x00u); // sprite flags
+    emitSetVramWriteAddress(0x3F00u); // SAT y table
+    emit8(0x3Eu); emit8(24u); emitOutA(0xBEu);
+    emit8(0x3Eu); emit8(0xD0u); emitOutA(0xBEu);
+    emitSetVramWriteAddress(0x3F80u); // SAT x/tile table
+    emit8(0x3Eu); emit8(24u); emitOutA(0xBEu);
+    emit8(0x3Eu); emit8(0x01u); emitOutA(0xBEu);
+
+    emitLoadHlAndByte(0xFE00u, 24u); // compat SAT shim y
+    emitLoadHlAndByte(0xFE01u, 24u); // compat SAT shim x
+    emitLoadHlAndByte(0xFE02u, 0x01u); // compat SAT shim tile
     emitLoadHlAndByte(0xC000u, 0x00u); // observed input state byte
 
     const std::size_t inputLoop = pc;
@@ -169,6 +184,73 @@ int main() {
     ioMemory.writeIoPort(0xBFu, 0x00u);
     assert(ioMemory.readIoPort(0xBEu) == 0x12u);
     assert(ioMemory.readIoPort(0xBEu) == 0x34u);
+    ioMemory.writeIoPort(0xBFu, 0xFFu);
+    ioMemory.writeIoPort(0xBFu, 0x85u); // reg #5 = 0xFF -> SAT base 0x3F00
+    ioMemory.writeIoPort(0xBFu, 0xFFu);
+    ioMemory.writeIoPort(0xBFu, 0x86u); // reg #6 = 0xFF -> sprite gen base 0x2000
+    ioMemory.writeIoPort(0xBFu, 0x40u);
+    ioMemory.writeIoPort(0xBFu, 0x81u); // reg #1 = display on
+    ioMemory.writeIoPort(0xBFu, 0x22u);
+    ioMemory.writeIoPort(0xBFu, 0xC0u); // CRAM addr 0x22 (palette1 color1)
+    ioMemory.writeIoPort(0xBEu, 0x0Fu); // red
+    ioMemory.writeIoPort(0xBEu, 0x00u);
+    ioMemory.writeIoPort(0xBEu, 0xF0u); // palette1 color2 -> green
+    ioMemory.writeIoPort(0xBEu, 0x00u);
+    ioMemory.writeIoPort(0xBFu, 0x20u);
+    ioMemory.writeIoPort(0xBFu, 0x60u); // VRAM addr 0x2020
+    for (int row = 0; row < 8; ++row) {
+        ioMemory.writeIoPort(0xBEu, 0xFFu);
+        ioMemory.writeIoPort(0xBEu, 0x00u);
+        ioMemory.writeIoPort(0xBEu, 0x00u);
+        ioMemory.writeIoPort(0xBEu, 0x00u);
+    }
+    ioMemory.writeIoPort(0xBFu, 0x40u);
+    ioMemory.writeIoPort(0xBFu, 0x60u); // VRAM addr 0x2040 tile 2
+    for (int row = 0; row < 8; ++row) {
+        ioMemory.writeIoPort(0xBEu, 0x00u);
+        ioMemory.writeIoPort(0xBEu, 0xFFu);
+        ioMemory.writeIoPort(0xBEu, 0x00u);
+        ioMemory.writeIoPort(0xBEu, 0x00u);
+    }
+    ioMemory.writeIoPort(0xBFu, 0x00u);
+    ioMemory.writeIoPort(0xBFu, 0x7Fu); // VRAM addr 0x3F00 SAT y-table
+    ioMemory.writeIoPort(0xBEu, 24u);
+    ioMemory.writeIoPort(0xBEu, 0xD0u);
+    ioMemory.writeIoPort(0xBFu, 0x80u);
+    ioMemory.writeIoPort(0xBFu, 0x7Fu); // VRAM addr 0x3F80 SAT x/tile
+    ioMemory.writeIoPort(0xBEu, 24u);
+    ioMemory.writeIoPort(0xBEu, 0x01u);
+    auto vdpModel = vdp.buildFrameModel({160, 144});
+    const auto redSpritePixel = vdpModel.argbPixels[24u * 160u + 24u];
+    assert(redSpritePixel != vdpModel.argbPixels[0]);
+    const auto lowerPixelBeforeTall = vdpModel.argbPixels[(24u + 12u) * 160u + 24u];
+    ioMemory.writeIoPort(0xBFu, 0x42u);
+    ioMemory.writeIoPort(0xBFu, 0x81u); // reg #1 = display on + 8x16 sprites
+    auto tallSpriteModel = vdp.buildFrameModel({160, 144});
+    assert(tallSpriteModel.argbPixels[(24u + 12u) * 160u + 24u] != tallSpriteModel.argbPixels[0]);
+    assert(lowerPixelBeforeTall == vdpModel.argbPixels[0]);
+    ioMemory.writeIoPort(0xBFu, 0x40u);
+    ioMemory.writeIoPort(0xBFu, 0x81u); // back to 8x8 sprites
+    ioMemory.writeIoPort(0xBFu, 0x22u);
+    ioMemory.writeIoPort(0xBFu, 0xC0u);
+    ioMemory.writeIoPort(0xBEu, 0x00u);
+    ioMemory.writeIoPort(0xBEu, 0x0Fu); // blue
+    auto blueModel = vdp.buildFrameModel({160, 144});
+    assert(blueModel.argbPixels[24u * 160u + 24u] != redSpritePixel);
+    ioMemory.writeIoPort(0xBFu, 0xFDu);
+    ioMemory.writeIoPort(0xBFu, 0x85u); // reg #5 = 0xFD -> SAT base 0x3E00
+    auto relocatedSatBlank = vdp.buildFrameModel({160, 144});
+    assert(relocatedSatBlank.argbPixels[24u * 160u + 24u] == relocatedSatBlank.argbPixels[0]);
+    ioMemory.writeIoPort(0xBFu, 0x00u);
+    ioMemory.writeIoPort(0xBFu, 0x7Eu); // VRAM addr 0x3E00 SAT y-table
+    ioMemory.writeIoPort(0xBEu, 24u);
+    ioMemory.writeIoPort(0xBEu, 0xD0u);
+    ioMemory.writeIoPort(0xBFu, 0x80u);
+    ioMemory.writeIoPort(0xBFu, 0x7Eu); // VRAM addr 0x3E80 SAT x/tile
+    ioMemory.writeIoPort(0xBEu, 24u);
+    ioMemory.writeIoPort(0xBEu, 0x01u);
+    auto relocatedSatModel = vdp.buildFrameModel({160, 144});
+    assert(relocatedSatModel.argbPixels[24u * 160u + 24u] != relocatedSatModel.argbPixels[0]);
 
     BMMQ::GameGearMachine gg;
     const std::vector<uint8_t> rom = makeFrontendProofRom();
@@ -183,12 +265,11 @@ int main() {
     assert(stepUntil(gg, 2048, [&] {
         return gg.runtimeContext().read8(0xFE02u) == 0x01u;
     }));
-    assert(gg.runtimeContext().read8(0x8010u) == 0xFFu);
-    assert(gg.runtimeContext().read8(0x801Fu) == 0xFFu);
     assert(gg.runtimeContext().read8(0xFE00u) == 24u);
     assert(gg.runtimeContext().read8(0xFE01u) == 24u);
     assert(gg.runtimeContext().read8(0xFE02u) == 0x01u);
-    assert(gg.runtimeContext().read8(0xFF47u) == 0xE4u);
+    assert(gg.runtimeContext().read8(0xFF45u) == 0xFFu);
+    assert(gg.runtimeContext().read8(0xFF46u) == 0xFFu);
     auto initialModel = gg.videoDebugFrameModel(BMMQ::VideoDebugRenderRequest{
         .frameWidth = 160,
         .frameHeight = 144,

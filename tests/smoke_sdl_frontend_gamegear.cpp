@@ -56,13 +56,28 @@ std::vector<uint8_t> makeFrontendProofRom()
     };
 
     emitRegWrite(1u, 0x40u);
-    emitRegWrite(7u, 0xE4u);
-    emitSetVramWriteAddress(0x0010u);
-    emit8(0x3Eu); emit8(0xFFu);
-    emit8(0x06u); emit8(0x10u);
+    emitRegWrite(5u, 0xFFu);
+    emitRegWrite(6u, 0xFFu);
+    emitRegWrite(7u, 0x00u);
+    emit8(0x3Eu); emit8(0x22u); emitOutA(0xBFu);
+    emit8(0x3Eu); emit8(0xC0u); emitOutA(0xBFu);
+    emit8(0x3Eu); emit8(0x0Fu); emitOutA(0xBEu);
+    emit8(0x3Eu); emit8(0x00u); emitOutA(0xBEu);
+    emitSetVramWriteAddress(0x2020u);
+    emit8(0x06u); emit8(0x08u);
     const auto fillTileLoop = pc;
-    emitOutA(0xBEu);
+    emit8(0x3Eu); emit8(0xFFu); emitOutA(0xBEu);
+    emit8(0x3Eu); emit8(0x00u); emitOutA(0xBEu);
+    emit8(0x3Eu); emit8(0x00u); emitOutA(0xBEu);
+    emit8(0x3Eu); emit8(0x00u); emitOutA(0xBEu);
     emitRel8(0x10u, fillTileLoop);
+
+    emitSetVramWriteAddress(0x3F00u);
+    emit8(0x3Eu); emit8(24u); emitOutA(0xBEu);
+    emit8(0x3Eu); emit8(0xD0u); emitOutA(0xBEu);
+    emitSetVramWriteAddress(0x3F80u);
+    emit8(0x3Eu); emit8(24u); emitOutA(0xBEu);
+    emit8(0x3Eu); emit8(0x01u); emitOutA(0xBEu);
 
     emitLoadHlAndByte(0xFE00u, 24u);
     emitLoadHlAndByte(0xFE01u, 24u);
