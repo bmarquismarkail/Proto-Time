@@ -140,6 +140,9 @@ add_executable(time-smoke-gamegear-cartridge
     cores/gamegear/GameGearCartridge.cpp
 )
 add_test(NAME smoke_gamegear_cartridge COMMAND time-smoke-gamegear-cartridge)
+add_executable(time-smoke-gamegear-banking tests/smoke_gamegear_banking.cpp)
+target_link_libraries(time-smoke-gamegear-banking time-gamegear-core)
+add_test(NAME smoke_gamegear_banking COMMAND time-smoke-gamegear-banking)
 add_executable(time-smoke-snapshot tests/smoke_snapshot.cpp)
 add_test(NAME smoke_snapshot COMMAND time-smoke-snapshot)
 add_executable(time-smoke-register-snapshot tests/smoke_register_snapshot.cpp)

@@ -22,6 +22,11 @@ public:
     void setMemoryInterface(MemRead reader, MemWrite writer);
     void setIoInterface(IoRead reader, IoWrite writer);
 
+    // Install a provider that returns true when an external IRQ should be
+    // serviced. The provider MUST atomically clear the pending request when
+    // it returns true; the interpreter will call it from the CPU thread.
+    void setInterruptRequestProvider(std::function<bool()> provider);
+
     // Z80 registers
     uint16_t AF = 0;
     uint16_t BC = 0;
@@ -70,6 +75,11 @@ private:
     void setZeroFlag(bool set) noexcept;
     [[nodiscard]] bool zeroFlag() const noexcept;
     [[nodiscard]] uint32_t executeOpcode(uint8_t opcode);
-    void handleInterrupts();
+    // Handle any external interrupts. Returns consumed cycles (0 if none).
+    uint32_t handleInterrupts();
     // TODO: Add full opcode decode/execute tables
+    // Interrupt request provider: returns true if a pending external IRQ
+    // should be serviced; the provider is expected to atomically consume
+    // the request when returning true.
+    std::function<bool()> interruptRequestProvider;
 };

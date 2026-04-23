@@ -181,6 +181,9 @@ struct GameGearMachine::Impl {
     std::optional<uint32_t> lastDigitalInputMask;
     uint64_t inputGeneration = 0u;
     uint64_t stepCounter = 0u;
+    // Interrupt request raised by VDP (VBlank) or other devices. Consumed
+    // atomically by the Z80 interrupt provider.
+    bool interruptRequested = false;
     GameGearRuntimeContext context{cpu, mem, romLoaded, activePolicy};
 };
 
@@ -213,6 +216,14 @@ GameGearMachine::GameGearMachine() : impl(std::make_unique<Impl>()) {
     );
     impl->mem.setInput(&impl->input);
     impl->mem.setVdp(&impl->vdp);
+    // Provide a callback for the CPU to atomically consume pending IRQs.
+    impl->cpu.setInterruptRequestProvider([this]() -> bool {
+        if (impl->interruptRequested) {
+            impl->interruptRequested = false;
+            return true;
+        }
+        return false;
+    });
     Plugin::validateExecutorPolicyStartup(impl->defaultPolicy);
     impl->vdp.reset();
     impl->input.reset();
@@ -290,16 +301,21 @@ void GameGearMachine::step() {
             "scanline ready"
         });
     }
-    if (impl->vdp.takeVBlankEntered() && impl->pluginManager.size() != 0u) {
-        impl->pluginManager.emit(view(), MachineEvent{
-            MachineEventType::VBlank,
-            PluginCategory::Video,
-            impl->stepCounter,
-            0xFF44u,
-            runtimeContext().read8(0xFF44u),
-            &runtimeContext().getLastFeedback(),
-            "entered VBlank"
-        });
+    if (impl->vdp.takeVBlankEntered()) {
+        // Always request an IRQ for VBlank; plugin event emission is
+        // conditional on plugin manager presence.
+        impl->interruptRequested = true;
+        if (impl->pluginManager.size() != 0u) {
+            impl->pluginManager.emit(view(), MachineEvent{
+                MachineEventType::VBlank,
+                PluginCategory::Video,
+                impl->stepCounter,
+                0xFF44u,
+                runtimeContext().read8(0xFF44u),
+                &runtimeContext().getLastFeedback(),
+                "entered VBlank"
+            });
+        }
     }
 }
 

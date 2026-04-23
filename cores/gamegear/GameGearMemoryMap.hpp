@@ -33,4 +33,8 @@ private:
     GameGearVDP* vdp = nullptr;
     std::vector<uint8_t> rom;
     std::array<uint8_t, 0x2000> ram{}; // 8KB RAM
+    // 3 x 16KiB bank registers for 0x0000-0x3FFF, 0x4000-0x7FFF, 0x8000-0xBFFF
+    std::array<uint8_t, 3> bankRegisters_{};
+    // number of 16KiB banks available in the loaded ROM (>=1 when ROM present)
+    std::size_t romNumBanks_ = 0u;
 };

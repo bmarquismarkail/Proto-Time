@@ -21,6 +21,10 @@ void Z80Interpreter::requireMemoryInterface() const {
     }
 }
 
+void Z80Interpreter::setInterruptRequestProvider(std::function<bool()> provider) {
+    interruptRequestProvider = std::move(provider);
+}
+
 uint8_t Z80Interpreter::readIo(uint8_t port) const {
     return ioRead ? ioRead(port) : 0xFFu;
 }
@@ -227,13 +231,34 @@ uint32_t Z80Interpreter::executeOpcode(uint8_t opcode) {
     }
 }
 
-void Z80Interpreter::handleInterrupts() {
-    // TODO: Implement interrupt logic
+uint32_t Z80Interpreter::handleInterrupts() {
+    if (!interruptRequestProvider) {
+        return 0u;
+    }
+    if (IME && interruptRequestProvider()) {
+        // Push PC (high then low) onto the stack
+        const uint8_t pcl = static_cast<uint8_t>(PC & 0x00FFu);
+        const uint8_t pch = static_cast<uint8_t>((PC >> 8) & 0x00FFu);
+        SP = static_cast<uint16_t>(SP - 1u);
+        memWrite(SP, pch);
+        SP = static_cast<uint16_t>(SP - 1u);
+        memWrite(SP, pcl);
+        // Jump to 0x0038 (RST 0x38 service)
+        PC = 0x0038u;
+        IFF1 = false;
+        IFF2 = false;
+        IME = false;
+        return 11u;
+    }
+    return 0u;
 }
 
 uint32_t Z80Interpreter::step() {
     requireMemoryInterface();
-    handleInterrupts();
+    const uint32_t intrCycles = handleInterrupts();
+    if (intrCycles != 0u) {
+        return intrCycles;
+    }
     const uint8_t opcode = fetch8();
     return executeOpcode(opcode);
 }
