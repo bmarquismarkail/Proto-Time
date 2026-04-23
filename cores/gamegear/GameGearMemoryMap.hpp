@@ -10,6 +10,7 @@
 
 class GameGearInput;
 class GameGearCartridge;
+class GameGearPSG;
 class GameGearVDP;
 class GameGearMemoryMap {
 public:
@@ -26,6 +27,7 @@ public:
 
     void setCartridge(GameGearCartridge* cartridgePtr);
     void setInput(GameGearInput* inputPtr);
+    void setPsg(GameGearPSG* psgPtr);
     void setVdp(GameGearVDP* vdpPtr);
     [[nodiscard]] uint8_t readIoPort(uint8_t port);
     void writeIoPort(uint8_t port, uint8_t value);
@@ -33,6 +35,7 @@ public:
 private:
     GameGearInput* input = nullptr;
     GameGearCartridge* cartridge = nullptr;
+    GameGearPSG* psg = nullptr;
     GameGearVDP* vdp = nullptr;
     std::array<uint8_t, 0x2000> ram{}; // 8KB RAM
 };

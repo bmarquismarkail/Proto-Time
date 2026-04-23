@@ -21,9 +21,10 @@ namespace {
 constexpr std::size_t kMaxRomSize = 1024u * 1024u;
 // Expose only true Game Gear memory regions and port-based IO descriptors.
 // Remove Game Boy memory-mapped video/input descriptors so tools see port IO.
-constexpr std::array<IoRegionDescriptor, 4> kIoRegions{{
+constexpr std::array<IoRegionDescriptor, 5> kIoRegions{{
     {PluginCategory::System, 0x0000u, 0x8000u, "ROM", true, false},
     {PluginCategory::System, 0xC000u, 0x2000u, "RAM", true, true},
+    {PluginCategory::Audio, 0xFF10u, 0x0017u, "APU Registers", true, true},
     {PluginCategory::Video, 0x00BEu, 0x0002u, "VDP Ports (IO)", true, true},
     {PluginCategory::DigitalInput, 0x00DCu, 0x0002u, "Input Ports (0xDC/0xDD)", true, false},
 }};
@@ -181,6 +182,7 @@ struct GameGearMachine::Impl {
     std::optional<uint32_t> lastDigitalInputMask;
     uint64_t inputGeneration = 0u;
     uint64_t stepCounter = 0u;
+    uint64_t lastAudioFrameCounter = 0u;
     // Interrupt request raised by VDP (VBlank) or other devices. Consumed
     // atomically by the Z80 interrupt provider.
     bool interruptRequested = false;
@@ -216,6 +218,7 @@ GameGearMachine::GameGearMachine() : impl(std::make_unique<Impl>()) {
     );
     impl->mem.setCartridge(&impl->cart);
     impl->mem.setInput(&impl->input);
+    impl->mem.setPsg(&impl->psg);
     impl->mem.setVdp(&impl->vdp);
     // Provide a callback for the CPU to atomically consume pending IRQs.
     // Return an optional data byte: present => interrupt pending; empty => none.
@@ -249,12 +252,14 @@ void GameGearMachine::loadRom(const std::vector<uint8_t>& bytes) {
     impl->cart.load(bytes.data(), bytes.size());
     impl->mem.reset();
     impl->vdp.reset();
+    impl->psg.reset();
     impl->input.reset();
     impl->romLoaded = true;
     ++impl->inputGeneration;
     inputService().advanceGeneration(impl->inputGeneration);
     impl->lastDigitalInputMask.reset();
     impl->stepCounter = 0u;
+    impl->lastAudioFrameCounter = 0u;
     impl->cpu.reset();
     if (impl->pluginManager.size() != 0u) {
         impl->pluginManager.emit(view(), MachineEvent{
@@ -292,7 +297,7 @@ void GameGearMachine::step() {
     const auto feedback = impl->context.step();
     ++impl->stepCounter;
     impl->vdp.step(feedback.retiredCycles);
-    impl->psg.step();
+    impl->psg.step(feedback.retiredCycles);
     if (impl->vdp.takeScanlineReady() && impl->pluginManager.size() != 0u) {
         impl->pluginManager.emit(view(), MachineEvent{
             MachineEventType::VideoScanlineReady,
@@ -317,6 +322,21 @@ void GameGearMachine::step() {
                 impl->vdp.currentScanline(),
                 &runtimeContext().getLastFeedback(),
                 "entered VBlank"
+            });
+        }
+    }
+    const auto audioFrameCounter = impl->psg.frameCounter();
+    if (audioFrameCounter != impl->lastAudioFrameCounter) {
+        impl->lastAudioFrameCounter = audioFrameCounter;
+        if (impl->pluginManager.size() != 0u) {
+            impl->pluginManager.emit(view(), MachineEvent{
+                MachineEventType::AudioFrameReady,
+                PluginCategory::Audio,
+                impl->stepCounter,
+                0xFF26u,
+                runtimeContext().read8(0xFF26u),
+                &runtimeContext().getLastFeedback(),
+                "psg frame mixed"
             });
         }
     }
@@ -346,6 +366,18 @@ void GameGearMachine::serviceInput() {
 
 std::optional<uint32_t> GameGearMachine::currentDigitalInputMask() const {
     return impl->lastDigitalInputMask;
+}
+
+std::vector<int16_t> GameGearMachine::recentAudioSamples() const {
+    return impl->psg.copyRecentSamples();
+}
+
+uint32_t GameGearMachine::audioSampleRate() const {
+    return impl->psg.sampleRate();
+}
+
+uint64_t GameGearMachine::audioFrameCounter() const {
+    return impl->psg.frameCounter();
 }
 
 std::optional<VideoDebugFrameModel> GameGearMachine::videoDebugFrameModel(

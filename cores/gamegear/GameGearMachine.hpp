@@ -32,6 +32,9 @@ public:
     const Plugin::IExecutorPolicyPlugin& attachedExecutorPolicy() const override;
     uint16_t readRegisterPair(std::string_view id) const override;
     std::optional<uint32_t> currentDigitalInputMask() const override;
+    std::vector<int16_t> recentAudioSamples() const override;
+    uint32_t audioSampleRate() const override;
+    uint64_t audioFrameCounter() const override;
     std::optional<VideoDebugFrameModel> videoDebugFrameModel(
         const VideoDebugRenderRequest& request) const override;
     uint32_t clockHz() const override;

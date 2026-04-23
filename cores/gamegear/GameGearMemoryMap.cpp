@@ -2,6 +2,7 @@
 
 #include "GameGearCartridge.hpp"
 #include "GameGearInput.hpp"
+#include "GameGearPSG.hpp"
 #include "GameGearVDP.hpp"
 
 namespace {
@@ -17,6 +18,10 @@ void GameGearMemoryMap::setCartridge(GameGearCartridge* cartridgePtr) {
 
 void GameGearMemoryMap::setInput(GameGearInput* inputPtr) {
     input = inputPtr;
+}
+
+void GameGearMemoryMap::setPsg(GameGearPSG* psgPtr) {
+    psg = psgPtr;
 }
 
 void GameGearMemoryMap::setVdp(GameGearVDP* vdpPtr) {
@@ -52,6 +57,12 @@ void GameGearMemoryMap::writeIoPort(uint8_t port, uint8_t value) {
     if ((port & 0xC1u) == 0x81u) {
         if (vdp) {
             vdp->writeControlPort(value);
+        }
+        return;
+    }
+    if ((port & 0xC0u) == 0x40u) {
+        if (psg) {
+            psg->writeData(value);
         }
         return;
     }
@@ -100,6 +111,12 @@ uint8_t GameGearMemoryMap::read(uint16_t addr) const {
     if (addr >= 0xFF40u && addr <= 0xFF4Bu && vdp != nullptr) {
         return vdp->readRegister(addr);
     }
+    if (addr >= 0xFF10u && addr <= 0xFF26u && psg != nullptr) {
+        return psg->readCompatRegister(addr);
+    }
+    if (addr >= 0xFF30u && addr <= 0xFF3Fu && psg != nullptr) {
+        return psg->readWaveRam(addr);
+    }
     if (addr == 0xFF00u) {
         return input ? input->readInputs() : 0xFFu;
     }
@@ -139,6 +156,14 @@ void GameGearMemoryMap::write(uint16_t addr, uint8_t value) {
     }
     if (addr >= 0xFF40u && addr <= 0xFF4Bu && vdp != nullptr) {
         vdp->writeRegister(addr, value);
+        return;
+    }
+    if (addr >= 0xFF10u && addr <= 0xFF26u && psg != nullptr) {
+        psg->writeCompatRegister(addr, value);
+        return;
+    }
+    if (addr >= 0xFF30u && addr <= 0xFF3Fu && psg != nullptr) {
+        psg->writeWaveRam(addr, value);
         return;
     }
     // 0xC000-0xDFFF: RAM (8KB)
