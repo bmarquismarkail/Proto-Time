@@ -184,12 +184,33 @@ int main() {
     ioMemory.writeIoPort(0xBFu, 0x00u);
     assert(ioMemory.readIoPort(0xBEu) == 0x12u);
     assert(ioMemory.readIoPort(0xBEu) == 0x34u);
+    ioMemory.writeIoPort(0x81u, 0x78u);
+    ioMemory.writeIoPort(0x81u, 0x83u);
+    assert(ioMemory.read(0xFF43u) == 0x78u);
+    assert(ioMemory.readIoPort(0x7Eu) == 0x00u);
+    assert(ioMemory.readIoPort(0x7Fu) == 0x00u);
+    ioMemory.writeIoPort(0xBFu, 0x22u);
+    ioMemory.writeIoPort(0xBFu, 0xC0u);
+    ioMemory.writeIoPort(0xBEu, 0x0Fu);
+    auto unchangedCramModel = vdp.buildFrameModel({160, 144});
+    assert(unchangedCramModel.argbPixels[0] == unchangedCramModel.argbPixels[1]);
+    ioMemory.writeIoPort(0xBEu, 0x00u);
+    auto latchedCramModel = vdp.buildFrameModel({160, 144});
+    assert(latchedCramModel.argbPixels[0] == unchangedCramModel.argbPixels[0]);
     ioMemory.writeIoPort(0xBFu, 0xFFu);
     ioMemory.writeIoPort(0xBFu, 0x85u); // reg #5 = 0xFF -> SAT base 0x3F00
     ioMemory.writeIoPort(0xBFu, 0xFFu);
     ioMemory.writeIoPort(0xBFu, 0x86u); // reg #6 = 0xFF -> sprite gen base 0x2000
     ioMemory.writeIoPort(0xBFu, 0x40u);
     ioMemory.writeIoPort(0xBFu, 0x81u); // reg #1 = display on
+    vdp.step(228u * 144u);
+    const auto vblankStatus = ioMemory.readIoPort(0xBFu);
+    assert((vblankStatus & 0x80u) != 0u);
+    assert((ioMemory.readIoPort(0xBFu) & 0x80u) == 0u);
+    ioMemory.writeIoPort(0xBFu, 0x00u);
+    ioMemory.writeIoPort(0xBFu, 0x81u);
+    ioMemory.writeIoPort(0xBFu, 0x40u);
+    ioMemory.writeIoPort(0xBFu, 0x81u);
     ioMemory.writeIoPort(0xBFu, 0x22u);
     ioMemory.writeIoPort(0xBFu, 0xC0u); // CRAM addr 0x22 (palette1 color1)
     ioMemory.writeIoPort(0xBEu, 0x0Fu); // red
@@ -214,10 +235,40 @@ int main() {
     }
     ioMemory.writeIoPort(0xBFu, 0x00u);
     ioMemory.writeIoPort(0xBFu, 0x7Fu); // VRAM addr 0x3F00 SAT y-table
-    ioMemory.writeIoPort(0xBEu, 24u);
+    ioMemory.writeIoPort(0xBEu, 0u);
     ioMemory.writeIoPort(0xBEu, 0xD0u);
     ioMemory.writeIoPort(0xBFu, 0x80u);
     ioMemory.writeIoPort(0xBFu, 0x7Fu); // VRAM addr 0x3F80 SAT x/tile
+    ioMemory.writeIoPort(0xBEu, 24u);
+    ioMemory.writeIoPort(0xBEu, 0x01u);
+    ioMemory.writeIoPort(0xBFu, 0x00u);
+    ioMemory.writeIoPort(0xBFu, 0x7Fu);
+    ioMemory.writeIoPort(0xBEu, 0u);
+    ioMemory.writeIoPort(0xBEu, 0u);
+    ioMemory.writeIoPort(0xBEu, 0u);
+    ioMemory.writeIoPort(0xBEu, 0u);
+    ioMemory.writeIoPort(0xBEu, 0u);
+    ioMemory.writeIoPort(0xBEu, 0u);
+    ioMemory.writeIoPort(0xBEu, 0u);
+    ioMemory.writeIoPort(0xBEu, 0u);
+    ioMemory.writeIoPort(0xBEu, 0u);
+    ioMemory.writeIoPort(0xBEu, 0xD0u);
+    ioMemory.writeIoPort(0xBFu, 0x80u);
+    ioMemory.writeIoPort(0xBFu, 0x7Fu);
+    for (int i = 0; i < 9; ++i) {
+        ioMemory.writeIoPort(0xBEu, 24u);
+        ioMemory.writeIoPort(0xBEu, 0x01u);
+    }
+    vdp.step(228u);
+    const auto spriteStatus = ioMemory.readIoPort(0xBFu);
+    assert((spriteStatus & 0x40u) != 0u);
+    assert((spriteStatus & 0x20u) != 0u);
+    ioMemory.writeIoPort(0xBFu, 0x00u);
+    ioMemory.writeIoPort(0xBFu, 0x7Fu); // restore SAT y-table
+    ioMemory.writeIoPort(0xBEu, 24u);
+    ioMemory.writeIoPort(0xBEu, 0xD0u);
+    ioMemory.writeIoPort(0xBFu, 0x80u);
+    ioMemory.writeIoPort(0xBFu, 0x7Fu); // restore SAT x/tile table
     ioMemory.writeIoPort(0xBEu, 24u);
     ioMemory.writeIoPort(0xBEu, 0x01u);
     auto vdpModel = vdp.buildFrameModel({160, 144});

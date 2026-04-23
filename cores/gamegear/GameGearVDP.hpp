@@ -26,6 +26,8 @@ public:
     [[nodiscard]] bool takeScanlineReady();
     [[nodiscard]] bool takeVBlankEntered();
     [[nodiscard]] uint8_t currentScanline() const noexcept;
+    [[nodiscard]] uint8_t readVCounter() const noexcept;
+    [[nodiscard]] uint8_t readHCounter() const noexcept;
     [[nodiscard]] BMMQ::VideoDebugFrameModel buildFrameModel(
         const BMMQ::VideoDebugRenderRequest& request) const;
 
@@ -51,6 +53,7 @@ private:
     [[nodiscard]] uint32_t sampleCramColor(uint8_t paletteSelect, uint8_t colorCode) const noexcept;
     [[nodiscard]] bool displayEnabled() const noexcept;
     [[nodiscard]] bool spriteTallMode() const noexcept;
+    void evaluateScanlineStatus(uint8_t scanline) noexcept;
     void writeCompatRegister(std::size_t index, uint8_t value);
     [[nodiscard]] uint8_t readCompatRegister(std::size_t index) const noexcept;
     void seedDefaultCram();
@@ -62,9 +65,16 @@ private:
     uint32_t pendingCycles_ = 0u;
     bool scanlineReadyPending_ = false;
     bool vblankPending_ = false;
+    bool frameInterruptPending_ = false;
+    bool spriteOverflowPending_ = false;
+    bool spriteCollisionPending_ = false;
+    uint8_t lastStatusScanline_ = 0xFFu;
+    bool statusScanlineConsumed_ = true;
     uint16_t dataAddress_ = 0u;
     uint8_t commandLow_ = 0u;
     uint8_t readBuffer_ = 0u;
+    uint8_t cramLatch_ = 0u;
+    bool cramLatchValid_ = false;
     enum class AccessMode : uint8_t {
         VramRead = 0x00u,
         VramWrite = 0x01u,

@@ -14,6 +14,11 @@ void GameGearVDP::reset() {
     pendingCycles_ = 0u;
     scanlineReadyPending_ = false;
     vblankPending_ = false;
+    frameInterruptPending_ = false;
+    spriteOverflowPending_ = false;
+    spriteCollisionPending_ = false;
+    lastStatusScanline_ = 0xFFu;
+    statusScanlineConsumed_ = true;
     registers_[0x02u] = 0xFFu; // default pattern name table at 0x3800
     registers_[0x05u] = 0xFFu; // default SAT at 0x3F00
     registers_[0x06u] = 0xFFu; // default sprite generator at 0x2000
@@ -21,6 +26,8 @@ void GameGearVDP::reset() {
     dataAddress_ = 0u;
     commandLow_ = 0u;
     readBuffer_ = 0u;
+    cramLatch_ = 0u;
+    cramLatchValid_ = false;
     accessMode_ = AccessMode::VramRead;
     commandLatchPending_ = false;
     seedDefaultCram();
@@ -32,6 +39,11 @@ void GameGearVDP::step(uint32_t cpuCycles) {
         pendingCycles_ = 0u;
         scanlineReadyPending_ = false;
         vblankPending_ = false;
+        frameInterruptPending_ = false;
+        spriteOverflowPending_ = false;
+        spriteCollisionPending_ = false;
+        lastStatusScanline_ = 0xFFu;
+        statusScanlineConsumed_ = true;
         return;
     }
 
@@ -40,6 +52,7 @@ void GameGearVDP::step(uint32_t cpuCycles) {
         pendingCycles_ -= kCyclesPerScanline;
         const uint8_t currentLy = registers_[4];
         if (currentLy < kVisibleScanlines) {
+            evaluateScanlineStatus(currentLy);
             scanlineReadyPending_ = true;
         }
 
@@ -50,6 +63,7 @@ void GameGearVDP::step(uint32_t cpuCycles) {
         registers_[4] = nextLy;
         if (nextLy == kVisibleScanlines) {
             vblankPending_ = true;
+            frameInterruptPending_ = true;
         }
     }
     // Update a defensible H counter value (0-255) reflecting position
@@ -146,25 +160,49 @@ uint8_t GameGearVDP::readDataPort() {
 
 uint8_t GameGearVDP::readControlPort() {
     commandLatchPending_ = false;
+    const uint8_t line = currentScanline() == 0u
+            ? 0u
+            : static_cast<uint8_t>(currentScanline() - 1u);
+    if (line < kVisibleScanlines && (!statusScanlineConsumed_ || line != lastStatusScanline_)) {
+            evaluateScanlineStatus(line);
+    }
     uint8_t status = 0u;
-    if (vblankPending_ || registers_[4] >= kVisibleScanlines) {
+    if (frameInterruptPending_) {
         status = static_cast<uint8_t>(status | 0x80u);
     }
-    // Reading the control port clears the VBlank pending flag on real
-    // hardware; emulate that behavior so software that polls the VDP
-    // status sees the flag cleared after a read.
-    vblankPending_ = false;
+    if (spriteOverflowPending_) {
+        status = static_cast<uint8_t>(status | 0x40u);
+    }
+    if (spriteCollisionPending_) {
+        status = static_cast<uint8_t>(status | 0x20u);
+    }
+    frameInterruptPending_ = false;
+    spriteOverflowPending_ = false;
+    spriteCollisionPending_ = false;
+    lastStatusScanline_ = line;
+    statusScanlineConsumed_ = true;
     return status;
 }
 
 void GameGearVDP::writeDataPort(uint8_t value) {
     commandLatchPending_ = false;
     if (accessMode_ == AccessMode::CramWrite) {
-        cram_[static_cast<std::size_t>(dataAddress_ % cram_.size())] = value;
+        const auto cramIndex = static_cast<std::size_t>(dataAddress_ % cram_.size());
+        if ((cramIndex & 0x01u) == 0u) {
+            cramLatch_ = value;
+            cramLatchValid_ = true;
+        } else {
+            const auto evenIndex = cramIndex - 1u;
+            if (cramLatchValid_ && evenIndex < cram_.size()) {
+                cram_[evenIndex] = cramLatch_;
+            }
+            cram_[cramIndex] = value;
+        }
         dataAddress_ = static_cast<uint16_t>((dataAddress_ + 1u) % cram_.size());
         return;
     }
     vram_[static_cast<std::size_t>(dataAddress_ % vram_.size())] = value;
+    readBuffer_ = value;
     dataAddress_ = static_cast<uint16_t>((dataAddress_ + 1u) % vram_.size());
 }
 
@@ -183,10 +221,14 @@ void GameGearVDP::writeControlPort(uint8_t value) {
     }
 
     dataAddress_ = static_cast<uint16_t>((static_cast<uint16_t>(value & 0x3Fu) << 8) | commandLow_);
-    if (!vram_.empty()) {
+    accessMode_ = static_cast<AccessMode>(command);
+    if (accessMode_ == AccessMode::CramWrite) {
+        if (!cram_.empty()) {
+            dataAddress_ = static_cast<uint16_t>(dataAddress_ % cram_.size());
+        }
+    } else if (!vram_.empty()) {
         dataAddress_ = static_cast<uint16_t>(dataAddress_ % vram_.size());
     }
-    accessMode_ = static_cast<AccessMode>(command);
     if (accessMode_ == AccessMode::VramRead) {
         if (!vram_.empty()) {
             readBuffer_ = vram_[static_cast<std::size_t>(dataAddress_ % vram_.size())];
@@ -209,6 +251,76 @@ bool GameGearVDP::takeVBlankEntered() {
 
 uint8_t GameGearVDP::currentScanline() const noexcept {
     return registers_[4u];
+}
+
+uint8_t GameGearVDP::readVCounter() const noexcept {
+    return registers_[4u];
+}
+
+uint8_t GameGearVDP::readHCounter() const noexcept {
+    return registers_[0x0Au];
+}
+
+void GameGearVDP::evaluateScanlineStatus(uint8_t scanline) noexcept {
+    lastStatusScanline_ = scanline;
+    statusScanlineConsumed_ = false;
+    const auto satBase = spriteAttributeTableBase();
+    const auto spriteBase = spriteGeneratorBase();
+    const int spriteHeight = spriteTallMode() ? 16 : 8;
+    std::array<bool, 256u> occupied{};
+    int spritesOnLine = 0;
+
+    for (std::size_t sprite = 0; sprite < 64u; ++sprite) {
+        const auto yIndex = satBase + sprite;
+        if (yIndex >= vram_.size()) {
+            break;
+        }
+        const uint8_t rawY = vram_[yIndex];
+        if (rawY == 0xD0u) {
+            break;
+        }
+        if (rawY == 0xE0u) {
+            continue;
+        }
+
+        const int spriteY = static_cast<int>(rawY);
+        if (static_cast<int>(scanline) < spriteY || static_cast<int>(scanline) >= spriteY + spriteHeight) {
+            continue;
+        }
+
+        ++spritesOnLine;
+        if (spritesOnLine > 8) {
+            spriteOverflowPending_ = true;
+        }
+
+        const auto xyBase = (satBase + 0x80u + sprite * 2u) % vram_.size();
+        const int spriteX = static_cast<int>(vram_[xyBase]);
+        uint16_t tileIndex = vram_[(xyBase + 1u) % vram_.size()];
+        if (spriteTallMode()) {
+            tileIndex = static_cast<uint16_t>(tileIndex & 0x00FEu);
+        }
+
+        const int row = static_cast<int>(scanline) - spriteY;
+        const auto rowTileOffset = spriteTallMode() && row >= 8 ? 1u : 0u;
+        for (int px = 0; px < 8; ++px) {
+            const int screenX = spriteX + px;
+            if (screenX < 0 || screenX >= static_cast<int>(occupied.size())) {
+                continue;
+            }
+            const auto colorCode = samplePatternColor(spriteBase,
+                                                      static_cast<uint16_t>(tileIndex + rowTileOffset),
+                                                      static_cast<std::size_t>(px),
+                                                      static_cast<std::size_t>(row % 8));
+            if (colorCode == 0u) {
+                continue;
+            }
+            if (occupied[static_cast<std::size_t>(screenX)]) {
+                spriteCollisionPending_ = true;
+            } else {
+                occupied[static_cast<std::size_t>(screenX)] = true;
+            }
+        }
+    }
 }
 
 BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
@@ -426,6 +538,15 @@ void GameGearVDP::writeCompatRegister(std::size_t index, uint8_t value) {
         return;
     }
     registers_[index] = value;
+    if ((index == 0u || index == 1u) && !displayEnabled()) {
+        registers_[4u] = 0u;
+        pendingCycles_ = 0u;
+        scanlineReadyPending_ = false;
+        vblankPending_ = false;
+        frameInterruptPending_ = false;
+        spriteOverflowPending_ = false;
+        spriteCollisionPending_ = false;
+    }
 }
 
 uint8_t GameGearVDP::readCompatRegister(std::size_t index) const noexcept {
