@@ -1,5 +1,6 @@
 #include "GameGearMachine.hpp"
 #include <array>
+#include <filesystem>
 #include <optional>
 #include <span>
 #include <sstream>
@@ -14,6 +15,7 @@
 #include "GameGearInput.hpp"
 #include "GameGearCartridge.hpp"
 #include "GameGearMemoryMap.hpp"
+#include "GameGearSaveManager.hpp"
 
 namespace BMMQ {
 
@@ -176,9 +178,11 @@ struct GameGearMachine::Impl {
     GameGearCartridge cart;
     GameGearMemoryMap mem;
     PluginManager pluginManager;
+    GameGearSaveManager saveManager;
     Plugin::DefaultStepPolicy defaultPolicy;
     Plugin::IExecutorPolicyPlugin* activePolicy = &defaultPolicy;
     bool romLoaded = false;
+    std::optional<std::filesystem::path> pendingRomSourcePath;
     std::optional<uint32_t> lastDigitalInputMask;
     uint64_t inputGeneration = 0u;
     uint64_t stepCounter = 0u;
@@ -237,6 +241,7 @@ GameGearMachine::GameGearMachine() : impl(std::make_unique<Impl>()) {
     impl->cpu.reset();
 }
 GameGearMachine::~GameGearMachine() {
+    (void)flushCartridgeSave();
     if (impl->pluginManager.initialized()) {
         impl->pluginManager.shutdown(view());
     }
@@ -249,7 +254,15 @@ void GameGearMachine::loadRom(const std::vector<uint8_t>& bytes) {
     if (bytes.size() > kMaxRomSize) {
         throw std::runtime_error("ROM too large");
     }
+    (void)flushCartridgeSave();
     impl->cart.load(bytes.data(), bytes.size());
+    if (impl->pendingRomSourcePath.has_value()) {
+        impl->saveManager.bindRomPath(*impl->pendingRomSourcePath);
+        impl->saveManager.load(impl->cart);
+    } else {
+        impl->saveManager.clearBinding();
+    }
+    impl->pendingRomSourcePath.reset();
     impl->mem.reset();
     impl->vdp.reset();
     impl->psg.reset();
@@ -272,6 +285,10 @@ void GameGearMachine::loadRom(const std::vector<uint8_t>& bytes) {
             "ROM loaded"
         });
     }
+}
+
+void GameGearMachine::setRomSourcePath(const std::optional<std::filesystem::path>& path) {
+    impl->pendingRomSourcePath = path;
 }
 
 RuntimeContext& GameGearMachine::runtimeContext() {
@@ -400,6 +417,10 @@ std::string GameGearMachine::stopSummary() const {
         << "Input port=0x" << std::hex << std::uppercase << static_cast<int>(impl->input.readInputs())
         << std::dec;
     return out.str();
+}
+
+bool GameGearMachine::flushCartridgeSave() {
+    return impl->saveManager.flush(impl->cart);
 }
 
 bool GameGearMachine::cpuInterruptsEnabled() const {

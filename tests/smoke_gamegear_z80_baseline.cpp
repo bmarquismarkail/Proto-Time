@@ -150,5 +150,119 @@ int main() {
         assert(!cpu.IFF1);
     }
 
+    {
+        std::vector<uint8_t> memory(0x10000u, 0x00u);
+        auto cpu = makeCpu(memory);
+        memory[0x0000u] = 0x01u; memory[0x0001u] = 0x34u; memory[0x0002u] = 0x12u; // LD BC,0x1234
+        memory[0x0003u] = 0x11u; memory[0x0004u] = 0x78u; memory[0x0005u] = 0x56u; // LD DE,0x5678
+        memory[0x0006u] = 0x03u;                                                   // INC BC
+        memory[0x0007u] = 0x13u;                                                   // INC DE
+        memory[0x0008u] = 0x0Bu;                                                   // DEC BC
+        memory[0x0009u] = 0x1Bu;                                                   // DEC DE
+        memory[0x000Au] = 0x21u; memory[0x000Bu] = 0x00u; memory[0x000Cu] = 0x20u; // LD HL,0x2000
+        memory[0x000Du] = 0x22u; memory[0x000Eu] = 0x00u; memory[0x000Fu] = 0x40u; // LD (0x4000),HL
+        memory[0x0010u] = 0x2Au; memory[0x0011u] = 0x00u; memory[0x0012u] = 0x40u; // LD HL,(0x4000)
+        memory[0x0013u] = 0x31u; memory[0x0014u] = 0x00u; memory[0x0015u] = 0xD0u; // LD SP,0xD000
+        memory[0x0016u] = 0x33u;                                                   // INC SP
+        memory[0x0017u] = 0x3Bu;                                                   // DEC SP
+
+        assert(cpu.step() == 10u);
+        assert(cpu.step() == 10u);
+        assert(cpu.step() == 6u);
+        assert(cpu.BC == 0x1235u);
+        assert(cpu.step() == 6u);
+        assert(cpu.DE == 0x5679u);
+        assert(cpu.step() == 6u);
+        assert(cpu.BC == 0x1234u);
+        assert(cpu.step() == 6u);
+        assert(cpu.DE == 0x5678u);
+        assert(cpu.step() == 10u);
+        assert(cpu.step() == 16u);
+        assert(memory[0x4000u] == 0x00u);
+        assert(memory[0x4001u] == 0x20u);
+        cpu.HL = 0u;
+        assert(cpu.step() == 16u);
+        assert(cpu.HL == 0x2000u);
+        assert(cpu.step() == 10u);
+        assert(cpu.step() == 6u);
+        assert(cpu.SP == 0xD001u);
+        assert(cpu.step() == 6u);
+        assert(cpu.SP == 0xD000u);
+    }
+
+    {
+        std::vector<uint8_t> memory(0x10000u, 0x00u);
+        auto cpu = makeCpu(memory);
+        memory[0x0000u] = 0x3Eu; memory[0x0001u] = 0x00u; // LD A,0
+        memory[0x0002u] = 0xFEu; memory[0x0003u] = 0x00u; // CP 0
+        memory[0x0004u] = 0x28u; memory[0x0005u] = 0x02u; // JR Z,+2
+        memory[0x0006u] = 0x3Eu; memory[0x0007u] = 0x11u; // skipped
+        memory[0x0008u] = 0x3Eu; memory[0x0009u] = 0x22u; // LD A,0x22
+        memory[0x000Au] = 0xC2u; memory[0x000Bu] = 0x10u; memory[0x000Cu] = 0x00u; // JP NZ,0x0010 (not taken)
+        memory[0x000Du] = 0xD6u; memory[0x000Eu] = 0x23u; // SUB 0x23 sets carry
+        memory[0x000Fu] = 0x38u; memory[0x0010u] = 0x02u; // JR C,+2
+        memory[0x0011u] = 0x3Eu; memory[0x0012u] = 0x33u; // skipped
+        memory[0x0013u] = 0x30u; memory[0x0014u] = 0x02u; // JR NC,+2 (not taken)
+        memory[0x0015u] = 0x3Eu; memory[0x0016u] = 0x44u; // executed
+
+        assert(cpu.step() == 7u);
+        assert(cpu.step() == 7u);
+        assert(cpu.step() == 12u);
+        assert(cpu.PC == 0x0008u);
+        assert(cpu.step() == 7u);
+        assert(static_cast<uint8_t>(cpu.AF >> 8u) == 0x22u);
+        assert(cpu.step() == 10u);
+        assert(cpu.PC == 0x000Du);
+        assert(cpu.step() == 7u);
+        assert((cpu.AF & 0x00FFu) == static_cast<uint16_t>(kFlagS | kFlagN | kFlagH | kFlagC));
+        assert(cpu.step() == 12u);
+        assert(cpu.PC == 0x0013u);
+        assert(cpu.step() == 7u);
+        assert(cpu.PC == 0x0015u);
+        assert(cpu.step() == 7u);
+        assert(static_cast<uint8_t>(cpu.AF >> 8u) == 0x44u);
+    }
+
+    {
+        std::vector<uint8_t> memory(0x10000u, 0x00u);
+        auto cpu = makeCpu(memory);
+        cpu.SP = 0xD000u;
+        cpu.AF = 0x1234u;
+        cpu.AF_ = 0xAB01u;
+        cpu.BC = 0x1111u;
+        cpu.DE = 0x2222u;
+        cpu.HL = 0x3333u;
+        cpu.BC_ = 0xAAAAu;
+        cpu.DE_ = 0xBBBBu;
+        cpu.HL_ = 0xCCCCu;
+
+        memory[0x0000u] = 0x08u; // EX AF,AF'
+        memory[0x0001u] = 0xD9u; // EXX
+        memory[0x0002u] = 0xC4u; memory[0x0003u] = 0x08u; memory[0x0004u] = 0x00u; // CALL NZ,0x0008
+        memory[0x0005u] = 0xCCu; memory[0x0006u] = 0x08u; memory[0x0007u] = 0x00u; // CALL Z,0x0008 (not taken)
+        memory[0x0008u] = 0xAFu; // XOR A -> Z set
+        memory[0x0009u] = 0xC8u; // RET Z
+
+        assert(cpu.step() == 4u);
+        assert(cpu.AF == 0xAB01u);
+        assert(cpu.AF_ == 0x1234u);
+        assert(cpu.step() == 4u);
+        assert(cpu.BC == 0xAAAAu);
+        assert(cpu.DE == 0xBBBBu);
+        assert(cpu.HL == 0xCCCCu);
+        assert(cpu.step() == 17u);
+        assert(cpu.PC == 0x0008u);
+        assert(cpu.SP == 0xCFFEu);
+        assert(memory[0xCFFEu] == 0x05u);
+        assert(memory[0xCFFFu] == 0x00u);
+        assert(cpu.step() == 4u);
+        assert((cpu.AF & 0x00FFu) == static_cast<uint16_t>(kFlagZ | kFlagPV));
+        assert(cpu.step() == 11u);
+        assert(cpu.PC == 0x0005u);
+        assert(cpu.SP == 0xD000u);
+        assert(cpu.step() == 17u);
+        assert(cpu.PC == 0x0008u);
+    }
+
     return 0;
 }

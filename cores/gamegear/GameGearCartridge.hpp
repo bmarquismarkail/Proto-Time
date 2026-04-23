@@ -19,6 +19,11 @@ public:
     [[nodiscard]] bool handlesMappedWrite(uint16_t addr) const noexcept;
     [[nodiscard]] uint8_t read(uint16_t addr) const;
     void write(uint16_t addr, uint8_t value);
+    [[nodiscard]] bool supportsSaveData() const noexcept;
+    [[nodiscard]] bool hasDirtySaveData() const noexcept;
+    void markSaveClean() noexcept;
+    [[nodiscard]] std::vector<uint8_t> exportSaveData() const;
+    void importSaveData(const std::vector<uint8_t>& saveData);
 
 private:
     static constexpr std::size_t kPageSize = 0x4000u;
@@ -34,4 +39,5 @@ private:
     std::vector<uint8_t> sram;
     std::array<uint8_t, 3> bankRegisters_{};
     uint8_t controlRegister_ = 0u;
+    bool saveDirty_ = false;
 };

@@ -14,12 +14,14 @@
 namespace BMMQ {
 
 
-class GameGearMachine final : public Machine {
+class GameGearMachine final : public Machine,
+                              public IRomPathAwareMachine {
 public:
     GameGearMachine();
     ~GameGearMachine() override;
 
     void loadRom(const std::vector<uint8_t>& bytes) override;
+    void setRomSourcePath(const std::optional<std::filesystem::path>& path) override;
     RuntimeContext& runtimeContext() override;
     const RuntimeContext& runtimeContext() const override;
     PluginManager& pluginManager() override;
@@ -39,6 +41,7 @@ public:
         const VideoDebugRenderRequest& request) const override;
     uint32_t clockHz() const override;
     std::string stopSummary() const override;
+    [[nodiscard]] bool flushCartridgeSave();
     // Test helper: inspect whether CPU IME is currently set.
     bool cpuInterruptsEnabled() const;
 

@@ -204,11 +204,37 @@ uint32_t Z80Interpreter::executeOpcode(uint8_t opcode) {
         case 0x01: // LD BC,nn
             BC = fetch16();
             return 10u;
+        case 0x02: // LD (BC),A
+            memWrite(BC, regA());
+            return 7u;
+        case 0x03: // INC BC
+            BC = static_cast<uint16_t>(BC + 1u);
+            return 6u;
         case 0x06: { // LD B,n
             const uint8_t value = fetch8();
             BC = static_cast<uint16_t>((static_cast<uint16_t>(value) << 8) | (BC & 0x00FFu));
             return 7u;
         }
+        case 0x08: { // EX AF,AF'
+            std::swap(AF, AF_);
+            return 4u;
+        }
+        case 0x09: { // ADD HL,BC
+            const uint32_t result = static_cast<uint32_t>(HL) + static_cast<uint32_t>(BC);
+            uint8_t flags = static_cast<uint8_t>(regF() & (kFlagS | kFlagZ | kFlagPV));
+            if (((HL & 0x0FFFu) + (BC & 0x0FFFu)) > 0x0FFFu) flags |= kFlagH;
+            if (result > 0xFFFFu) flags |= kFlagC;
+            HL = static_cast<uint16_t>(result & 0xFFFFu);
+            setRegF(flags);
+            return 11u;
+        }
+        case 0x0A: { // LD A,(BC)
+            setRegA(memRead(BC));
+            return 7u;
+        }
+        case 0x0B: // DEC BC
+            BC = static_cast<uint16_t>(BC - 1u);
+            return 6u;
         case 0x0E: { // LD C,n
             const uint8_t value = fetch8();
             BC = static_cast<uint16_t>((BC & 0xFF00u) | value);
@@ -217,11 +243,33 @@ uint32_t Z80Interpreter::executeOpcode(uint8_t opcode) {
         case 0x11: // LD DE,nn
             DE = fetch16();
             return 10u;
+        case 0x12: // LD (DE),A
+            memWrite(DE, regA());
+            return 7u;
+        case 0x13: // INC DE
+            DE = static_cast<uint16_t>(DE + 1u);
+            return 6u;
         case 0x16: { // LD D,n
             const uint8_t value = fetch8();
             DE = static_cast<uint16_t>((static_cast<uint16_t>(value) << 8) | (DE & 0x00FFu));
             return 7u;
         }
+        case 0x19: { // ADD HL,DE
+            const uint32_t result = static_cast<uint32_t>(HL) + static_cast<uint32_t>(DE);
+            uint8_t flags = static_cast<uint8_t>(regF() & (kFlagS | kFlagZ | kFlagPV));
+            if (((HL & 0x0FFFu) + (DE & 0x0FFFu)) > 0x0FFFu) flags |= kFlagH;
+            if (result > 0xFFFFu) flags |= kFlagC;
+            HL = static_cast<uint16_t>(result & 0xFFFFu);
+            setRegF(flags);
+            return 11u;
+        }
+        case 0x1A: { // LD A,(DE)
+            setRegA(memRead(DE));
+            return 7u;
+        }
+        case 0x1B: // DEC DE
+            DE = static_cast<uint16_t>(DE - 1u);
+            return 6u;
         case 0x10: { // DJNZ e
             const int8_t displacement = static_cast<int8_t>(fetch8());
             auto b = static_cast<uint8_t>((BC >> 8) & 0x00FFu);
@@ -247,12 +295,19 @@ uint32_t Z80Interpreter::executeOpcode(uint8_t opcode) {
             const int8_t displacement = static_cast<int8_t>(fetch8());
             if (!zeroFlag()) {
                 PC = static_cast<uint16_t>(PC + displacement);
+                return 12u;
             }
-            return 12u;
+            return 7u;
         }
         case 0x21: // LD HL,nn
             HL = fetch16();
             return 10u;
+        case 0x22: { // LD (nn),HL
+            const uint16_t addr = fetch16();
+            memWrite(addr, static_cast<uint8_t>(HL & 0x00FFu));
+            memWrite(static_cast<uint16_t>(addr + 1u), static_cast<uint8_t>((HL >> 8) & 0x00FFu));
+            return 16u;
+        }
         case 0x23: // INC HL
             HL = static_cast<uint16_t>(HL + 1u);
             return 6u;
@@ -266,9 +321,67 @@ uint32_t Z80Interpreter::executeOpcode(uint8_t opcode) {
             HL = static_cast<uint16_t>((HL & 0xFF00u) | value);
             return 7u;
         }
+        case 0x28: { // JR Z,e
+            const int8_t displacement = static_cast<int8_t>(fetch8());
+            if (zeroFlag()) {
+                PC = static_cast<uint16_t>(PC + displacement);
+                return 12u;
+            }
+            return 7u;
+        }
+        case 0x29: { // ADD HL,HL
+            const uint32_t result = static_cast<uint32_t>(HL) + static_cast<uint32_t>(HL);
+            uint8_t flags = static_cast<uint8_t>(regF() & (kFlagS | kFlagZ | kFlagPV));
+            if (((HL & 0x0FFFu) + (HL & 0x0FFFu)) > 0x0FFFu) flags |= kFlagH;
+            if (result > 0xFFFFu) flags |= kFlagC;
+            HL = static_cast<uint16_t>(result & 0xFFFFu);
+            setRegF(flags);
+            return 11u;
+        }
+        case 0x2A: { // LD HL,(nn)
+            const uint16_t addr = fetch16();
+            const uint8_t lo = memRead(addr);
+            const uint8_t hi = memRead(static_cast<uint16_t>(addr + 1u));
+            HL = static_cast<uint16_t>(static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8u));
+            return 16u;
+        }
+        case 0x2B: // DEC HL
+            HL = static_cast<uint16_t>(HL - 1u);
+            return 6u;
         case 0x31: // LD SP,nn
             SP = fetch16();
             return 10u;
+        case 0x30: { // JR NC,e
+            const int8_t displacement = static_cast<int8_t>(fetch8());
+            if ((regF() & kFlagC) == 0u) {
+                PC = static_cast<uint16_t>(PC + displacement);
+                return 12u;
+            }
+            return 7u;
+        }
+        case 0x33: // INC SP
+            SP = static_cast<uint16_t>(SP + 1u);
+            return 6u;
+        case 0x38: { // JR C,e
+            const int8_t displacement = static_cast<int8_t>(fetch8());
+            if ((regF() & kFlagC) != 0u) {
+                PC = static_cast<uint16_t>(PC + displacement);
+                return 12u;
+            }
+            return 7u;
+        }
+        case 0x39: { // ADD HL,SP
+            const uint32_t result = static_cast<uint32_t>(HL) + static_cast<uint32_t>(SP);
+            uint8_t flags = static_cast<uint8_t>(regF() & (kFlagS | kFlagZ | kFlagPV));
+            if (((HL & 0x0FFFu) + (SP & 0x0FFFu)) > 0x0FFFu) flags |= kFlagH;
+            if (result > 0xFFFFu) flags |= kFlagC;
+            HL = static_cast<uint16_t>(result & 0xFFFFu);
+            setRegF(flags);
+            return 11u;
+        }
+        case 0x3B: // DEC SP
+            SP = static_cast<uint16_t>(SP - 1u);
+            return 6u;
         case 0x3C: { // INC A
             const auto before = regA();
             const auto result = static_cast<uint8_t>(before + 1u);
@@ -559,9 +672,22 @@ uint32_t Z80Interpreter::executeOpcode(uint8_t opcode) {
             setRegF(static_cast<uint8_t>(kFlagZ | kFlagPV));
             return 4u;
         }
+        case 0xD9: { // EXX
+            std::swap(BC, BC_);
+            std::swap(DE, DE_);
+            std::swap(HL, HL_);
+            return 4u;
+        }
         case 0xC3: // JP nn
             PC = fetch16();
             return 10u;
+        case 0xC2: { // JP NZ,nn
+            const uint16_t address = fetch16();
+            if (!zeroFlag()) {
+                PC = address;
+            }
+            return 10u;
+        }
         case 0xCA: { // JP Z,nn
             const uint16_t address = fetch16();
             if (zeroFlag()) {
@@ -569,6 +695,50 @@ uint32_t Z80Interpreter::executeOpcode(uint8_t opcode) {
             }
             return 10u;
         }
+        case 0xC0: // RET NZ
+            if (!zeroFlag()) {
+                {
+                    const uint8_t pcl = memRead(SP);
+                    const uint8_t pch = memRead(static_cast<uint16_t>(SP + 1u));
+                    SP = static_cast<uint16_t>(SP + 2u);
+                    PC = static_cast<uint16_t>(static_cast<uint16_t>(pcl) | (static_cast<uint16_t>(pch) << 8u));
+                }
+                return 11u;
+            }
+            return 5u;
+        case 0xC8: // RET Z
+            if (zeroFlag()) {
+                {
+                    const uint8_t pcl = memRead(SP);
+                    const uint8_t pch = memRead(static_cast<uint16_t>(SP + 1u));
+                    SP = static_cast<uint16_t>(SP + 2u);
+                    PC = static_cast<uint16_t>(static_cast<uint16_t>(pcl) | (static_cast<uint16_t>(pch) << 8u));
+                }
+                return 11u;
+            }
+            return 5u;
+        case 0xD0: // RET NC
+            if ((regF() & kFlagC) == 0u) {
+                {
+                    const uint8_t pcl = memRead(SP);
+                    const uint8_t pch = memRead(static_cast<uint16_t>(SP + 1u));
+                    SP = static_cast<uint16_t>(SP + 2u);
+                    PC = static_cast<uint16_t>(static_cast<uint16_t>(pcl) | (static_cast<uint16_t>(pch) << 8u));
+                }
+                return 11u;
+            }
+            return 5u;
+        case 0xD8: // RET C
+            if ((regF() & kFlagC) != 0u) {
+                {
+                    const uint8_t pcl = memRead(SP);
+                    const uint8_t pch = memRead(static_cast<uint16_t>(SP + 1u));
+                    SP = static_cast<uint16_t>(SP + 2u);
+                    PC = static_cast<uint16_t>(static_cast<uint16_t>(pcl) | (static_cast<uint16_t>(pch) << 8u));
+                }
+                return 11u;
+            }
+            return 5u;
         case 0xDB: { // IN A,(n)
             const uint8_t port = fetch8();
             const uint8_t value = readIo(port);
@@ -619,6 +789,62 @@ uint32_t Z80Interpreter::executeOpcode(uint8_t opcode) {
             const uint8_t result = static_cast<uint8_t>(lhs - value);
             setRegF(computeSubFlags(lhs, value, 0u, result));
             return 7u;
+        }
+        case 0xC4: { // CALL NZ,nn
+            const uint16_t addr = fetch16();
+            if (!zeroFlag()) {
+                const uint8_t pcl = static_cast<uint8_t>(PC & 0x00FFu);
+                const uint8_t pch = static_cast<uint8_t>((PC >> 8) & 0x00FFu);
+                SP = static_cast<uint16_t>(SP - 1u);
+                memWrite(SP, pch);
+                SP = static_cast<uint16_t>(SP - 1u);
+                memWrite(SP, pcl);
+                PC = addr;
+                return 17u;
+            }
+            return 10u;
+        }
+        case 0xCC: { // CALL Z,nn
+            const uint16_t addr = fetch16();
+            if (zeroFlag()) {
+                const uint8_t pcl = static_cast<uint8_t>(PC & 0x00FFu);
+                const uint8_t pch = static_cast<uint8_t>((PC >> 8) & 0x00FFu);
+                SP = static_cast<uint16_t>(SP - 1u);
+                memWrite(SP, pch);
+                SP = static_cast<uint16_t>(SP - 1u);
+                memWrite(SP, pcl);
+                PC = addr;
+                return 17u;
+            }
+            return 10u;
+        }
+        case 0xD4: { // CALL NC,nn
+            const uint16_t addr = fetch16();
+            if ((regF() & kFlagC) == 0u) {
+                const uint8_t pcl = static_cast<uint8_t>(PC & 0x00FFu);
+                const uint8_t pch = static_cast<uint8_t>((PC >> 8) & 0x00FFu);
+                SP = static_cast<uint16_t>(SP - 1u);
+                memWrite(SP, pch);
+                SP = static_cast<uint16_t>(SP - 1u);
+                memWrite(SP, pcl);
+                PC = addr;
+                return 17u;
+            }
+            return 10u;
+        }
+        case 0xDC: { // CALL C,nn
+            const uint16_t addr = fetch16();
+            if ((regF() & kFlagC) != 0u) {
+                const uint8_t pcl = static_cast<uint8_t>(PC & 0x00FFu);
+                const uint8_t pch = static_cast<uint8_t>((PC >> 8) & 0x00FFu);
+                SP = static_cast<uint16_t>(SP - 1u);
+                memWrite(SP, pch);
+                SP = static_cast<uint16_t>(SP - 1u);
+                memWrite(SP, pcl);
+                PC = addr;
+                return 17u;
+            }
+            return 10u;
         }
         case 0xF3: { // DI
             // Disable interrupts immediately and cancel any pending EI.

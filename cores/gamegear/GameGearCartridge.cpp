@@ -1,5 +1,7 @@
 #include "GameGearCartridge.hpp"
 
+#include <algorithm>
+
 GameGearCartridge::GameGearCartridge() {}
 GameGearCartridge::~GameGearCartridge() {}
 
@@ -27,6 +29,7 @@ void GameGearCartridge::reset() {
     bankRegisters_[1] = static_cast<uint8_t>(1u % banks);
     bankRegisters_[2] = static_cast<uint8_t>(2u % banks);
     controlRegister_ = 0u;
+    saveDirty_ = false;
 }
 
 bool GameGearCartridge::loaded() const noexcept {
@@ -74,9 +77,39 @@ void GameGearCartridge::write(uint16_t addr, uint8_t value) {
     if (addr >= 0x8000u && addr < 0xC000u && sramEnabled()) {
         const auto offset = sramOffset(addr);
         if (offset < sram.size()) {
-            sram[offset] = value;
+            if (sram[offset] != value) {
+                sram[offset] = value;
+                saveDirty_ = true;
+            }
         }
     }
+}
+
+bool GameGearCartridge::supportsSaveData() const noexcept {
+    return !sram.empty();
+}
+
+bool GameGearCartridge::hasDirtySaveData() const noexcept {
+    return saveDirty_;
+}
+
+void GameGearCartridge::markSaveClean() noexcept {
+    saveDirty_ = false;
+}
+
+std::vector<uint8_t> GameGearCartridge::exportSaveData() const {
+    return sram;
+}
+
+void GameGearCartridge::importSaveData(const std::vector<uint8_t>& saveData) {
+    if (sram.empty()) {
+        saveDirty_ = false;
+        return;
+    }
+    std::fill(sram.begin(), sram.end(), 0u);
+    const auto count = std::min(sram.size(), saveData.size());
+    std::copy_n(saveData.begin(), count, sram.begin());
+    saveDirty_ = false;
 }
 
 std::size_t GameGearCartridge::numBanks() const noexcept {

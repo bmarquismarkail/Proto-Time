@@ -163,6 +163,22 @@ add_executable(time-smoke-gamegear-audio tests/smoke_gamegear_audio.cpp)
 target_link_libraries(time-smoke-gamegear-audio time-gamegear-core)
 add_test(NAME smoke_gamegear_audio COMMAND time-smoke-gamegear-audio)
 
+add_executable(time-smoke-gamegear-mapper-subsystem tests/smoke_gamegear_mapper_subsystem.cpp)
+target_link_libraries(time-smoke-gamegear-mapper-subsystem time-gamegear-core)
+add_test(NAME smoke_gamegear_mapper_subsystem COMMAND time-smoke-gamegear-mapper-subsystem)
+
+add_executable(time-smoke-gamegear-vdp-subsystem tests/smoke_gamegear_vdp_subsystem.cpp)
+target_link_libraries(time-smoke-gamegear-vdp-subsystem time-gamegear-core)
+add_test(NAME smoke_gamegear_vdp_subsystem COMMAND time-smoke-gamegear-vdp-subsystem)
+
+add_executable(time-smoke-gamegear-psg-subsystem tests/smoke_gamegear_psg_subsystem.cpp)
+target_link_libraries(time-smoke-gamegear-psg-subsystem time-gamegear-core)
+add_test(NAME smoke_gamegear_psg_subsystem COMMAND time-smoke-gamegear-psg-subsystem)
+
+add_executable(time-smoke-gamegear-save-persistence tests/smoke_gamegear_save_persistence.cpp)
+target_link_libraries(time-smoke-gamegear-save-persistence time-gamegear-core)
+add_test(NAME smoke_gamegear_save_persistence COMMAND time-smoke-gamegear-save-persistence)
+
 add_executable(time-smoke-snapshot tests/smoke_snapshot.cpp)
 add_test(NAME smoke_snapshot COMMAND time-smoke-snapshot)
 add_executable(time-smoke-register-snapshot tests/smoke_register_snapshot.cpp)
