@@ -298,8 +298,8 @@ void GameGearMachine::step() {
             MachineEventType::VideoScanlineReady,
             PluginCategory::Video,
             impl->stepCounter,
-            0xFF44u,
-            runtimeContext().read8(0xFF44u),
+            0, // No memory-mapped address for scanline
+            impl->vdp.currentScanline(),
             &runtimeContext().getLastFeedback(),
             "scanline ready"
         });
@@ -313,8 +313,8 @@ void GameGearMachine::step() {
                 MachineEventType::VBlank,
                 PluginCategory::Video,
                 impl->stepCounter,
-                0xFF44u,
-                runtimeContext().read8(0xFF44u),
+                0, // No memory-mapped address for VBlank
+                impl->vdp.currentScanline(),
                 &runtimeContext().getLastFeedback(),
                 "entered VBlank"
             });
@@ -363,7 +363,7 @@ std::string GameGearMachine::stopSummary() const {
     out << "PC=0x" << std::hex << std::uppercase << impl->cpu.PC
         << " SP=0x" << impl->cpu.SP
         << " AF=0x" << impl->cpu.AF
-        << " LY=0x" << static_cast<int>(runtimeContext().read8(0xFF44u))
+        << " LY=0x" << static_cast<int>(impl->vdp.currentScanline())
         << std::dec << '\n'
         << "Input port=0x" << std::hex << std::uppercase << static_cast<int>(impl->input.readInputs())
         << std::dec;

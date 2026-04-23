@@ -1,3 +1,5 @@
+    // Helper for INC flag calculation (preserves C, computes Z, S, H, PV)
+    [[nodiscard]] uint8_t computeIncFlags(uint8_t before, uint8_t result) const noexcept;
 #pragma once
 // Sega Game Gear Z80 CPU interpreter stub
 // References: SMS Power, MAME, Emulicious, Genesis Plus GX
@@ -51,7 +53,10 @@ public:
     bool IME = false;
     // Set by EI; becomes effective only after the instruction following
     // the `EI` instruction completes (deferred IME enable semantics).
-    bool imeEnablePending_ = false;
+    // Replaced boolean pending flag with an integer delay counter.
+    // When >0, it is decremented each `step()` and when it reaches 0
+    // IME is promoted to true. Initialize to 0 (no pending enable).
+    int imeEnableDelay_ = 0;
 
 private:
     // Z80 F register flags (canonical bit positions):
