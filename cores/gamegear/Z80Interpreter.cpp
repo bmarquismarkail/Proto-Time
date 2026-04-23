@@ -273,20 +273,7 @@ uint32_t Z80Interpreter::executeOpcode(uint8_t opcode) {
             const auto before = regA();
             const auto result = static_cast<uint8_t>(before + 1u);
             setRegA(result);
-            uint8_t newFlags = static_cast<uint8_t>(regF() & kFlagC);
-            if (result == 0u) {
-                newFlags = static_cast<uint8_t>(newFlags | kFlagZ);
-            }
-            if ((result & 0x80u) != 0u) {
-                newFlags = static_cast<uint8_t>(newFlags | kFlagS);
-            }
-            if (((before & 0x0Fu) + 1u) > 0x0Fu) {
-                newFlags = static_cast<uint8_t>(newFlags | kFlagH);
-            }
-            if (before == 0x7Fu) {
-                newFlags = static_cast<uint8_t>(newFlags | kFlagPV);
-            }
-            setRegF(newFlags);
+            setRegF(computeIncFlags(before, result));
             return 4u;
         }
         case 0x36: { // LD (HL),n

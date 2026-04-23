@@ -25,6 +25,7 @@ public:
     void writeControlPort(uint8_t value);
     [[nodiscard]] bool takeScanlineReady();
     [[nodiscard]] bool takeVBlankEntered();
+    [[nodiscard]] uint8_t currentScanline() const noexcept;
     [[nodiscard]] BMMQ::VideoDebugFrameModel buildFrameModel(
         const BMMQ::VideoDebugRenderRequest& request) const;
 

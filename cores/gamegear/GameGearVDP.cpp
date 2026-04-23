@@ -207,6 +207,10 @@ bool GameGearVDP::takeVBlankEntered() {
     return ready;
 }
 
+uint8_t GameGearVDP::currentScanline() const noexcept {
+    return registers_[4u];
+}
+
 BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
     const BMMQ::VideoDebugRenderRequest& request) const
 {
