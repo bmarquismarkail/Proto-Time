@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 
 class Z80Interpreter {
 public:
@@ -25,7 +26,10 @@ public:
     // Install a provider that returns true when an external IRQ should be
     // serviced. The provider MUST atomically clear the pending request when
     // it returns true; the interpreter will call it from the CPU thread.
-    void setInterruptRequestProvider(std::function<bool()> provider);
+    void setInterruptRequestProvider(std::function<std::optional<uint8_t>()> provider);
+
+    // Programmatic setter for interrupt mode (0,1,2). Default is 1.
+    void setInterruptMode(uint8_t mode) { interruptMode_ = mode; }
 
     // Z80 registers
     uint16_t AF = 0;
@@ -45,6 +49,9 @@ public:
     bool IFF1 = false;
     bool IFF2 = false;
     bool IME = false;
+    // Set by EI; becomes effective only after the instruction following
+    // the `EI` instruction completes (deferred IME enable semantics).
+    bool imeEnablePending_ = false;
 
 private:
     // Z80 F register flags (canonical bit positions):
@@ -81,5 +88,7 @@ private:
     // Interrupt request provider: returns true if a pending external IRQ
     // should be serviced; the provider is expected to atomically consume
     // the request when returning true.
-    std::function<bool()> interruptRequestProvider;
+    std::function<std::optional<uint8_t>()> interruptRequestProvider;
+    // Interrupt mode (0,1,2). Defaults to IM1.
+    uint8_t interruptMode_ = 1u;
 };

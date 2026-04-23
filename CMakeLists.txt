@@ -150,6 +150,10 @@ add_test(NAME smoke_gamegear_machine_banking COMMAND time-smoke-gamegear-machine
 add_executable(time-smoke-gamegear-vblank-irq tests/smoke_gamegear_vblank_irq.cpp)
 target_link_libraries(time-smoke-gamegear-vblank-irq time-gamegear-core)
 add_test(NAME smoke_gamegear_vblank_irq COMMAND time-smoke-gamegear-vblank-irq)
+
+add_executable(time-smoke-ei-reti tests/smoke_ei_reti.cpp)
+target_link_libraries(time-smoke-ei-reti time-gamegear-core)
+add_test(NAME smoke_ei_reti COMMAND time-smoke-ei-reti)
 add_executable(time-smoke-snapshot tests/smoke_snapshot.cpp)
 add_test(NAME smoke_snapshot COMMAND time-smoke-snapshot)
 add_executable(time-smoke-register-snapshot tests/smoke_register_snapshot.cpp)

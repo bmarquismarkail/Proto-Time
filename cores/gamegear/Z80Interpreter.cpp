@@ -21,7 +21,7 @@ void Z80Interpreter::requireMemoryInterface() const {
     }
 }
 
-void Z80Interpreter::setInterruptRequestProvider(std::function<bool()> provider) {
+void Z80Interpreter::setInterruptRequestProvider(std::function<std::optional<uint8_t>()> provider) {
     interruptRequestProvider = std::move(provider);
 }
 
@@ -48,6 +48,7 @@ void Z80Interpreter::reset() {
     I = 0;
     R = 0;
     IFF1 = IFF2 = IME = false;
+    imeEnablePending_ = false;
 }
 
 uint8_t Z80Interpreter::fetch8() {
@@ -227,13 +228,38 @@ uint32_t Z80Interpreter::executeOpcode(uint8_t opcode) {
             return 7u;
         }
         case 0xF3: { // DI
+            // Disable interrupts immediately and cancel any pending EI.
             IME = false;
+            imeEnablePending_ = false;
             return 4u;
         }
-        case 0xFB: { // EI (simple immediate enable)
-            IME = true;
+        case 0xFB: { // EI (deferred enable)
+            // On Z80, EI enables interrupts only after the instruction
+            // following EI has executed. Set a pending flag here; step()
+            // will promote it to IME after the next instruction.
+            imeEnablePending_ = true;
             return 4u;
         }
+            case 0xED: {
+                // ED-prefixed opcodes: implement a small subset (RETI, RETN later).
+                const uint8_t sub = fetch8();
+                switch (sub) {
+                    case 0x4Du: { // RETI
+                        // Pop return address from stack (low then high)
+                        const uint8_t pcl = memRead(SP);
+                        const uint8_t pch = memRead(static_cast<uint16_t>(SP + 1u));
+                        SP = static_cast<uint16_t>(SP + 2u);
+                        PC = static_cast<uint16_t>(static_cast<uint16_t>(pcl) | (static_cast<uint16_t>(pch) << 8u));
+                        // Restore IFF1 from IFF2 (Z80 semantics: RETN/RETI restore IFFs)
+                        IFF1 = IFF2;
+                        IME = IFF1;
+                        return 14u;
+                    }
+                    default:
+                        // Unimplemented ED sub-opcode: treat as NOP for now
+                        return 8u;
+                }
+            }
         default:
             return 4u;
     }
@@ -243,7 +269,21 @@ uint32_t Z80Interpreter::handleInterrupts() {
     if (!interruptRequestProvider) {
         return 0u;
     }
-    if (IME && interruptRequestProvider()) {
+    if (!IME) {
+        return 0u;
+    }
+
+    const auto maybeData = interruptRequestProvider();
+    if (!maybeData.has_value()) {
+        return 0u;
+    }
+
+    // An interrupt has been requested. Behavior depends on the current
+    // interrupt mode (IM 0/1/2). For IM1, perform RST 0x38 (legacy
+    // behavior). For IM2, construct a vector from I and the data byte
+    // and fetch the handler address from memory. IM0 falls back to IM1
+    // here (most hardware uses IM1-like vectors in practice).
+    if (interruptMode_ == 1u) {
         // Push PC (high then low) onto the stack
         const uint8_t pcl = static_cast<uint8_t>(PC & 0x00FFu);
         const uint8_t pch = static_cast<uint8_t>((PC >> 8) & 0x00FFu);
@@ -254,11 +294,43 @@ uint32_t Z80Interpreter::handleInterrupts() {
         // Jump to 0x0038 (RST 0x38 service)
         PC = 0x0038u;
         IFF1 = false;
-        IFF2 = false;
+        // Preserve IFF2 per Z80 semantics
         IME = false;
         return 11u;
     }
-    return 0u;
+
+    if (interruptMode_ == 2u) {
+        const uint8_t data = *maybeData;
+        const uint16_t vector = static_cast<uint16_t>((static_cast<uint16_t>(I) << 8u) | static_cast<uint16_t>(data));
+        // Read 16-bit address from vector table (low then high)
+        const uint8_t pcl = memRead(vector);
+        const uint8_t pch = memRead(static_cast<uint16_t>(vector + 1u));
+        // Push PC, jump to fetched address
+        const uint8_t oldPcl = static_cast<uint8_t>(PC & 0x00FFu);
+        const uint8_t oldPch = static_cast<uint8_t>((PC >> 8) & 0x00FFu);
+        SP = static_cast<uint16_t>(SP - 1u);
+        memWrite(SP, oldPch);
+        SP = static_cast<uint16_t>(SP - 1u);
+        memWrite(SP, oldPcl);
+        PC = static_cast<uint16_t>(static_cast<uint16_t>(pcl) | (static_cast<uint16_t>(pch) << 8u));
+        IFF1 = false;
+        IME = false;
+        return 19u;
+    }
+
+    // IM0: fall back to IM1 behavior (RST 0x38)
+    {
+        const uint8_t pcl = static_cast<uint8_t>(PC & 0x00FFu);
+        const uint8_t pch = static_cast<uint8_t>((PC >> 8) & 0x00FFu);
+        SP = static_cast<uint16_t>(SP - 1u);
+        memWrite(SP, pch);
+        SP = static_cast<uint16_t>(SP - 1u);
+        memWrite(SP, pcl);
+        PC = 0x0038u;
+        IFF1 = false;
+        IME = false;
+        return 11u;
+    }
 }
 
 uint32_t Z80Interpreter::step() {
@@ -268,5 +340,12 @@ uint32_t Z80Interpreter::step() {
         return intrCycles;
     }
     const uint8_t opcode = fetch8();
-    return executeOpcode(opcode);
+    const uint32_t retired = executeOpcode(opcode);
+    // If EI was executed previously, it becomes effective only after the
+    // following instruction completes. Promote the pending flag now.
+    if (imeEnablePending_) {
+        IME = true;
+        imeEnablePending_ = false;
+    }
+    return retired;
 }

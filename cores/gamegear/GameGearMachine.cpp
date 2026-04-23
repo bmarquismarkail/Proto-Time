@@ -217,12 +217,15 @@ GameGearMachine::GameGearMachine() : impl(std::make_unique<Impl>()) {
     impl->mem.setInput(&impl->input);
     impl->mem.setVdp(&impl->vdp);
     // Provide a callback for the CPU to atomically consume pending IRQs.
-    impl->cpu.setInterruptRequestProvider([this]() -> bool {
+    // Return an optional data byte: present => interrupt pending; empty => none.
+    impl->cpu.setInterruptRequestProvider([this]() -> std::optional<uint8_t> {
         if (impl->interruptRequested) {
             impl->interruptRequested = false;
-            return true;
+            // No device-supplied vector byte available; return 0 as a
+            // harmless placeholder. IM1 ignores the byte.
+            return static_cast<uint8_t>(0u);
         }
-        return false;
+        return std::nullopt;
     });
     Plugin::validateExecutorPolicyStartup(impl->defaultPolicy);
     impl->vdp.reset();
@@ -365,6 +368,10 @@ std::string GameGearMachine::stopSummary() const {
         << "Input port=0x" << std::hex << std::uppercase << static_cast<int>(impl->input.readInputs())
         << std::dec;
     return out.str();
+}
+
+bool GameGearMachine::cpuInterruptsEnabled() const {
+    return impl->cpu.IME;
 }
 
 } // namespace BMMQ

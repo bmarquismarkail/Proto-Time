@@ -36,6 +36,8 @@ public:
         const VideoDebugRenderRequest& request) const override;
     uint32_t clockHz() const override;
     std::string stopSummary() const override;
+    // Test helper: inspect whether CPU IME is currently set.
+    bool cpuInterruptsEnabled() const;
 
 private:
     struct Impl;
