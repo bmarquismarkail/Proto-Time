@@ -9,6 +9,7 @@
 #include <array>
 
 class GameGearInput;
+class GameGearCartridge;
 class GameGearVDP;
 class GameGearMemoryMap {
 public:
@@ -23,6 +24,7 @@ public:
     void mapRom(const uint8_t* data, size_t size);
     void clearRom();
 
+    void setCartridge(GameGearCartridge* cartridgePtr);
     void setInput(GameGearInput* inputPtr);
     void setVdp(GameGearVDP* vdpPtr);
     [[nodiscard]] uint8_t readIoPort(uint8_t port);
@@ -30,11 +32,7 @@ public:
 
 private:
     GameGearInput* input = nullptr;
+    GameGearCartridge* cartridge = nullptr;
     GameGearVDP* vdp = nullptr;
-    std::vector<uint8_t> rom;
     std::array<uint8_t, 0x2000> ram{}; // 8KB RAM
-    // 3 x 16KiB bank registers for 0x0000-0x3FFF, 0x4000-0x7FFF, 0x8000-0xBFFF
-    std::array<uint8_t, 3> bankRegisters_{};
-    // number of 16KiB banks available in the loaded ROM (>=1 when ROM present)
-    std::size_t romNumBanks_ = 0u;
 };

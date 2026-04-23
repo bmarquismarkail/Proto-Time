@@ -214,6 +214,7 @@ GameGearMachine::GameGearMachine() : impl(std::make_unique<Impl>()) {
         [this](uint8_t port) { return impl->mem.readIoPort(port); },
         [this](uint8_t port, uint8_t value) { impl->mem.writeIoPort(port, value); }
     );
+    impl->mem.setCartridge(&impl->cart);
     impl->mem.setInput(&impl->input);
     impl->mem.setVdp(&impl->vdp);
     // Provide a callback for the CPU to atomically consume pending IRQs.
@@ -245,7 +246,6 @@ void GameGearMachine::loadRom(const std::vector<uint8_t>& bytes) {
     if (bytes.size() > kMaxRomSize) {
         throw std::runtime_error("ROM too large");
     }
-    impl->mem.mapRom(bytes.data(), bytes.size());
     impl->cart.load(bytes.data(), bytes.size());
     impl->mem.reset();
     impl->vdp.reset();
