@@ -15,6 +15,7 @@ constexpr uint8_t kFlagH = 0x10u;
 constexpr uint8_t kFlagPV = 0x04u;
 constexpr uint8_t kFlagN = 0x02u;
 constexpr uint8_t kFlagC = 0x01u;
+constexpr uint8_t kDocumentedFlagMask = kFlagS | kFlagZ | kFlagH | kFlagPV | kFlagN | kFlagC;
 
 Z80Interpreter makeCpu(std::vector<uint8_t>& memory) {
     Z80Interpreter cpu;
@@ -107,17 +108,17 @@ int main() {
         assert(cpu.step() == 7u);
         assert(cpu.step() == 7u);
         assert(static_cast<uint8_t>(cpu.AF >> 8u) == 0x15u);
-        assert((cpu.AF & 0x00FFu) == 0x00u);
+        assert((cpu.AF & kDocumentedFlagMask) == 0x00u);
         assert(cpu.step() == 7u);
         assert(static_cast<uint8_t>(cpu.AF >> 8u) == 0x15u);
-        assert((cpu.AF & 0x00FFu) == static_cast<uint16_t>(kFlagN | kFlagZ));
+        assert((cpu.AF & kDocumentedFlagMask) == static_cast<uint16_t>(kFlagN | kFlagZ));
         assert(cpu.step() == 7u);
         assert(cpu.step() == 7u);
         assert(static_cast<uint8_t>(cpu.AF >> 8u) == 0x00u);
-        assert((cpu.AF & 0x00FFu) == static_cast<uint16_t>(kFlagZ | kFlagH | kFlagPV));
+        assert((cpu.AF & kDocumentedFlagMask) == static_cast<uint16_t>(kFlagZ | kFlagH | kFlagPV));
         assert(cpu.step() == 7u);
         assert(static_cast<uint8_t>(cpu.AF >> 8u) == 0x80u);
-        assert((cpu.AF & 0x00FFu) == static_cast<uint16_t>(kFlagS));
+        assert((cpu.AF & kDocumentedFlagMask) == static_cast<uint16_t>(kFlagS));
     }
 
     {
@@ -132,19 +133,19 @@ int main() {
         assert(cpu.step() == 7u);
         assert(cpu.step() == 7u);
         assert(static_cast<uint8_t>(cpu.AF >> 8u) == 0x80u);
-        assert((cpu.AF & 0x00FFu) == static_cast<uint16_t>(kFlagS | kFlagH | kFlagPV));
+        assert((cpu.AF & kDocumentedFlagMask) == static_cast<uint16_t>(kFlagS | kFlagH | kFlagPV));
 
         assert(cpu.step() == 7u);
         assert(static_cast<uint8_t>(cpu.AF >> 8u) == 0x7Fu);
-        assert((cpu.AF & 0x00FFu) == static_cast<uint16_t>(kFlagPV | kFlagC));
+        assert((cpu.AF & kDocumentedFlagMask) == static_cast<uint16_t>(kFlagPV | kFlagC));
 
         assert(cpu.step() == 7u);
         assert(static_cast<uint8_t>(cpu.AF >> 8u) == 0xFFu);
-        assert((cpu.AF & 0x00FFu) == static_cast<uint16_t>(kFlagS | kFlagN | kFlagPV | kFlagC));
+        assert((cpu.AF & kDocumentedFlagMask) == static_cast<uint16_t>(kFlagS | kFlagN | kFlagPV | kFlagC));
 
         assert(cpu.step() == 7u);
         assert(static_cast<uint8_t>(cpu.AF >> 8u) == 0xFEu);
-        assert((cpu.AF & 0x00FFu) == static_cast<uint16_t>(kFlagS | kFlagN));
+        assert((cpu.AF & kDocumentedFlagMask) == static_cast<uint16_t>(kFlagS | kFlagN));
     }
 
     {
@@ -344,7 +345,7 @@ int main() {
         assert(cpu.step() == 10u);
         assert(cpu.PC == 0x000Du);
         assert(cpu.step() == 7u);
-        assert((cpu.AF & 0x00FFu) == static_cast<uint16_t>(kFlagS | kFlagN | kFlagH | kFlagC));
+        assert((cpu.AF & kDocumentedFlagMask) == static_cast<uint16_t>(kFlagS | kFlagN | kFlagH | kFlagC));
         assert(cpu.step() == 12u);
         assert(cpu.PC == 0x0013u);
         assert(cpu.step() == 7u);
@@ -386,12 +387,79 @@ int main() {
         assert(memory[0xCFFEu] == 0x05u);
         assert(memory[0xCFFFu] == 0x00u);
         assert(cpu.step() == 4u);
-        assert((cpu.AF & 0x00FFu) == static_cast<uint16_t>(kFlagZ | kFlagPV));
+        assert((cpu.AF & kDocumentedFlagMask) == static_cast<uint16_t>(kFlagZ | kFlagPV));
         assert(cpu.step() == 11u);
         assert(cpu.PC == 0x0005u);
         assert(cpu.SP == 0xD000u);
         assert(cpu.step() == 17u);
         assert(cpu.PC == 0x0008u);
+    }
+
+    {
+        std::vector<uint8_t> memory(0x10000u, 0x00u);
+        auto cpu = makeCpu(memory);
+        memory[0x4000u] = 0x11u;
+        memory[0x4001u] = 0x22u;
+        memory[0x4002u] = 0x33u;
+        memory[0x5000u] = 0x00u;
+        memory[0x5001u] = 0x00u;
+        memory[0x5002u] = 0x00u;
+        memory[0x6000u] = 0x34u;
+        memory[0x6005u] = 0x81u;
+        memory[0x0000u] = 0x21u; memory[0x0001u] = 0x00u; memory[0x0002u] = 0x40u; // LD HL,0x4000
+        memory[0x0003u] = 0x11u; memory[0x0004u] = 0x00u; memory[0x0005u] = 0x50u; // LD DE,0x5000
+        memory[0x0006u] = 0x01u; memory[0x0007u] = 0x03u; memory[0x0008u] = 0x00u; // LD BC,3
+        memory[0x0009u] = 0xEDu; memory[0x000Au] = 0xB0u;                           // LDIR
+        memory[0x000Bu] = 0x3Eu; memory[0x000Cu] = 0x15u;                           // LD A,0x15
+        memory[0x000Du] = 0xC6u; memory[0x000Eu] = 0x27u;                           // ADD A,0x27
+        memory[0x000Fu] = 0x27u;                                                    // DAA -> 0x42
+        memory[0x0010u] = 0x07u;                                                    // RLCA -> 0x84
+        memory[0x0011u] = 0x17u;                                                    // RLA -> 0x08, C=1
+        memory[0x0012u] = 0xDDu; memory[0x0013u] = 0x21u; memory[0x0014u] = 0x00u; memory[0x0015u] = 0x60u; // LD IX,0x6000
+        memory[0x0016u] = 0xDDu; memory[0x0017u] = 0x7Eu; memory[0x0018u] = 0x05u;  // LD A,(IX+5)
+        memory[0x0019u] = 0xDDu; memory[0x001Au] = 0xCBu; memory[0x001Bu] = 0x05u; memory[0x001Cu] = 0x00u; // RLC (IX+5),B
+        memory[0x001Du] = 0x3Eu; memory[0x001Eu] = 0xA1u;                           // LD A,0xA1
+        memory[0x001Fu] = 0xEDu; memory[0x0020u] = 0x67u;                           // RRD
+        memory[0x0021u] = 0xEDu; memory[0x0022u] = 0x6Fu;                           // RLD
+        memory[0x0023u] = 0x21u; memory[0x0024u] = 0x00u; memory[0x0025u] = 0x50u; // LD HL,0x5000
+        memory[0x0026u] = 0x01u; memory[0x0027u] = 0x03u; memory[0x0028u] = 0x00u; // LD BC,3
+        memory[0x0029u] = 0x3Eu; memory[0x002Au] = 0x33u;                           // LD A,0x33
+        memory[0x002Bu] = 0xEDu; memory[0x002Cu] = 0xB1u;                           // CPIR
+
+        CHECK_OR_FAIL(cpu.step() == 10u, "LD HL setup for LDIR failed");
+        CHECK_OR_FAIL(cpu.step() == 10u, "LD DE setup for LDIR failed");
+        CHECK_OR_FAIL(cpu.step() == 10u, "LD BC setup for LDIR failed");
+        CHECK_OR_FAIL(cpu.step() == 58u, "LDIR should transfer all bytes in one interpreter step");
+        CHECK_OR_FAIL(memory[0x5000u] == 0x11u && memory[0x5001u] == 0x22u && memory[0x5002u] == 0x33u,
+                      "LDIR did not copy the full range");
+        CHECK_OR_FAIL(cpu.BC == 0u && cpu.HL == 0x4003u && cpu.DE == 0x5003u,
+                      "LDIR did not update BC/HL/DE correctly");
+        CHECK_OR_FAIL(cpu.step() == 7u, "DAA setup LD A failed");
+        CHECK_OR_FAIL(cpu.step() == 7u, "DAA setup ADD failed");
+        CHECK_OR_FAIL(cpu.step() == 4u, "DAA opcode missing");
+        CHECK_OR_FAIL(static_cast<uint8_t>(cpu.AF >> 8u) == 0x42u, "DAA produced wrong BCD result");
+        CHECK_OR_FAIL(cpu.step() == 4u, "RLCA opcode missing");
+        CHECK_OR_FAIL(static_cast<uint8_t>(cpu.AF >> 8u) == 0x84u, "RLCA produced wrong result");
+        CHECK_OR_FAIL(cpu.step() == 4u, "RLA opcode missing");
+        CHECK_OR_FAIL(static_cast<uint8_t>(cpu.AF >> 8u) == 0x08u && (cpu.AF & kFlagC) != 0u, "RLA produced wrong result/carry");
+        CHECK_OR_FAIL(cpu.step() == 14u, "LD IX,nn missing");
+        CHECK_OR_FAIL(cpu.step() == 19u, "LD A,(IX+d) missing");
+        CHECK_OR_FAIL(static_cast<uint8_t>(cpu.AF >> 8u) == 0x81u, "LD A,(IX+d) read wrong byte");
+        CHECK_OR_FAIL(cpu.step() == 23u, "DDCB RLC (IX+d),B missing");
+        CHECK_OR_FAIL(memory[0x6005u] == 0x03u && static_cast<uint8_t>(cpu.BC >> 8u) == 0x03u,
+                      "DDCB RLC should update memory and destination register");
+        cpu.HL = 0x6000u;
+        CHECK_OR_FAIL(cpu.step() == 7u, "RLD/RRD setup LD A failed");
+        CHECK_OR_FAIL(cpu.step() == 18u, "RRD missing");
+        CHECK_OR_FAIL(static_cast<uint8_t>(cpu.AF >> 8u) == 0xA4u && memory[0x6000u] == 0x13u, "RRD result mismatch");
+        CHECK_OR_FAIL(cpu.step() == 18u, "RLD missing");
+        CHECK_OR_FAIL(static_cast<uint8_t>(cpu.AF >> 8u) == 0xA1u && memory[0x6000u] == 0x34u, "RLD result mismatch");
+        CHECK_OR_FAIL(cpu.step() == 10u, "CPIR setup LD HL failed");
+        CHECK_OR_FAIL(cpu.step() == 10u, "CPIR setup LD BC failed");
+        CHECK_OR_FAIL(cpu.step() == 7u, "CPIR setup LD A failed");
+        CHECK_OR_FAIL(cpu.step() == 58u, "CPIR should search until match in one interpreter step");
+        CHECK_OR_FAIL(cpu.BC == 0u && cpu.HL == 0x5003u && (cpu.AF & kFlagZ) != 0u,
+                      "CPIR did not stop with the expected match state");
     }
 
     return 0;

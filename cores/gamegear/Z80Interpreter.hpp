@@ -1,6 +1,6 @@
 #pragma once
-// Sega Game Gear Z80 CPU interpreter stub
-// References: SMS Power, MAME, Emulicious, Genesis Plus GX
+// Sega Game Gear Z80 CPU interpreter.
+// References: Zilog Z80 Family User Manual and The Undocumented Z80 Documented.
 
 #include <cstdint>
 #include <functional>
@@ -68,7 +68,9 @@ private:
     // 7  6  5  4  3    2  1  0 (bit indices)
     static constexpr uint8_t kFlagS = 0x80u;   // Sign (bit 7)
     static constexpr uint8_t kFlagZ = 0x40u;   // Zero (bit 6)
+    static constexpr uint8_t kFlag5 = 0x20u;   // Undocumented copy bit 5
     static constexpr uint8_t kFlagH = 0x10u;   // Half-carry (bit 4)
+    static constexpr uint8_t kFlag3 = 0x08u;   // Undocumented copy bit 3
     static constexpr uint8_t kFlagPV = 0x04u;  // Parity/Overflow (bit 2)
     static constexpr uint8_t kFlagN = 0x02u;   // Add/Subtract (bit 1)
     static constexpr uint8_t kFlagC = 0x01u;   // Carry (bit 0)
@@ -83,6 +85,7 @@ private:
     uint8_t readIo(uint8_t port) const;
     void writeIo(uint8_t port, uint8_t value) const;
     uint8_t fetch8();
+    uint8_t fetchOpcode();
     uint16_t fetch16();
     [[nodiscard]] uint8_t regA() const noexcept;
     void setRegA(uint8_t value) noexcept;
@@ -98,9 +101,21 @@ private:
     [[nodiscard]] uint8_t computeAddFlags(uint8_t lhs, uint8_t rhs, uint8_t carryIn, uint8_t result) const noexcept;
     [[nodiscard]] uint8_t computeSubFlags(uint8_t lhs, uint8_t rhs, uint8_t carryIn, uint8_t result) const noexcept;
     [[nodiscard]] uint32_t executeOpcode(uint8_t opcode);
+    [[nodiscard]] uint32_t executeCbOpcode(uint8_t opcode, bool indexed, uint16_t indexedAddress, uint8_t* indexedDestination);
+    [[nodiscard]] uint32_t executeEdOpcode(uint8_t opcode);
+    [[nodiscard]] uint32_t executeIndexedOpcode(uint8_t prefix, uint8_t opcode);
     // Handle any external interrupts. Returns consumed cycles (0 if none).
     uint32_t handleInterrupts();
-    // TODO: Add full opcode decode/execute tables
+    void push16(uint16_t value);
+    [[nodiscard]] uint16_t pop16();
+    void write16(uint16_t address, uint16_t value);
+    [[nodiscard]] uint16_t read16(uint16_t address) const;
+    [[nodiscard]] uint16_t getReg16ByPair(int pair, bool afForPair3 = false) const noexcept;
+    void setReg16ByPair(int pair, uint16_t value, bool afForPair3 = false) noexcept;
+    [[nodiscard]] uint8_t alu(uint8_t group, uint8_t value);
+    [[nodiscard]] uint8_t rotateShift(uint8_t group, uint8_t value);
+    void setLogicFlags(uint8_t result, bool halfCarry) noexcept;
+    void incRefresh() noexcept;
     // Interrupt request provider: returns a std::optional<uint8_t>
     // containing the IRQ byte/vector when a pending external IRQ should be
     // serviced; an empty optional means no pending IRQ. The provider is
