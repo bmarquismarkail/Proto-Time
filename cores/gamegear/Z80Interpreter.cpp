@@ -860,10 +860,84 @@ uint32_t Z80Interpreter::executeOpcode(uint8_t opcode) {
             imeEnableDelay_ = 2;
             return 4u;
         }
+        case 0xDD:
+        case 0xFD: {
+            uint16_t& index = (opcode == 0xDD) ? IX : IY;
+            const uint8_t sub = fetch8();
+            switch (sub) {
+                case 0x21: // LD IX/IY,nn
+                    index = fetch16();
+                    return 14u;
+                case 0x22: { // LD (nn),IX/IY
+                    const uint16_t addr = fetch16();
+                    memWrite(addr, static_cast<uint8_t>(index & 0x00FFu));
+                    memWrite(static_cast<uint16_t>(addr + 1u), static_cast<uint8_t>((index >> 8) & 0x00FFu));
+                    return 20u;
+                }
+                case 0x2A: { // LD IX/IY,(nn)
+                    const uint16_t addr = fetch16();
+                    const uint8_t lo = memRead(addr);
+                    const uint8_t hi = memRead(static_cast<uint16_t>(addr + 1u));
+                    index = static_cast<uint16_t>(static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8u));
+                    return 20u;
+                }
+                case 0xE1: { // POP IX/IY
+                    const uint8_t lo = memRead(SP);
+                    const uint8_t hi = memRead(static_cast<uint16_t>(SP + 1u));
+                    SP = static_cast<uint16_t>(SP + 2u);
+                    index = static_cast<uint16_t>(static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8u));
+                    return 14u;
+                }
+                case 0xE5: { // PUSH IX/IY
+                    SP = static_cast<uint16_t>(SP - 1u);
+                    memWrite(SP, static_cast<uint8_t>((index >> 8) & 0x00FFu));
+                    SP = static_cast<uint16_t>(SP - 1u);
+                    memWrite(SP, static_cast<uint8_t>(index & 0x00FFu));
+                    return 15u;
+                }
+                case 0xF9: // LD SP,IX/IY
+                    SP = index;
+                    return 10u;
+                default:
+                    return executeOpcode(sub);
+            }
+        }
             case 0xED: {
                 // ED-prefixed opcodes: implement a small subset (RETI, RETN later).
                 const uint8_t sub = fetch8();
                 switch (sub) {
+                    case 0x41u: // OUT (C),B
+                    case 0x61u: // OUT (C),H
+                    case 0x69u: // OUT (C),L
+                    case 0x79u: { // OUT (C),A
+                        const uint8_t value = [&]() -> uint8_t {
+                            switch (sub) {
+                            case 0x41u:
+                                return static_cast<uint8_t>((BC >> 8) & 0x00FFu);
+                            case 0x61u:
+                                return static_cast<uint8_t>((HL >> 8) & 0x00FFu);
+                            case 0x69u:
+                                return static_cast<uint8_t>(HL & 0x00FFu);
+                            default:
+                                return regA();
+                            }
+                        }();
+                        writeIo(static_cast<uint8_t>(BC & 0x00FFu), value);
+                        return 12u;
+                    }
+                    case 0x43u: { // LD (nn),BC
+                        const uint16_t addr = fetch16();
+                        memWrite(addr, static_cast<uint8_t>(BC & 0x00FFu));
+                        memWrite(static_cast<uint16_t>(addr + 1u), static_cast<uint8_t>((BC >> 8) & 0x00FFu));
+                        return 20u;
+                    }
+                    case 0x4Bu: { // LD BC,(nn)
+                        const uint16_t addr = fetch16();
+                        const uint8_t lo = memRead(addr);
+                        const uint8_t hi = memRead(static_cast<uint16_t>(addr + 1u));
+                        BC = static_cast<uint16_t>(static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8u));
+                        return 20u;
+                    }
                     case 0x4Du: { // RETI
                         // Pop return address from stack (low then high)
                         const uint8_t pcl = memRead(SP);
@@ -875,6 +949,71 @@ uint32_t Z80Interpreter::executeOpcode(uint8_t opcode) {
                         IME = IFF1;
                         return 14u;
                     }
+                    case 0x56u: // IM 1
+                        setInterruptMode(1u);
+                        return 8u;
+                    case 0x57u: { // LD A,I
+                        const uint8_t value = I;
+                        setRegA(value);
+                        uint8_t flags = static_cast<uint8_t>(regF() & kFlagC);
+                        if (value == 0u) flags |= kFlagZ;
+                        if ((value & 0x80u) != 0u) flags |= kFlagS;
+                        if (IFF2) flags |= kFlagPV;
+                        setRegF(flags);
+                        return 9u;
+                    }
+                    case 0x5Bu: { // LD DE,(nn)
+                        const uint16_t addr = fetch16();
+                        const uint8_t lo = memRead(addr);
+                        const uint8_t hi = memRead(static_cast<uint16_t>(addr + 1u));
+                        DE = static_cast<uint16_t>(static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8u));
+                        return 20u;
+                    }
+                    case 0x5Fu: { // LD A,R
+                        const uint8_t value = R;
+                        setRegA(value);
+                        uint8_t flags = static_cast<uint8_t>(regF() & kFlagC);
+                        if (value == 0u) flags |= kFlagZ;
+                        if ((value & 0x80u) != 0u) flags |= kFlagS;
+                        if (IFF2) flags |= kFlagPV;
+                        setRegF(flags);
+                        return 9u;
+                    }
+                    case 0x73u: { // LD (nn),SP
+                        const uint16_t addr = fetch16();
+                        memWrite(addr, static_cast<uint8_t>(SP & 0x00FFu));
+                        memWrite(static_cast<uint16_t>(addr + 1u), static_cast<uint8_t>((SP >> 8) & 0x00FFu));
+                        return 20u;
+                    }
+                    case 0x78u: { // IN A,(C)
+                        const uint8_t value = readIo(static_cast<uint8_t>(BC & 0x00FFu));
+                        setRegA(value);
+                        uint8_t flags = static_cast<uint8_t>(regF() & kFlagC);
+                        if (value == 0u) flags |= kFlagZ;
+                        if ((value & 0x80u) != 0u) flags |= kFlagS;
+                        if (parityEven(value)) flags |= kFlagPV;
+                        setRegF(flags);
+                        return 12u;
+                    }
+                    case 0xA2u: { // INI
+                        const uint8_t value = readIo(static_cast<uint8_t>(BC & 0x00FFu));
+                        memWrite(HL, value);
+                        HL = static_cast<uint16_t>(HL + 1u);
+                        const auto nextB = static_cast<uint8_t>(((BC >> 8) - 1u) & 0x00FFu);
+                        BC = static_cast<uint16_t>((static_cast<uint16_t>(nextB) << 8u) | (BC & 0x00FFu));
+                        return 16u;
+                    }
+                    case 0xB3u: { // OTIR
+                        const uint8_t port = static_cast<uint8_t>(BC & 0x00FFu);
+                        const unsigned count = static_cast<unsigned>((BC >> 8) & 0x00FFu);
+                        const unsigned transfers = count == 0u ? 256u : count;
+                        for (unsigned i = 0; i < transfers; ++i) {
+                            writeIo(port, memRead(HL));
+                            HL = static_cast<uint16_t>(HL + 1u);
+                        }
+                        BC = static_cast<uint16_t>(BC & 0x00FFu);
+                        return static_cast<uint32_t>(16u + (transfers - 1u) * 21u);
+                    }
                     case 0x45u: { // RETN (treat like RETI)
                         const uint8_t pcl = memRead(SP);
                         const uint8_t pch = memRead(static_cast<uint16_t>(SP + 1u));
@@ -883,6 +1022,19 @@ uint32_t Z80Interpreter::executeOpcode(uint8_t opcode) {
                         IFF1 = IFF2;
                         IME = IFF1;
                         return 14u;
+                    }
+                    case 0x53u: { // LD (nn),DE
+                        const uint16_t addr = fetch16();
+                        memWrite(addr, static_cast<uint8_t>(DE & 0x00FFu));
+                        memWrite(static_cast<uint16_t>(addr + 1u), static_cast<uint8_t>((DE >> 8) & 0x00FFu));
+                        return 20u;
+                    }
+                    case 0x7Bu: { // LD SP,(nn)
+                        const uint16_t addr = fetch16();
+                        const uint8_t lo = memRead(addr);
+                        const uint8_t hi = memRead(static_cast<uint16_t>(addr + 1u));
+                        SP = static_cast<uint16_t>(static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8u));
+                        return 20u;
                     }
                     default:
                         // Unimplemented ED sub-opcode: treat as NOP for now

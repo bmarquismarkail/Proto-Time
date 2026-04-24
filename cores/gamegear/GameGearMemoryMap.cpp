@@ -29,6 +29,9 @@ void GameGearMemoryMap::setVdp(GameGearVDP* vdpPtr) {
 }
 
 uint8_t GameGearMemoryMap::readIoPort(uint8_t port) {
+    if (port <= 0x05u) {
+        return input ? input->readSystemPort(port) : 0xFFu;
+    }
     if ((port & 0xC1u) == 0x80u) {
         return vdp ? vdp->readDataPort() : 0xFFu;
     }
@@ -48,6 +51,12 @@ uint8_t GameGearMemoryMap::readIoPort(uint8_t port) {
 }
 
 void GameGearMemoryMap::writeIoPort(uint8_t port, uint8_t value) {
+    if ((port >= 0x01u && port <= 0x03u) || port == 0x05u || port == 0x06u) {
+        if (input) {
+            input->writeSystemPort(port, value);
+        }
+        return;
+    }
     if ((port & 0xC1u) == 0x80u) {
         if (vdp) {
             vdp->writeDataPort(value);

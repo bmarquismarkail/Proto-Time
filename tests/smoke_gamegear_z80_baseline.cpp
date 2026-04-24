@@ -2,6 +2,9 @@
 
 #include <cassert>
 #include <cstdint>
+#include <iostream>
+#include <optional>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -22,6 +25,26 @@ Z80Interpreter makeCpu(std::vector<uint8_t>& memory) {
     cpu.reset();
     return cpu;
 }
+
+template <typename IoRead, typename IoWrite>
+Z80Interpreter makeCpu(std::vector<uint8_t>& memory, IoRead&& ioRead, IoWrite&& ioWrite) {
+    Z80Interpreter cpu;
+    cpu.setMemoryInterface(
+        [&](uint16_t address) { return memory[address]; },
+        [&](uint16_t address, uint8_t value) { memory[address] = value; }
+    );
+    cpu.setIoInterface(std::forward<IoRead>(ioRead), std::forward<IoWrite>(ioWrite));
+    cpu.reset();
+    return cpu;
+}
+
+#define CHECK_OR_FAIL(condition, message) \
+    do { \
+        if (!(condition)) { \
+            std::cerr << "smoke_gamegear_z80_baseline: " << message << '\n'; \
+            return 1; \
+        } \
+    } while (false)
 
 }
 
@@ -148,6 +171,113 @@ int main() {
         assert(memory[0xCFFEu] == 0x34u);
         assert(!cpu.IME);
         assert(!cpu.IFF1);
+    }
+
+    {
+        std::vector<uint8_t> memory(0x10000u, 0x00u);
+        std::optional<uint8_t> lastPortRead;
+        std::vector<std::pair<uint8_t, uint8_t>> portWrites;
+        auto cpu = makeCpu(
+            memory,
+            [&](uint8_t port) {
+                lastPortRead = port;
+                return static_cast<uint8_t>(0xA5u);
+            },
+            [&](uint8_t port, uint8_t value) {
+                portWrites.emplace_back(port, value);
+            });
+        memory[0x0000u] = 0x01u; memory[0x0001u] = 0xBFu; memory[0x0002u] = 0x12u; // LD BC,0x12BF
+        memory[0x0003u] = 0x11u; memory[0x0004u] = 0x78u; memory[0x0005u] = 0x56u; // LD DE,0x5678
+        memory[0x0006u] = 0x21u; memory[0x0007u] = 0x00u; memory[0x0008u] = 0x40u; // LD HL,0x4000
+        memory[0x0009u] = 0x31u; memory[0x000Au] = 0x00u; memory[0x000Bu] = 0xD0u; // LD SP,0xD000
+        memory[0x000Cu] = 0x3Eu; memory[0x000Du] = 0x9Au;                           // LD A,0x9A
+        memory[0x000Eu] = 0xEDu; memory[0x000Fu] = 0x79u;                           // OUT (C),A
+        memory[0x0010u] = 0xEDu; memory[0x0011u] = 0x41u;                           // OUT (C),B
+        memory[0x0012u] = 0xEDu; memory[0x0013u] = 0x61u;                           // OUT (C),H
+        memory[0x0014u] = 0xEDu; memory[0x0015u] = 0x69u;                           // OUT (C),L
+        memory[0x0016u] = 0xEDu; memory[0x0017u] = 0x78u;                           // IN A,(C)
+        memory[0x0018u] = 0xEDu; memory[0x0019u] = 0x43u; memory[0x001Au] = 0x20u; memory[0x001Bu] = 0x40u; // LD (0x4020),BC
+        memory[0x001Cu] = 0xEDu; memory[0x001Du] = 0x53u; memory[0x001Eu] = 0x22u; memory[0x001Fu] = 0x40u; // LD (0x4022),DE
+        memory[0x0020u] = 0xEDu; memory[0x0021u] = 0x73u; memory[0x0022u] = 0x24u; memory[0x0023u] = 0x40u; // LD (0x4024),SP
+        memory[0x0024u] = 0x01u; memory[0x0025u] = 0x00u; memory[0x0026u] = 0x00u; // LD BC,0x0000
+        memory[0x0027u] = 0x11u; memory[0x0028u] = 0x00u; memory[0x0029u] = 0x00u; // LD DE,0x0000
+        memory[0x002Au] = 0x31u; memory[0x002Bu] = 0x00u; memory[0x002Cu] = 0x00u; // LD SP,0x0000
+        memory[0x002Du] = 0xEDu; memory[0x002Eu] = 0x4Bu; memory[0x002Fu] = 0x20u; memory[0x0030u] = 0x40u; // LD BC,(0x4020)
+        memory[0x0031u] = 0xEDu; memory[0x0032u] = 0x5Bu; memory[0x0033u] = 0x22u; memory[0x0034u] = 0x40u; // LD DE,(0x4022)
+        memory[0x0035u] = 0xEDu; memory[0x0036u] = 0x7Bu; memory[0x0037u] = 0x24u; memory[0x0038u] = 0x40u; // LD SP,(0x4024)
+        memory[0x0039u] = 0x01u; memory[0x003Au] = 0xBEu; memory[0x003Bu] = 0x03u; // LD BC,0x03BE
+        memory[0x003Cu] = 0x21u; memory[0x003Du] = 0x30u; memory[0x003Eu] = 0x40u; // LD HL,0x4030
+        memory[0x003Fu] = 0xEDu; memory[0x0040u] = 0xB3u;                           // OTIR
+        memory[0x4030u] = 0x11u;
+        memory[0x4031u] = 0x22u;
+        memory[0x4032u] = 0x33u;
+
+        CHECK_OR_FAIL(cpu.step() == 10u, "ED regression setup failed at LD BC");
+        CHECK_OR_FAIL(cpu.step() == 10u, "ED regression setup failed at LD DE");
+        CHECK_OR_FAIL(cpu.step() == 10u, "ED regression setup failed at LD HL");
+        CHECK_OR_FAIL(cpu.step() == 10u, "ED regression setup failed at LD SP");
+        CHECK_OR_FAIL(cpu.step() == 7u, "ED regression setup failed at LD A");
+        CHECK_OR_FAIL(cpu.step() == 12u, "OUT (C),A missing");
+        CHECK_OR_FAIL(cpu.step() == 12u, "OUT (C),B missing");
+        CHECK_OR_FAIL(cpu.step() == 12u, "OUT (C),H missing");
+        CHECK_OR_FAIL(cpu.step() == 12u, "OUT (C),L missing");
+        CHECK_OR_FAIL(portWrites.size() == 4u, "expected four ED OUT writes");
+        CHECK_OR_FAIL(portWrites[0] == std::make_pair(static_cast<uint8_t>(0xBFu), static_cast<uint8_t>(0x9Au)),
+                      "OUT (C),A wrote wrong value");
+        CHECK_OR_FAIL(portWrites[1] == std::make_pair(static_cast<uint8_t>(0xBFu), static_cast<uint8_t>(0x12u)),
+                      "OUT (C),B wrote wrong value");
+        CHECK_OR_FAIL(portWrites[2] == std::make_pair(static_cast<uint8_t>(0xBFu), static_cast<uint8_t>(0x40u)),
+                      "OUT (C),H wrote wrong value");
+        CHECK_OR_FAIL(portWrites[3] == std::make_pair(static_cast<uint8_t>(0xBFu), static_cast<uint8_t>(0x00u)),
+                      "OUT (C),L wrote wrong value");
+        CHECK_OR_FAIL(cpu.step() == 12u, "IN A,(C) missing");
+        CHECK_OR_FAIL(lastPortRead.has_value() && *lastPortRead == 0xBFu, "IN A,(C) read wrong port");
+        CHECK_OR_FAIL(static_cast<uint8_t>(cpu.AF >> 8u) == 0xA5u, "IN A,(C) read wrong value");
+        CHECK_OR_FAIL(cpu.step() == 20u, "LD (nn),BC missing");
+        CHECK_OR_FAIL(memory[0x4020u] == 0xBFu && memory[0x4021u] == 0x12u, "LD (nn),BC wrote wrong bytes");
+        CHECK_OR_FAIL(cpu.step() == 20u, "LD (nn),DE missing");
+        CHECK_OR_FAIL(memory[0x4022u] == 0x78u && memory[0x4023u] == 0x56u, "LD (nn),DE wrote wrong bytes");
+        CHECK_OR_FAIL(cpu.step() == 20u, "LD (nn),SP missing");
+        CHECK_OR_FAIL(memory[0x4024u] == 0x00u && memory[0x4025u] == 0xD0u, "LD (nn),SP wrote wrong bytes");
+        CHECK_OR_FAIL(cpu.step() == 10u, "reset BC for ED load failed");
+        CHECK_OR_FAIL(cpu.step() == 10u, "reset DE for ED load failed");
+        CHECK_OR_FAIL(cpu.step() == 10u, "reset SP for ED load failed");
+        CHECK_OR_FAIL(cpu.step() == 20u && cpu.BC == 0x12BFu, "LD BC,(nn) missing");
+        CHECK_OR_FAIL(cpu.step() == 20u && cpu.DE == 0x5678u, "LD DE,(nn) missing");
+        CHECK_OR_FAIL(cpu.step() == 20u && cpu.SP == 0xD000u, "LD SP,(nn) missing");
+        CHECK_OR_FAIL(cpu.step() == 10u, "OTIR setup failed at LD BC");
+        CHECK_OR_FAIL(cpu.step() == 10u, "OTIR setup failed at LD HL");
+        CHECK_OR_FAIL(cpu.step() == 58u, "OTIR missing");
+        CHECK_OR_FAIL(cpu.BC == 0x00BEu, "OTIR should decrement B to zero and preserve port");
+        CHECK_OR_FAIL(cpu.HL == 0x4033u, "OTIR should advance HL across copied bytes");
+        CHECK_OR_FAIL(portWrites.size() == 7u, "OTIR should emit three port writes");
+        CHECK_OR_FAIL(portWrites[4] == std::make_pair(static_cast<uint8_t>(0xBEu), static_cast<uint8_t>(0x11u)),
+                      "OTIR wrote wrong first byte");
+        CHECK_OR_FAIL(portWrites[5] == std::make_pair(static_cast<uint8_t>(0xBEu), static_cast<uint8_t>(0x22u)),
+                      "OTIR wrote wrong second byte");
+        CHECK_OR_FAIL(portWrites[6] == std::make_pair(static_cast<uint8_t>(0xBEu), static_cast<uint8_t>(0x33u)),
+                      "OTIR wrote wrong third byte");
+    }
+
+    {
+        std::vector<uint8_t> memory(0x10000u, 0x00u);
+        auto cpu = makeCpu(memory);
+        memory[0x0000u] = 0xDDu; memory[0x0001u] = 0x21u; memory[0x0002u] = 0x34u; memory[0x0003u] = 0x12u; // LD IX,0x1234
+        memory[0x0004u] = 0xFDu; memory[0x0005u] = 0x21u; memory[0x0006u] = 0x78u; memory[0x0007u] = 0x56u; // LD IY,0x5678
+        memory[0x0008u] = 0xDDu; memory[0x0009u] = 0x22u; memory[0x000Au] = 0x20u; memory[0x000Bu] = 0x40u; // LD (0x4020),IX
+        memory[0x000Cu] = 0xFDu; memory[0x000Du] = 0x22u; memory[0x000Eu] = 0x22u; memory[0x000Fu] = 0x40u; // LD (0x4022),IY
+        memory[0x0010u] = 0x3Eu; memory[0x0011u] = 0x9Au;                                                   // LD A,0x9A
+        memory[0x0012u] = 0xDDu; memory[0x0013u] = 0x32u; memory[0x0014u] = 0x24u; memory[0x0015u] = 0x40u; // DD prefix should preserve LD (nn),A
+
+        CHECK_OR_FAIL(cpu.step() == 14u && cpu.IX == 0x1234u, "LD IX,nn missing");
+        CHECK_OR_FAIL(cpu.step() == 14u && cpu.IY == 0x5678u, "LD IY,nn missing");
+        CHECK_OR_FAIL(cpu.step() == 20u, "LD (nn),IX missing");
+        CHECK_OR_FAIL(memory[0x4020u] == 0x34u && memory[0x4021u] == 0x12u, "LD (nn),IX wrote wrong bytes");
+        CHECK_OR_FAIL(cpu.step() == 20u, "LD (nn),IY missing");
+        CHECK_OR_FAIL(memory[0x4022u] == 0x78u && memory[0x4023u] == 0x56u, "LD (nn),IY wrote wrong bytes");
+        CHECK_OR_FAIL(cpu.step() == 7u, "IX/IY prefix regression setup failed at LD A");
+        CHECK_OR_FAIL(cpu.step() == 13u, "DD passthrough should preserve LD (nn),A");
+        CHECK_OR_FAIL(memory[0x4024u] == 0x9Au, "DD passthrough desynchronized the stream");
     }
 
     {

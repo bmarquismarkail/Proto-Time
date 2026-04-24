@@ -101,9 +101,11 @@ int main(int argc, char** argv)
             config.frameWidth = descriptor.defaultFrameWidth;
             config.frameHeight = descriptor.defaultFrameHeight;
             config.autoInitializeBackend = true;
-            config.createHiddenWindowOnInitialize = true;
+            // The SDL presenter opens windows hidden; ensure frames are
+            // presented automatically so the window appears during normal runs.
+            config.createHiddenWindowOnInitialize = false;
             config.pumpBackendEventsOnInputSample = false;
-            config.autoPresentOnVideoEvent = false;
+            config.autoPresentOnVideoEvent = true;
             config.showWindowOnPresent = true;
             config.enableAudio = options.audioEnabled;
             config.audioBackend = options.audioBackend;

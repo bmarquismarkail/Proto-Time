@@ -31,10 +31,15 @@ public:
     [[nodiscard]] BMMQ::VideoDebugFrameModel buildFrameModel(
         const BMMQ::VideoDebugRenderRequest& request) const;
 
-private:
-    static constexpr uint32_t kCyclesPerScanline = 228u;
-    static constexpr uint8_t kVisibleScanlines = 144u;
-    static constexpr uint8_t kTotalScanlines = 154u;
+ private:
+     static constexpr uint32_t kCyclesPerScanline = 228u;
+     // Game Gear LCD is 160x144, but the underlying VDP follows an SMS-like
+     // scanline counter that games sometimes poll (e.g. waiting for 0xB0).
+     // Keep VBlank timing aligned to the 144-line cropped output while letting
+     // the V counter progress through a full frame.
+     static constexpr std::size_t kDisplayScanlines = 144u;
+     static constexpr uint16_t kVBlankStartScanline = 144u;
+     static constexpr uint16_t kTotalScanlines = 262u;
     static constexpr std::size_t kTileMapOffset = 0x1800u;
     static constexpr std::size_t kTilesPerRow = 32u;
     static constexpr std::size_t kSpriteCount = 40u;
@@ -62,7 +67,8 @@ private:
     std::array<uint8_t, 0x00A0> oam_{};
     std::array<uint8_t, 0x000C> registers_{};
     std::array<uint8_t, 0x0040> cram_{};
-    uint32_t pendingCycles_ = 0u;
+     uint32_t pendingCycles_ = 0u;
+     uint16_t scanline_ = 0u;
     bool scanlineReadyPending_ = false;
     bool vblankPending_ = false;
     bool frameInterruptPending_ = false;

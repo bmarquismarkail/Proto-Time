@@ -926,7 +926,7 @@ private:
                 static_cast<std::uint32_t>(std::numeric_limits<int>::max()))),
             .frameWidth = std::max(config_.frameWidth, 1),
             .frameHeight = std::max(config_.frameHeight, 1),
-            .createHiddenWindowOnOpen = true,
+            .createHiddenWindowOnOpen = config_.createHiddenWindowOnInitialize,
             .showWindowOnPresent = config_.showWindowOnPresent,
         });
         if (config_.enableVideo) {

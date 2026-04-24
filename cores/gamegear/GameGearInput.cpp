@@ -5,6 +5,12 @@ GameGearInput::~GameGearInput() {}
 
 void GameGearInput::reset() {
     logicalButtons_ = 0u;
+    extData_ = 0u;
+    extDirectionNmi_ = 0xFFu;
+    serialTxData_ = 0u;
+    serialRxData_ = 0u;
+    serialControl_ = 0u;
+    audioStereoControl_ = 0xFFu;
 }
 
 void GameGearInput::setLogicalButtons(BMMQ::InputButtonMask mask) {
@@ -40,4 +46,57 @@ uint8_t GameGearInput::readInputs() {
         state &= static_cast<uint8_t>(~0x80u);
     }
     return state;
+}
+
+uint8_t GameGearInput::readSystemPort0() const noexcept {
+    uint8_t state = 0x40u; // Overseas + NTSC default, low bits read as zero.
+    if ((logicalButtons_ & BMMQ::inputButtonMask(BMMQ::InputButton::Meta2)) == 0u) {
+        state = static_cast<uint8_t>(state | 0x80u);
+    }
+    return state;
+}
+
+uint8_t GameGearInput::readSystemPort(uint8_t port) const noexcept {
+    switch (port) {
+    case 0x00u:
+        return readSystemPort0();
+    case 0x01u:
+        return extData_;
+    case 0x02u:
+        return extDirectionNmi_;
+    case 0x03u:
+        return serialTxData_;
+    case 0x04u:
+        return serialRxData_;
+    case 0x05u:
+        return serialControl_;
+    default:
+        return 0xFFu;
+    }
+}
+
+void GameGearInput::writeSystemPort(uint8_t port, uint8_t value) noexcept {
+    switch (port) {
+    case 0x01u:
+        extData_ = value;
+        break;
+    case 0x02u:
+        extDirectionNmi_ = value;
+        break;
+    case 0x03u:
+        serialTxData_ = value;
+        break;
+    case 0x05u:
+        serialControl_ = value;
+        break;
+    case 0x06u:
+        audioStereoControl_ = value;
+        break;
+    default:
+        break;
+    }
+}
+
+uint8_t GameGearInput::audioStereoControl() const noexcept {
+    return audioStereoControl_;
 }

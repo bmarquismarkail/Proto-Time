@@ -159,6 +159,10 @@ add_executable(time-smoke-gamegear-z80-baseline tests/smoke_gamegear_z80_baselin
 target_link_libraries(time-smoke-gamegear-z80-baseline time-gamegear-core)
 add_test(NAME smoke_gamegear_z80_baseline COMMAND time-smoke-gamegear-z80-baseline)
 
+add_executable(time-smoke-gamegear-system-ports tests/smoke_gamegear_system_ports.cpp)
+target_link_libraries(time-smoke-gamegear-system-ports time-gamegear-core)
+add_test(NAME smoke_gamegear_system_ports COMMAND time-smoke-gamegear-system-ports)
+
 add_executable(time-smoke-gamegear-audio tests/smoke_gamegear_audio.cpp)
 target_link_libraries(time-smoke-gamegear-audio time-gamegear-core)
 add_test(NAME smoke_gamegear_audio COMMAND time-smoke-gamegear-audio)
