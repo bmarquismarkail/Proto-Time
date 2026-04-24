@@ -12,6 +12,7 @@ public:
     ~GameGearVDP();
 
     void reset();
+    void setSmsMode(bool enabled) noexcept;
     void step(uint32_t cpuCycles);
     [[nodiscard]] uint8_t readVram(uint16_t address) const;
     void writeVram(uint16_t address, uint8_t value);
@@ -94,4 +95,5 @@ private:
     };
     AccessMode accessMode_ = AccessMode::VramRead;
     bool commandLatchPending_ = false;
+    bool smsMode_ = false;
 };

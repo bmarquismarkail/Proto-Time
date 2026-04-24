@@ -60,6 +60,10 @@ void GameGearVDP::reset() {
     seedDefaultCram();
 }
 
+void GameGearVDP::setSmsMode(bool enabled) noexcept {
+    smsMode_ = enabled;
+}
+
 void GameGearVDP::step(uint32_t cpuCycles) {
     const bool displayOn = displayEnabled();
     pendingCycles_ += cpuCycles;
@@ -219,7 +223,13 @@ uint8_t GameGearVDP::readControlPort() {
 void GameGearVDP::writeDataPort(uint8_t value) {
     commandLatchPending_ = false;
     if (accessMode_ == AccessMode::CramWrite) {
-        const auto cramIndex = static_cast<std::size_t>(dataAddress_ % cram_.size());
+        const auto cramSize = smsMode_ ? 0x20u : cram_.size();
+        const auto cramIndex = static_cast<std::size_t>(dataAddress_ % cramSize);
+        if (smsMode_) {
+            cram_[cramIndex] = static_cast<uint8_t>(value & 0x3Fu);
+            dataAddress_ = static_cast<uint16_t>((dataAddress_ + 1u) % cramSize);
+            return;
+        }
         if ((cramIndex & 0x01u) == 0u) {
             cramLatch_ = value;
             cramLatchValid_ = true;
@@ -241,6 +251,7 @@ void GameGearVDP::writeDataPort(uint8_t value) {
 void GameGearVDP::writeControlPort(uint8_t value) {
     if (!commandLatchPending_) {
         commandLow_ = value;
+        dataAddress_ = static_cast<uint16_t>((dataAddress_ & 0x3F00u) | value);
         commandLatchPending_ = true;
         return;
     }
@@ -387,6 +398,37 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
 
     const auto backdrop = sampleCramColor(1u, static_cast<uint8_t>(registers_[7u] & 0x0Fu));
     std::fill(model.argbPixels.begin(), model.argbPixels.end(), backdrop);
+    if (!mode4Enabled() && (registers_[0u] & 0x02u) != 0u) {
+        const bool graphicsII = (registers_[0u] & 0x02u) != 0u;
+        const auto nameBase = static_cast<std::size_t>((registers_[2u] & 0x0Eu) << 10u);
+        const auto patternBase = static_cast<std::size_t>((registers_[4u] & 0x04u) << 11u);
+        const auto colorBase = static_cast<std::size_t>((registers_[3u] & 0x80u) << 6u);
+        const int viewportX = gameGearViewportXOffset(model.width);
+        const int viewportY = gameGearViewportYOffset(model.height);
+        for (int y = 0; y < model.height; ++y) {
+            const auto vdpY = static_cast<std::size_t>(y + viewportY);
+            const auto tileY = (vdpY / 8u) % 24u;
+            const auto pixelY = vdpY % 8u;
+            const auto bankOffset = graphicsII ? ((tileY / 8u) * 0x0800u) : 0u;
+            for (int x = 0; x < model.width; ++x) {
+                const auto vdpX = static_cast<std::size_t>(x + viewportX);
+                const auto tileX = (vdpX / 8u) % 32u;
+                const auto pixelX = vdpX % 8u;
+                const auto nameIndex = (nameBase + tileY * 32u + tileX) % vram_.size();
+                const auto tileIndex = static_cast<std::size_t>(vram_[nameIndex]);
+                const auto patternAddress = (patternBase + bankOffset + tileIndex * 8u + pixelY) % vram_.size();
+                const auto colorAddress = (colorBase + bankOffset + tileIndex * 8u + pixelY) % vram_.size();
+                const auto pattern = vram_[patternAddress];
+                const auto color = vram_[colorAddress];
+                const bool foreground = ((pattern >> (7u - pixelX)) & 0x01u) != 0u;
+                const auto colorCode = static_cast<uint8_t>(foreground ? (color >> 4u) : (color & 0x0Fu));
+                const auto pixelIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(model.width)
+                                      + static_cast<std::size_t>(x);
+                model.argbPixels[pixelIndex] = colorCode == 0u ? backdrop : sampleCramColor(1u, colorCode);
+            }
+        }
+        return model;
+    }
     const auto scrollX = readCompatRegister(8u);
     const auto scrollY = verticalScrollLatch_;
     std::vector<bool> backgroundPriority(model.argbPixels.size(), false);
@@ -573,6 +615,16 @@ uint8_t GameGearVDP::samplePatternColor(std::size_t patternBase,
 
 uint32_t GameGearVDP::sampleCramColor(uint8_t paletteSelect, uint8_t colorCode) const noexcept {
     const auto colorIndex = static_cast<std::size_t>((paletteSelect & 0x01u) * 16u + (colorCode & 0x0Fu));
+    if (smsMode_) {
+        const auto smsColor = cram_[colorIndex % 0x20u];
+        const auto red = static_cast<uint8_t>((smsColor & 0x03u) * 85u);
+        const auto green = static_cast<uint8_t>(((smsColor >> 2u) & 0x03u) * 85u);
+        const auto blue = static_cast<uint8_t>(((smsColor >> 4u) & 0x03u) * 85u);
+        return 0xFF000000u |
+               (static_cast<uint32_t>(red) << 16u) |
+               (static_cast<uint32_t>(green) << 8u) |
+               static_cast<uint32_t>(blue);
+    }
     const auto byteIndex = colorIndex * 2u;
     if (byteIndex + 1u >= cram_.size()) {
         return paletteColor(colorCode & 0x03u);

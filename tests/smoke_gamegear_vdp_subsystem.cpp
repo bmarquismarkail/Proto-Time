@@ -78,6 +78,13 @@ int main()
         docMemory.writeIoPort(0xBEu, 0xC3u);
         assert(docVdp.readVram(0x9234u) == 0xC3u);
 
+        docMemory.writeIoPort(0xBFu, 0x34u);
+        docMemory.writeIoPort(0xBFu, 0x52u); // VRAM write address 0x1234
+        docMemory.writeIoPort(0xBFu, 0xABu); // first control byte updates A0-A7 immediately
+        docMemory.writeIoPort(0xBEu, 0x6Du); // data write clears latch and uses 0x12AB
+        assert(docVdp.readVram(0x9234u) == 0xC3u);
+        assert(docVdp.readVram(0x92ABu) == 0x6Du);
+
         docMemory.writeIoPort(0xBFu, 0x01u);
         docMemory.writeIoPort(0xBFu, 0x8Au); // line counter reload value = 1
         docMemory.writeIoPort(0xBFu, 0x10u);
@@ -209,6 +216,53 @@ int main()
         }
         if (colorZeroModel.argbPixels[0] != 0xFFFFFFFFu) {
             return fail("Game Gear background color 0 did not render from background palette color 0");
+        }
+    }
+
+    {
+        GameGearVDP tmsVdp;
+        GameGearMemoryMap tmsMemory;
+        tmsMemory.setVdp(&tmsVdp);
+        tmsVdp.reset();
+        tmsVdp.setSmsMode(true);
+
+        tmsMemory.writeIoPort(0xBFu, 0x02u);
+        tmsMemory.writeIoPort(0xBFu, 0x80u); // Graphics II, not Mode 4
+        tmsMemory.writeIoPort(0xBFu, 0x40u);
+        tmsMemory.writeIoPort(0xBFu, 0x81u); // display on
+        tmsMemory.writeIoPort(0xBFu, 0x02u);
+        tmsMemory.writeIoPort(0xBFu, 0x82u); // name table 0x0800
+        tmsMemory.writeIoPort(0xBFu, 0x80u);
+        tmsMemory.writeIoPort(0xBFu, 0x83u); // color table 0x2000
+        tmsMemory.writeIoPort(0xBFu, 0x00u);
+        tmsMemory.writeIoPort(0xBFu, 0x84u); // pattern table 0x0000
+
+        tmsMemory.writeIoPort(0xBFu, 0x11u);
+        tmsMemory.writeIoPort(0xBFu, 0xC0u); // palette1 color1: white
+        tmsMemory.writeIoPort(0xBEu, 0x3Fu);
+        tmsMemory.writeIoPort(0xBFu, 0x12u);
+        tmsMemory.writeIoPort(0xBFu, 0xC0u); // palette1 color2: blue
+        tmsMemory.writeIoPort(0xBEu, 0x30u);
+
+        tmsMemory.writeIoPort(0xBFu, 0x08u);
+        tmsMemory.writeIoPort(0xBFu, 0x60u); // color table tile 1, row 0
+        tmsMemory.writeIoPort(0xBEu, 0x12u); // foreground color 1, background color 2
+        tmsMemory.writeIoPort(0xBFu, 0x08u);
+        tmsMemory.writeIoPort(0xBFu, 0x40u); // pattern tile 1, row 0
+        tmsMemory.writeIoPort(0xBEu, 0x80u); // leftmost pixel set
+        tmsMemory.writeIoPort(0xBFu, 0x66u);
+        tmsMemory.writeIoPort(0xBFu, 0x48u); // name table tile at VDP (48,24)
+        tmsMemory.writeIoPort(0xBEu, 0x01u);
+
+        const auto tmsModel = tmsVdp.buildFrameModel({160, 144});
+        if (tmsModel.argbPixels.empty()) {
+            return fail("Game Gear TMS Graphics II model unexpectedly empty");
+        }
+        if (tmsModel.argbPixels[0] != 0xFFFFFFFFu) {
+            return fail("Game Gear TMS Graphics II foreground pixel did not use CRAM color 17");
+        }
+        if (tmsModel.argbPixels[1] != 0xFF0000FFu) {
+            return fail("Game Gear TMS Graphics II background pixel did not use CRAM color 18");
         }
     }
 
