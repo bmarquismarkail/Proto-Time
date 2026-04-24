@@ -12,7 +12,7 @@ GameGearCartridge& fallbackCartridgeStorage() {
 }
 }
 
-void GameGearMemoryMap::setCartridge(GameGearCartridge* cartridgePtr) {
+void GameGearMemoryMap::setCartridge(GameGearMapper* cartridgePtr) {
     cartridge = cartridgePtr;
 }
 

@@ -75,6 +75,9 @@ int main(int argc, char** argv)
     config.audioPreviewSampleCount = 64;
     config.autoInitializeBackend = false;
     config.autoPresentOnVideoEvent = false;
+    // Create the window hidden on initialize in tests to avoid platform
+    // differences in default window visibility (headless CI vs local SDL).
+    config.createHiddenWindowOnInitialize = true;
 
     GameBoyMachine machine;
     std::vector<uint8_t> cartridgeRom(0x8000, 0x00);

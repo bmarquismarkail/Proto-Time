@@ -1,16 +1,18 @@
 #pragma once
-// Sega Game Gear cartridge interface stub
+// Sega Game Gear cartridge implementation (mapper)
 // References: SMS Power, Charles MacDonald
+
+#include "GameGearMapper.hpp"
 
 #include <cstdint>
 #include <cstddef>
 #include <array>
 #include <vector>
 
-class GameGearCartridge {
+class GameGearCartridge : public GameGearMapper {
 public:
     GameGearCartridge();
-    ~GameGearCartridge();
+    ~GameGearCartridge() override;
 
     bool load(const uint8_t* data, size_t size);
     void reset();

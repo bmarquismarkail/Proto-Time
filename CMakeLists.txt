@@ -53,6 +53,7 @@ add_library(time-gamegear-core STATIC
     cores/gamegear/GameGearPSG.cpp
     cores/gamegear/GameGearInput.cpp
     cores/gamegear/GameGearCartridge.cpp
+    cores/gamegear/GameGearMapperFactory.cpp
     cores/gamegear/GameGearMemoryMap.cpp
 )
 set_target_properties(time-gamegear-core PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -159,6 +160,10 @@ add_executable(time-smoke-gamegear-z80-baseline tests/smoke_gamegear_z80_baselin
 target_link_libraries(time-smoke-gamegear-z80-baseline time-gamegear-core)
 add_test(NAME smoke_gamegear_z80_baseline COMMAND time-smoke-gamegear-z80-baseline)
 
+add_executable(time-smoke-gamegear-z80-extended tests/smoke_gamegear_z80_extended.cpp)
+target_link_libraries(time-smoke-gamegear-z80-extended time-gamegear-core)
+add_test(NAME smoke_gamegear_z80_extended COMMAND time-smoke-gamegear-z80-extended)
+
 add_executable(time-smoke-gamegear-system-ports tests/smoke_gamegear_system_ports.cpp)
 target_link_libraries(time-smoke-gamegear-system-ports time-gamegear-core)
 add_test(NAME smoke_gamegear_system_ports COMMAND time-smoke-gamegear-system-ports)
@@ -171,9 +176,21 @@ add_executable(time-smoke-gamegear-mapper-subsystem tests/smoke_gamegear_mapper_
 target_link_libraries(time-smoke-gamegear-mapper-subsystem time-gamegear-core)
 add_test(NAME smoke_gamegear_mapper_subsystem COMMAND time-smoke-gamegear-mapper-subsystem)
 
+add_executable(time-smoke-gamegear-3155235-reset tests/smoke_gamegear_3155235_reset.cpp)
+target_link_libraries(time-smoke-gamegear-3155235-reset time-gamegear-core)
+add_test(NAME smoke_gamegear_3155235_reset COMMAND time-smoke-gamegear-3155235-reset)
+
+add_executable(time-smoke-gamegear-mapper-table tests/smoke_gamegear_mapper_table.cpp)
+target_link_libraries(time-smoke-gamegear-mapper-table time-gamegear-core)
+add_test(NAME smoke_gamegear_mapper_table COMMAND time-smoke-gamegear-mapper-table)
+
 add_executable(time-smoke-gamegear-vdp-subsystem tests/smoke_gamegear_vdp_subsystem.cpp)
 target_link_libraries(time-smoke-gamegear-vdp-subsystem time-gamegear-core)
 add_test(NAME smoke_gamegear_vdp_subsystem COMMAND time-smoke-gamegear-vdp-subsystem)
+
+add_executable(time-smoke-gamegear-vdp-fidelity tests/smoke_gamegear_vdp_fidelity.cpp)
+target_link_libraries(time-smoke-gamegear-vdp-fidelity time-gamegear-core)
+add_test(NAME smoke_gamegear_vdp_fidelity COMMAND time-smoke-gamegear-vdp-fidelity)
 
 add_executable(time-smoke-gamegear-psg-subsystem tests/smoke_gamegear_psg_subsystem.cpp)
 target_link_libraries(time-smoke-gamegear-psg-subsystem time-gamegear-core)

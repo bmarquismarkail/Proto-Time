@@ -13,7 +13,9 @@
 #include "GameGearVDP.hpp"
 #include "GameGearPSG.hpp"
 #include "GameGearInput.hpp"
-#include "GameGearCartridge.hpp"
+#include "GameGearMapperFactory.hpp"
+#include "GameGearMapper.hpp"
+#include <memory>
 #include "GameGearMemoryMap.hpp"
 #include "GameGearSaveManager.hpp"
 
@@ -175,7 +177,7 @@ struct GameGearMachine::Impl {
     GameGearVDP vdp;
     GameGearPSG psg;
     GameGearInput input;
-    GameGearCartridge cart;
+    std::unique_ptr<GameGearMapper> cart;
     GameGearMemoryMap mem;
     PluginManager pluginManager;
     GameGearSaveManager saveManager;
@@ -220,7 +222,7 @@ GameGearMachine::GameGearMachine() : impl(std::make_unique<Impl>()) {
         [this](uint8_t port) { return impl->mem.readIoPort(port); },
         [this](uint8_t port, uint8_t value) { impl->mem.writeIoPort(port, value); }
     );
-    impl->mem.setCartridge(&impl->cart);
+    // Leave memory map using its fallback cartridge until a ROM is loaded.
     impl->mem.setInput(&impl->input);
     impl->mem.setPsg(&impl->psg);
     impl->mem.setVdp(&impl->vdp);
@@ -255,10 +257,18 @@ void GameGearMachine::loadRom(const std::vector<uint8_t>& bytes) {
         throw std::runtime_error("ROM too large");
     }
     (void)flushCartridgeSave();
-    impl->cart.load(bytes.data(), bytes.size());
+    // Create an appropriate mapper for the ROM and bind it into the
+    // memory map. The factory returns a mapper with the ROM already
+    // loaded.
+    impl->cart = createMapperFromRom(bytes.data(), bytes.size(), impl->pendingRomSourcePath);
+    if (!impl->cart) {
+        throw std::runtime_error("Failed to create mapper for ROM");
+    }
+    impl->mem.setCartridge(impl->cart.get());
+
     if (impl->pendingRomSourcePath.has_value()) {
         impl->saveManager.bindRomPath(*impl->pendingRomSourcePath);
-        impl->saveManager.load(impl->cart);
+        impl->saveManager.load(*impl->cart);
     } else {
         impl->saveManager.clearBinding();
     }
@@ -420,7 +430,8 @@ std::string GameGearMachine::stopSummary() const {
 }
 
 bool GameGearMachine::flushCartridgeSave() {
-    return impl->saveManager.flush(impl->cart);
+    if (!impl->cart) return false;
+    return impl->saveManager.flush(*impl->cart);
 }
 
 bool GameGearMachine::cpuInterruptsEnabled() const {

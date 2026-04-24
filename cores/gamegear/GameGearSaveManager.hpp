@@ -1,6 +1,6 @@
 #pragma once
 
-#include "GameGearCartridge.hpp"
+#include "GameGearMapper.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -33,7 +33,7 @@ public:
         return savePath_;
     }
 
-    void load(GameGearCartridge& cartridge) const
+    void load(GameGearMapper& cartridge) const
     {
         if (!bound_ || !cartridge.supportsSaveData()) {
             cartridge.markSaveClean();
@@ -47,7 +47,7 @@ public:
         }
     }
 
-    [[nodiscard]] bool flush(GameGearCartridge& cartridge) const
+    [[nodiscard]] bool flush(GameGearMapper& cartridge) const
     {
         if (!bound_ || !cartridge.supportsSaveData() || !cartridge.hasDirtySaveData()) {
             return false;

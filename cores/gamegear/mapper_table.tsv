@@ -1,0 +1,25 @@
+# Mapper table for Game Gear (TSV)
+# Format: <type>\t<pattern>\t<mapperId>\t[priority]
+# Types: filename_contains, filename_exact, header_contains
+# Example entries (priority higher -> preferred):
+filename_contains	phantasy	5235	200
+filename_contains	phantasy star	5235	200
+filename_contains	golden axe	5235	150
+filename_contains	bubble bobble	5365	150
+filename_contains	wonder boy 3	5365	140
+# Exact filename example (uncomment to use)
+#filename_exact	Sonic The Hedgehog (J).sms	5208	250
+
+# Curated header-based mappings (prefer header scan for robustness)
+header_contains	SONIC THE HEDGEHOG	5208	300
+header_contains	SONIC THE HEDGEHOG 2	5208	300
+header_contains	GOLDEN AXE	5235	300
+header_contains	PHANTASY STAR	5235	300
+header_contains	R-TYPE	5235	260
+header_contains	BUBBLE BOBBLE	5365	300
+header_contains	WONDER BOY	5365	260
+
+# Filename fallbacks for ambiguous titles
+filename_contains	sonic	5208	250
+filename_contains	goldenaxe	5235	240
+filename_contains	phantasy	5235	240
