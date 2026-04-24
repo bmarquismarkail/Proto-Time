@@ -49,7 +49,7 @@ int main()
         BMMQ::GameGearMachine machine;
         machine.setRomSourcePath(romPath);
         machine.loadRom(rom);
-        machine.runtimeContext().write8(0xFFFFu, 0x01u);
+        machine.runtimeContext().write8(0xFFFCu, 0x08u);
         machine.runtimeContext().write8(0x8000u, 0x56u);
         machine.runtimeContext().write8(0xBFFFu, 0x78u);
         assert(machine.flushCartridgeSave());
@@ -65,7 +65,7 @@ int main()
         BMMQ::GameGearMachine machine;
         machine.setRomSourcePath(romPath);
         machine.loadRom(rom);
-        machine.runtimeContext().write8(0xFFFFu, 0x01u);
+        machine.runtimeContext().write8(0xFFFCu, 0x08u);
         assert(machine.runtimeContext().read8(0x8000u) == 0x56u);
         assert(machine.runtimeContext().read8(0xBFFFu) == 0x78u);
         assert(!machine.flushCartridgeSave());

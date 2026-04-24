@@ -25,21 +25,21 @@ int main()
     assert(cartridge.read(0x4000u) == 0x11u);
     assert(cartridge.read(0x8000u) == 0x22u);
 
-    cartridge.write(0xFFFDu, 0x03u);
+    cartridge.write(0xFFFEu, 0x03u);
     assert(cartridge.read(0x4000u) == 0x33u);
 
-    cartridge.write(0xFFFFu, 0x01u);
+    cartridge.write(0xFFFCu, 0x08u);
     cartridge.write(0x8000u, 0xA5u);
     cartridge.write(0xBFFFu, 0x5Au);
     assert(cartridge.read(0x8000u) == 0xA5u);
     assert(cartridge.read(0xBFFFu) == 0x5Au);
 
-    cartridge.write(0xFFFFu, 0x03u);
+    cartridge.write(0xFFFCu, 0x0Cu);
     assert(cartridge.read(0x8000u) == 0x00u);
     cartridge.write(0x8000u, 0x3Cu);
     assert(cartridge.read(0x8000u) == 0x3Cu);
 
-    cartridge.write(0xFFFFu, 0x01u);
+    cartridge.write(0xFFFCu, 0x08u);
     assert(cartridge.read(0x8000u) == 0xA5u);
 
     assert(cartridge.load(nullptr, 0u));

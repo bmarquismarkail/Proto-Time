@@ -54,6 +54,10 @@ uint8_t GameGearCartridge::read(uint16_t addr) const {
         return offset < sram.size() ? sram[offset] : 0xFFu;
     }
 
+    if (addr < 0x0400u) {
+        return rom[addr % rom.size()];
+    }
+
     const std::size_t pageIndex = static_cast<std::size_t>(addr / kPageSize);
     const std::size_t bankNum = pageBank(pageIndex);
     const std::size_t romOffset = bankNum * kPageSize + static_cast<std::size_t>(addr % kPageSize);
@@ -63,12 +67,12 @@ uint8_t GameGearCartridge::read(uint16_t addr) const {
 void GameGearCartridge::write(uint16_t addr, uint8_t value) {
     switch (addr) {
         case 0xFFFCu:
+            controlRegister_ = value;
+            return;
         case 0xFFFDu:
         case 0xFFFEu:
-            bankRegisters_[static_cast<std::size_t>(addr - 0xFFFCu)] = value;
-            return;
         case 0xFFFFu:
-            controlRegister_ = value;
+            bankRegisters_[static_cast<std::size_t>(addr - 0xFFFDu)] = value;
             return;
         default:
             break;
@@ -121,14 +125,15 @@ std::size_t GameGearCartridge::pageBank(std::size_t pageIndex) const noexcept {
     if (pageIndex >= bankRegisters_.size()) {
         return 0u;
     }
-    return static_cast<std::size_t>(bankRegisters_[pageIndex]) % banks;
+    const auto bankShift = static_cast<std::size_t>(controlRegister_ & 0x03u) * 8u;
+    return (static_cast<std::size_t>(bankRegisters_[pageIndex]) + bankShift) % banks;
 }
 
 bool GameGearCartridge::sramEnabled() const noexcept {
-    return (controlRegister_ & 0x01u) != 0u;
+    return (controlRegister_ & 0x08u) != 0u;
 }
 
 std::size_t GameGearCartridge::sramOffset(uint16_t addr) const noexcept {
-    const std::size_t bankOffset = (controlRegister_ & 0x02u) != 0u ? kSramWindowSize : 0u;
+    const std::size_t bankOffset = (controlRegister_ & 0x04u) != 0u ? kSramWindowSize : 0u;
     return bankOffset + static_cast<std::size_t>(addr - 0x8000u);
 }

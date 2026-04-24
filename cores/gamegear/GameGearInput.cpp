@@ -5,10 +5,10 @@ GameGearInput::~GameGearInput() {}
 
 void GameGearInput::reset() {
     logicalButtons_ = 0u;
-    extData_ = 0u;
+    extData_ = 0x7Fu;
     extDirectionNmi_ = 0xFFu;
     serialTxData_ = 0u;
-    serialRxData_ = 0u;
+    serialRxData_ = 0xFFu;
     serialControl_ = 0u;
     audioStereoControl_ = 0xFFu;
 }

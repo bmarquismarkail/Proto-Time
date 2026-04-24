@@ -20,13 +20,13 @@ int main()
     memory.reset();
 
     // After Sega315-5235 reset the documented power-up values are:
-    // FFFC=0x00, FFFD=0x00, FFFE=0x01 -> resulting mapping:
+    // FFFC=0x00, FFFD=0x00, FFFE=0x01, FFFF=0x02 -> resulting mapping:
     // page0 -> bank0 (0xAA)
-    // page1 -> bank0 (0xAA)
-    // page2 -> bank1 (0xBB)
+    // page1 -> bank1 (0xBB)
+    // page2 -> bank0 (0xAA) because this 2-bank fixture wraps bank 2.
     assert(memory.read(0x0000u) == 0xAAu);
-    assert(memory.read(0x4000u) == 0xAAu);
-    assert(memory.read(0x8000u) == 0xBBu);
+    assert(memory.read(0x4000u) == 0xBBu);
+    assert(memory.read(0x8000u) == 0xAAu);
 
     return 0;
 }

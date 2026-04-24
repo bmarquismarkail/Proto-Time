@@ -26,7 +26,7 @@ int main() {
 
     // Bank 0 continuation at 0x0010: write bank register 1 <- 2, then JP 0x4000
     const std::size_t p0_addr = 0x0010u;
-    rom[p0_addr + 0x00] = 0x21u; rom[p0_addr + 0x01] = 0xFDu; rom[p0_addr + 0x02] = 0xFFu; // LD HL,0xFFFD
+    rom[p0_addr + 0x00] = 0x21u; rom[p0_addr + 0x01] = 0xFEu; rom[p0_addr + 0x02] = 0xFFu; // LD HL,0xFFFE
     rom[p0_addr + 0x03] = 0x3Eu; rom[p0_addr + 0x04] = 0x02u;                               // LD A,0x02
     rom[p0_addr + 0x05] = 0x77u;                                                         // LD (HL),A
     rom[p0_addr + 0x06] = 0xC3u; rom[p0_addr + 0x07] = 0x00u; rom[p0_addr + 0x08] = 0x40u; // JP 0x4000

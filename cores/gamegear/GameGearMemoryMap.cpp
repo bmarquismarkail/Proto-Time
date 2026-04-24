@@ -149,6 +149,9 @@ void GameGearMemoryMap::write(uint16_t addr, uint8_t value) {
     }
     if (cartridge != nullptr && cartridge->handlesControlWrite(addr)) {
         cartridge->write(addr, value);
+        if (addr >= 0xE000u) {
+            ram[addr - 0xE000u] = value;
+        }
         return;
     }
     if (cartridge != nullptr && cartridge->handlesMappedWrite(addr)) {

@@ -26,28 +26,30 @@ int main() {
     assert(memory.read(0x4000u) == 0x11u);
     assert(memory.read(0x8000u) == 0x22u);
 
-    // Switch bank 0 to bank 2 via write to 0xFFFC
-    memory.write(0xFFFCu, 0x02u);
-    assert(memory.read(0x0000u) == 0x22u);
+    // Switch bank 0 to bank 2 via write to 0xFFFD. The first 1KiB
+    // remains fixed to bank 0 for interrupt vectors.
+    memory.write(0xFFFDu, 0x02u);
+    assert(memory.read(0x0000u) == 0x00u);
+    assert(memory.read(0x0400u) == 0x22u);
 
-    // Switch bank 1 to bank 0 via write to 0xFFFD
-    memory.write(0xFFFDu, 0x00u);
+    // Switch bank 1 to bank 0 via write to 0xFFFE
+    memory.write(0xFFFEu, 0x00u);
     assert(memory.read(0x4000u) == 0x00u);
 
     // Ensure bank values wrap by number of banks (e.g., 3 -> index 0)
-    memory.write(0xFFFCu, 0x03u); // 3 % 3 == 0
-    assert(memory.read(0x0000u) == 0x00u);
+    memory.write(0xFFFDu, 0x03u); // 3 % 3 == 0
+    assert(memory.read(0x0400u) == 0x00u);
 
-    memory.write(0xFFFFu, 0x01u); // enable SRAM window at 0x8000-0xBFFF
+    memory.write(0xFFFCu, 0x08u); // enable SRAM window at 0x8000-0xBFFF
     memory.write(0x8000u, 0xA5u);
     assert(memory.read(0x8000u) == 0xA5u);
 
-    memory.write(0xFFFFu, 0x03u); // switch to SRAM bank 1
+    memory.write(0xFFFCu, 0x0Cu); // switch to SRAM bank 1
     assert(memory.read(0x8000u) == 0x00u);
     memory.write(0x8000u, 0x5Au);
     assert(memory.read(0x8000u) == 0x5Au);
 
-    memory.write(0xFFFFu, 0x01u);
+    memory.write(0xFFFCu, 0x08u);
     assert(memory.read(0x8000u) == 0xA5u);
 
     return 0;
