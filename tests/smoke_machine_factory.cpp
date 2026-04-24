@@ -66,7 +66,11 @@ int main()
     };
 
     emitLdHlImm(0xFF40u);
-    emitLdMemHlImm8(0x91u);
+    emitLdMemHlImm8(0x04u); // VDP mode 4
+    emitLdHlImm(0xFF41u);
+    emitLdMemHlImm8(0x40u); // display visible
+    emitLdHlImm(0xFF42u);
+    emitLdMemHlImm8(0x06u); // name table at 0x1800 for this proof ROM
     emitLdHlImm(0xFF47u);
     emitLdMemHlImm8(0xE4u);
     emitLdHlImm(0x8000u);

@@ -217,7 +217,7 @@ public:
         }
 
         if (event.type == MachineEventType::VideoScanlineReady) {
-            captureScanline(model);
+            captureScanline(event, model);
             syncEngineDiagnostics();
             return false;
         }
@@ -365,17 +365,14 @@ private:
         scanlineCaptureCount_ = 0;
     }
 
-    void captureScanline(const VideoDebugFrameModel& model)
+    void captureScanline(const MachineEvent& event, const VideoDebugFrameModel& model)
     {
         if (!model.displayEnabled || model.inVBlank || !model.scanlineIndex.has_value()) {
             resetScanlineCapture();
-            lastScanlineSourceFrame_.reset();
-            lastScanlineModelHash_ = 0;
-            lastScanlineGeneration_ = 0;
             return;
         }
 
-        const int screenY = static_cast<int>(*model.scanlineIndex);
+        const int screenY = static_cast<int>(event.value);
         if (screenY < 0 || screenY >= engine_.config().frameHeight) {
             return;
         }
@@ -385,20 +382,7 @@ private:
             return;
         }
 
-        // Compute a simple hash of the model and generation to detect changes.
-        // For a more robust solution, a proper hash function should be used.
-        std::size_t modelHash = reinterpret_cast<std::size_t>(&model); // fallback: address-based
-        std::uint64_t generation = engine_.currentGeneration();
-
-        if (!lastScanlineSourceFrame_.has_value() ||
-            lastScanlineModelHash_ != modelHash ||
-            lastScanlineGeneration_ != generation) {
-            lastScanlineSourceFrame_ = engine_.buildDebugFrame(model, generation);
-            lastScanlineModelHash_ = modelHash;
-            lastScanlineGeneration_ = generation;
-        }
-
-        const auto& sourceFrame = *lastScanlineSourceFrame_;
+        const auto sourceFrame = engine_.buildDebugFrame(model, engine_.currentGeneration());
         if (sourceFrame.width != scanlineFrame_->width || sourceFrame.height != scanlineFrame_->height) {
             return;
         }
@@ -459,10 +443,6 @@ private:
     }
 
     VideoEngine engine_{};
-    // Cache for scanline frame/model/generation
-    mutable std::optional<VideoFramePacket> lastScanlineSourceFrame_;
-    mutable std::size_t lastScanlineModelHash_ = 0;
-    mutable std::uint64_t lastScanlineGeneration_ = 0;
     VisualOverrideService* visualOverrideService_ = nullptr;
     const IVisualDebugAdapter* visualDebugAdapter_ = nullptr;
     VideoPresenterConfig presenterConfig_{};

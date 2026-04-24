@@ -73,13 +73,13 @@ std::vector<uint8_t> makeFrontendProofRom()
     emitRel8(0x10u, fillTileLoop);
 
     emitSetVramWriteAddress(0x3F00u);
-    emit8(0x3Eu); emit8(24u); emitOutA(0xBEu);
+    emit8(0x3Eu); emit8(23u); emitOutA(0xBEu);
     emit8(0x3Eu); emit8(0xD0u); emitOutA(0xBEu);
     emitSetVramWriteAddress(0x3F80u);
     emit8(0x3Eu); emit8(24u); emitOutA(0xBEu);
     emit8(0x3Eu); emit8(0x01u); emitOutA(0xBEu);
 
-    emitLoadHlAndByte(0xFE00u, 24u);
+    emitLoadHlAndByte(0xFE00u, 23u);
     emitLoadHlAndByte(0xFE01u, 24u);
     emitLoadHlAndByte(0xFE02u, 0x01u);
     emitLoadHlAndByte(0xFE03u, 0x00u);
@@ -121,13 +121,21 @@ int main(int argc, char** argv)
     machine.pluginManager().add(std::move(frontendPlugin));
     machine.pluginManager().initialize(machine.mutableView());
 
-    for (int i = 0; i < 20000; ++i) {
+    for (int i = 0; i < 100000; ++i) {
         machine.step();
         if ((i % 16) == 0) {
             machine.serviceInput();
             (void)frontend->serviceFrontend();
         }
     }
+
+    assert(machine.runtimeContext().read8(0xFE02u) == 0x01u);
+    const auto directModel = machine.videoDebugFrameModel(BMMQ::VideoDebugRenderRequest{160, 144});
+    assert(directModel.has_value());
+    std::unordered_set<std::uint32_t> directColors(
+        directModel->argbPixels.begin(),
+        directModel->argbPixels.end());
+    assert(directColors.size() > 1u);
 
     assert(frontend->lastVideoDebugModel().has_value());
     assert(frontend->lastVideoDebugModel()->displayEnabled);

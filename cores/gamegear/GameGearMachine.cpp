@@ -321,15 +321,12 @@ void GameGearMachine::step() {
             PluginCategory::Video,
             impl->stepCounter,
             0, // No memory-mapped address for scanline
-            impl->vdp.currentScanline(),
+            impl->vdp.lastReadyScanline(),
             &runtimeContext().getLastFeedback(),
             "scanline ready"
         });
     }
     if (impl->vdp.takeVBlankEntered()) {
-        // Always request an IRQ for VBlank; plugin event emission is
-        // conditional on plugin manager presence.
-        impl->interruptRequested = true;
         if (impl->pluginManager.size() != 0u) {
             impl->pluginManager.emit(view(), MachineEvent{
                 MachineEventType::VBlank,
@@ -341,6 +338,9 @@ void GameGearMachine::step() {
                 "entered VBlank"
             });
         }
+    }
+    if (impl->vdp.takeIrqAsserted()) {
+        impl->interruptRequested = true;
     }
     const auto audioFrameCounter = impl->psg.frameCounter();
     if (audioFrameCounter != impl->lastAudioFrameCounter) {

@@ -24,8 +24,8 @@ int main() {
     // Main at 0x0000: LD HL,0xC200 ; LD A,0x11 ; EI ; loop
     size_t pc = 0;
     rom[pc++] = 0x21u; rom[pc++] = 0x00u; rom[pc++] = 0xC2u; // LD HL,0xC200
-    // Enable VDP display: LD A,0x40; OUT (0xBF),A; LD A,0x81; OUT (0xBF),A
-    rom[pc++] = 0x3Eu; rom[pc++] = 0x40u; // LD A,0x40
+    // Enable VDP display and frame IRQ: LD A,0x60; OUT (0xBF),A; LD A,0x81; OUT (0xBF),A
+    rom[pc++] = 0x3Eu; rom[pc++] = 0x60u; // LD A,0x60
     rom[pc++] = 0xD3u; rom[pc++] = 0xBFu; // OUT (0xBF),A
     rom[pc++] = 0x3Eu; rom[pc++] = 0x81u; // LD A,0x81
     rom[pc++] = 0xD3u; rom[pc++] = 0xBFu; // OUT (0xBF),A

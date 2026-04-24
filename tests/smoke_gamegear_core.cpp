@@ -59,7 +59,7 @@ std::vector<uint8_t> makeFrontendProofRom()
         emit8(static_cast<uint8_t>(static_cast<int8_t>(delta)));
     };
 
-    emitRegWrite(1u, 0x40u); // display enable
+    emitRegWrite(1u, 0x60u); // display enable + frame IRQ enable
     emitRegWrite(5u, 0xFFu); // SAT base 0x3F00
     emitRegWrite(6u, 0xFFu); // sprite generator base 0x2000
     emitRegWrite(7u, 0x00u); // backdrop color code 0
@@ -79,13 +79,13 @@ std::vector<uint8_t> makeFrontendProofRom()
     emitRel8(0x10u, fillTileLoop); // DJNZ fillTileLoop
 
     emitSetVramWriteAddress(0x3F00u); // SAT y table
-    emit8(0x3Eu); emit8(24u); emitOutA(0xBEu);
+    emit8(0x3Eu); emit8(23u); emitOutA(0xBEu);
     emit8(0x3Eu); emit8(0xD0u); emitOutA(0xBEu);
     emitSetVramWriteAddress(0x3F80u); // SAT x/tile table
     emit8(0x3Eu); emit8(24u); emitOutA(0xBEu);
     emit8(0x3Eu); emit8(0x01u); emitOutA(0xBEu);
 
-    emitLoadHlAndByte(0xFE00u, 24u); // compat SAT shim y
+    emitLoadHlAndByte(0xFE00u, 23u); // compat SAT shim y
     emitLoadHlAndByte(0xFE01u, 24u); // compat SAT shim x
     emitLoadHlAndByte(0xFE02u, 0x01u); // compat SAT shim tile
     emitLoadHlAndByte(0xC000u, 0x00u); // observed input state byte
@@ -203,7 +203,7 @@ int main() {
     ioMemory.writeIoPort(0xBFu, 0x86u); // reg #6 = 0xFF -> sprite gen base 0x2000
     ioMemory.writeIoPort(0xBFu, 0x40u);
     ioMemory.writeIoPort(0xBFu, 0x81u); // reg #1 = display on
-    vdp.step(228u * 144u);
+    vdp.step(228u * 193u);
     const auto vblankStatus = ioMemory.readIoPort(0xBFu);
     assert((vblankStatus & 0x80u) != 0u);
     assert((ioMemory.readIoPort(0xBFu) & 0x80u) == 0u);
@@ -239,7 +239,7 @@ int main() {
     ioMemory.writeIoPort(0xBEu, 0xD0u);
     ioMemory.writeIoPort(0xBFu, 0x80u);
     ioMemory.writeIoPort(0xBFu, 0x7Fu); // VRAM addr 0x3F80 SAT x/tile
-    ioMemory.writeIoPort(0xBEu, 24u);
+    ioMemory.writeIoPort(0xBEu, 23u);
     ioMemory.writeIoPort(0xBEu, 0x01u);
     ioMemory.writeIoPort(0xBFu, 0x00u);
     ioMemory.writeIoPort(0xBFu, 0x7Fu);
@@ -256,20 +256,20 @@ int main() {
     ioMemory.writeIoPort(0xBFu, 0x80u);
     ioMemory.writeIoPort(0xBFu, 0x7Fu);
     for (int i = 0; i < 9; ++i) {
-        ioMemory.writeIoPort(0xBEu, 24u);
+        ioMemory.writeIoPort(0xBEu, 23u);
         ioMemory.writeIoPort(0xBEu, 0x01u);
     }
-    vdp.step(228u);
+    vdp.step(228u * 2u);
     const auto spriteStatus = ioMemory.readIoPort(0xBFu);
     assert((spriteStatus & 0x40u) != 0u);
     assert((spriteStatus & 0x20u) != 0u);
     ioMemory.writeIoPort(0xBFu, 0x00u);
     ioMemory.writeIoPort(0xBFu, 0x7Fu); // restore SAT y-table
-    ioMemory.writeIoPort(0xBEu, 24u);
+    ioMemory.writeIoPort(0xBEu, 23u);
     ioMemory.writeIoPort(0xBEu, 0xD0u);
     ioMemory.writeIoPort(0xBFu, 0x80u);
     ioMemory.writeIoPort(0xBFu, 0x7Fu); // restore SAT x/tile table
-    ioMemory.writeIoPort(0xBEu, 24u);
+    ioMemory.writeIoPort(0xBEu, 23u);
     ioMemory.writeIoPort(0xBEu, 0x01u);
     auto vdpModel = vdp.buildFrameModel({160, 144});
     const auto redSpritePixel = vdpModel.argbPixels[24u * 160u + 24u];
@@ -294,7 +294,7 @@ int main() {
     assert(relocatedSatBlank.argbPixels[24u * 160u + 24u] == relocatedSatBlank.argbPixels[0]);
     ioMemory.writeIoPort(0xBFu, 0x00u);
     ioMemory.writeIoPort(0xBFu, 0x7Eu); // VRAM addr 0x3E00 SAT y-table
-    ioMemory.writeIoPort(0xBEu, 24u);
+    ioMemory.writeIoPort(0xBEu, 23u);
     ioMemory.writeIoPort(0xBEu, 0xD0u);
     ioMemory.writeIoPort(0xBFu, 0x80u);
     ioMemory.writeIoPort(0xBFu, 0x7Eu); // VRAM addr 0x3E80 SAT x/tile
@@ -307,7 +307,7 @@ int main() {
     const std::vector<uint8_t> rom = makeFrontendProofRom();
     gg.loadRom(rom);
     assert(stepUntil(gg, 256, [&] {
-        return gg.runtimeContext().read8(0xFF41u) == 0x40u;
+        return gg.runtimeContext().read8(0xFF41u) == 0x60u;
     }));
     assert(gg.runtimeContext().readRegister16("PC") != 0u);
     gg.runtimeContext().writeRegister16("SP", 0xD123u);
@@ -316,7 +316,7 @@ int main() {
     assert(stepUntil(gg, 2048, [&] {
         return gg.runtimeContext().read8(0xFE02u) == 0x01u;
     }));
-    assert(gg.runtimeContext().read8(0xFE00u) == 24u);
+    assert(gg.runtimeContext().read8(0xFE00u) == 23u);
     assert(gg.runtimeContext().read8(0xFE01u) == 24u);
     assert(gg.runtimeContext().read8(0xFE02u) == 0x01u);
     assert(gg.runtimeContext().read8(0xFF45u) == 0xFFu);

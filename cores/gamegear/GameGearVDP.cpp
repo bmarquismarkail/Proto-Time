@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <vector>
 
 GameGearVDP::GameGearVDP() {}
 GameGearVDP::~GameGearVDP() {}
@@ -13,9 +14,13 @@ void GameGearVDP::reset() {
     cram_.fill(0u);
     pendingCycles_ = 0u;
     scanline_ = 0u;
+    lastReadyScanline_ = 0u;
+    hCounter_ = 0u;
     scanlineReadyPending_ = false;
     vblankPending_ = false;
     frameInterruptPending_ = false;
+    lineInterruptPending_ = false;
+    irqAsserted_ = false;
     spriteOverflowPending_ = false;
     spriteCollisionPending_ = false;
     lastStatusScanline_ = 0xFFu;
@@ -29,6 +34,8 @@ void GameGearVDP::reset() {
     readBuffer_ = 0u;
     cramLatch_ = 0u;
     cramLatchValid_ = false;
+    lineCounter_ = 0u;
+    verticalScrollLatch_ = 0u;
     accessMode_ = AccessMode::VramRead;
     commandLatchPending_ = false;
     seedDefaultCram();
@@ -40,9 +47,11 @@ void GameGearVDP::step(uint32_t cpuCycles) {
     while (pendingCycles_ >= kCyclesPerScanline) {
         pendingCycles_ -= kCyclesPerScanline;
         const uint16_t currentLine = scanline_;
-        const uint8_t currentV = static_cast<uint8_t>(currentLine & 0x00FFu);
-        if (displayOn && currentLine < kDisplayScanlines) {
+        const auto activeLines = activeDisplayLines();
+        const uint8_t currentV = vCounterValue();
+        if (displayOn && currentLine < activeLines) {
             evaluateScanlineStatus(currentV);
+            lastReadyScanline_ = currentV;
             scanlineReadyPending_ = true;
         }
 
@@ -50,15 +59,34 @@ void GameGearVDP::step(uint32_t cpuCycles) {
         if (scanline_ >= kTotalScanlines) {
             scanline_ = 0u;
         }
-        if (scanline_ == kVBlankStartScanline) {
+
+        if (scanline_ <= activeLines) {
+            if (lineCounter_ == 0u) {
+                lineCounter_ = registers_[0x0Au];
+                lineInterruptPending_ = true;
+                if ((registers_[0u] & 0x10u) != 0u) {
+                    irqAsserted_ = true;
+                }
+            } else {
+                lineCounter_ = static_cast<uint8_t>(lineCounter_ - 1u);
+            }
+        } else {
+            lineCounter_ = registers_[0x0Au];
+            verticalScrollLatch_ = registers_[9u];
+        }
+
+        if (scanline_ == activeLines + 1u) {
             vblankPending_ = true;
             frameInterruptPending_ = true;
+            if ((registers_[1u] & 0x20u) != 0u) {
+                irqAsserted_ = true;
+            }
         }
     }
     // Update a defensible H counter value (0-255) reflecting position
     // within the current scanline. This is an approximate value suitable
     // for software that polls an H counter.
-    registers_[0x0Au] = static_cast<uint8_t>((pendingCycles_ * 256u) / kCyclesPerScanline);
+    hCounter_ = static_cast<uint8_t>((pendingCycles_ * 256u) / kCyclesPerScanline);
 }
 
 uint8_t GameGearVDP::readVram(uint16_t address) const {
@@ -146,7 +174,7 @@ uint8_t GameGearVDP::readControlPort() {
     const uint8_t line = currentScanline() == 0u
             ? 0u
             : static_cast<uint8_t>(currentScanline() - 1u);
-    if (line < kDisplayScanlines && (!statusScanlineConsumed_ || line != lastStatusScanline_)) {
+    if (line < activeDisplayLines() && (!statusScanlineConsumed_ || line != lastStatusScanline_)) {
             evaluateScanlineStatus(line);
     }
     uint8_t status = 0u;
@@ -160,6 +188,8 @@ uint8_t GameGearVDP::readControlPort() {
         status = static_cast<uint8_t>(status | 0x20u);
     }
     frameInterruptPending_ = false;
+    lineInterruptPending_ = false;
+    irqAsserted_ = false;
     spriteOverflowPending_ = false;
     spriteCollisionPending_ = false;
     lastStatusScanline_ = line;
@@ -198,13 +228,13 @@ void GameGearVDP::writeControlPort(uint8_t value) {
 
     commandLatchPending_ = false;
     const auto command = static_cast<uint8_t>((value >> 6) & 0x03u);
+    dataAddress_ = static_cast<uint16_t>((static_cast<uint16_t>(value & 0x3Fu) << 8) | commandLow_);
+    accessMode_ = static_cast<AccessMode>(command);
     if (command == 0x02u) {
         writeCompatRegister(static_cast<std::size_t>(value & 0x0Fu), commandLow_);
         return;
     }
 
-    dataAddress_ = static_cast<uint16_t>((static_cast<uint16_t>(value & 0x3Fu) << 8) | commandLow_);
-    accessMode_ = static_cast<AccessMode>(command);
     if (accessMode_ == AccessMode::CramWrite) {
         if (!cram_.empty()) {
             dataAddress_ = static_cast<uint16_t>(dataAddress_ % cram_.size());
@@ -232,19 +262,26 @@ bool GameGearVDP::takeVBlankEntered() {
     return ready;
 }
 
+bool GameGearVDP::takeIrqAsserted() {
+    const bool ready = irqAsserted_;
+    irqAsserted_ = false;
+    return ready;
+}
+
 uint8_t GameGearVDP::currentScanline() const noexcept {
     return static_cast<uint8_t>(scanline_ & 0x00FFu);
 }
 
+uint8_t GameGearVDP::lastReadyScanline() const noexcept {
+    return lastReadyScanline_;
+}
+
 uint8_t GameGearVDP::readVCounter() const noexcept {
-    // V counter is an 8-bit value. This returns a pragmatic value that
-    // progresses across the frame so polling loops (e.g. waiting for 0xB0)
-    // can complete.
-    return static_cast<uint8_t>(scanline_ & 0x00FFu);
+    return vCounterValue();
 }
 
 uint8_t GameGearVDP::readHCounter() const noexcept {
-    return registers_[0x0Au];
+    return hCounter_;
 }
 
 void GameGearVDP::evaluateScanlineStatus(uint8_t scanline) noexcept {
@@ -252,7 +289,8 @@ void GameGearVDP::evaluateScanlineStatus(uint8_t scanline) noexcept {
     statusScanlineConsumed_ = false;
     const auto satBase = spriteAttributeTableBase();
     const auto spriteBase = spriteGeneratorBase();
-    const int spriteHeight = spriteTallMode() ? 16 : 8;
+    const int zoom = spriteZoomMode() ? 2 : 1;
+    const int spriteHeight = (spriteTallMode() ? 16 : 8) * zoom;
     std::array<bool, 256u> occupied{};
     int spritesOnLine = 0;
 
@@ -262,14 +300,14 @@ void GameGearVDP::evaluateScanlineStatus(uint8_t scanline) noexcept {
             break;
         }
         const uint8_t rawY = vram_[yIndex];
-        if (rawY == 0xD0u) {
+        if (activeDisplayLines() == 192u && rawY == 0xD0u) {
             break;
         }
         if (rawY == 0xE0u) {
             continue;
         }
 
-        const int spriteY = static_cast<int>(rawY);
+        const int spriteY = static_cast<int>(rawY) + 1;
         if (static_cast<int>(scanline) < spriteY || static_cast<int>(scanline) >= spriteY + spriteHeight) {
             continue;
         }
@@ -280,22 +318,22 @@ void GameGearVDP::evaluateScanlineStatus(uint8_t scanline) noexcept {
         }
 
         const auto xyBase = (satBase + 0x80u + sprite * 2u) % vram_.size();
-        const int spriteX = static_cast<int>(vram_[xyBase]);
+        const int spriteX = static_cast<int>(vram_[xyBase]) - ((registers_[0u] & 0x08u) != 0u ? 8 : 0);
         uint16_t tileIndex = vram_[(xyBase + 1u) % vram_.size()];
         if (spriteTallMode()) {
             tileIndex = static_cast<uint16_t>(tileIndex & 0x00FEu);
         }
 
-        const int row = static_cast<int>(scanline) - spriteY;
+        const int row = (static_cast<int>(scanline) - spriteY) / zoom;
         const auto rowTileOffset = spriteTallMode() && row >= 8 ? 1u : 0u;
-        for (int px = 0; px < 8; ++px) {
+        for (int px = 0; px < 8 * zoom; ++px) {
             const int screenX = spriteX + px;
             if (screenX < 0 || screenX >= static_cast<int>(occupied.size())) {
                 continue;
             }
             const auto colorCode = samplePatternColor(spriteBase,
                                                       static_cast<uint16_t>(tileIndex + rowTileOffset),
-                                                      static_cast<std::size_t>(px),
+                                                      static_cast<std::size_t>(px / zoom),
                                                       static_cast<std::size_t>(row % 8));
             if (colorCode == 0u) {
                 continue;
@@ -316,7 +354,7 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
     model.width = std::max(request.frameWidth, 1);
     model.height = std::max(request.frameHeight, 1);
     model.displayEnabled = displayEnabled();
-    model.inVBlank = scanline_ >= kVBlankStartScanline;
+    model.inVBlank = scanline_ >= activeDisplayLines() + 1u;
     model.scanlineIndex = static_cast<uint8_t>(scanline_ & 0x00FFu);
     model.argbPixels.assign(
         static_cast<std::size_t>(model.width) * static_cast<std::size_t>(model.height),
@@ -331,15 +369,27 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
     const auto backdrop = sampleCramColor(1u, static_cast<uint8_t>(registers_[7u] & 0x0Fu));
     std::fill(model.argbPixels.begin(), model.argbPixels.end(), backdrop);
     const auto scrollX = readCompatRegister(8u);
-    const auto scrollY = readCompatRegister(9u);
+    const auto scrollY = verticalScrollLatch_;
     std::vector<bool> backgroundPriority(model.argbPixels.size(), false);
     for (int y = 0; y < model.height; ++y) {
-        const auto scrolledY = static_cast<std::size_t>((y + scrollY) & 0xFF);
-        const auto tileY = scrolledY / 8u;
-        const auto pixelY = scrolledY % 8u;
         for (int x = 0; x < model.width; ++x) {
-            const auto scrolledX = static_cast<std::size_t>((x + scrollX) & 0xFF);
-            const auto tileX = scrolledX / 8u;
+            const bool fixedTopRows = (registers_[0u] & 0x40u) != 0u && y < 16;
+            const bool fixedRightColumns = (registers_[0u] & 0x80u) != 0u && x >= 192;
+            const auto effectiveScrollX = static_cast<uint8_t>(fixedTopRows ? 0u : scrollX);
+            const auto effectiveScrollY = static_cast<uint8_t>(fixedRightColumns ? 0u : scrollY);
+            if ((registers_[0u] & 0x20u) != 0u && x < 8) {
+                continue;
+            }
+            const auto fineScrollX = static_cast<std::size_t>(effectiveScrollX & 0x07u);
+            if (fineScrollX != 0u && static_cast<std::size_t>(x) < fineScrollX) {
+                continue;
+            }
+            const auto scrolledY = static_cast<std::size_t>((y + effectiveScrollY) & 0xFF);
+            const auto tileY = scrolledY / 8u;
+            const auto pixelY = scrolledY % 8u;
+            const auto startingColumn = static_cast<std::size_t>((32u - (effectiveScrollX >> 3u)) & 0x1Fu);
+            const auto scrolledX = static_cast<std::size_t>((x + fineScrollX) & 0xFF);
+            const auto tileX = (startingColumn + (scrolledX / 8u)) % 32u;
             const auto pixelX = scrolledX % 8u;
             const auto entry = backgroundTileEntry(tileX, tileY);
             const uint16_t tileIndex = static_cast<uint16_t>(((entry >> 0u) & 0x01FFu));
@@ -361,8 +411,10 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
 
     const auto satBase = spriteAttributeTableBase();
     const auto spriteBase = spriteGeneratorBase();
-    std::array<std::uint8_t, kDisplayScanlines> spritesOnLine{};
-    const int spriteHeight = spriteTallMode() ? 16 : 8;
+    std::array<std::uint8_t, 240u> spritesOnLine{};
+    std::vector<bool> spriteOccupied(model.argbPixels.size(), false);
+    const int zoom = spriteZoomMode() ? 2 : 1;
+    const int spriteHeight = (spriteTallMode() ? 16 : 8) * zoom;
     std::size_t spriteCount = 0u;
     for (std::size_t sprite = 0; sprite < 64u; ++sprite) {
         const auto yIndex = satBase + sprite;
@@ -370,29 +422,29 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
             break;
         }
         const uint8_t rawY = vram_[yIndex];
-        if (rawY == 0xD0u) {
+        if (activeDisplayLines() == 192u && rawY == 0xD0u) {
             break;
         }
         if (rawY == 0xE0u) {
             continue;
         }
         const auto xyBase = (satBase + 0x80u + sprite * 2u) % vram_.size();
-        const int spriteX = static_cast<int>(vram_[xyBase]);
+        const int spriteX = static_cast<int>(vram_[xyBase]) - ((registers_[0u] & 0x08u) != 0u ? 8 : 0);
         uint16_t tileIndex = vram_[(xyBase + 1u) % vram_.size()];
         if (spriteTallMode()) {
             tileIndex = static_cast<uint16_t>(tileIndex & 0x00FEu);
         }
-        const int spriteY = static_cast<int>(rawY);
+        const int spriteY = static_cast<int>(rawY) + 1;
         for (int py = 0; py < spriteHeight; ++py) {
             const int screenY = spriteY + py;
             if (screenY < 0 || screenY >= model.height) {
                 continue;
             }
-            if (screenY >= 0 && screenY < static_cast<int>(kDisplayScanlines) &&
+            if (screenY >= 0 && screenY < static_cast<int>(spritesOnLine.size()) &&
                 spritesOnLine[static_cast<std::size_t>(screenY)] >= 8u) {
                 continue;
             }
-            for (int px = 0; px < 8; ++px) {
+            for (int px = 0; px < 8 * zoom; ++px) {
                 const int screenX = spriteX + px;
                 if (screenX < 0 || screenX >= model.width) {
                     continue;
@@ -400,19 +452,20 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
                 const auto rowTileOffset = spriteTallMode() && py >= 8 ? 1u : 0u;
                 const auto colorCode = samplePatternColor(spriteBase,
                                                           static_cast<uint16_t>(tileIndex + rowTileOffset),
-                                                          static_cast<std::size_t>(px),
-                                                          static_cast<std::size_t>(py % 8));
+                                                          static_cast<std::size_t>(px / zoom),
+                                                          static_cast<std::size_t>((py / zoom) % 8));
                 if (colorCode == 0u) {
                     continue;
                 }
                 const auto pixelIndex = static_cast<std::size_t>(screenY) * static_cast<std::size_t>(model.width)
                                       + static_cast<std::size_t>(screenX);
-                if (backgroundPriority[pixelIndex]) {
+                if (backgroundPriority[pixelIndex] || spriteOccupied[pixelIndex]) {
                     continue;
                 }
                 model.argbPixels[pixelIndex] = sampleCramColor(1u, colorCode);
+                spriteOccupied[pixelIndex] = true;
             }
-            if (screenY >= 0 && screenY < static_cast<int>(kDisplayScanlines)) {
+            if (screenY >= 0 && screenY < static_cast<int>(spritesOnLine.size())) {
                 spritesOnLine[static_cast<std::size_t>(screenY)] =
                     static_cast<std::uint8_t>(spritesOnLine[static_cast<std::size_t>(screenY)] + 1u);
             }
@@ -451,8 +504,8 @@ uint32_t GameGearVDP::colorFromCramWord(uint16_t cramWord) noexcept {
 
 std::size_t GameGearVDP::nameTableBase() const noexcept {
     const auto reg2 = registers_[2u];
-    if (reg2 == 0u) {
-        return kTileMapOffset;
+    if (mode4Enabled() && activeDisplayLines() != 192u) {
+        return static_cast<std::size_t>(0x0700u + (((reg2 >> 2u) & 0x03u) * 0x1000u));
     }
     return static_cast<std::size_t>((reg2 & 0x0Eu) << 10u);
 }
@@ -471,7 +524,7 @@ std::size_t GameGearVDP::spriteGeneratorBase() const noexcept {
 
 uint16_t GameGearVDP::backgroundTileEntry(std::size_t tileX, std::size_t tileY) const noexcept {
     const auto wrappedTileX = tileX % kTilesPerRow;
-    const auto wrappedTileY = tileY % 28u;
+    const auto wrappedTileY = tileY % (activeDisplayLines() == 192u ? 28u : 32u);
     const auto base = nameTableBase();
     const auto index = base + (wrappedTileY * kTilesPerRow + wrappedTileX) * 2u;
     if (index + 1u >= vram_.size()) {
@@ -512,11 +565,43 @@ uint32_t GameGearVDP::sampleCramColor(uint8_t paletteSelect, uint8_t colorCode) 
 }
 
 bool GameGearVDP::displayEnabled() const noexcept {
-    return (registers_[1u] & 0x40u) != 0u || (registers_[0u] & 0x80u) != 0u;
+    return (registers_[1u] & 0x40u) != 0u;
+}
+
+bool GameGearVDP::mode4Enabled() const noexcept {
+    return (registers_[0u] & 0x04u) != 0u;
+}
+
+std::size_t GameGearVDP::activeDisplayLines() const noexcept {
+    if (mode4Enabled() && (registers_[0u] & 0x02u) != 0u) {
+        const bool m1 = (registers_[1u] & 0x10u) != 0u;
+        const bool m3 = (registers_[1u] & 0x08u) != 0u;
+        if (m1 && !m3) {
+            return 224u;
+        }
+        if (!m1 && m3) {
+            return 240u;
+        }
+    }
+    return 192u;
+}
+
+uint8_t GameGearVDP::vCounterValue() const noexcept {
+    if (activeDisplayLines() == 224u) {
+        return scanline_ <= 0xEAu ? static_cast<uint8_t>(scanline_) : static_cast<uint8_t>(scanline_ - 6u);
+    }
+    if (activeDisplayLines() == 240u) {
+        return static_cast<uint8_t>(scanline_ & 0x00FFu);
+    }
+    return scanline_ <= 0xDAu ? static_cast<uint8_t>(scanline_) : static_cast<uint8_t>(scanline_ - 6u);
 }
 
 bool GameGearVDP::spriteTallMode() const noexcept {
     return (registers_[1u] & 0x02u) != 0u;
+}
+
+bool GameGearVDP::spriteZoomMode() const noexcept {
+    return (registers_[1u] & 0x01u) != 0u;
 }
 
 void GameGearVDP::writeCompatRegister(std::size_t index, uint8_t value) {
@@ -531,13 +616,25 @@ void GameGearVDP::writeCompatRegister(std::size_t index, uint8_t value) {
         // and then expect counters/status evaluation to restart from the top.
         scanline_ = 0u;
         pendingCycles_ = 0u;
+        lastReadyScanline_ = 0u;
+        hCounter_ = 0u;
         scanlineReadyPending_ = false;
         vblankPending_ = false;
         frameInterruptPending_ = false;
+        lineInterruptPending_ = false;
+        irqAsserted_ = false;
         spriteOverflowPending_ = false;
         spriteCollisionPending_ = false;
         lastStatusScanline_ = 0xFFu;
         statusScanlineConsumed_ = true;
+        lineCounter_ = registers_[0x0Au];
+        verticalScrollLatch_ = registers_[9u];
+    }
+    if (index == 9u && scanline_ > activeDisplayLines()) {
+        verticalScrollLatch_ = value;
+    }
+    if (index == 0x0Au && scanline_ == 0u) {
+        lineCounter_ = value;
     }
 }
 

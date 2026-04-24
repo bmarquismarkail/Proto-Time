@@ -1,6 +1,6 @@
 #pragma once
-// Sega Game Gear Video Display Processor (VDP) stub
-// References: SMS Power, Charles MacDonald, MAME
+// Sega Game Gear Video Display Processor (VDP).
+// Reference: .internal/docs/vdp-doc.txt (Charles MacDonald SMS/GG VDP notes)
 
 #include <array>
 #include <cstdint>
@@ -25,22 +25,17 @@ public:
     void writeControlPort(uint8_t value);
     [[nodiscard]] bool takeScanlineReady();
     [[nodiscard]] bool takeVBlankEntered();
+    [[nodiscard]] bool takeIrqAsserted();
     [[nodiscard]] uint8_t currentScanline() const noexcept;
+    [[nodiscard]] uint8_t lastReadyScanline() const noexcept;
     [[nodiscard]] uint8_t readVCounter() const noexcept;
     [[nodiscard]] uint8_t readHCounter() const noexcept;
     [[nodiscard]] BMMQ::VideoDebugFrameModel buildFrameModel(
         const BMMQ::VideoDebugRenderRequest& request) const;
 
- private:
-     static constexpr uint32_t kCyclesPerScanline = 228u;
-     // Game Gear LCD is 160x144, but the underlying VDP follows an SMS-like
-     // scanline counter that games sometimes poll (e.g. waiting for 0xB0).
-     // Keep VBlank timing aligned to the 144-line cropped output while letting
-     // the V counter progress through a full frame.
-     static constexpr std::size_t kDisplayScanlines = 144u;
-     static constexpr uint16_t kVBlankStartScanline = 144u;
-     static constexpr uint16_t kTotalScanlines = 262u;
-    static constexpr std::size_t kTileMapOffset = 0x1800u;
+private:
+    static constexpr uint32_t kCyclesPerScanline = 228u;
+    static constexpr uint16_t kTotalScanlines = 262u;
     static constexpr std::size_t kTilesPerRow = 32u;
     static constexpr std::size_t kSpriteCount = 40u;
     static constexpr std::size_t kVramSize = 0x4000u;
@@ -57,7 +52,11 @@ public:
                                              std::size_t pixelY) const noexcept;
     [[nodiscard]] uint32_t sampleCramColor(uint8_t paletteSelect, uint8_t colorCode) const noexcept;
     [[nodiscard]] bool displayEnabled() const noexcept;
+    [[nodiscard]] bool mode4Enabled() const noexcept;
+    [[nodiscard]] std::size_t activeDisplayLines() const noexcept;
+    [[nodiscard]] uint8_t vCounterValue() const noexcept;
     [[nodiscard]] bool spriteTallMode() const noexcept;
+    [[nodiscard]] bool spriteZoomMode() const noexcept;
     void evaluateScanlineStatus(uint8_t scanline) noexcept;
     void writeCompatRegister(std::size_t index, uint8_t value);
     [[nodiscard]] uint8_t readCompatRegister(std::size_t index) const noexcept;
@@ -65,13 +64,17 @@ public:
 
     std::array<uint8_t, kVramSize> vram_{};
     std::array<uint8_t, 0x00A0> oam_{};
-    std::array<uint8_t, 0x000C> registers_{};
+    std::array<uint8_t, 0x000B> registers_{};
     std::array<uint8_t, 0x0040> cram_{};
-     uint32_t pendingCycles_ = 0u;
-     uint16_t scanline_ = 0u;
+    uint32_t pendingCycles_ = 0u;
+    uint16_t scanline_ = 0u;
+    uint8_t lastReadyScanline_ = 0u;
+    uint8_t hCounter_ = 0u;
     bool scanlineReadyPending_ = false;
     bool vblankPending_ = false;
     bool frameInterruptPending_ = false;
+    bool lineInterruptPending_ = false;
+    bool irqAsserted_ = false;
     bool spriteOverflowPending_ = false;
     bool spriteCollisionPending_ = false;
     uint8_t lastStatusScanline_ = 0xFFu;
@@ -81,6 +84,8 @@ public:
     uint8_t readBuffer_ = 0u;
     uint8_t cramLatch_ = 0u;
     bool cramLatchValid_ = false;
+    uint8_t lineCounter_ = 0u;
+    uint8_t verticalScrollLatch_ = 0u;
     enum class AccessMode : uint8_t {
         VramRead = 0x00u,
         VramWrite = 0x01u,

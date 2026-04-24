@@ -21,9 +21,9 @@ int main() {
     std::vector<uint8_t> rom(0x4000u, 0x00u);
 
     // Startup: enable VDP display via register write sequence (OUT (0xBF) twice)
-    // LD A,0x40; OUT (0xBF),A; LD A,0x81; OUT (0xBF),A
+    // LD A,0x60; OUT (0xBF),A; LD A,0x81; OUT (0xBF),A
     size_t pc = 0;
-    rom[pc++] = 0x3Eu; rom[pc++] = 0x40u; // LD A,0x40
+    rom[pc++] = 0x3Eu; rom[pc++] = 0x60u; // LD A,0x60: display + frame IRQ enable
     rom[pc++] = 0xD3u; rom[pc++] = 0xBFu; // OUT (0xBF),A
     rom[pc++] = 0x3Eu; rom[pc++] = 0x81u; // LD A,0x81
     rom[pc++] = 0xD3u; rom[pc++] = 0xBFu; // OUT (0xBF),A
