@@ -4,6 +4,25 @@
 #include <cstddef>
 #include <vector>
 
+namespace {
+
+constexpr int kGameGearViewportWidth = 160;
+constexpr int kGameGearViewportHeight = 144;
+constexpr int kGameGearViewportX = 48;
+constexpr int kGameGearViewportY = 24;
+
+[[nodiscard]] int gameGearViewportXOffset(int frameWidth) noexcept
+{
+    return frameWidth == kGameGearViewportWidth ? kGameGearViewportX : 0;
+}
+
+[[nodiscard]] int gameGearViewportYOffset(int frameHeight) noexcept
+{
+    return frameHeight == kGameGearViewportHeight ? kGameGearViewportY : 0;
+}
+
+} // namespace
+
 GameGearVDP::GameGearVDP() {}
 GameGearVDP::~GameGearVDP() {}
 
@@ -371,24 +390,28 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
     const auto scrollX = readCompatRegister(8u);
     const auto scrollY = verticalScrollLatch_;
     std::vector<bool> backgroundPriority(model.argbPixels.size(), false);
+    const int viewportX = gameGearViewportXOffset(model.width);
+    const int viewportY = gameGearViewportYOffset(model.height);
     for (int y = 0; y < model.height; ++y) {
+        const int vdpY = y + viewportY;
         for (int x = 0; x < model.width; ++x) {
-            const bool fixedTopRows = (registers_[0u] & 0x40u) != 0u && y < 16;
-            const bool fixedRightColumns = (registers_[0u] & 0x80u) != 0u && x >= 192;
+            const int vdpX = x + viewportX;
+            const bool fixedTopRows = (registers_[0u] & 0x40u) != 0u && vdpY < 16;
+            const bool fixedRightColumns = (registers_[0u] & 0x80u) != 0u && vdpX >= 192;
             const auto effectiveScrollX = static_cast<uint8_t>(fixedTopRows ? 0u : scrollX);
             const auto effectiveScrollY = static_cast<uint8_t>(fixedRightColumns ? 0u : scrollY);
-            if ((registers_[0u] & 0x20u) != 0u && x < 8) {
+            if ((registers_[0u] & 0x20u) != 0u && vdpX < 8) {
                 continue;
             }
             const auto fineScrollX = static_cast<std::size_t>(effectiveScrollX & 0x07u);
-            if (fineScrollX != 0u && static_cast<std::size_t>(x) < fineScrollX) {
+            if (fineScrollX != 0u && static_cast<std::size_t>(vdpX) < fineScrollX) {
                 continue;
             }
-            const auto scrolledY = static_cast<std::size_t>((y + effectiveScrollY) & 0xFF);
+            const auto scrolledY = static_cast<std::size_t>((vdpY + effectiveScrollY) & 0xFF);
             const auto tileY = scrolledY / 8u;
             const auto pixelY = scrolledY % 8u;
             const auto startingColumn = static_cast<std::size_t>((32u - (effectiveScrollX >> 3u)) & 0x1Fu);
-            const auto scrolledX = static_cast<std::size_t>((x + fineScrollX) & 0xFF);
+            const auto scrolledX = static_cast<std::size_t>((vdpX + fineScrollX) & 0xFF);
             const auto tileX = (startingColumn + (scrolledX / 8u)) % 32u;
             const auto pixelX = scrolledX % 8u;
             const auto entry = backgroundTileEntry(tileX, tileY);
@@ -402,9 +425,7 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
             const auto colorCode = samplePatternColor(0u, tileIndex, sampleX, sampleY);
             const auto pixelIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(model.width)
                                   + static_cast<std::size_t>(x);
-            if (colorCode != 0u) {
-                model.argbPixels[pixelIndex] = sampleCramColor(palette1 ? 1u : 0u, colorCode);
-            }
+            model.argbPixels[pixelIndex] = sampleCramColor(palette1 ? 1u : 0u, colorCode);
             backgroundPriority[pixelIndex] = priority && colorCode != 0u;
         }
     }
@@ -436,7 +457,7 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
         }
         const int spriteY = static_cast<int>(rawY) + 1;
         for (int py = 0; py < spriteHeight; ++py) {
-            const int screenY = spriteY + py;
+            const int screenY = spriteY + py - viewportY;
             if (screenY < 0 || screenY >= model.height) {
                 continue;
             }
@@ -445,7 +466,7 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
                 continue;
             }
             for (int px = 0; px < 8 * zoom; ++px) {
-                const int screenX = spriteX + px;
+                const int screenX = spriteX + px - viewportX;
                 if (screenX < 0 || screenX >= model.width) {
                     continue;
                 }
@@ -608,28 +629,7 @@ void GameGearVDP::writeCompatRegister(std::size_t index, uint8_t value) {
     if (index >= registers_.size()) {
         return;
     }
-    const bool wasDisplayEnabled = displayEnabled();
     registers_[index] = value;
-    const bool nowDisplayEnabled = displayEnabled();
-    if (!wasDisplayEnabled && nowDisplayEnabled) {
-        // Pragmatic reset: some ROMs (and our smoke tests) toggle the display
-        // and then expect counters/status evaluation to restart from the top.
-        scanline_ = 0u;
-        pendingCycles_ = 0u;
-        lastReadyScanline_ = 0u;
-        hCounter_ = 0u;
-        scanlineReadyPending_ = false;
-        vblankPending_ = false;
-        frameInterruptPending_ = false;
-        lineInterruptPending_ = false;
-        irqAsserted_ = false;
-        spriteOverflowPending_ = false;
-        spriteCollisionPending_ = false;
-        lastStatusScanline_ = 0xFFu;
-        statusScanlineConsumed_ = true;
-        lineCounter_ = registers_[0x0Au];
-        verticalScrollLatch_ = registers_[9u];
-    }
     if (index == 9u && scanline_ > activeDisplayLines()) {
         verticalScrollLatch_ = value;
     }

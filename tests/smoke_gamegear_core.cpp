@@ -5,6 +5,8 @@
 #include "machine/InputTypes.hpp"
 #include "machine/VideoDebugModel.hpp"
 #include "machine/plugins/input/InputPlugin.hpp"
+#include "machine/plugins/IoPlugin.hpp"
+#include "machine/plugins/PluginManager.hpp"
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -79,14 +81,14 @@ std::vector<uint8_t> makeFrontendProofRom()
     emitRel8(0x10u, fillTileLoop); // DJNZ fillTileLoop
 
     emitSetVramWriteAddress(0x3F00u); // SAT y table
-    emit8(0x3Eu); emit8(23u); emitOutA(0xBEu);
+    emit8(0x3Eu); emit8(47u); emitOutA(0xBEu);
     emit8(0x3Eu); emit8(0xD0u); emitOutA(0xBEu);
     emitSetVramWriteAddress(0x3F80u); // SAT x/tile table
-    emit8(0x3Eu); emit8(24u); emitOutA(0xBEu);
+    emit8(0x3Eu); emit8(72u); emitOutA(0xBEu);
     emit8(0x3Eu); emit8(0x01u); emitOutA(0xBEu);
 
-    emitLoadHlAndByte(0xFE00u, 23u); // compat SAT shim y
-    emitLoadHlAndByte(0xFE01u, 24u); // compat SAT shim x
+    emitLoadHlAndByte(0xFE00u, 47u); // compat SAT shim y
+    emitLoadHlAndByte(0xFE01u, 72u); // compat SAT shim x
     emitLoadHlAndByte(0xFE02u, 0x01u); // compat SAT shim tile
     emitLoadHlAndByte(0xC000u, 0x00u); // observed input state byte
 
@@ -99,14 +101,38 @@ std::vector<uint8_t> makeFrontendProofRom()
     emit8(0x20u); // JR NZ,notPressed
     const auto notPressedPatch = pc;
     emit8(0x00u);
-    emitLoadHlAndByte(0xFE01u, 40u); // pressed -> move sprite right
+    emitLoadHlAndByte(0xFE01u, 88u); // pressed -> move sprite right
     emitRel8(0x18u, inputLoop); // JR inputLoop
     const auto notPressed = pc;
     rom[notPressedPatch] = static_cast<uint8_t>(static_cast<int8_t>(
         static_cast<int>(notPressed) - static_cast<int>(notPressedPatch + 1u)));
-    emitLoadHlAndByte(0xFE01u, 24u); // not pressed -> left position
+    emitLoadHlAndByte(0xFE01u, 72u); // not pressed -> left position
     emitRel8(0x18u, inputLoop); // JR inputLoop
 
+    return rom;
+}
+
+std::vector<uint8_t> makeDisplayOnlyRom()
+{
+    std::vector<uint8_t> rom(0x4000u, 0x00u);
+    std::size_t pc = 0u;
+    auto emit8 = [&](uint8_t value) {
+        rom[pc++] = value;
+    };
+    auto emitOutA = [&](uint8_t port) {
+        emit8(0xD3u);
+        emit8(port);
+    };
+
+    emit8(0x3Eu);
+    emit8(0x40u);
+    emitOutA(0xBFu);
+    emit8(0x3Eu);
+    emit8(0x81u);
+    emitOutA(0xBFu);
+    const auto idleLoop = pc;
+    emit8(0x18u);
+    emit8(static_cast<uint8_t>(static_cast<int8_t>(static_cast<int>(idleLoop) - static_cast<int>(pc + 1u))));
     return rom;
 }
 
@@ -162,6 +188,22 @@ public:
 
 private:
     BMMQ::InputButtonMask value_ = 0u;
+};
+
+class FirstScanlinePlugin final : public BMMQ::IVideoPlugin {
+public:
+    std::optional<BMMQ::MachineEvent> firstScanlineEvent;
+
+    std::string_view id() const override {
+        return "test.gamegear.first-scanline";
+    }
+
+    void onVideoEvent(const BMMQ::MachineEvent& event, const BMMQ::MachineView&) override {
+        if (event.type == BMMQ::MachineEventType::VideoScanlineReady &&
+            !firstScanlineEvent.has_value()) {
+            firstScanlineEvent = event;
+        }
+    }
 };
 
 }
@@ -259,17 +301,22 @@ int main() {
         ioMemory.writeIoPort(0xBEu, 23u);
         ioMemory.writeIoPort(0xBEu, 0x01u);
     }
-    vdp.step(228u * 2u);
+    for (int i = 0; i < 262; ++i) {
+        vdp.step(228u);
+        if (vdp.currentScanline() == 2u) {
+            break;
+        }
+    }
     const auto spriteStatus = ioMemory.readIoPort(0xBFu);
     assert((spriteStatus & 0x40u) != 0u);
     assert((spriteStatus & 0x20u) != 0u);
     ioMemory.writeIoPort(0xBFu, 0x00u);
     ioMemory.writeIoPort(0xBFu, 0x7Fu); // restore SAT y-table
-    ioMemory.writeIoPort(0xBEu, 23u);
+    ioMemory.writeIoPort(0xBEu, 47u);
     ioMemory.writeIoPort(0xBEu, 0xD0u);
     ioMemory.writeIoPort(0xBFu, 0x80u);
     ioMemory.writeIoPort(0xBFu, 0x7Fu); // restore SAT x/tile table
-    ioMemory.writeIoPort(0xBEu, 23u);
+    ioMemory.writeIoPort(0xBEu, 72u);
     ioMemory.writeIoPort(0xBEu, 0x01u);
     auto vdpModel = vdp.buildFrameModel({160, 144});
     const auto redSpritePixel = vdpModel.argbPixels[24u * 160u + 24u];
@@ -294,11 +341,11 @@ int main() {
     assert(relocatedSatBlank.argbPixels[24u * 160u + 24u] == relocatedSatBlank.argbPixels[0]);
     ioMemory.writeIoPort(0xBFu, 0x00u);
     ioMemory.writeIoPort(0xBFu, 0x7Eu); // VRAM addr 0x3E00 SAT y-table
-    ioMemory.writeIoPort(0xBEu, 23u);
+    ioMemory.writeIoPort(0xBEu, 47u);
     ioMemory.writeIoPort(0xBEu, 0xD0u);
     ioMemory.writeIoPort(0xBFu, 0x80u);
     ioMemory.writeIoPort(0xBFu, 0x7Eu); // VRAM addr 0x3E80 SAT x/tile
-    ioMemory.writeIoPort(0xBEu, 24u);
+    ioMemory.writeIoPort(0xBEu, 72u);
     ioMemory.writeIoPort(0xBEu, 0x01u);
     auto relocatedSatModel = vdp.buildFrameModel({160, 144});
     assert(relocatedSatModel.argbPixels[24u * 160u + 24u] != relocatedSatModel.argbPixels[0]);
@@ -316,8 +363,8 @@ int main() {
     assert(stepUntil(gg, 2048, [&] {
         return gg.runtimeContext().read8(0xFE02u) == 0x01u;
     }));
-    assert(gg.runtimeContext().read8(0xFE00u) == 23u);
-    assert(gg.runtimeContext().read8(0xFE01u) == 24u);
+    assert(gg.runtimeContext().read8(0xFE00u) == 47u);
+    assert(gg.runtimeContext().read8(0xFE01u) == 72u);
     assert(gg.runtimeContext().read8(0xFE02u) == 0x01u);
     assert(gg.runtimeContext().read8(0xFF45u) == 0xFFu);
     assert(gg.runtimeContext().read8(0xFF46u) == 0xFFu);
@@ -412,7 +459,7 @@ int main() {
     assert((gg.runtimeContext().read8(0xC000u) & 0x10u) == 0u);
     assert((gg.runtimeContext().read8(0xC000u) & 0x80u) == 0u);
     assert(stepUntil(gg, 256, [&] {
-        return gg.runtimeContext().read8(0xFE01u) == 40u;
+        return gg.runtimeContext().read8(0xFE01u) == 88u;
     }));
     auto pressedModel = gg.videoDebugFrameModel(BMMQ::VideoDebugRenderRequest{
         .frameWidth = 160,
@@ -423,6 +470,19 @@ int main() {
     const auto movedSpritePixel =
         pressedModel->argbPixels[24u * 160u + 40u];
     assert(movedSpritePixel == initialSpritePixel);
+
+    BMMQ::GameGearMachine scanlineMachine;
+    scanlineMachine.loadRom(makeDisplayOnlyRom());
+    auto scanlinePlugin = std::make_unique<FirstScanlinePlugin>();
+    auto* firstScanline = scanlinePlugin.get();
+    scanlineMachine.pluginManager().add(std::move(scanlinePlugin));
+    scanlineMachine.pluginManager().initialize(scanlineMachine.mutableView());
+    for (int i = 0; i < 1000 && !firstScanline->firstScanlineEvent.has_value(); ++i) {
+        scanlineMachine.step();
+    }
+    assert(firstScanline->firstScanlineEvent.has_value());
+    assert(firstScanline->firstScanlineEvent->value == 0u);
+    assert(firstScanline->firstScanlineEvent->tick >= 300u);
 
     puts("Game Gear core basic smoke test passed.");
     return 0;

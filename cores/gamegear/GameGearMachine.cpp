@@ -23,6 +23,8 @@ namespace BMMQ {
 
 namespace {
 constexpr std::size_t kMaxRomSize = 1024u * 1024u;
+constexpr uint8_t kGameGearViewportY = 24u;
+constexpr uint8_t kGameGearViewportHeight = 144u;
 // Expose only true Game Gear memory regions and port-based IO descriptors.
 // Remove Game Boy memory-mapped video/input descriptors so tools see port IO.
 constexpr std::array<IoRegionDescriptor, 5> kIoRegions{{
@@ -326,15 +328,19 @@ void GameGearMachine::step() {
     impl->vdp.step(feedback.retiredCycles);
     impl->psg.step(feedback.retiredCycles);
     if (impl->vdp.takeScanlineReady() && impl->pluginManager.size() != 0u) {
-        impl->pluginManager.emit(view(), MachineEvent{
-            MachineEventType::VideoScanlineReady,
-            PluginCategory::Video,
-            impl->stepCounter,
-            0, // No memory-mapped address for scanline
-            impl->vdp.lastReadyScanline(),
-            &runtimeContext().getLastFeedback(),
-            "scanline ready"
-        });
+        const auto vdpScanline = impl->vdp.lastReadyScanline();
+        if (vdpScanline >= kGameGearViewportY &&
+            vdpScanline < static_cast<uint8_t>(kGameGearViewportY + kGameGearViewportHeight)) {
+            impl->pluginManager.emit(view(), MachineEvent{
+                MachineEventType::VideoScanlineReady,
+                PluginCategory::Video,
+                impl->stepCounter,
+                0, // No memory-mapped address for scanline
+                static_cast<uint8_t>(vdpScanline - kGameGearViewportY),
+                &runtimeContext().getLastFeedback(),
+                "scanline ready"
+            });
+        }
     }
     if (impl->vdp.takeVBlankEntered()) {
         if (impl->pluginManager.size() != 0u) {

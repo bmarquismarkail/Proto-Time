@@ -73,14 +73,14 @@ std::vector<uint8_t> makeFrontendProofRom()
     emitRel8(0x10u, fillTileLoop);
 
     emitSetVramWriteAddress(0x3F00u);
-    emit8(0x3Eu); emit8(23u); emitOutA(0xBEu);
+    emit8(0x3Eu); emit8(47u); emitOutA(0xBEu);
     emit8(0x3Eu); emit8(0xD0u); emitOutA(0xBEu);
     emitSetVramWriteAddress(0x3F80u);
-    emit8(0x3Eu); emit8(24u); emitOutA(0xBEu);
+    emit8(0x3Eu); emit8(72u); emitOutA(0xBEu);
     emit8(0x3Eu); emit8(0x01u); emitOutA(0xBEu);
 
-    emitLoadHlAndByte(0xFE00u, 23u);
-    emitLoadHlAndByte(0xFE01u, 24u);
+    emitLoadHlAndByte(0xFE00u, 47u);
+    emitLoadHlAndByte(0xFE01u, 72u);
     emitLoadHlAndByte(0xFE02u, 0x01u);
     emitLoadHlAndByte(0xFE03u, 0x00u);
 
