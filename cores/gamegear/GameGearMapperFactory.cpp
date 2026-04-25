@@ -3,6 +3,7 @@
 #include "mappers/Sega3155208Mapper.hpp"
 #include "mappers/Sega3155235Mapper.hpp"
 #include "mappers/Sega3155365Mapper.hpp"
+#include "mappers/CodemastersMapper.hpp"
 
 #include <memory>
 #include <algorithm>
@@ -132,6 +133,7 @@ std::unique_ptr<GameGearMapper> createMapperFromRom(const uint8_t* data,
     auto makeMapperById = [](int id) -> std::unique_ptr<GameGearMapper> {
         if (id == 5235) return std::make_unique<Sega3155235Mapper>();
         if (id == 5365) return std::make_unique<Sega3155365Mapper>();
+        if (id == 999) return std::make_unique<CodemastersMapper>();
         return std::make_unique<Sega3155208Mapper>();
     };
 

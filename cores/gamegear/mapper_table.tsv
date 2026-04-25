@@ -18,6 +18,7 @@ header_contains	PHANTASY STAR	5235	300
 header_contains	R-TYPE	5235	260
 header_contains	BUBBLE BOBBLE	5365	300
 header_contains	WONDER BOY	5365	260
+header_contains	CODEMASTERS	999	300
 
 # Filename fallbacks for ambiguous titles
 filename_contains	sonic	5208	250

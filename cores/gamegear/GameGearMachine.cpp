@@ -1,5 +1,7 @@
 #include "GameGearMachine.hpp"
+#include <algorithm>
 #include <array>
+#include <cctype>
 #include <filesystem>
 #include <optional>
 #include <span>
@@ -34,6 +36,18 @@ constexpr std::array<IoRegionDescriptor, 5> kIoRegions{{
     {PluginCategory::Video, 0x00BEu, 0x0002u, "VDP Ports (IO)", true, true},
     {PluginCategory::DigitalInput, 0x00DCu, 0x0002u, "Input Ports (0xDC/0xDD)", true, false},
 }};
+
+[[nodiscard]] bool romPathAllowsSaveBinding(const std::optional<std::filesystem::path>& path)
+{
+    if (!path.has_value()) {
+        return false;
+    }
+    auto extension = path->extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return extension != ".sms";
+}
 
 class GameGearRuntimeContext final : public RuntimeContext {
 public:
@@ -268,7 +282,7 @@ void GameGearMachine::loadRom(const std::vector<uint8_t>& bytes) {
     }
     impl->mem.setCartridge(impl->cart.get());
 
-    if (impl->pendingRomSourcePath.has_value()) {
+    if (romPathAllowsSaveBinding(impl->pendingRomSourcePath)) {
         impl->saveManager.bindRomPath(*impl->pendingRomSourcePath);
         impl->saveManager.load(*impl->cart);
     } else {

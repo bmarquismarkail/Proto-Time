@@ -37,5 +37,6 @@ private:
     GameGearMapper* cartridge = nullptr;
     GameGearPSG* psg = nullptr;
     GameGearVDP* vdp = nullptr;
+    uint8_t ioControl_ = 0xFFu;
     std::array<uint8_t, 0x2000> ram{}; // 8KB RAM
 };

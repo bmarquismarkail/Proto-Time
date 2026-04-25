@@ -389,7 +389,7 @@ int main() {
     GameGearMemoryMap memory;
     const std::vector<uint8_t> mappedRom(0x8000, 0xAAu);
     memory.mapRom(mappedRom.data(), mappedRom.size());
-    assert(memory.read(0x7F00) == 0x00u);
+    assert(memory.read(0x7F00) == 0xAAu);
 
     Z80Interpreter cpu;
     assert(cpu.AF == 0u);

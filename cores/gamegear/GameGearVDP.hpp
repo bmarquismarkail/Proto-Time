@@ -31,6 +31,7 @@ public:
     [[nodiscard]] uint8_t lastReadyScanline() const noexcept;
     [[nodiscard]] uint8_t readVCounter() const noexcept;
     [[nodiscard]] uint8_t readHCounter() const noexcept;
+    void latchHCounter() noexcept;
     [[nodiscard]] BMMQ::VideoDebugFrameModel buildFrameModel(
         const BMMQ::VideoDebugRenderRequest& request) const;
 
@@ -71,6 +72,8 @@ private:
     uint16_t scanline_ = 0u;
     uint8_t lastReadyScanline_ = 0u;
     uint8_t hCounter_ = 0u;
+    uint8_t latchedHCounter_ = 0u;
+    bool hCounterLatched_ = false;
     bool scanlineReadyPending_ = false;
     bool vblankPending_ = false;
     bool frameInterruptPending_ = false;

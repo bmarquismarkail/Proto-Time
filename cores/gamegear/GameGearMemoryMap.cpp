@@ -57,6 +57,16 @@ void GameGearMemoryMap::writeIoPort(uint8_t port, uint8_t value) {
         }
         return;
     }
+    if (port >= 0x07u && port <= 0x3Fu) {
+        if ((port & 0x01u) != 0u) {
+            constexpr uint8_t kThOutputLevels = 0xA0u;
+            if (vdp != nullptr && ((ioControl_ ^ value) & kThOutputLevels) != 0u) {
+                vdp->latchHCounter();
+            }
+            ioControl_ = value;
+        }
+        return;
+    }
     if ((port & 0xC1u) == 0x80u) {
         if (vdp) {
             vdp->writeDataPort(value);
@@ -83,6 +93,7 @@ GameGearMemoryMap::~GameGearMemoryMap() {}
 
 void GameGearMemoryMap::reset() {
     ram.fill(0);
+    ioControl_ = 0xFFu;
     if (cartridge != nullptr) {
         cartridge->reset();
     }
@@ -105,9 +116,6 @@ void GameGearMemoryMap::clearRom() {
 }
 
 uint8_t GameGearMemoryMap::read(uint16_t addr) const {
-    if ((addr & 0xFF00u) == 0x7F00u) {
-        return 0x00u;
-    }
     if (cartridge != nullptr && addr < 0xC000u && cartridge->loaded()) {
         return cartridge->read(addr);
     }
@@ -144,9 +152,6 @@ uint8_t GameGearMemoryMap::read(uint16_t addr) const {
 }
 
 void GameGearMemoryMap::write(uint16_t addr, uint8_t value) {
-    if ((addr & 0xFF00u) == 0x7F00u) {
-        return;
-    }
     if (cartridge != nullptr && cartridge->handlesControlWrite(addr)) {
         cartridge->write(addr, value);
         if (addr >= 0xE000u) {
