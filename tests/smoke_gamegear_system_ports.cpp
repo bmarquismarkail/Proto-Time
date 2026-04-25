@@ -1,5 +1,6 @@
 #include "cores/gamegear/GameGearInput.hpp"
 #include "cores/gamegear/GameGearMemoryMap.hpp"
+#include "cores/gamegear/GameGearVDP.hpp"
 
 #include <cassert>
 
@@ -61,6 +62,29 @@ int main()
         assert(memory.readIoPort(0x04u) == 0xFFu);
         assert(memory.readIoPort(0x05u) == 0x78u);
         assert(input.audioStereoControl() == 0x9Au);
+    }
+
+    {
+        GameGearMemoryMap memory;
+        GameGearVDP vdp;
+        memory.setVdp(&vdp);
+        vdp.reset();
+
+        vdp.step(114u);
+        assert(memory.readIoPort(0x7Fu) == 128u);
+
+        memory.writeIoPort(0x3Fu, 0x05u); // TH low, output mode
+        vdp.step(57u);
+        assert(memory.readIoPort(0x7Fu) == 128u);
+
+        memory.writeIoPort(0x3Eu, 0xFFu); // memory-control mirror does not affect TH
+        assert(memory.readIoPort(0x7Fu) == 128u);
+
+        memory.writeIoPort(0x3Fu, 0xFFu); // TH high, latches current H counter
+        assert(memory.readIoPort(0x7Fu) == 192u);
+
+        vdp.step(20u);
+        assert(memory.readIoPort(0x7Fu) == 192u);
     }
 
     return 0;

@@ -69,9 +69,17 @@ int main()
         docMemory.writeIoPort(0xBFu, 0xFFu);
         docMemory.writeIoPort(0xBFu, 0x7Fu); // VRAM write at 0x3FFF
         docMemory.writeIoPort(0xBEu, 0xA5u);
+        assert(docMemory.readIoPort(0xBEu) == 0xA5u);
+        docMemory.writeIoPort(0xBFu, 0x00u);
+        docMemory.writeIoPort(0xBFu, 0x40u); // restore VRAM write at 0x0000
         docMemory.writeIoPort(0xBEu, 0x5Au); // wraps to 0x0000
         assert(docVdp.readVram(0xBFFFu) == 0xA5u);
         assert(docVdp.readVram(0x8000u) == 0x5Au);
+
+        docMemory.writeIoPort(0xBFu, 0x04u);
+        docMemory.writeIoPort(0xBFu, 0xC0u); // CRAM write
+        docMemory.writeIoPort(0xBEu, 0x3Cu);
+        assert(docMemory.readIoPort(0xBEu) == 0x3Cu);
 
         docMemory.writeIoPort(0xBFu, 0x34u);
         docMemory.writeIoPort(0xBFu, 0x92u); // register write also loads address 0x1234 and mode VRAM write
@@ -250,8 +258,8 @@ int main()
         tmsMemory.writeIoPort(0xBFu, 0x08u);
         tmsMemory.writeIoPort(0xBFu, 0x40u); // pattern tile 1, row 0
         tmsMemory.writeIoPort(0xBEu, 0x80u); // leftmost pixel set
-        tmsMemory.writeIoPort(0xBFu, 0x66u);
-        tmsMemory.writeIoPort(0xBFu, 0x48u); // name table tile at VDP (48,24)
+        tmsMemory.writeIoPort(0xBFu, 0x61u);
+        tmsMemory.writeIoPort(0xBFu, 0x48u); // name table tile at VDP (8,24)
         tmsMemory.writeIoPort(0xBEu, 0x01u);
 
         const auto tmsModel = tmsVdp.buildFrameModel({160, 144});
@@ -263,6 +271,53 @@ int main()
         }
         if (tmsModel.argbPixels[1] != 0xFF0000FFu) {
             return fail("Game Gear TMS Graphics II background pixel did not use CRAM color 18");
+        }
+    }
+
+    {
+        GameGearVDP tmsViewportVdp;
+        GameGearMemoryMap tmsViewportMemory;
+        tmsViewportMemory.setVdp(&tmsViewportVdp);
+        tmsViewportVdp.reset();
+        tmsViewportVdp.setSmsMode(true);
+
+        tmsViewportMemory.writeIoPort(0xBFu, 0x02u);
+        tmsViewportMemory.writeIoPort(0xBFu, 0x80u); // Graphics II, not Mode 4
+        tmsViewportMemory.writeIoPort(0xBFu, 0x40u);
+        tmsViewportMemory.writeIoPort(0xBFu, 0x81u); // display on
+        tmsViewportMemory.writeIoPort(0xBFu, 0x02u);
+        tmsViewportMemory.writeIoPort(0xBFu, 0x82u); // name table 0x0800
+        tmsViewportMemory.writeIoPort(0xBFu, 0x80u);
+        tmsViewportMemory.writeIoPort(0xBFu, 0x83u); // color table 0x2000
+        tmsViewportMemory.writeIoPort(0xBFu, 0x00u);
+        tmsViewportMemory.writeIoPort(0xBFu, 0x84u); // pattern table 0x0000
+
+        tmsViewportMemory.writeIoPort(0xBFu, 0x11u);
+        tmsViewportMemory.writeIoPort(0xBFu, 0xC0u); // palette1 color1: white
+        tmsViewportMemory.writeIoPort(0xBEu, 0x3Fu);
+        tmsViewportMemory.writeIoPort(0xBFu, 0x12u);
+        tmsViewportMemory.writeIoPort(0xBFu, 0xC0u); // palette1 color2: blue
+        tmsViewportMemory.writeIoPort(0xBEu, 0x30u);
+
+        tmsViewportMemory.writeIoPort(0xBFu, 0x08u);
+        tmsViewportMemory.writeIoPort(0xBFu, 0x60u); // color table tile 1, row 0
+        tmsViewportMemory.writeIoPort(0xBEu, 0x12u);
+        tmsViewportMemory.writeIoPort(0xBFu, 0x08u);
+        tmsViewportMemory.writeIoPort(0xBFu, 0x40u); // pattern tile 1, row 0
+        tmsViewportMemory.writeIoPort(0xBEu, 0x80u); // leftmost pixel set
+        tmsViewportMemory.writeIoPort(0xBFu, 0x61u);
+        tmsViewportMemory.writeIoPort(0xBFu, 0x48u); // name table tile at VDP (8,24)
+        tmsViewportMemory.writeIoPort(0xBEu, 0x01u);
+
+        const auto tmsViewportModel = tmsViewportVdp.buildFrameModel({160, 144});
+        if (tmsViewportModel.argbPixels.empty()) {
+            return fail("Game Gear TMS compatibility viewport model unexpectedly empty");
+        }
+        if (tmsViewportModel.argbPixels[0] != 0xFFFFFFFFu) {
+            return fail("Game Gear TMS compatibility viewport did not map LCD x=0 to SMS x=8");
+        }
+        if (tmsViewportModel.argbPixels[1] != 0xFF0000FFu) {
+            return fail("Game Gear TMS compatibility viewport did not horizontally compress SMS pixels");
         }
     }
 

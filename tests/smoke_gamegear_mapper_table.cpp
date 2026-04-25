@@ -2,6 +2,7 @@
 #include "cores/gamegear/mappers/Sega3155208Mapper.hpp"
 #include "cores/gamegear/mappers/Sega3155235Mapper.hpp"
 #include "cores/gamegear/mappers/Sega3155365Mapper.hpp"
+#include "cores/gamegear/mappers/CodemastersMapper.hpp"
 
 #include <cassert>
 #include <vector>
@@ -10,6 +11,14 @@
 #include <string>
 
 int main() {
+    // Header-based mapping: Codemasters title detection
+    std::vector<uint8_t> codemastersHeader(0x1000, 0u);
+    const std::string codem = "CODEMASTERS";
+    std::copy(codem.begin(), codem.end(), codemastersHeader.begin() + 0x20);
+    auto mc = createMapperFromRom(codemastersHeader.data(), codemastersHeader.size(), std::nullopt);
+    assert(mc && "mapper should not be null for Codemasters header");
+    assert(dynamic_cast<CodemastersMapper*>(mc.get()) && "expected CodemastersMapper for CODEMASTERS header");
+
     // Header-based mapping: include the title in the ROM header area
     std::vector<uint8_t> romHeader(0x1000, 0u);
     const std::string golden = "GOLDEN AXE";

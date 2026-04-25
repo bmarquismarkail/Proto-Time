@@ -71,5 +71,21 @@ int main()
         assert(!machine.flushCartridgeSave());
     }
 
+    const auto smsRomPath = tempRoot / "diagnostic.sms";
+    const auto smsSavePath = tempRoot / "diagnostic.sav";
+    removeIfExists(smsRomPath);
+    removeIfExists(smsSavePath);
+    writeBinary(smsRomPath, rom);
+
+    {
+        BMMQ::GameGearMachine machine;
+        machine.setRomSourcePath(smsRomPath);
+        machine.loadRom(rom);
+        machine.runtimeContext().write8(0xFFFCu, 0x08u);
+        machine.runtimeContext().write8(0x8000u, 0x9Au);
+        assert(!machine.flushCartridgeSave());
+    }
+    assert(!std::filesystem::exists(smsSavePath));
+
     return 0;
 }
