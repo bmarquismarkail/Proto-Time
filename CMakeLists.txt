@@ -184,6 +184,10 @@ add_executable(time-smoke-gamegear-mapper-table tests/smoke_gamegear_mapper_tabl
 target_link_libraries(time-smoke-gamegear-mapper-table time-gamegear-core)
 add_test(NAME smoke_gamegear_mapper_table COMMAND time-smoke-gamegear-mapper-table)
 
+add_executable(time-smoke-gamegear-bios tests/smoke_gamegear_bios.cpp)
+target_link_libraries(time-smoke-gamegear-bios time-gamegear-core)
+add_test(NAME smoke_gamegear_bios COMMAND time-smoke-gamegear-bios)
+
 add_executable(time-smoke-gamegear-vdp-subsystem tests/smoke_gamegear_vdp_subsystem.cpp)
 target_link_libraries(time-smoke-gamegear-vdp-subsystem time-gamegear-core)
 add_test(NAME smoke_gamegear_vdp_subsystem COMMAND time-smoke-gamegear-vdp-subsystem)

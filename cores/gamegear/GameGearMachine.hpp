@@ -15,7 +15,8 @@ namespace BMMQ {
 
 
 class GameGearMachine final : public Machine,
-                              public IRomPathAwareMachine {
+                              public IRomPathAwareMachine,
+                              public IExternalBootRomMachine {
 public:
     GameGearMachine();
     ~GameGearMachine() override;
@@ -42,6 +43,7 @@ public:
     uint32_t clockHz() const override;
     std::string stopSummary() const override;
     [[nodiscard]] bool flushCartridgeSave();
+    void loadExternalBootRom(const std::vector<uint8_t>& bytes) override;
     // Test helper: inspect whether CPU IME is currently set.
     bool cpuInterruptsEnabled() const;
 

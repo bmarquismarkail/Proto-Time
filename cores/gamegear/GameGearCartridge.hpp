@@ -42,4 +42,9 @@ private:
     std::array<uint8_t, 3> bankRegisters_{};
     uint8_t controlRegister_ = 0u;
     bool saveDirty_ = false;
+
+public:
+    // Debug / introspection
+    [[nodiscard]] std::array<uint8_t,3> bankRegisters() const noexcept { return bankRegisters_; }
+    [[nodiscard]] uint8_t controlRegister() const noexcept { return controlRegister_; }
 };

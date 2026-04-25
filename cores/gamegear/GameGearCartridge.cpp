@@ -130,7 +130,7 @@ std::size_t GameGearCartridge::pageBank(std::size_t pageIndex) const noexcept {
 }
 
 bool GameGearCartridge::sramEnabled() const noexcept {
-    return (controlRegister_ & 0x04u) != 0u;
+    return (controlRegister_ & 0x08u) != 0u;
 }
 
 std::size_t GameGearCartridge::sramOffset(uint16_t addr) const noexcept {

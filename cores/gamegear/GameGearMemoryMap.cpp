@@ -10,6 +10,8 @@ GameGearCartridge& fallbackCartridgeStorage() {
     static GameGearCartridge cartridge;
     return cartridge;
 }
+
+constexpr uint8_t kMemoryControlBiosDisabled = 0x08u;
 }
 
 void GameGearMemoryMap::setCartridge(GameGearMapper* cartridgePtr) {
@@ -58,7 +60,9 @@ void GameGearMemoryMap::writeIoPort(uint8_t port, uint8_t value) {
         return;
     }
     if (port >= 0x07u && port <= 0x3Fu) {
-        if ((port & 0x01u) != 0u) {
+        if ((port & 0x01u) == 0u) {
+            memoryControl_ = value;
+        } else {
             constexpr uint8_t kThOutputLevels = 0xA0u;
             if (vdp != nullptr && ((ioControl_ ^ value) & kThOutputLevels) != 0u) {
                 vdp->latchHCounter();
@@ -93,6 +97,10 @@ GameGearMemoryMap::~GameGearMemoryMap() {}
 
 void GameGearMemoryMap::reset() {
     ram.fill(0);
+    // Memory-control D3 is active-low for the optional 1 KiB Game Gear BIOS.
+    memoryControl_ = bios_.empty()
+        ? 0xFFu
+        : static_cast<uint8_t>(0xFFu & ~kMemoryControlBiosDisabled);
     ioControl_ = 0xFFu;
     if (cartridge != nullptr) {
         cartridge->reset();
@@ -115,7 +123,36 @@ void GameGearMemoryMap::clearRom() {
     }
 }
 
+void GameGearMemoryMap::mapBios(const uint8_t* data, size_t size) {
+    bios_.clear();
+    if (data == nullptr || size == 0u) {
+        return;
+    }
+    bios_.assign(data, data + size);
+}
+
+void GameGearMemoryMap::clearBios() {
+    bios_.clear();
+}
+
+bool GameGearMemoryMap::hasBios() const noexcept {
+    return !bios_.empty();
+}
+
+uint8_t GameGearMemoryMap::ioControlValue() const noexcept {
+    return ioControl_;
+}
+
+uint8_t GameGearMemoryMap::memoryControlValue() const noexcept {
+    return memoryControl_;
+}
+
 uint8_t GameGearMemoryMap::read(uint16_t addr) const {
+    // BIOS mapping: if a BIOS is loaded and the memory-control bit D3 is active (0),
+    // the BIOS occupies $0000-$03FF.
+    if (addr < 0x0400u && !bios_.empty() && ((memoryControl_ & kMemoryControlBiosDisabled) == 0u)) {
+        return bios_[static_cast<std::size_t>(addr) % bios_.size()];
+    }
     if (cartridge != nullptr && addr < 0xC000u && cartridge->loaded()) {
         return cartridge->read(addr);
     }

@@ -300,13 +300,14 @@ int main()
         (void)BMMQ::resolveEmulatorConfig(invalid);
     }));
 
-    CHECK_TRUE(throwsInvalidArgumentContaining("does not support external boot ROM loading", [&] {
-        auto invalid = parseArgs({"timeEmulator",
-                                  "--core", "gamegear",
-                                  "--rom", "cli.gg",
-                                  "--boot-rom", "gg-boot.bin"});
-        (void)BMMQ::resolveEmulatorConfig(invalid);
-    }));
+    {
+        auto gameGearBootRom = parseArgs({"timeEmulator",
+                                          "--core", "gamegear",
+                                          "--rom", "cli.gg",
+                                          "--boot-rom", "gg-boot.bin"});
+        const auto gameGearBootRomConfig = BMMQ::resolveEmulatorConfig(gameGearBootRom);
+        CHECK_TRUE(gameGearBootRomConfig.bootRomPath == "gg-boot.bin");
+    }
 
     const auto explicitGameBoy = parseArgs({"timeEmulator", "--core", "gameboy", "--rom", "gb.gb"});
     CHECK_TRUE(explicitGameBoy.overrides.machineKind.has_value());

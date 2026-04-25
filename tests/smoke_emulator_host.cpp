@@ -3,7 +3,6 @@
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
-#include <string_view>
 #include <vector>
 
 #include "emulator/EmulatorHost.hpp"
@@ -30,16 +29,6 @@ void writeBinaryFile(const std::filesystem::path& path, const std::vector<std::u
     if (!output.good()) {
         throw std::runtime_error("unable to write test file: " + path.string());
     }
-}
-
-bool throwsInvalidArgumentContaining(std::string_view expected, auto&& fn)
-{
-    try {
-        fn();
-    } catch (const std::invalid_argument& ex) {
-        return std::string_view(ex.what()).find(expected) != std::string_view::npos;
-    }
-    return false;
 }
 
 } // namespace
@@ -97,9 +86,11 @@ int main()
         config.romPath = gameGearRomPath;
         config.bootRomPath = bootRomPath;
         config.headless = true;
-        assert(throwsInvalidArgumentContaining("does not support external boot ROM loading", [&] {
-            (void)BMMQ::bootstrapMachine(config);
-        }));
+
+        auto bootstrapped = BMMQ::bootstrapMachine(config);
+        assert(bootstrapped.descriptor.id == "gamegear");
+        assert(bootstrapped.romSize == gameGearRom.size());
+        bootstrapped.machine->step();
     }
 
     std::filesystem::remove_all(tempDir);

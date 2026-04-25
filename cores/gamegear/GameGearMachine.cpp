@@ -17,6 +17,7 @@
 #include "GameGearInput.hpp"
 #include "GameGearMapperFactory.hpp"
 #include "GameGearMapper.hpp"
+#include "GameGearCartridge.hpp"
 #include <memory>
 #include "GameGearMemoryMap.hpp"
 #include "GameGearSaveManager.hpp"
@@ -317,6 +318,10 @@ void GameGearMachine::setRomSourcePath(const std::optional<std::filesystem::path
     impl->pendingRomSourcePath = path;
 }
 
+void GameGearMachine::loadExternalBootRom(const std::vector<uint8_t>& bytes) {
+    impl->mem.mapBios(bytes.data(), bytes.size());
+}
+
 RuntimeContext& GameGearMachine::runtimeContext() {
     return impl->context;
 }
@@ -445,7 +450,18 @@ std::string GameGearMachine::stopSummary() const {
         << " LY=0x" << static_cast<int>(impl->vdp.currentScanline())
         << std::dec << '\n'
         << "Input port=0x" << std::hex << std::uppercase << static_cast<int>(impl->input.readInputs())
-        << std::dec;
+        << std::dec << '\n'
+        << "MEM=0x" << std::hex << std::uppercase << static_cast<int>(impl->mem.memoryControlValue())
+        << " IO=0x" << static_cast<int>(impl->mem.ioControlValue())
+        << " BIOS=" << (impl->mem.hasBios() ? "Yes" : "No") << std::dec << '\n';
+
+    if (impl->cart) {
+        if (auto* concrete = dynamic_cast<GameGearCartridge*>(impl->cart.get())) {
+            const auto banks = concrete->bankRegisters();
+            out << "Cart CTRL=0x" << std::hex << std::uppercase << static_cast<int>(concrete->controlRegister())
+                << " banks=[" << std::dec << static_cast<int>(banks[0]) << "," << static_cast<int>(banks[1]) << "," << static_cast<int>(banks[2]) << "]\n";
+        }
+    }
     return out.str();
 }
 
