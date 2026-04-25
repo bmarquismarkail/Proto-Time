@@ -44,7 +44,7 @@ uint8_t GameGearMemoryMap::readIoPort(uint8_t port) {
     if ((port & 0xC1u) == 0x41u) {
         return vdp ? vdp->readHCounter() : 0xFFu;
     }
-    if (port == 0xDCu) {
+    if ((port & 0xFEu) == 0xDCu) {
         return input ? input->readInputs() : 0xFFu;
     }
     return 0xFFu;
