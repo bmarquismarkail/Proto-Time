@@ -357,6 +357,16 @@ int main() {
     {
         std::vector<uint8_t> memory(0x10000u, 0x00u);
         auto cpu = makeCpu(memory);
+        cpu.PC = 0x0149u;
+        memory[0x0149u] = 0x18u; memory[0x014Au] = 0xE2u; // JR -30
+
+        CHECK_OR_FAIL(cpu.step() == 12u, "unconditional JR -30 should take 12 cycles");
+        CHECK_OR_FAIL(cpu.PC == 0x012Du, "unconditional JR should branch relative to the post-operand PC");
+    }
+
+    {
+        std::vector<uint8_t> memory(0x10000u, 0x00u);
+        auto cpu = makeCpu(memory);
         cpu.SP = 0xD000u;
         cpu.AF = 0x1234u;
         cpu.AF_ = 0xAB01u;

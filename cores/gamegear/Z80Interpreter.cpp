@@ -733,7 +733,11 @@ uint32_t Z80Interpreter::executeOpcode(uint8_t opcode) {
         setRegF(static_cast<uint8_t>((regF() & (kFlagS | kFlagZ | kFlagPV)) | (r & (kFlag5 | kFlag3)) | c));
         return 4u;
     }
-    case 0x18: PC = static_cast<uint16_t>(PC + displacement(fetch8())); return 12u;
+    case 0x18: {
+        const int8_t d = displacement(fetch8());
+        PC = static_cast<uint16_t>(PC + d);
+        return 12u;
+    }
     case 0x1A: setRegA(memRead(DE)); return 7u;
     case 0x1F: {
         const uint8_t a = regA();
