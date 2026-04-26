@@ -185,14 +185,20 @@ uint8_t GameGearMemoryMap::read(uint16_t addr) const {
     if (addr >= 0xE000) {
         return ram[addr - 0xE000];
     }
+    // RAM mirror for $FFFC-$FFFF and $DFFC-$DFFF
+    if ((addr >= 0xDFFCu && addr <= 0xDFFFu) || (addr >= 0xFFFCu && addr <= 0xFFFFu)) {
+        return ram[0x1FFCu + (addr & 0x3)];
+    }
     return 0xFF;
 }
 
 void GameGearMemoryMap::write(uint16_t addr, uint8_t value) {
+    // Mapper register region: $FFFC-$FFFF
     if (cartridge != nullptr && cartridge->handlesControlWrite(addr)) {
         cartridge->write(addr, value);
-        if (addr >= 0xE000u) {
-            ram[addr - 0xE000u] = value;
+        // Writes to $FFFC-$FFFF also update RAM mirror at $1FFC-$1FFF
+        if (addr >= 0xFFFCu && addr <= 0xFFFFu) {
+            ram[0x1FFCu + (addr & 0x3)] = value;
         }
         return;
     }
@@ -228,6 +234,11 @@ void GameGearMemoryMap::write(uint16_t addr, uint8_t value) {
     // 0xE000-0xFFFF: RAM mirror
     if (addr >= 0xE000) {
         ram[addr - 0xE000] = value;
+        return;
+    }
+    // Writes to $DFFC-$DFFF also update RAM mirror at $1FFC-$1FFF
+    if (addr >= 0xDFFCu && addr <= 0xDFFFu) {
+        ram[0x1FFCu + (addr & 0x3)] = value;
         return;
     }
 }

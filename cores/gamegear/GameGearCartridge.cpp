@@ -65,19 +65,16 @@ uint8_t GameGearCartridge::read(uint16_t addr) const {
 }
 
 void GameGearCartridge::write(uint16_t addr, uint8_t value) {
-    switch (addr) {
-        case 0xFFFCu:
+    // Mapper registers $FFFC-$FFFF
+    if (addr >= 0xFFFCu && addr <= 0xFFFFu) {
+        if (addr == 0xFFFCu) {
             controlRegister_ = value;
-            return;
-        case 0xFFFDu:
-        case 0xFFFEu:
-        case 0xFFFFu:
+        } else {
             bankRegisters_[static_cast<std::size_t>(addr - 0xFFFDu)] = value;
-            return;
-        default:
-            break;
+        }
+        // RAM mirror update is handled by GameGearMemoryMap
+        return;
     }
-
     if (addr >= 0x8000u && addr < 0xC000u && sramEnabled()) {
         const auto offset = sramOffset(addr);
         if (offset < sram.size()) {

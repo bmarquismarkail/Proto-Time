@@ -195,31 +195,36 @@ void GameGearVDP::writeRegister(uint16_t address, uint8_t value) {
 }
 
 uint8_t GameGearVDP::readDataPort() {
+    // Reading data port clears the command latch (see Charles MacDonald VDP docs)
     commandLatchPending_ = false;
+    // VRAM reads are buffered: return buffer, then load buffer from VRAM at current address
     const auto value = readBuffer_;
-    readBuffer_ = vram_[static_cast<std::size_t>(dataAddress_ % vram_.size())];
-    dataAddress_ = static_cast<uint16_t>((dataAddress_ + 1u) % vram_.size());
+    readBuffer_ = vram_[static_cast<std::size_t>(dataAddress_ & 0x3FFFu)];
+    // VDP address auto-increments and wraps at 0x3FFF
+    dataAddress_ = static_cast<uint16_t>((dataAddress_ + 1u) & 0x3FFFu);
     return value;
 }
 
 uint8_t GameGearVDP::readControlPort() {
+    // Reading control port clears the command latch and status/IRQ flags
     commandLatchPending_ = false;
     const uint8_t line = currentScanline() == 0u
             ? 0u
             : static_cast<uint8_t>(currentScanline() - 1u);
     if (line < activeDisplayLines() && (!statusScanlineConsumed_ || line != lastStatusScanline_)) {
-            evaluateScanlineStatus(line);
+        evaluateScanlineStatus(line);
     }
     uint8_t status = 0u;
     if (frameInterruptPending_) {
-        status = static_cast<uint8_t>(status | 0x80u);
+        status |= 0x80u;
     }
     if (spriteOverflowPending_) {
-        status = static_cast<uint8_t>(status | 0x40u);
+        status |= 0x40u;
     }
     if (spriteCollisionPending_) {
-        status = static_cast<uint8_t>(status | 0x20u);
+        status |= 0x20u;
     }
+    // Control-port read clears status/IRQ pending flags (see vdpint.txt)
     frameInterruptPending_ = false;
     lineInterruptPending_ = false;
     irqAsserted_ = false;
@@ -231,14 +236,16 @@ uint8_t GameGearVDP::readControlPort() {
 }
 
 void GameGearVDP::writeDataPort(uint8_t value) {
+    // Writing data port clears the command latch
     commandLatchPending_ = false;
+    // VRAM writes update the read buffer (see Charles MacDonald VDP docs)
     readBuffer_ = value;
     if (accessMode_ == AccessMode::CramWrite) {
         const auto cramSize = smsMode_ ? 0x20u : cram_.size();
         const auto cramIndex = static_cast<std::size_t>(dataAddress_ % cramSize);
         if (smsMode_) {
             cram_[cramIndex] = static_cast<uint8_t>(value & 0x3Fu);
-            dataAddress_ = static_cast<uint16_t>((dataAddress_ + 1u) % vram_.size());
+            dataAddress_ = static_cast<uint16_t>((dataAddress_ + 1u) & 0x3FFFu);
             return;
         }
         if ((cramIndex & 0x01u) == 0u) {
@@ -251,14 +258,15 @@ void GameGearVDP::writeDataPort(uint8_t value) {
             }
             cram_[cramIndex] = value;
         }
-        dataAddress_ = static_cast<uint16_t>((dataAddress_ + 1u) % vram_.size());
+        dataAddress_ = static_cast<uint16_t>((dataAddress_ + 1u) & 0x3FFFu);
         return;
     }
-    vram_[static_cast<std::size_t>(dataAddress_ % vram_.size())] = value;
-    dataAddress_ = static_cast<uint16_t>((dataAddress_ + 1u) % vram_.size());
+    vram_[static_cast<std::size_t>(dataAddress_ & 0x3FFFu)] = value;
+    dataAddress_ = static_cast<uint16_t>((dataAddress_ + 1u) & 0x3FFFu);
 }
 
 void GameGearVDP::writeControlPort(uint8_t value) {
+    // Two-byte command latch: first write latches, second write executes
     if (!commandLatchPending_) {
         commandLow_ = value;
         dataAddress_ = static_cast<uint16_t>((dataAddress_ & 0x3F00u) | value);
@@ -268,21 +276,17 @@ void GameGearVDP::writeControlPort(uint8_t value) {
 
     commandLatchPending_ = false;
     const auto command = static_cast<uint8_t>((value >> 6) & 0x03u);
-    dataAddress_ = static_cast<uint16_t>((static_cast<uint16_t>(value & 0x3Fu) << 8) | commandLow_);
+    dataAddress_ = static_cast<uint16_t>(((value & 0x3Fu) << 8) | commandLow_);
+    dataAddress_ &= 0x3FFFu; // VDP address wraps at 0x3FFF
     accessMode_ = static_cast<AccessMode>(command);
     if (command == 0x02u) {
         writeCompatRegister(static_cast<std::size_t>(value & 0x0Fu), commandLow_);
         return;
     }
 
-    if (accessMode_ != AccessMode::CramWrite && !vram_.empty()) {
-        dataAddress_ = static_cast<uint16_t>(dataAddress_ % vram_.size());
-    }
-    if (accessMode_ == AccessMode::VramRead) {
-        if (!vram_.empty()) {
-            readBuffer_ = vram_[static_cast<std::size_t>(dataAddress_ % vram_.size())];
-            dataAddress_ = static_cast<uint16_t>((dataAddress_ + 1u) % vram_.size());
-        }
+    if (accessMode_ == AccessMode::VramRead && !vram_.empty()) {
+        readBuffer_ = vram_[static_cast<std::size_t>(dataAddress_ & 0x3FFFu)];
+        dataAddress_ = static_cast<uint16_t>((dataAddress_ + 1u) & 0x3FFFu);
     }
 }
 

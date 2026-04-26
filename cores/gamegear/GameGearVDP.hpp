@@ -8,6 +8,13 @@
 
 class GameGearVDP {
 public:
+    // ...existing public API...
+
+    // --- Test/Debug: Expose internal state for testing ---
+    [[nodiscard]] bool isCommandLatchPending() const noexcept { return commandLatchPending_; }
+    [[nodiscard]] bool isFrameInterruptPending() const noexcept { return frameInterruptPending_; }
+    [[nodiscard]] bool isIrqAsserted() const noexcept { return irqAsserted_; }
+public:
     GameGearVDP();
     ~GameGearVDP();
 
@@ -63,6 +70,7 @@ private:
     void writeCompatRegister(std::size_t index, uint8_t value);
     [[nodiscard]] uint8_t readCompatRegister(std::size_t index) const noexcept;
     void seedDefaultCram();
+
 
     std::array<uint8_t, kVramSize> vram_{};
     std::array<uint8_t, 0x00A0> oam_{};

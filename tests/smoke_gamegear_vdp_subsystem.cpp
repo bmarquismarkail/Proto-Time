@@ -15,12 +15,121 @@ int fail(const char* message)
 
 } // namespace
 
+
 int main()
 {
     GameGearVDP vdp;
     GameGearMemoryMap memory;
     memory.setVdp(&vdp);
     vdp.reset();
+
+    // --- VDP CONTROL/DATA PORT BEHAVIOR TESTS ---
+    // 1. VDP control port uses a two-byte command latch
+    {
+        vdp.reset();
+        // Write only one byte: should not change VRAM
+        memory.writeIoPort(0xBFu, 0x34u); // first byte
+        vdp.writeVram(0x9234u, 0x00u); // clear for test
+        memory.writeIoPort(0xBEu, 0xAAu); // data port write (should not write to VRAM at 0x9234)
+        assert(vdp.readVram(0x9234u) == 0x00u); // no effect, latch not completed
+        // Now send second byte: should set up VRAM write
+        memory.writeIoPort(0xBFu, 0x52u); // second byte (VRAM write, address 0x1234)
+        memory.writeIoPort(0xBEu, 0xBBu); // data port write
+        assert(vdp.readVram(0x9234u) == 0xBBu); // VRAM written
+    }
+
+
+    // 2. Reading control port clears the command latch
+    {
+        vdp.reset();
+        memory.writeIoPort(0xBFu, 0x12u); // first byte
+        assert(vdp.isCommandLatchPending()); // internal: latch should be set
+        (void)memory.readIoPort(0xBFu); // read control port
+        assert(!vdp.isCommandLatchPending()); // latch cleared
+    }
+
+    // 3. Reading data port clears the command latch
+    {
+        vdp.reset();
+        memory.writeIoPort(0xBFu, 0x12u); // first byte
+        assert(vdp.isCommandLatchPending());
+        (void)memory.readIoPort(0xBEu); // read data port
+        assert(!vdp.isCommandLatchPending());
+    }
+
+    // 4. Writing data port clears the command latch
+    {
+        vdp.reset();
+        memory.writeIoPort(0xBFu, 0x12u); // first byte
+        assert(vdp.isCommandLatchPending());
+        memory.writeIoPort(0xBEu, 0x55u); // write data port
+        assert(!vdp.isCommandLatchPending());
+    }
+
+    // 5. VRAM reads are buffered
+    {
+        vdp.reset();
+        // Write known values
+        memory.writeIoPort(0xBFu, 0x34u);
+        memory.writeIoPort(0xBFu, 0x40u); // VRAM read, address 0x1034
+        vdp.writeVram(0x9034u, 0xDEu);
+        vdp.writeVram(0x9035u, 0xADu);
+        // Set up VRAM read at 0x1034
+        memory.writeIoPort(0xBFu, 0x34u);
+        memory.writeIoPort(0xBFu, 0x00u); // VRAM read, address 0x1034
+        // First read returns buffer (default 0)
+        uint8_t first = memory.readIoPort(0xBEu);
+        // Second read returns 0xDE (from 0x9034)
+        uint8_t second = memory.readIoPort(0xBEu);
+        // Third read returns 0xAD (from 0x9035)
+        uint8_t third = memory.readIoPort(0xBEu);
+        assert(first == 0u);
+        assert(second == 0xDEu);
+        assert(third == 0xADu);
+    }
+
+    // 6. VRAM writes update the read buffer
+    {
+        vdp.reset();
+        memory.writeIoPort(0xBFu, 0x34u);
+        memory.writeIoPort(0xBFu, 0x41u); // VRAM write, address 0x1134
+        memory.writeIoPort(0xBEu, 0x99u); // write data port
+        // Now, read data port: buffer should return 0x99
+        uint8_t buf = memory.readIoPort(0xBEu);
+        assert(buf == 0x99u);
+    }
+
+    // 7. VDP address auto-increments and wraps at 0x3FFF
+    {
+        vdp.reset();
+        // Set address to 0x3FFF, VRAM write
+        memory.writeIoPort(0xBFu, 0xFFu);
+        memory.writeIoPort(0xBFu, 0x41u); // VRAM write, address 0x3FFF
+        memory.writeIoPort(0xBEu, 0x77u); // write data port
+        // Next write should wrap to 0x0000
+        memory.writeIoPort(0xBEu, 0x88u);
+        assert(vdp.readVram(0xBFFFu) == 0x77u);
+        assert(vdp.readVram(0x8000u) == 0x88u);
+    }
+
+    // 8. Control-port read clears status/IRQ pending flags
+    {
+        vdp.reset();
+        // Simulate VBlank IRQ
+        // Use a helper to set the private flags via a control port read
+        // Instead, use public interface: simulate by stepping to vblank
+        // (But for test, we can use a friend or test-only setter if needed)
+        // Here, we use a workaround: set up a vblank
+        vdp.step(228u * 193u); // step to vblank
+        assert(vdp.isFrameInterruptPending() || vdp.isIrqAsserted());
+        uint8_t status = memory.readIoPort(0xBFu);
+        assert((status & 0x80u) != 0u); // IRQ flag set
+        // After read, flags should be cleared
+        assert(!vdp.isFrameInterruptPending());
+        assert(!vdp.isIrqAsserted());
+    }
+
+    // ...existing code...
 
     memory.writeIoPort(0xBFu, 0x40u);
     memory.writeIoPort(0xBFu, 0x81u); // display on
