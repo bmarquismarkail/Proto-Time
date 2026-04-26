@@ -204,6 +204,10 @@ add_executable(time-smoke-gamegear-vdp-fidelity tests/smoke_gamegear_vdp_fidelit
 target_link_libraries(time-smoke-gamegear-vdp-fidelity time-gamegear-core)
 add_test(NAME smoke_gamegear_vdp_fidelity COMMAND time-smoke-gamegear-vdp-fidelity)
 
+add_executable(time-smoke-gamegear-vdp-hoist tests/smoke_gamegear_vdp_hoist.cpp)
+target_link_libraries(time-smoke-gamegear-vdp-hoist time-gamegear-core)
+add_test(NAME smoke_gamegear_vdp_hoist COMMAND time-smoke-gamegear-vdp-hoist)
+
 add_executable(time-smoke-gamegear-vdp-cram tests/smoke_gamegear_vdp_cram.cpp)
 target_link_libraries(time-smoke-gamegear-vdp-cram time-gamegear-core)
 add_test(NAME smoke_gamegear_vdp_cram COMMAND time-smoke-gamegear-vdp-cram)

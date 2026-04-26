@@ -416,7 +416,10 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
     model.width = std::max(request.frameWidth, 1);
     model.height = std::max(request.frameHeight, 1);
     model.displayEnabled = displayEnabled();
-    model.inVBlank = scanline_ >= activeDisplayLines() + 1u;
+    const auto activeLines = activeDisplayLines();
+    const bool mode4 = mode4Enabled();
+    const auto nameBasePre = nameTableBase();
+    model.inVBlank = scanline_ >= activeLines + 1u;
     model.scanlineIndex = static_cast<uint8_t>(scanline_ & 0x00FFu);
     model.argbPixels.assign(
         static_cast<std::size_t>(model.width) * static_cast<std::size_t>(model.height),
@@ -430,7 +433,7 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
 
     const auto backdrop = sampleCramColor(1u, static_cast<uint8_t>(registers_[7u] & 0x0Fu));
     std::fill(model.argbPixels.begin(), model.argbPixels.end(), backdrop);
-    if (!mode4Enabled() && (registers_[0u] & 0x02u) != 0u) {
+    if (!mode4 && (registers_[0u] & 0x02u) != 0u) {
         const bool graphicsII = (registers_[0u] & 0x02u) != 0u;
         const auto nameBase = static_cast<std::size_t>((registers_[2u] & 0x0Eu) << 10u);
         const auto patternBase = static_cast<std::size_t>((registers_[4u] & 0x04u) << 11u);
@@ -487,7 +490,7 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
             const auto scrolledX = static_cast<std::size_t>((vdpX + fineScrollX) & 0xFF);
             const auto tileX = (startingColumn + (scrolledX / 8u)) % 32u;
             const auto pixelX = scrolledX % 8u;
-            const auto entry = backgroundTileEntry(tileX, tileY);
+            const auto entry = backgroundTileEntry(tileX, tileY, nameBasePre, activeLines);
             const uint16_t tileIndex = static_cast<uint16_t>(((entry >> 0u) & 0x01FFu));
             const bool flipH = (entry & 0x0200u) != 0u;
             const bool flipV = (entry & 0x0400u) != 0u;
@@ -516,7 +519,7 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
             break;
         }
         const uint8_t rawY = vram_[yIndex];
-        if (activeDisplayLines() == 192u && rawY == 0xD0u) {
+        if (activeLines == 192u && rawY == 0xD0u) {
             break;
         }
         if (rawY == 0xE0u) {
@@ -655,10 +658,17 @@ std::size_t GameGearVDP::spriteGeneratorBase() const noexcept {
 }
 
 uint16_t GameGearVDP::backgroundTileEntry(std::size_t tileX, std::size_t tileY) const noexcept {
+    return backgroundTileEntry(tileX, tileY, nameTableBase(), activeDisplayLines());
+}
+
+uint16_t GameGearVDP::backgroundTileEntry(std::size_t tileX,
+                                         std::size_t tileY,
+                                         std::size_t nameTableBase,
+                                         std::size_t activeLines) const noexcept
+{
     const auto wrappedTileX = tileX % kTilesPerRow;
-    const auto wrappedTileY = tileY % (activeDisplayLines() == 192u ? 28u : 32u);
-    const auto base = nameTableBase();
-    const auto index = base + (wrappedTileY * kTilesPerRow + wrappedTileX) * 2u;
+    const auto wrappedTileY = tileY % (activeLines == 192u ? 28u : 32u);
+    const auto index = nameTableBase + (wrappedTileY * kTilesPerRow + wrappedTileX) * 2u;
     if (index + 1u >= vram_.size()) {
         return 0u;
     }

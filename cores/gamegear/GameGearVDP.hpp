@@ -60,6 +60,11 @@ private:
     [[nodiscard]] std::size_t spriteAttributeTableBase() const noexcept;
     [[nodiscard]] std::size_t spriteGeneratorBase() const noexcept;
     [[nodiscard]] uint16_t backgroundTileEntry(std::size_t tileX, std::size_t tileY) const noexcept;
+    // Variant accepting precomputed name table base and active display lines
+    [[nodiscard]] uint16_t backgroundTileEntry(std::size_t tileX,
+                                               std::size_t tileY,
+                                               std::size_t nameTableBase,
+                                               std::size_t activeLines) const noexcept;
     [[nodiscard]] uint8_t samplePatternColor(std::size_t patternBase,
                                              uint16_t tileIndex,
                                              std::size_t pixelX,
