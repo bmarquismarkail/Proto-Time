@@ -14,6 +14,8 @@ public:
     [[nodiscard]] bool isCommandLatchPending() const noexcept { return commandLatchPending_; }
     [[nodiscard]] bool isFrameInterruptPending() const noexcept { return frameInterruptPending_; }
     [[nodiscard]] bool isIrqAsserted() const noexcept { return irqAsserted_; }
+    // Test-only: expose raw CRAM bytes (64 bytes / 32 entries)
+    [[nodiscard]] const std::array<uint8_t, 0x0040>& debugCram() const noexcept { return cram_; }
 public:
     GameGearVDP();
     ~GameGearVDP();
