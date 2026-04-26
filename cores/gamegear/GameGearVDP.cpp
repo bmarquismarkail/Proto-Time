@@ -74,6 +74,12 @@ void GameGearVDP::setSmsMode(bool enabled) noexcept {
     smsMode_ = enabled;
 }
 
+void GameGearVDP::recomputeIrqAsserted() noexcept {
+    const bool vblankEnabled = (registers_[1u] & 0x20u) != 0u;
+    const bool lineEnabled = (registers_[0u] & 0x10u) != 0u;
+    irqAsserted_ = (frameInterruptPending_ && vblankEnabled) || (lineInterruptPending_ && lineEnabled);
+}
+
 void GameGearVDP::step(uint32_t cpuCycles) {
     const bool displayOn = displayEnabled();
     pendingCycles_ += cpuCycles;
@@ -97,9 +103,7 @@ void GameGearVDP::step(uint32_t cpuCycles) {
             if (lineCounter_ == 0u) {
                 lineCounter_ = registers_[0x0Au];
                 lineInterruptPending_ = true;
-                if ((registers_[0u] & 0x10u) != 0u) {
-                    irqAsserted_ = true;
-                }
+                recomputeIrqAsserted();
             } else {
                 lineCounter_ = static_cast<uint8_t>(lineCounter_ - 1u);
             }
@@ -111,9 +115,7 @@ void GameGearVDP::step(uint32_t cpuCycles) {
         if (scanline_ == activeLines + 1u) {
             vblankPending_ = true;
             frameInterruptPending_ = true;
-            if ((registers_[1u] & 0x20u) != 0u) {
-                irqAsserted_ = true;
-            }
+            recomputeIrqAsserted();
         }
     }
     // Update a defensible H counter value (0-255) reflecting position
@@ -227,9 +229,10 @@ uint8_t GameGearVDP::readControlPort() {
     // Control-port read clears status/IRQ pending flags (see vdpint.txt)
     frameInterruptPending_ = false;
     lineInterruptPending_ = false;
-    irqAsserted_ = false;
     spriteOverflowPending_ = false;
     spriteCollisionPending_ = false;
+    // Recompute IRQ assertion based on remaining pending flags and enable bits
+    recomputeIrqAsserted();
     lastStatusScanline_ = line;
     statusScanlineConsumed_ = true;
     return status;
@@ -702,6 +705,8 @@ void GameGearVDP::writeCompatRegister(std::size_t index, uint8_t value) {
     if (index == 0x0Au && scanline_ == 0u) {
         lineCounter_ = value;
     }
+    // Re-evaluate IRQ assertion when registers change (IE bits may affect state)
+    recomputeIrqAsserted();
 }
 
 uint8_t GameGearVDP::readCompatRegister(std::size_t index) const noexcept {

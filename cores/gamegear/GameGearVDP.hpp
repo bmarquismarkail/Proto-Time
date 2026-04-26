@@ -14,6 +14,7 @@ public:
     [[nodiscard]] bool isCommandLatchPending() const noexcept { return commandLatchPending_; }
     [[nodiscard]] bool isFrameInterruptPending() const noexcept { return frameInterruptPending_; }
     [[nodiscard]] bool isIrqAsserted() const noexcept { return irqAsserted_; }
+    [[nodiscard]] bool isLineInterruptPending() const noexcept { return lineInterruptPending_; }
     // Test-only: expose raw CRAM bytes (64 bytes / 32 entries)
     [[nodiscard]] const std::array<uint8_t, 0x0040>& debugCram() const noexcept { return cram_; }
 public:
@@ -72,6 +73,7 @@ private:
     void writeCompatRegister(std::size_t index, uint8_t value);
     [[nodiscard]] uint8_t readCompatRegister(std::size_t index) const noexcept;
     void seedDefaultCram();
+    void recomputeIrqAsserted() noexcept;
 
 
     std::array<uint8_t, kVramSize> vram_{};
