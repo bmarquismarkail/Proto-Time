@@ -168,6 +168,10 @@ add_executable(time-smoke-gamegear-z80-halt tests/smoke_gamegear_z80_halt.cpp)
 target_link_libraries(time-smoke-gamegear-z80-halt time-gamegear-core)
 add_test(NAME smoke_gamegear_z80_halt COMMAND time-smoke-gamegear-z80-halt)
 
+add_executable(time-smoke-gamegear-z80-interrupts tests/smoke_gamegear_z80_interrupts.cpp)
+target_link_libraries(time-smoke-gamegear-z80-interrupts time-gamegear-core)
+add_test(NAME smoke_gamegear_z80_interrupts COMMAND time-smoke-gamegear-z80-interrupts)
+
 add_executable(time-smoke-gamegear-system-ports tests/smoke_gamegear_system_ports.cpp)
 target_link_libraries(time-smoke-gamegear-system-ports time-gamegear-core)
 add_test(NAME smoke_gamegear_system_ports COMMAND time-smoke-gamegear-system-ports)
