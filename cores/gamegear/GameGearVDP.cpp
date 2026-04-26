@@ -68,10 +68,14 @@ void GameGearVDP::reset() {
     accessMode_ = AccessMode::VramRead;
     commandLatchPending_ = false;
     seedDefaultCram();
+    // Initialize decoded CRAM cache from seeded CRAM
+    recomputeDecodedCramCache();
 }
 
 void GameGearVDP::setSmsMode(bool enabled) noexcept {
     smsMode_ = enabled;
+    // Changing SMS/GG decode semantics requires refreshing decoded cache
+    recomputeDecodedCramCache();
 }
 
 void GameGearVDP::recomputeIrqAsserted() noexcept {
@@ -247,19 +251,29 @@ void GameGearVDP::writeDataPort(uint8_t value) {
         const auto cramSize = smsMode_ ? 0x20u : cram_.size();
         const auto cramIndex = static_cast<std::size_t>(dataAddress_ % cramSize);
         if (smsMode_) {
+            // SMS CRAM: single-byte entries (32 total)
             cram_[cramIndex] = static_cast<uint8_t>(value & 0x3Fu);
+            // Update decoded cache for this entry
+            updateDecodedCramEntry(cramIndex % decodedCram_.size());
             dataAddress_ = static_cast<uint16_t>((dataAddress_ + 1u) & 0x3FFFu);
             return;
         }
         if ((cramIndex & 0x01u) == 0u) {
+            // Even byte: latch only, do not update decoded cache yet
             cramLatch_ = value;
             cramLatchValid_ = true;
         } else {
+            // Odd byte: commit even (if latched) and odd; update decoded cache for color
             const auto evenIndex = cramIndex - 1u;
             if (cramLatchValid_ && evenIndex < cram_.size()) {
                 cram_[evenIndex] = cramLatch_;
             }
             cram_[cramIndex] = value;
+            // Compute color index (word pairs) and update decoded cache entry
+            const auto colorIdx = static_cast<std::size_t>(evenIndex / 2u);
+            if (colorIdx < decodedCram_.size()) {
+                updateDecodedCramEntry(colorIdx);
+            }
         }
         dataAddress_ = static_cast<uint16_t>((dataAddress_ + 1u) & 0x3FFFu);
         return;
@@ -582,6 +596,44 @@ uint32_t GameGearVDP::colorFromCramWord(uint16_t cramWord) noexcept {
            static_cast<uint32_t>(blue);
 }
 
+void GameGearVDP::updateDecodedCramEntry(std::size_t colorIndex) noexcept {
+    // Ensure index within 0..31
+    const auto idx = colorIndex % decodedCram_.size();
+    if (smsMode_) {
+        const auto smsIndex = idx % 0x20u;
+        if (smsIndex < cram_.size()) {
+            const auto smsColor = cram_[smsIndex];
+            const auto red = static_cast<uint8_t>((smsColor & 0x03u) * 85u);
+            const auto green = static_cast<uint8_t>(((smsColor >> 2u) & 0x03u) * 85u);
+            const auto blue = static_cast<uint8_t>(((smsColor >> 4u) & 0x03u) * 85u);
+            decodedCram_[idx] = 0xFF000000u |
+                               (static_cast<uint32_t>(red) << 16u) |
+                               (static_cast<uint32_t>(green) << 8u) |
+                               static_cast<uint32_t>(blue);
+            return;
+        }
+        decodedCram_[idx] = paletteColor(static_cast<uint8_t>(idx & 0x03u));
+        return;
+    }
+    const auto byteIndex = idx * 2u;
+    if (byteIndex + 1u >= cram_.size()) {
+        decodedCram_[idx] = paletteColor(static_cast<uint8_t>(idx & 0x03u));
+        return;
+    }
+    const auto even = cram_[byteIndex];
+    const auto odd = cram_[byteIndex + 1u];
+    const auto cramWord = static_cast<uint16_t>((even & 0x0Fu) |
+                                                ((even & 0xF0u) << 0u) |
+                                                ((odd & 0x0Fu) << 8u));
+    decodedCram_[idx] = colorFromCramWord(cramWord);
+}
+
+void GameGearVDP::recomputeDecodedCramCache() noexcept {
+    for (std::size_t i = 0; i < decodedCram_.size(); ++i) {
+        updateDecodedCramEntry(i);
+    }
+}
+
 std::size_t GameGearVDP::nameTableBase() const noexcept {
     const auto reg2 = registers_[2u];
     if (mode4Enabled() && activeDisplayLines() != 192u) {
@@ -632,26 +684,14 @@ uint8_t GameGearVDP::samplePatternColor(std::size_t patternBase,
 
 uint32_t GameGearVDP::sampleCramColor(uint8_t paletteSelect, uint8_t colorCode) const noexcept {
     const auto colorIndex = static_cast<std::size_t>((paletteSelect & 0x01u) * 16u + (colorCode & 0x0Fu));
-    if (smsMode_) {
-        const auto smsColor = cram_[colorIndex % 0x20u];
-        const auto red = static_cast<uint8_t>((smsColor & 0x03u) * 85u);
-        const auto green = static_cast<uint8_t>(((smsColor >> 2u) & 0x03u) * 85u);
-        const auto blue = static_cast<uint8_t>(((smsColor >> 4u) & 0x03u) * 85u);
-        return 0xFF000000u |
-               (static_cast<uint32_t>(red) << 16u) |
-               (static_cast<uint32_t>(green) << 8u) |
-               static_cast<uint32_t>(blue);
-    }
-    const auto byteIndex = colorIndex * 2u;
-    if (byteIndex + 1u >= cram_.size()) {
+    if (colorIndex >= decodedCram_.size()) {
         return paletteColor(colorCode & 0x03u);
     }
-    const auto even = cram_[byteIndex];
-    const auto odd = cram_[byteIndex + 1u];
-    const auto cramWord = static_cast<uint16_t>((even & 0x0Fu) |
-                                                ((even & 0xF0u) << 0u) |
-                                                ((odd & 0x0Fu) << 8u));
-    return colorFromCramWord(cramWord);
+    return decodedCram_[colorIndex];
+}
+
+uint32_t GameGearVDP::debugDecodedCramColor(std::size_t colorIndex) const noexcept {
+    return decodedCram_[colorIndex % decodedCram_.size()];
 }
 
 bool GameGearVDP::displayEnabled() const noexcept {

@@ -17,6 +17,8 @@ public:
     [[nodiscard]] bool isLineInterruptPending() const noexcept { return lineInterruptPending_; }
     // Test-only: expose raw CRAM bytes (64 bytes / 32 entries)
     [[nodiscard]] const std::array<uint8_t, 0x0040>& debugCram() const noexcept { return cram_; }
+    // Test-only: expose decoded CRAM color (ARGB) cache per color index (0..31)
+    [[nodiscard]] uint32_t debugDecodedCramColor(std::size_t colorIndex) const noexcept;
 public:
     GameGearVDP();
     ~GameGearVDP();
@@ -73,6 +75,9 @@ private:
     void writeCompatRegister(std::size_t index, uint8_t value);
     [[nodiscard]] uint8_t readCompatRegister(std::size_t index) const noexcept;
     void seedDefaultCram();
+    // Recompute/refresh decoded palette cache from raw CRAM bytes
+    void recomputeDecodedCramCache() noexcept;
+    void updateDecodedCramEntry(std::size_t colorIndex) noexcept;
     void recomputeIrqAsserted() noexcept;
 
 
@@ -80,6 +85,8 @@ private:
     std::array<uint8_t, 0x00A0> oam_{};
     std::array<uint8_t, 0x000B> registers_{};
     std::array<uint8_t, 0x0040> cram_{};
+    // Decoded CRAM cache: one ARGB color per CRAM entry (32 entries)
+    std::array<uint32_t, 32> decodedCram_{};
     uint32_t pendingCycles_ = 0u;
     uint16_t scanline_ = 0u;
     uint8_t lastReadyScanline_ = 0u;

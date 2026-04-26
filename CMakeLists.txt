@@ -212,6 +212,10 @@ add_executable(time-smoke-gamegear-vdp-line-irq tests/smoke_gamegear_vdp_line_ir
 target_link_libraries(time-smoke-gamegear-vdp-line-irq time-gamegear-core)
 add_test(NAME smoke_gamegear_vdp_line_irq COMMAND time-smoke-gamegear-vdp-line-irq)
 
+add_executable(time-smoke-gamegear-vdp-cache tests/smoke_gamegear_vdp_cache.cpp)
+target_link_libraries(time-smoke-gamegear-vdp-cache time-gamegear-core)
+add_test(NAME smoke_gamegear_vdp_cache COMMAND time-smoke-gamegear-vdp-cache)
+
 add_executable(time-smoke-gamegear-psg-subsystem tests/smoke_gamegear_psg_subsystem.cpp)
 target_link_libraries(time-smoke-gamegear-psg-subsystem time-gamegear-core)
 add_test(NAME smoke_gamegear_psg_subsystem COMMAND time-smoke-gamegear-psg-subsystem)
