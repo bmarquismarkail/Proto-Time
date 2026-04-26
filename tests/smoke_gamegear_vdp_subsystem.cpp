@@ -32,7 +32,8 @@ int main()
         vdp.writeVram(0x9234u, 0x00u); // clear for test
         memory.writeIoPort(0xBEu, 0xAAu); // data port write (should not write to VRAM at 0x9234)
         assert(vdp.readVram(0x9234u) == 0x00u); // no effect, latch not completed
-        // Now send second byte: should set up VRAM write
+        // The data-port write clears the latch, so send a fresh two-byte command.
+        memory.writeIoPort(0xBFu, 0x34u);
         memory.writeIoPort(0xBFu, 0x52u); // second byte (VRAM write, address 0x1234)
         memory.writeIoPort(0xBEu, 0xBBu); // data port write
         assert(vdp.readVram(0x9234u) == 0xBBu); // VRAM written
@@ -70,22 +71,20 @@ int main()
     {
         vdp.reset();
         // Write known values
-        memory.writeIoPort(0xBFu, 0x34u);
-        memory.writeIoPort(0xBFu, 0x40u); // VRAM read, address 0x1034
         vdp.writeVram(0x9034u, 0xDEu);
         vdp.writeVram(0x9035u, 0xADu);
         // Set up VRAM read at 0x1034
         memory.writeIoPort(0xBFu, 0x34u);
-        memory.writeIoPort(0xBFu, 0x00u); // VRAM read, address 0x1034
-        // First read returns buffer (default 0)
+        memory.writeIoPort(0xBFu, 0x10u); // VRAM read, address 0x1034
+        // The read command preloads the buffer from 0x1034.
         uint8_t first = memory.readIoPort(0xBEu);
-        // Second read returns 0xDE (from 0x9034)
+        // The first data read queues 0x1035 for the next read.
         uint8_t second = memory.readIoPort(0xBEu);
-        // Third read returns 0xAD (from 0x9035)
+        // The second data read queues 0x1036, which is still zero.
         uint8_t third = memory.readIoPort(0xBEu);
-        assert(first == 0u);
-        assert(second == 0xDEu);
-        assert(third == 0xADu);
+        assert(first == 0xDEu);
+        assert(second == 0xADu);
+        assert(third == 0u);
     }
 
     // 6. VRAM writes update the read buffer
@@ -104,7 +103,7 @@ int main()
         vdp.reset();
         // Set address to 0x3FFF, VRAM write
         memory.writeIoPort(0xBFu, 0xFFu);
-        memory.writeIoPort(0xBFu, 0x41u); // VRAM write, address 0x3FFF
+        memory.writeIoPort(0xBFu, 0x7Fu); // VRAM write, address 0x3FFF
         memory.writeIoPort(0xBEu, 0x77u); // write data port
         // Next write should wrap to 0x0000
         memory.writeIoPort(0xBEu, 0x88u);
@@ -131,6 +130,7 @@ int main()
 
     // ...existing code...
 
+    vdp.reset();
     memory.writeIoPort(0xBFu, 0x40u);
     memory.writeIoPort(0xBFu, 0x81u); // display on
     memory.writeIoPort(0xBFu, 0x01u);
