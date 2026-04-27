@@ -655,6 +655,11 @@ int main(int argc, char** argv) {
     bool collectBfTimingSinceLastClear = false;
     bool collectVdpWritesBetweenClearAndSet = false;
     bool collectBetweenSuccessfulClearAndFinalSetStats = false;
+    // open a small on-disk log so we can observe IY/IX changes as they happen
+    std::ofstream iyChangeLog("/tmp/iy_changes.log", std::ios::trunc);
+    iyChangeLog << "step|pc|op0|op1|op2|op3|oldIY|newIY|oldIX|newIX|af|bc|de|hl|sp|scanline|machine_irq_pending|in_isr" << std::endl;
+    std::ofstream pc4b7bLog("/tmp/pc_4b7b.log", std::ios::trunc);
+    pc4b7bLog << "step|pc|op0|op1|op2|op3|iy|ix|af|bc|de|hl|sp|scanline|machine_irq_pending|in_isr" << std::endl;
 
     auto bankState = [&]() {
         BankState state{};
@@ -1023,6 +1028,8 @@ int main(int argc, char** argv) {
     uint16_t lastPc = 0;
     uint64_t samePcRun = 0;
 
+    uint16_t prevIY = cpu.IY;
+    uint16_t prevIX = cpu.IX;
     for (currentStep = 0; currentStep < maxSteps; ++currentStep) {
         if (pressStartAt.has_value() && currentStep == *pressStartAt) {
             input.setLogicalButtons(BMMQ::inputButtonMask(BMMQ::InputButton::Meta2));
@@ -1054,6 +1061,39 @@ int main(int argc, char** argv) {
         const auto cycles = cpu.step();
         totalCpuCycles += cycles;
         const auto postStepSnapshot = snapshotCpu(lastPc, c702BeforeStep, c702Value);
+        // record whenever PC==0x4B7B so we can inspect IY at each execution
+        if (lastPc == 0x4B7Bu) {
+            const uint8_t o0 = opcodeAtPc;
+            const uint8_t o1 = nextOpcodeByte;
+            const uint8_t o2 = thirdOpcodeByte;
+            const uint8_t o3 = fourthOpcodeByte;
+            pc4b7bLog << postStepSnapshot.step << '|' << hex16(postStepSnapshot.pc) << '|' \
+                      << hex8(o0) << '|' << hex8(o1) << '|' << hex8(o2) << '|' << hex8(o3) << '|' \
+                      << hex16(postStepSnapshot.iy) << '|' << hex16(postStepSnapshot.ix) << '|' \
+                      << hex16(postStepSnapshot.af) << '|' << hex16(postStepSnapshot.bc) << '|' \
+                      << hex16(postStepSnapshot.de) << '|' << hex16(postStepSnapshot.hl) << '|' \
+                      << hex16(postStepSnapshot.sp) << '|' << static_cast<int>(vdp.currentScanline()) << '|' \
+                      << (interruptRequested ? "yes" : "no") << '|' << (inInterruptRoutine ? "yes" : "no") << std::endl;
+            pc4b7bLog.flush();
+        }
+        // detect IY/IX changes and write immediate probe log entries
+        if (postStepSnapshot.iy != prevIY || postStepSnapshot.ix != prevIX) {
+            const uint8_t o0 = opcodeAtPc;
+            const uint8_t o1 = nextOpcodeByte;
+            const uint8_t o2 = thirdOpcodeByte;
+            const uint8_t o3 = fourthOpcodeByte;
+            iyChangeLog << postStepSnapshot.step << '|' << hex16(postStepSnapshot.pc) << '|' \
+                        << hex8(o0) << '|' << hex8(o1) << '|' << hex8(o2) << '|' << hex8(o3) << '|' \
+                        << hex16(prevIY) << '|' << hex16(postStepSnapshot.iy) << '|' \
+                        << hex16(prevIX) << '|' << hex16(postStepSnapshot.ix) << '|' \
+                        << hex16(postStepSnapshot.af) << '|' << hex16(postStepSnapshot.bc) << '|' \
+                        << hex16(postStepSnapshot.de) << '|' << hex16(postStepSnapshot.hl) << '|' \
+                        << hex16(postStepSnapshot.sp) << '|' << static_cast<int>(vdp.currentScanline()) << '|' \
+                        << (interruptRequested ? "yes" : "no") << '|' << (inInterruptRoutine ? "yes" : "no") << std::endl;
+            iyChangeLog.flush();
+            prevIY = postStepSnapshot.iy;
+            prevIX = postStepSnapshot.ix;
+        }
         if (collectBetweenSuccessfulClearAndFinalSetStats && lastPc != 0x4500u) {
             recordOpcodeStats(betweenSuccessfulClearAndFinalSetStats,
                               opcodeAtPc,

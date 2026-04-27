@@ -175,6 +175,11 @@ add_executable(time-smoke-gamegear-z80-interrupts tests/smoke_gamegear_z80_inter
 target_link_libraries(time-smoke-gamegear-z80-interrupts time-gamegear-core)
 add_test(NAME smoke_gamegear_z80_interrupts COMMAND time-smoke-gamegear-z80-interrupts)
 
+# Focused FD-indexed behavior tests
+add_executable(time-smoke-gamegear-z80-fd-indexed tests/smoke_gamegear_z80_fd_indexed.cpp)
+target_link_libraries(time-smoke-gamegear-z80-fd-indexed time-gamegear-core)
+add_test(NAME smoke_gamegear_z80_fd_indexed COMMAND time-smoke-gamegear-z80-fd-indexed)
+
 add_executable(time-smoke-gamegear-system-ports tests/smoke_gamegear_system_ports.cpp)
 target_link_libraries(time-smoke-gamegear-system-ports time-gamegear-core)
 add_test(NAME smoke_gamegear_system_ports COMMAND time-smoke-gamegear-system-ports)
