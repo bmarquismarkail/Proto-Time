@@ -384,6 +384,58 @@ void printOpcodeWindow(const OpcodeWindow& window) {
     }
 }
 
+void analyzeOpcodeWindow(const OpcodeWindow& window) {
+    bool any = false;
+    for (std::size_t i = 0; i + 1 < window.bytes.size(); ++i) {
+        const uint16_t addr = static_cast<uint16_t>(window.start + i);
+        const uint8_t b0 = window.bytes[i];
+        if (b0 == 0xFDu || b0 == 0xDDu) {
+            const uint8_t op = window.bytes[i + 1];
+            if (op == 0xCBu) {
+                if (i + 3 < window.bytes.size()) {
+                    const uint8_t disp = window.bytes[i + 2];
+                    const uint8_t cbop = window.bytes[i + 3];
+                    std::cout << "    decode:" << hex16(addr) << ":FDCB " << hex8(disp) << ':' << hex8(cbop)
+                              << " -> bit/rot op on (IY+" << std::dec << static_cast<int8_t>(disp) << ")\n";
+                    any = true;
+                }
+            } else {
+                // common memory ops that become (IY+d)/(IX+d) when prefixed
+                if (op == 0x34u) {
+                    const uint8_t disp = (i + 2 < window.bytes.size()) ? window.bytes[i + 2] : 0u;
+                    std::cout << "    decode:" << hex16(addr) << ":" << hex8(b0) << ':' << hex8(op)
+                              << " -> INC (IY+" << std::dec << static_cast<int8_t>(disp) << ")\n";
+                    any = true;
+                } else if (op == 0x35u) {
+                    const uint8_t disp = (i + 2 < window.bytes.size()) ? window.bytes[i + 2] : 0u;
+                    std::cout << "    decode:" << hex16(addr) << ":" << hex8(b0) << ':' << hex8(op)
+                              << " -> DEC (IY+" << std::dec << static_cast<int8_t>(disp) << ")\n";
+                    any = true;
+                } else if (op == 0x36u) {
+                    const uint8_t disp = (i + 2 < window.bytes.size()) ? window.bytes[i + 2] : 0u;
+                    const uint8_t imm = (i + 3 < window.bytes.size()) ? window.bytes[i + 3] : 0u;
+                    std::cout << "    decode:" << hex16(addr) << ":" << hex8(b0) << ':' << hex8(op)
+                              << " -> LD (IY+" << std::dec << static_cast<int8_t>(disp) << ")," << hex8(imm) << "\n";
+                    any = true;
+                } else if (op >= 0x70u && op <= 0x77u) {
+                    const uint8_t disp = (i + 2 < window.bytes.size()) ? window.bytes[i + 2] : 0u;
+                    std::cout << "    decode:" << hex16(addr) << ":" << hex8(b0) << ':' << hex8(op)
+                              << " -> LD (IY+" << std::dec << static_cast<int8_t>(disp) << "),r\n";
+                    any = true;
+                } else {
+                    // Generic prefix hint
+                    std::cout << "    decode:" << hex16(addr) << ":" << hex8(b0) << ':' << hex8(op)
+                              << " -> FD/DD prefix present (possible (IY/IX+d) access)\n";
+                    any = true;
+                }
+            }
+        }
+    }
+    if (!any) {
+        std::cout << "    decode: no FD/DD patterns found in window\n";
+    }
+}
+
 void printBankState(const BankState& banks) {
     if (!banks.available) {
         std::cout << " bank4000=n/a bank8000=n/a mapper_control=n/a";
@@ -539,6 +591,10 @@ int main(int argc, char** argv) {
     std::vector<IoEvent> events;
     std::vector<MemEvent> memEvents;
     std::vector<RamWriteEvent> ramWrites;
+    // Dedicated small ring for C700-C710 writes (inclusive)
+    std::array<std::vector<RamWriteEvent>, 0x11> c700History;
+    // Fast lookup of the last seen ram write per address
+    std::map<uint16_t, RamWriteEvent> lastRamWrite;
     std::vector<C702WriteEvent> c702Writes;
     std::vector<C702ReadEvent> c702Reads;
     std::vector<InterruptEvent> interruptEvents;
@@ -830,6 +886,13 @@ int main(int argc, char** argv) {
         ev.vdp_frame_pending = vdp.isFrameInterruptPending();
         ev.vdp_line_pending = vdp.isLineInterruptPending();
         ramWrites.push_back(ev);
+        // Keep a small dedicated history for C700-C710
+        if (address >= 0xC700u && address <= 0xC710u) {
+            const std::size_t idx = static_cast<std::size_t>(address - 0xC700u);
+            pushTail(c700History[idx], ev, 512u);
+        }
+        // Update fast last-write map for fallback attribution
+        lastRamWrite[address] = ev;
     };
     auto recordC702Read = [&](uint8_t value) {
         pushTail(c702Reads,
@@ -1557,6 +1620,84 @@ int main(int argc, char** argv) {
                   << '\n';
     }
 
+    // --- Full write histories for addresses of interest ---
+    auto printRamHistory = [&](uint16_t address) {
+        std::cout << "full_write_history addr=" << hex16(address) << '\n';
+        // From ramWrites
+        for (const auto& w : ramWrites) {
+            if (w.address == address) {
+                std::cout << "  step=" << w.step << " pc=" << hex16(w.pc)
+                          << " prev=" << hex8(w.previousValue) << " written=" << hex8(w.value)
+                          << " scanline=" << static_cast<int>(w.scanline)
+                          << " regs af=" << hex16(w.af) << " bc=" << hex16(w.bc)
+                          << " de=" << hex16(w.de) << " hl=" << hex16(w.hl)
+                          << " ix=" << hex16(w.ix) << " iy=" << hex16(w.iy)
+                          << " sp=" << hex16(w.sp)
+                          << " opcodes";
+                printOpcodeWindow(w.opcodes);
+                std::cout << '\n';
+            }
+        }
+        // For C700..C710, also print dedicated ring history
+        if (address >= 0xC700u && address <= 0xC710u) {
+            const std::size_t idx = static_cast<std::size_t>(address - 0xC700u);
+            std::cout << "  c700_ring_history (last " << c700History[idx].size() << ")\n";
+            for (const auto& w : c700History[idx]) {
+                std::cout << "    step=" << w.step << " pc=" << hex16(w.pc)
+                          << " prev=" << hex8(w.previousValue) << " written=" << hex8(w.value)
+                          << " scanline=" << static_cast<int>(w.scanline)
+                          << " regs af=" << hex16(w.af) << " bc=" << hex16(w.bc)
+                          << " de=" << hex16(w.de) << " hl=" << hex16(w.hl)
+                          << " ix=" << hex16(w.ix) << " iy=" << hex16(w.iy)
+                          << " sp=" << hex16(w.sp)
+                          << " opcodes";
+                printOpcodeWindow(w.opcodes);
+                std::cout << '\n';
+            }
+        }
+    };
+
+    // Print histories for requested addresses
+    for (const uint16_t addr : {0xC702u, 0xC703u, 0xC503u, 0xC603u}) {
+        printRamHistory(addr);
+    }
+
+    // Print opcode window and decode around PC=0x4B7B
+    {
+        const uint16_t probePc = 0x4B7Bu;
+        const auto window = captureOpcodeWindow(mem, probePc);
+        std::cout << "opcode_window_4B7B";
+        printOpcodeWindow(window);
+        std::cout << '\n';
+        analyzeOpcodeWindow(window);
+    }
+
+    // Print snapshot byte ranges at last successful set and final stuck set
+    auto printSnapshotRange = [&](const std::string& tag, const CpuSnapshot& snap, uint16_t startAddr, uint16_t endAddr) {
+        std::cout << tag << " " << hex16(startAddr) << "-" << hex16(endAddr) << '\n';
+        const int base = 0xC4E0;
+        for (uint16_t a = startAddr; a <= endAddr; ++a) {
+            const int idx = static_cast<int>(a) - base;
+            if (idx >= 0 && static_cast<std::size_t>(idx) < snap.ram_c4e0_c720.size()) {
+                std::cout << ' ' << hex16(a) << ':' << hex8(snap.ram_c4e0_c720[static_cast<std::size_t>(idx)]);
+            } else {
+                std::cout << ' ' << hex16(a) << ":n/a";
+            }
+        }
+        std::cout << '\n';
+    };
+
+    if (lastSuccessfulCycle.valid) {
+        printSnapshotRange("last_successful_set_snapshot", lastSuccessfulCycle.setSnapshot, 0xC4F8u, 0xC508u);
+        printSnapshotRange("last_successful_set_snapshot", lastSuccessfulCycle.setSnapshot, 0xC5F8u, 0xC608u);
+        printSnapshotRange("last_successful_set_snapshot", lastSuccessfulCycle.setSnapshot, 0xC6F8u, 0xC708u);
+    }
+    if (finalCycle.valid) {
+        printSnapshotRange("final_set_snapshot", finalCycle.setSnapshot, 0xC4F8u, 0xC508u);
+        printSnapshotRange("final_set_snapshot", finalCycle.setSnapshot, 0xC5F8u, 0xC608u);
+        printSnapshotRange("final_set_snapshot", finalCycle.setSnapshot, 0xC6F8u, 0xC708u);
+    }
+
     std::cout << "interrupt_events\n";
     for (const auto& event : interruptEvents) {
         std::cout << "  step=" << event.step
@@ -1851,10 +1992,30 @@ int main(int argc, char** argv) {
                 }
 
                 std::optional<RamWriteEvent> lastWriter;
+                bool lastWriterFromC700History = false;
+                // 1) search ramWrites in the between-clear window
                 for (auto it = ramWrites.rbegin(); it != ramWrites.rend(); ++it) {
                     if (it->address == addr && it->step >= windowStart && it->step <= windowEnd) {
                         lastWriter = *it;
                         break;
+                    }
+                }
+                // 2) if not found and address in C700..C710, search small ring history
+                if (!lastWriter.has_value() && addr >= 0xC700u && addr <= 0xC710u) {
+                    const std::size_t idx = static_cast<std::size_t>(addr - 0xC700u);
+                    for (auto it = c700History[idx].rbegin(); it != c700History[idx].rend(); ++it) {
+                        if (it->step <= windowEnd && it->step >= windowStart) {
+                            lastWriter = *it;
+                            lastWriterFromC700History = true;
+                            break;
+                        }
+                    }
+                }
+                // 3) fallback: if still not found, use lastRamWrite if it existed at or before final set
+                if (!lastWriter.has_value()) {
+                    const auto it = lastRamWrite.find(addr);
+                    if (it != lastRamWrite.end() && it->second.step <= windowEnd) {
+                        lastWriter = it->second;
                     }
                 }
                 if (lastWriter.has_value()) {
@@ -1872,6 +2033,7 @@ int main(int argc, char** argv) {
                               << " sp=" << hex16(w.sp)
                               << " opcodes";
                     printOpcodeWindow(w.opcodes);
+                    if (lastWriterFromC700History) std::cout << " (from_c700_history)";
                     std::cout << '\n';
                 } else {
                     std::cout << " last_writer=n/a\n";
