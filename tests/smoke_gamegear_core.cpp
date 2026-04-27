@@ -303,9 +303,6 @@ int main() {
     }
     for (int i = 0; i < 262; ++i) {
         vdp.step(228u);
-        if (vdp.currentScanline() == 2u) {
-            break;
-        }
     }
     const auto spriteStatus = ioMemory.readIoPort(0xBFu);
     assert((spriteStatus & 0x40u) != 0u);

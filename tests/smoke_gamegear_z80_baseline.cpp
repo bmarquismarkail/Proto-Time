@@ -302,9 +302,9 @@ int main() {
         CHECK_OR_FAIL(cpu.step() == 19u && memory[0x6001u] == 0x12u, "FD36 LD (IY+d),n should take 19 cycles");
         CHECK_OR_FAIL(cpu.step() == 19u && memory[0x6002u] == 0xA5u, "FD77 LD (IY+d),A should take 19 cycles");
         CHECK_OR_FAIL(cpu.step() == 23u && memory[0x6003u] == 0x81u, "FD34 INC (IY+d) should take 23 cycles");
-        CHECK_OR_FAIL(cpu.step() == 19u && cpu.IY == 0x6055u,
-                      "FD6E LD IYL,(IY+d) should take 19 cycles");
-        CHECK_OR_FAIL(cpu.step() == 10u && cpu.IY == 0x6054u, "FD2B DEC IY should take 10 cycles");
+        CHECK_OR_FAIL(cpu.step() == 19u && cpu.IY == 0x6000u && static_cast<uint8_t>(cpu.HL) == 0x55u,
+                      "FD6E LD L,(IY+d) should take 19 cycles without mutating IY");
+        CHECK_OR_FAIL(cpu.step() == 10u && cpu.IY == 0x5FFFu, "FD2B DEC IY should take 10 cycles");
     }
 
     {
