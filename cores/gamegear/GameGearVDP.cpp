@@ -70,6 +70,17 @@ void GameGearVDP::reset() {
     seedDefaultCram();
     // Initialize decoded CRAM cache from seeded CRAM
     recomputeDecodedCramCache();
+
+    // Initialize sprite attribute table (Y entries) to 0xE0 (hidden) so
+    // default SAT entries do not appear as visible sprites on early
+    // scanlines. This matches expected hardware semantics where unused
+    // sprite entries are off-screen.
+    const auto satBase = spriteAttributeTableBase();
+    if (satBase + 64u <= vram_.size()) {
+        for (std::size_t i = 0; i < 64u; ++i) {
+            vram_[satBase + i] = 0xE0u;
+        }
+    }
 }
 
 void GameGearVDP::setSmsMode(bool enabled) noexcept {
@@ -214,9 +225,9 @@ uint8_t GameGearVDP::readDataPort() {
 uint8_t GameGearVDP::readControlPort() {
     // Reading control port clears the command latch and status/IRQ flags
     commandLatchPending_ = false;
-    const uint8_t line = currentScanline() == 0u
-            ? 0u
-            : static_cast<uint8_t>(currentScanline() - 1u);
+    // Use the V counter value when evaluating status so the scanline
+    // reference matches the value used during step() and sprite evaluation.
+    const uint8_t line = readVCounter();
     if (line < activeDisplayLines() && (!statusScanlineConsumed_ || line != lastStatusScanline_)) {
         evaluateScanlineStatus(line);
     }
@@ -397,6 +408,7 @@ void GameGearVDP::evaluateScanlineStatus(uint8_t scanline) noexcept {
                                                       static_cast<uint16_t>(tileIndex + rowTileOffset),
                                                       static_cast<std::size_t>(px / zoom),
                                                       static_cast<std::size_t>(row % 8));
+            (void)colorCode;
             if (colorCode == 0u) {
                 continue;
             }

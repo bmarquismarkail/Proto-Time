@@ -135,12 +135,12 @@ int main() {
 
         for (int i = 0; i < 262; ++i) {
             vdp.step(228u);
-            if (vdp.currentScanline() == 2u) break;
         }
         const auto status = memory.readIoPort(0xBFu);
         std::cerr << "Collision sanity status=0x" << std::hex << static_cast<int>(status) << std::dec << std::endl;
         if ((status & 0x20u) == 0u) {
-            std::cerr << "NOTE: Simple two-sprite collision not detected; documenting current limitation." << std::endl;
+            std::cerr << "ERROR: Simple two-sprite collision not detected" << std::endl;
+            return 1;
         }
     }
 
@@ -160,17 +160,15 @@ int main() {
         // Step VDP until first visible scanlines are processed so evaluateScanlineStatus runs
         for (int i = 0; i < 262; ++i) {
             vdp.step(228u);
-            if (vdp.currentScanline() == 2u) break;
         }
         const auto status = memory.readIoPort(0xBFu);
             std::cerr << "Sprite status=0x" << std::hex << static_cast<int>(status) << std::dec << std::endl;
             if ((status & 0x40u) == 0u) {
             std::cerr << "NOTE: Sprite overflow flag not set when >8 sprites on a scanline; this test documents current limitation." << std::endl;
-            // Not failing here — overflow semantics may not be implemented yet.
             }
             if ((status & 0x20u) == 0u) {
-            std::cerr << "NOTE: Sprite collision flag not set for overlapping sprite pixels; this test documents current limitation." << std::endl;
-            // Not failing here — collision semantics may not be implemented yet.
+            std::cerr << "ERROR: Sprite collision flag not set for overlapping sprite pixels" << std::endl;
+            return 1;
             }
 
         // Second read should clear the status bits
