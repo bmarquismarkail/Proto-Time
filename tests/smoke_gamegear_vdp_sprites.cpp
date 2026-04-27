@@ -91,6 +91,8 @@ int main() {
         }
     }
 
+    
+
     // 3) 8x16 mode uses expected pattern rows
     {
         // prepare two tiles: tile20 and tile21 with non-zero pixels
@@ -120,6 +122,60 @@ int main() {
         // restore reg1 to non-tall (clear bit 1)
         memory.writeIoPort(0xBFu, 0x40u);
         memory.writeIoPort(0xBFu, 0x81u);
+    }
+
+    // 2b) Earlier sprites have priority over later sprites when both opaque
+    {
+        // Sprite 0: opaque pixel (higher priority)
+        std::array<uint8_t, 32> tileA{};
+        tileA[0] = static_cast<uint8_t>(1u << 7u);
+        writeSpritePattern(70u, tileA);
+        writeSatY(0x3F00u, 0u, 47u);
+        writeSatXTile(0x3F00u, 0u, 72u, 70u);
+
+        // Record pixel with only sprite0 present
+        const auto model0 = vdp.buildFrameModel({160, 144});
+        const auto pixel0 = model0.argbPixels[24u * 160u + 24u];
+
+        // Sprite 1: another opaque pixel (lower priority)
+        std::array<uint8_t, 32> tileB{};
+        tileB[0] = static_cast<uint8_t>(1u << 6u);
+        writeSpritePattern(71u, tileB);
+        writeSatY(0x3F00u, 1u, 47u);
+        writeSatXTile(0x3F00u, 1u, 72u, 71u);
+
+        const auto modelBoth = vdp.buildFrameModel({160, 144});
+        const auto pixelBoth = modelBoth.argbPixels[24u * 160u + 24u];
+        if (pixelBoth != pixel0) {
+            std::cerr << "Sprite priority ordering failed: earlier sprite not visible over later sprite" << std::endl;
+            return 1;
+        }
+    }
+
+    // 2c) Transparent later sprite does not overwrite earlier sprite/background
+    {
+        // Sprite 2: opaque pixel
+        std::array<uint8_t, 32> tileC{};
+        tileC[0] = static_cast<uint8_t>(1u << 7u);
+        writeSpritePattern(80u, tileC);
+        writeSatY(0x3F00u, 2u, 47u);
+        writeSatXTile(0x3F00u, 2u, 72u, 80u);
+
+        const auto before = vdp.buildFrameModel({160, 144});
+        const auto pixelBefore = before.argbPixels[24u * 160u + 24u];
+
+        // Sprite 3: fully transparent
+        std::array<uint8_t, 32> tileD{};
+        writeSpritePattern(81u, tileD);
+        writeSatY(0x3F00u, 3u, 47u);
+        writeSatXTile(0x3F00u, 3u, 72u, 81u);
+
+        const auto after = vdp.buildFrameModel({160, 144});
+        const auto pixelAfter = after.argbPixels[24u * 160u + 24u];
+        if (pixelAfter != pixelBefore) {
+            std::cerr << "Transparent later sprite incorrectly overwrote earlier sprite" << std::endl;
+            return 1;
+        }
     }
 
     // Quick sanity: two overlapping sprites should set collision
