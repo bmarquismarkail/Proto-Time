@@ -485,6 +485,13 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
         std::array<DecodedBgEntry, kTilesPerRow> decodedEntries{};
         std::array<bool, kTilesPerRow> decodedValid{};
 
+        // Per-tile per-row decoded pattern pixels (8 color indexes for the
+        // currently decoded sampleY). `decodedPatternRowY` stores the
+        // sampleY last decoded for that tile; -1 indicates no row decoded yet.
+        std::array<std::array<uint8_t, 8>, kTilesPerRow> decodedPatternRows{};
+        std::array<int, kTilesPerRow> decodedPatternRowY{};
+        decodedPatternRowY.fill(-1);
+
         for (int x = 0; x < model.width; ++x) {
             const int vdpX = x + viewportX;
             const bool fixedTopRows = (registers_[0u] & 0x40u) != 0u && vdpY < 16;
@@ -519,7 +526,26 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
             const auto &decoded = decodedEntries[tileX];
             const auto sampleX = decoded.flipH ? (7u - pixelX) : pixelX;
             const auto sampleY = decoded.flipV ? (7u - pixelY) : pixelY;
-            const auto colorCode = samplePatternColor(0u, decoded.tileIndex, sampleX, sampleY);
+
+            // Decode the 4 bitplane bytes for this tile row once and reuse
+            // the resulting 8 color indexes for pixels in the tile.
+            if (decodedPatternRowY[tileX] != static_cast<int>(sampleY)) {
+                const auto tileBase = (static_cast<std::size_t>(decoded.tileIndex) * 32u) % vram_.size();
+                const auto rowBase = (tileBase + static_cast<std::size_t>(sampleY) * 4u) % vram_.size();
+                const auto plane0 = vram_[rowBase];
+                const auto plane1 = vram_[(rowBase + 1u) % vram_.size()];
+                const auto plane2 = vram_[(rowBase + 2u) % vram_.size()];
+                const auto plane3 = vram_[(rowBase + 3u) % vram_.size()];
+                for (std::size_t px = 0; px < 8u; ++px) {
+                    const auto bit = static_cast<uint8_t>(7u - static_cast<uint8_t>(px));
+                    decodedPatternRows[tileX][px] = static_cast<uint8_t>((((plane3 >> bit) & 0x01u) << 3u) |
+                                                                          (((plane2 >> bit) & 0x01u) << 2u) |
+                                                                          (((plane1 >> bit) & 0x01u) << 1u) |
+                                                                          ((plane0 >> bit) & 0x01u));
+                }
+                decodedPatternRowY[tileX] = static_cast<int>(sampleY);
+            }
+            const auto colorCode = decodedPatternRows[tileX][static_cast<std::size_t>(sampleX)];
             const auto pixelIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(model.width)
                                   + static_cast<std::size_t>(x);
             model.argbPixels[pixelIndex] = sampleCramColor(decoded.palette1 ? 1u : 0u, colorCode);

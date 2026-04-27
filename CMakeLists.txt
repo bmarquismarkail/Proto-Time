@@ -212,6 +212,14 @@ add_executable(time-smoke-gamegear-vdp-tile-flags tests/smoke_gamegear_vdp_tile_
 target_link_libraries(time-smoke-gamegear-vdp-tile-flags time-gamegear-core)
 add_test(NAME smoke_gamegear_vdp_tile_flags COMMAND time-smoke-gamegear-vdp-tile-flags)
 
+add_executable(time-smoke-gamegear-vdp-pattern-row tests/smoke_gamegear_vdp_pattern_row.cpp)
+target_link_libraries(time-smoke-gamegear-vdp-pattern-row time-gamegear-core)
+add_test(NAME smoke_gamegear_vdp_pattern_row COMMAND time-smoke-gamegear-vdp-pattern-row)
+
+add_executable(time-perf-gamegear-vdp-bench tests/perf_gamegear_vdp_bench.cpp)
+target_link_libraries(time-perf-gamegear-vdp-bench time-gamegear-core)
+add_test(NAME perf_gamegear_vdp_bench COMMAND time-perf-gamegear-vdp-bench)
+
 add_executable(time-smoke-gamegear-vdp-cram tests/smoke_gamegear_vdp_cram.cpp)
 target_link_libraries(time-smoke-gamegear-vdp-cram time-gamegear-core)
 add_test(NAME smoke_gamegear_vdp_cram COMMAND time-smoke-gamegear-vdp-cram)
