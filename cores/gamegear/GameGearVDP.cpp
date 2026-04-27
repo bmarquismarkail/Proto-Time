@@ -470,6 +470,21 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
     const int viewportY = gameGearViewportYOffset(model.height);
     for (int y = 0; y < model.height; ++y) {
         const int vdpY = y + viewportY;
+
+        // Small per-row cache for decoded background tile entries. Decoding the
+        // name-table entry once per tile cell avoids repeated VRAM reads in the
+        // inner pixel loop and preserves semantics (tile index, flips,
+        // palette select, priority).
+        struct DecodedBgEntry {
+            uint16_t tileIndex = 0u;
+            bool flipH = false;
+            bool flipV = false;
+            bool palette1 = false;
+            bool priority = false;
+        };
+        std::array<DecodedBgEntry, kTilesPerRow> decodedEntries{};
+        std::array<bool, kTilesPerRow> decodedValid{};
+
         for (int x = 0; x < model.width; ++x) {
             const int vdpX = x + viewportX;
             const bool fixedTopRows = (registers_[0u] & 0x40u) != 0u && vdpY < 16;
@@ -490,19 +505,25 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
             const auto scrolledX = static_cast<std::size_t>((vdpX + fineScrollX) & 0xFF);
             const auto tileX = (startingColumn + (scrolledX / 8u)) % 32u;
             const auto pixelX = scrolledX % 8u;
-            const auto entry = backgroundTileEntry(tileX, tileY, nameBasePre, activeLines);
-            const uint16_t tileIndex = static_cast<uint16_t>(((entry >> 0u) & 0x01FFu));
-            const bool flipH = (entry & 0x0200u) != 0u;
-            const bool flipV = (entry & 0x0400u) != 0u;
-            const bool palette1 = (entry & 0x0800u) != 0u;
-            const bool priority = (entry & 0x1000u) != 0u;
-            const auto sampleX = flipH ? (7u - pixelX) : pixelX;
-            const auto sampleY = flipV ? (7u - pixelY) : pixelY;
-            const auto colorCode = samplePatternColor(0u, tileIndex, sampleX, sampleY);
+
+            // Decode the name-table entry at most once per tile cell for this row.
+            if (!decodedValid[tileX]) {
+                const auto entry = backgroundTileEntry(tileX, tileY, nameBasePre, activeLines);
+                decodedEntries[tileX].tileIndex = static_cast<uint16_t>(((entry >> 0u) & 0x01FFu));
+                decodedEntries[tileX].flipH = (entry & 0x0200u) != 0u;
+                decodedEntries[tileX].flipV = (entry & 0x0400u) != 0u;
+                decodedEntries[tileX].palette1 = (entry & 0x0800u) != 0u;
+                decodedEntries[tileX].priority = (entry & 0x1000u) != 0u;
+                decodedValid[tileX] = true;
+            }
+            const auto &decoded = decodedEntries[tileX];
+            const auto sampleX = decoded.flipH ? (7u - pixelX) : pixelX;
+            const auto sampleY = decoded.flipV ? (7u - pixelY) : pixelY;
+            const auto colorCode = samplePatternColor(0u, decoded.tileIndex, sampleX, sampleY);
             const auto pixelIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(model.width)
                                   + static_cast<std::size_t>(x);
-            model.argbPixels[pixelIndex] = sampleCramColor(palette1 ? 1u : 0u, colorCode);
-            backgroundPriority[pixelIndex] = priority && colorCode != 0u;
+            model.argbPixels[pixelIndex] = sampleCramColor(decoded.palette1 ? 1u : 0u, colorCode);
+            backgroundPriority[pixelIndex] = decoded.priority && colorCode != 0u;
         }
     }
 

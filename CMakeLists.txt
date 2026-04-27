@@ -208,6 +208,10 @@ add_executable(time-smoke-gamegear-vdp-hoist tests/smoke_gamegear_vdp_hoist.cpp)
 target_link_libraries(time-smoke-gamegear-vdp-hoist time-gamegear-core)
 add_test(NAME smoke_gamegear_vdp_hoist COMMAND time-smoke-gamegear-vdp-hoist)
 
+add_executable(time-smoke-gamegear-vdp-tile-flags tests/smoke_gamegear_vdp_tile_flags.cpp)
+target_link_libraries(time-smoke-gamegear-vdp-tile-flags time-gamegear-core)
+add_test(NAME smoke_gamegear_vdp_tile_flags COMMAND time-smoke-gamegear-vdp-tile-flags)
+
 add_executable(time-smoke-gamegear-vdp-cram tests/smoke_gamegear_vdp_cram.cpp)
 target_link_libraries(time-smoke-gamegear-vdp-cram time-gamegear-core)
 add_test(NAME smoke_gamegear_vdp_cram COMMAND time-smoke-gamegear-vdp-cram)
