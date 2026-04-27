@@ -38,17 +38,18 @@ struct IoEvent {
     bool inInterruptRoutine = false;
 };
 
+struct OpcodeWindow {
+    uint16_t start = 0;
+    std::array<uint8_t, 17> bytes{};
+};
+
 struct MemEvent {
     uint64_t step = 0;
     uint16_t pc = 0;
     uint16_t address = 0;
     uint8_t value = 0;
     uint8_t scanline = 0;
-};
-
-struct OpcodeWindow {
-    uint16_t start = 0;
-    std::array<uint8_t, 17> bytes{};
+    OpcodeWindow opcodes{};
 };
 
 struct C702WriteEvent {
@@ -114,6 +115,14 @@ struct CpuSnapshot {
     uint8_t c702Before = 0;
     uint8_t c702After = 0;
     OpcodeWindow opcodes{};
+    // Memory snapshots for targeted regions
+    std::vector<uint8_t> ram_c700_c720;
+    std::vector<uint8_t> ram_c780_c7c0;
+    std::vector<uint8_t> ram_c880_c8a0;
+    std::vector<uint8_t> ram_c4e0_c720;
+    // IX/IY-relative regions (IX-16..IX+32, IY-16..IY+32)
+    std::vector<uint8_t> ram_ix_range;
+    std::vector<uint8_t> ram_iy_range;
 };
 
 struct BranchEvent {
@@ -571,6 +580,28 @@ int main(int argc, char** argv) {
         return state;
     };
     auto snapshotCpu = [&](uint16_t pc, uint8_t before, uint8_t after) {
+        // helper to read an inclusive range from memory and return a vector
+        auto readRange = [&](int start, int end) {
+            std::vector<uint8_t> out;
+            if (end < start) return out;
+            const int s = std::max(0, start);
+            const int e = std::min(0xFFFF, end);
+            out.reserve(static_cast<std::size_t>(e - s + 1));
+            for (int a = s; a <= e; ++a) {
+                out.push_back(mem.read(static_cast<uint16_t>(a)));
+            }
+            return out;
+        };
+
+        const uint16_t ix = cpu.IX;
+        const uint16_t iy = cpu.IY;
+        const auto r_c700 = readRange(0xC700, 0xC720);
+        const auto r_c780 = readRange(0xC780, 0xC7C0);
+        const auto r_c880 = readRange(0xC880, 0xC8A0);
+        const auto r_c4e0 = readRange(0xC4E0, 0xC720);
+        const auto r_ix = readRange(static_cast<int>(ix) - 16, static_cast<int>(ix) + 32);
+        const auto r_iy = readRange(static_cast<int>(iy) - 16, static_cast<int>(iy) + 32);
+
         return CpuSnapshot{
             currentStep,
             pc,
@@ -585,6 +616,12 @@ int main(int argc, char** argv) {
             before,
             after,
             captureOpcodeWindow(mem, pc),
+            r_c700,
+            r_c780,
+            r_c880,
+            r_c4e0,
+            r_ix,
+            r_iy,
         };
     };
     auto pushCycleBranch = [&](CycleTrace& cycle, const BranchEvent& event) {
@@ -732,8 +769,12 @@ int main(int argc, char** argv) {
         }
     };
     auto recordMemWrite = [&](uint16_t address, uint8_t value) {
-        if (!((address >= 0xC100u && address <= 0xC1A0u) ||
-              (address >= 0xC700u && address <= 0xC710u))) {
+        const bool watched =
+            (address >= 0xC700u && address <= 0xC720u) ||
+            (address >= 0xC780u && address <= 0xC7C0u) ||
+            (address >= 0xC880u && address <= 0xC8A0u) ||
+            (address >= 0xC4E0u && address <= 0xC720u);
+        if (!watched) {
             return;
         }
         pushTail(memEvents, MemEvent{
@@ -742,6 +783,7 @@ int main(int argc, char** argv) {
             address,
             value,
             vdp.currentScanline(),
+            captureOpcodeWindow(mem, currentInstructionPc),
         }, tailLimit);
     };
     auto recordC702Read = [&](uint8_t value) {
@@ -1411,7 +1453,9 @@ int main(int argc, char** argv) {
                   << " addr=" << hex16(event.address)
                   << " value=" << hex8(event.value)
                   << " scanline=" << static_cast<int>(event.scanline)
-                  << '\n';
+                  << " opcodes";
+        printOpcodeWindow(event.opcodes);
+        std::cout << '\n';
     }
 
     std::cout << "c702_summary"
@@ -1670,6 +1714,83 @@ int main(int argc, char** argv) {
                 std::cout << '\n';
             } else {
                 std::cout << "  final <no branch at this index>\n";
+            }
+        }
+    }
+
+    // Compute diffs between the last successful set (snapshot at set) and final stuck set
+    std::cout << "ram_diffs_between_successful_clear_and_final_set\n";
+    if (!lastSuccessfulCycle.valid || !finalCycle.valid) {
+        std::cout << "  no_cycles_found: last_success_valid=" << (lastSuccessfulCycle.valid ? "yes" : "no")
+                  << " final_valid=" << (finalCycle.valid ? "yes" : "no") << '\n';
+    } else if (!lastSuccessfulCycle.reached4B24) {
+        std::cout << "  last_successful_cycle did not reach 4B24/clear; cannot compute between-clear window\n";
+    } else {
+        const uint64_t windowStart = lastSuccessfulCycle.clearStep;
+        const uint64_t windowEnd = finalCycle.setStep;
+        std::vector<std::tuple<uint16_t, uint8_t, uint8_t>> diffs;
+
+        auto recordDiffs = [&](uint16_t base, const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+            const std::size_t n = std::min(a.size(), b.size());
+            for (std::size_t i = 0; i < n; ++i) {
+                if (a[i] != b[i]) {
+                    diffs.emplace_back(static_cast<uint16_t>(base + i), a[i], b[i]);
+                }
+            }
+        };
+
+        recordDiffs(0xC700u, lastSuccessfulCycle.setSnapshot.ram_c700_c720, finalCycle.setSnapshot.ram_c700_c720);
+        recordDiffs(0xC780u, lastSuccessfulCycle.setSnapshot.ram_c780_c7c0, finalCycle.setSnapshot.ram_c780_c7c0);
+        recordDiffs(0xC880u, lastSuccessfulCycle.setSnapshot.ram_c880_c8a0, finalCycle.setSnapshot.ram_c880_c8a0);
+        recordDiffs(0xC4E0u, lastSuccessfulCycle.setSnapshot.ram_c4e0_c720, finalCycle.setSnapshot.ram_c4e0_c720);
+
+        // IX-relative: compute base from snapshot.ix - 16
+        if (!lastSuccessfulCycle.setSnapshot.ram_ix_range.empty() && !finalCycle.setSnapshot.ram_ix_range.empty()) {
+            const int ixBase = static_cast<int>(lastSuccessfulCycle.setSnapshot.ix) - 16;
+            const std::size_t n = std::min(lastSuccessfulCycle.setSnapshot.ram_ix_range.size(), finalCycle.setSnapshot.ram_ix_range.size());
+            for (std::size_t i = 0; i < n; ++i) {
+                const auto a = lastSuccessfulCycle.setSnapshot.ram_ix_range[i];
+                const auto b = finalCycle.setSnapshot.ram_ix_range[i];
+                if (a != b) diffs.emplace_back(static_cast<uint16_t>(ixBase + static_cast<int>(i)), a, b);
+            }
+        }
+
+        // IY-relative: similar
+        if (!lastSuccessfulCycle.setSnapshot.ram_iy_range.empty() && !finalCycle.setSnapshot.ram_iy_range.empty()) {
+            const int iyBase = static_cast<int>(lastSuccessfulCycle.setSnapshot.iy) - 16;
+            const std::size_t n = std::min(lastSuccessfulCycle.setSnapshot.ram_iy_range.size(), finalCycle.setSnapshot.ram_iy_range.size());
+            for (std::size_t i = 0; i < n; ++i) {
+                const auto a = lastSuccessfulCycle.setSnapshot.ram_iy_range[i];
+                const auto b = finalCycle.setSnapshot.ram_iy_range[i];
+                if (a != b) diffs.emplace_back(static_cast<uint16_t>(iyBase + static_cast<int>(i)), a, b);
+            }
+        }
+
+        if (diffs.empty()) {
+            std::cout << "  no_ram_diffs_found_in_ranges\n";
+        } else {
+            // For each diff, find the last writer in memEvents within window
+            for (const auto& [addr, oldv, newv] : diffs) {
+                std::cout << "  addr=" << hex16(addr)
+                          << " old=" << hex8(oldv)
+                          << " new=" << hex8(newv);
+                // search memEvents from back for last write to addr in [windowStart, windowEnd]
+                std::optional<MemEvent> lastWriter;
+                for (auto it = memEvents.rbegin(); it != memEvents.rend(); ++it) {
+                    if (it->address == addr && it->step >= windowStart && it->step <= windowEnd) {
+                        lastWriter = *it;
+                        break;
+                    }
+                }
+                if (lastWriter.has_value()) {
+                    const auto& w = *lastWriter;
+                    std::cout << " last_writer_step=" << w.step << " pc=" << hex16(w.pc)
+                              << " scanline=" << static_cast<int>(w.scanline) << " opcodes";
+                    printOpcodeWindow(w.opcodes);
+                    std::cout << '\n';
+                } else {
+                    std::cout << " last_writer=n/a\n";
+                }
             }
         }
     }
