@@ -153,6 +153,9 @@ uint8_t GameGearMemoryMap::read(uint16_t addr) const {
     if (addr < 0x0400u && !bios_.empty() && ((memoryControl_ & kMemoryControlBiosDisabled) == 0u)) {
         return bios_[static_cast<std::size_t>(addr) % bios_.size()];
     }
+    if (addr == 0x00DCu || addr == 0x00DDu) {
+        return input ? input->readInputs() : 0xFFu;
+    }
     if (cartridge != nullptr && addr < 0xC000u && cartridge->loaded()) {
         return cartridge->read(addr);
     }
@@ -173,9 +176,6 @@ uint8_t GameGearMemoryMap::read(uint16_t addr) const {
     }
     if (addr == 0xFF00u) {
         return input ? input->readInputs() : 0xFFu;
-    }
-    if (addr == 0x00DC) {
-        return input ? input->readInputs() : 0xFF;
     }
     // 0xC000-0xDFFF: RAM (8KB)
     if (addr >= 0xC000 && addr < 0xE000) {
