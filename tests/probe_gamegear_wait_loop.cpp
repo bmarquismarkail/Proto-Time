@@ -167,14 +167,31 @@ struct TimingSnapshot {
     bool iff2 = false;
 };
 
+struct OpcodeStats {
+    uint64_t instructions = 0;
+    uint64_t cycles = 0;
+    std::map<std::string, uint64_t> opcodeCounts;
+    std::map<std::string, uint64_t> opcodeCycles;
+    std::map<std::string, uint64_t> groupCounts;
+    std::map<std::string, uint64_t> groupCycles;
+};
+
 struct CycleTrace {
     bool valid = false;
     bool reached4B24 = false;
     bool cleared = false;
+    bool reached4090 = false;
     uint64_t setStep = 0;
     uint64_t clearStep = 0;
+    uint64_t setCpuCycles = 0;
+    uint64_t clearCpuCycles = 0;
+    uint64_t first4090Step = 0;
+    uint64_t first4090CpuCycles = 0;
     CpuSnapshot setSnapshot{};
     CpuSnapshot clearSnapshot{};
+    CpuSnapshot first4090Snapshot{};
+    OpcodeStats stats{};
+    OpcodeStats statsToFirst4090{};
     std::vector<BranchEvent> preSetBranches;
     std::vector<ControlEvent> preSetControl;
     std::vector<BranchEvent> branchHead;
@@ -264,6 +281,62 @@ std::string hex16(uint16_t value) {
     out << "0x" << std::hex << std::uppercase << std::setw(4) << std::setfill('0')
         << static_cast<int>(value);
     return out.str();
+}
+
+std::string opcodeKey(uint8_t opcode, uint8_t operand0, uint8_t operand1, uint8_t operand2) {
+    std::ostringstream out;
+    out << std::hex << std::uppercase << std::setw(2) << std::setfill('0');
+    if ((opcode == 0xDDu || opcode == 0xFDu) && operand0 == 0xCBu) {
+        out << static_cast<int>(opcode) << "CB"
+            << std::setw(2) << static_cast<int>(operand1)
+            << std::setw(2) << static_cast<int>(operand2);
+        return out.str();
+    }
+    if (opcode == 0xCBu || opcode == 0xEDu || opcode == 0xDDu || opcode == 0xFDu) {
+        out << static_cast<int>(opcode)
+            << std::setw(2) << static_cast<int>(operand0);
+        return out.str();
+    }
+    out << static_cast<int>(opcode);
+    return out.str();
+}
+
+std::string opcodeGroup(uint8_t opcode, uint8_t operand0) {
+    if (opcode == 0xCBu) {
+        return "CB";
+    }
+    if (opcode == 0xEDu) {
+        return "ED";
+    }
+    if (opcode == 0xDDu && operand0 == 0xCBu) {
+        return "DDCB";
+    }
+    if (opcode == 0xFDu && operand0 == 0xCBu) {
+        return "FDCB";
+    }
+    if (opcode == 0xDDu) {
+        return "DD";
+    }
+    if (opcode == 0xFDu) {
+        return "FD";
+    }
+    return "base";
+}
+
+void recordOpcodeStats(OpcodeStats& stats,
+                       uint8_t opcode,
+                       uint8_t operand0,
+                       uint8_t operand1,
+                       uint8_t operand2,
+                       uint32_t cycles) {
+    const auto key = opcodeKey(opcode, operand0, operand1, operand2);
+    const auto group = opcodeGroup(opcode, operand0);
+    ++stats.instructions;
+    stats.cycles += cycles;
+    ++stats.opcodeCounts[key];
+    stats.opcodeCycles[key] += cycles;
+    ++stats.groupCounts[group];
+    stats.groupCycles[group] += cycles;
 }
 
 OpcodeWindow captureOpcodeWindow(const GameGearMemoryMap& mem, uint16_t pc) {
@@ -480,11 +553,13 @@ int main(int argc, char** argv) {
     CycleTrace activeCycle;
     CycleTrace lastSuccessfulCycle;
     CycleTrace finalCycle;
+    OpcodeStats betweenSuccessfulClearAndFinalSetStats;
     std::map<uint16_t, uint64_t> tracePcCounts;
     std::vector<TimingSnapshot> timingSnapshots;
     std::vector<TimingSnapshot> bfTimingSinceLastClear;
     bool collectBfTimingSinceLastClear = false;
     bool collectVdpWritesBetweenClearAndSet = false;
+    bool collectBetweenSuccessfulClearAndFinalSetStats = false;
 
     auto bankState = [&]() {
         BankState state{};
@@ -797,7 +872,9 @@ int main(int argc, char** argv) {
         const uint8_t opcodeAtPc = mem.read(cpu.PC);
         const uint8_t nextOpcodeByte = mem.read(static_cast<uint16_t>(cpu.PC + 1u));
         const uint8_t thirdOpcodeByte = mem.read(static_cast<uint16_t>(cpu.PC + 2u));
+        const uint8_t fourthOpcodeByte = mem.read(static_cast<uint16_t>(cpu.PC + 3u));
         const uint16_t preStepSp = cpu.SP;
+        const uint64_t preInstructionCpuCycles = totalCpuCycles;
         auto preStepTiming = captureTiming(activeCycle.valid ? "after_4500" : "outside_cycle",
                                            "pc_before_execute",
                                            lastPc,
@@ -812,6 +889,14 @@ int main(int argc, char** argv) {
         const auto cycles = cpu.step();
         totalCpuCycles += cycles;
         const auto postStepSnapshot = snapshotCpu(lastPc, c702BeforeStep, c702Value);
+        if (collectBetweenSuccessfulClearAndFinalSetStats && lastPc != 0x4500u) {
+            recordOpcodeStats(betweenSuccessfulClearAndFinalSetStats,
+                              opcodeAtPc,
+                              nextOpcodeByte,
+                              thirdOpcodeByte,
+                              fourthOpcodeByte,
+                              cycles);
+        }
         if (isTracePc(lastPc)) {
             ++tracePcCounts[lastPc];
             pushTail(tracePcHits, postStepSnapshot, tailLimit);
@@ -823,9 +908,13 @@ int main(int argc, char** argv) {
             if (collectVdpWritesBetweenClearAndSet) {
                 collectVdpWritesBetweenClearAndSet = false;
             }
+            if (collectBetweenSuccessfulClearAndFinalSetStats) {
+                collectBetweenSuccessfulClearAndFinalSetStats = false;
+            }
             activeCycle = CycleTrace{};
             activeCycle.valid = true;
             activeCycle.setStep = currentStep;
+            activeCycle.setCpuCycles = preInstructionCpuCycles;
             activeCycle.setSnapshot = postStepSnapshot;
             activeCycle.preSetBranches = takeTail(branchEvents, 30u);
             activeCycle.preSetControl = takeTail(controlEvents, 30u);
@@ -834,12 +923,29 @@ int main(int argc, char** argv) {
             recordTiming(preStepTiming);
             auto post4500Timing = captureTiming("after_4500", "pc_4500_after", lastPc, cpu.PC);
             recordTiming(post4500Timing);
-        } else if (lastPc == 0x4B24u) {
+        }
+        if (activeCycle.valid) {
+            if (lastPc == 0x4090u && !activeCycle.reached4090) {
+                activeCycle.reached4090 = true;
+                activeCycle.first4090Step = currentStep;
+                activeCycle.first4090CpuCycles = preInstructionCpuCycles;
+                activeCycle.first4090Snapshot = postStepSnapshot;
+                activeCycle.statsToFirst4090 = activeCycle.stats;
+            }
+            recordOpcodeStats(activeCycle.stats,
+                              opcodeAtPc,
+                              nextOpcodeByte,
+                              thirdOpcodeByte,
+                              fourthOpcodeByte,
+                              cycles);
+        }
+        if (lastPc == 0x4B24u) {
             if (activeCycle.valid) {
                 activeCycle.reached4B24 = true;
                 if (c702Value == 0u) {
                     activeCycle.cleared = true;
                     activeCycle.clearStep = currentStep;
+                    activeCycle.clearCpuCycles = totalCpuCycles;
                     activeCycle.clearSnapshot = postStepSnapshot;
                     auto clearTiming = captureTiming("after_4500", "pc_4b24_clear_after", lastPc, cpu.PC);
                     recordTiming(clearTiming);
@@ -847,6 +953,8 @@ int main(int argc, char** argv) {
                     bfTimingSinceLastClear.clear();
                     collectVdpWritesBetweenClearAndSet = true;
                     vdpWritesBetweenClearAndSet.clear();
+                    collectBetweenSuccessfulClearAndFinalSetStats = true;
+                    betweenSuccessfulClearAndFinalSetStats = OpcodeStats{};
                     lastSuccessfulCycle = activeCycle;
                     activeCycle = CycleTrace{};
                 }
@@ -1094,13 +1202,54 @@ int main(int argc, char** argv) {
                   << " iff1=" << (timing.iff1 ? "yes" : "no")
                   << " iff2=" << (timing.iff2 ? "yes" : "no");
     };
+    auto sortedByCount = [](const std::map<std::string, uint64_t>& counts) {
+        std::vector<std::pair<std::string, uint64_t>> entries(counts.begin(), counts.end());
+        std::sort(entries.begin(), entries.end(), [](const auto& lhs, const auto& rhs) {
+            if (lhs.second != rhs.second) {
+                return lhs.second > rhs.second;
+            }
+            return lhs.first < rhs.first;
+        });
+        return entries;
+    };
+    auto printOpcodeStats = [&](const char* label, const OpcodeStats& stats, std::size_t limit) {
+        std::cout << label
+                  << " instructions=" << stats.instructions
+                  << " cycles=" << stats.cycles
+                  << '\n';
+        std::cout << "  groups";
+        for (const auto& group : {"base", "CB", "ED", "DD", "FD", "DDCB", "FDCB"}) {
+            const auto countIt = stats.groupCounts.find(group);
+            const auto cycleIt = stats.groupCycles.find(group);
+            const auto count = countIt == stats.groupCounts.end() ? 0u : countIt->second;
+            const auto cycles = cycleIt == stats.groupCycles.end() ? 0u : cycleIt->second;
+            std::cout << ' ' << group << "_count=" << count << ' ' << group << "_cycles=" << cycles;
+        }
+        std::cout << '\n';
+        std::cout << "  top_opcodes\n";
+        const auto entries = sortedByCount(stats.opcodeCounts);
+        for (std::size_t i = 0; i < std::min(limit, entries.size()); ++i) {
+            const auto cyclesIt = stats.opcodeCycles.find(entries[i].first);
+            const auto cycles = cyclesIt == stats.opcodeCycles.end() ? 0u : cyclesIt->second;
+            std::cout << "    opcode=" << entries[i].first
+                      << " count=" << entries[i].second
+                      << " cycles=" << cycles
+                      << '\n';
+        }
+    };
     auto printCycle = [&](const char* label, const CycleTrace& cycle) {
         std::cout << label
                   << " valid=" << (cycle.valid ? "yes" : "no")
                   << " reached_4b24=" << (cycle.reached4B24 ? "yes" : "no")
                   << " cleared=" << (cycle.cleared ? "yes" : "no")
+                  << " reached_4090=" << (cycle.reached4090 ? "yes" : "no")
                   << " set_step=" << (cycle.valid ? std::to_string(cycle.setStep) : std::string("n/a"))
                   << " clear_step=" << (cycle.reached4B24 ? std::to_string(cycle.clearStep) : std::string("n/a"))
+                  << " first_4090_step=" << (cycle.reached4090 ? std::to_string(cycle.first4090Step) : std::string("n/a"))
+                  << " set_cpu_cycles=" << (cycle.valid ? std::to_string(cycle.setCpuCycles) : std::string("n/a"))
+                  << " clear_cpu_cycles=" << (cycle.reached4B24 ? std::to_string(cycle.clearCpuCycles) : std::string("n/a"))
+                  << " first_4090_cpu_cycles="
+                  << (cycle.reached4090 ? std::to_string(cycle.first4090CpuCycles) : std::string("n/a"))
                   << '\n';
         if (cycle.valid) {
             std::cout << "  set_snapshot ";
@@ -1112,6 +1261,15 @@ int main(int argc, char** argv) {
             printSnapshot(cycle.clearSnapshot);
             std::cout << '\n';
         }
+        if (cycle.reached4090) {
+            std::cout << "  first_4090_snapshot ";
+            printSnapshot(cycle.first4090Snapshot);
+            std::cout << '\n';
+            std::cout << "  opcode_stats_to_first_4090\n";
+            printOpcodeStats("    cycle_to_first_4090_opcode_histogram", cycle.statsToFirst4090, 20u);
+        }
+        std::cout << "  opcode_stats\n";
+        printOpcodeStats("    cycle_opcode_histogram", cycle.stats, 20u);
         std::cout << "  irq_timing_milestones\n";
         for (const auto& timing : cycle.timingMilestones) {
             std::cout << "    ";
@@ -1434,6 +1592,32 @@ int main(int argc, char** argv) {
               << " reached_4b24_after_final_4500="
               << (finalCycle.valid && finalCycle.reached4B24 ? "yes" : "no")
               << '\n';
+    std::cout << "cycle_delta_comparison\n";
+    if (lastSuccessfulCycle.valid && lastSuccessfulCycle.reached4B24) {
+        std::cout << "  successful_set_to_clear"
+                  << " instructions=" << lastSuccessfulCycle.stats.instructions
+                  << " cycles=" << (lastSuccessfulCycle.clearCpuCycles - lastSuccessfulCycle.setCpuCycles)
+                  << " steps=" << (lastSuccessfulCycle.clearStep - lastSuccessfulCycle.setStep)
+                  << '\n';
+    } else {
+        std::cout << "  successful_set_to_clear n/a\n";
+    }
+    if (finalCycle.valid && finalCycle.reached4090) {
+        std::cout << "  final_set_to_first_4090"
+                  << " instructions=" << finalCycle.statsToFirst4090.instructions
+                  << " cycles=" << (finalCycle.first4090CpuCycles - finalCycle.setCpuCycles)
+                  << " steps=" << (finalCycle.first4090Step - finalCycle.setStep)
+                  << '\n';
+    } else {
+        std::cout << "  final_set_to_first_4090 n/a\n";
+    }
+    std::cout << "  successful_clear_to_final_set"
+              << " instructions=" << betweenSuccessfulClearAndFinalSetStats.instructions
+              << " cycles=" << betweenSuccessfulClearAndFinalSetStats.cycles
+              << '\n';
+    printOpcodeStats("successful_clear_to_final_set_opcode_histogram",
+                     betweenSuccessfulClearAndFinalSetStats,
+                     30u);
     printCycle("last_successful_set_clear_cycle", lastSuccessfulCycle);
     printCycle("final_set_stuck_cycle", finalCycle);
 

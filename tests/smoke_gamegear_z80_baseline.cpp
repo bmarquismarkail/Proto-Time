@@ -284,6 +284,45 @@ int main() {
     {
         std::vector<uint8_t> memory(0x10000u, 0x00u);
         auto cpu = makeCpu(memory);
+        memory[0x6001u] = 0x7Fu;
+        memory[0x6002u] = 0x3Cu;
+        memory[0x6003u] = 0x80u;
+        memory[0x6004u] = 0x55u;
+
+        memory[0x0000u] = 0xFDu; memory[0x0001u] = 0x21u; memory[0x0002u] = 0x00u; memory[0x0003u] = 0x60u; // LD IY,0x6000
+        memory[0x0004u] = 0x3Eu; memory[0x0005u] = 0xA5u;                                                   // LD A,0xA5
+        memory[0x0006u] = 0xFDu; memory[0x0007u] = 0x36u; memory[0x0008u] = 0x01u; memory[0x0009u] = 0x12u; // LD (IY+1),0x12
+        memory[0x000Au] = 0xFDu; memory[0x000Bu] = 0x77u; memory[0x000Cu] = 0x02u;                           // LD (IY+2),A
+        memory[0x000Du] = 0xFDu; memory[0x000Eu] = 0x34u; memory[0x000Fu] = 0x03u;                           // INC (IY+3)
+        memory[0x0010u] = 0xFDu; memory[0x0011u] = 0x6Eu; memory[0x0012u] = 0x04u;                           // LD L,(IY+4)
+        memory[0x0013u] = 0xFDu; memory[0x0014u] = 0x2Bu;                                                     // DEC IY
+
+        CHECK_OR_FAIL(cpu.step() == 14u, "LD IY,nn setup failed for indexed timing");
+        CHECK_OR_FAIL(cpu.step() == 7u, "LD A,n setup failed for indexed timing");
+        CHECK_OR_FAIL(cpu.step() == 19u && memory[0x6001u] == 0x12u, "FD36 LD (IY+d),n should take 19 cycles");
+        CHECK_OR_FAIL(cpu.step() == 19u && memory[0x6002u] == 0xA5u, "FD77 LD (IY+d),A should take 19 cycles");
+        CHECK_OR_FAIL(cpu.step() == 23u && memory[0x6003u] == 0x81u, "FD34 INC (IY+d) should take 23 cycles");
+        CHECK_OR_FAIL(cpu.step() == 19u && cpu.IY == 0x6055u,
+                      "FD6E LD IYL,(IY+d) should take 19 cycles");
+        CHECK_OR_FAIL(cpu.step() == 10u && cpu.IY == 0x6054u, "FD2B DEC IY should take 10 cycles");
+    }
+
+    {
+        std::vector<uint8_t> memory(0x10000u, 0x00u);
+        auto cpu = makeCpu(memory);
+        memory[0x6000u] = 0x40u;
+        cpu.HL = 0x6000u;
+        cpu.BC = 0x0001u;
+        memory[0x0000u] = 0xCBu; memory[0x0001u] = 0x21u; // SLA C
+        memory[0x0002u] = 0xCBu; memory[0x0003u] = 0x76u; // BIT 6,(HL)
+
+        CHECK_OR_FAIL(cpu.step() == 8u && static_cast<uint8_t>(cpu.BC) == 0x02u, "CB21 SLA C should take 8 cycles");
+        CHECK_OR_FAIL(cpu.step() == 12u && (cpu.AF & kFlagZ) == 0u, "CB76 BIT 6,(HL) should take 12 cycles");
+    }
+
+    {
+        std::vector<uint8_t> memory(0x10000u, 0x00u);
+        auto cpu = makeCpu(memory);
         memory[0x0000u] = 0x01u; memory[0x0001u] = 0x34u; memory[0x0002u] = 0x12u; // LD BC,0x1234
         memory[0x0003u] = 0x11u; memory[0x0004u] = 0x78u; memory[0x0005u] = 0x56u; // LD DE,0x5678
         memory[0x0006u] = 0x03u;                                                   // INC BC
