@@ -549,6 +549,8 @@ int main(int argc, char** argv) {
     uint64_t maxSteps = 5'000'000u;
     std::optional<uint64_t> pressStartAt;
     std::size_t tailLimit = 80u;
+    // optional: stop when CPU spins in the known C700 wait loop with C702 stuck high
+    std::optional<uint64_t> stopOnC702SpinSamePcCount;
 
     for (int i = 2; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -558,6 +560,13 @@ int main(int argc, char** argv) {
             pressStartAt = std::strtoull(argv[++i], nullptr, 10);
         } else if (arg == "--tail" && i + 1 < argc) {
             tailLimit = static_cast<std::size_t>(std::strtoull(argv[++i], nullptr, 10));
+        } else if (arg == "--stop-on-c702-spin") {
+            // optionally accept an explicit same-pc-run threshold, otherwise default to 1000
+            if (i + 1 < argc && std::isdigit(argv[i + 1][0])) {
+                stopOnC702SpinSamePcCount = std::strtoull(argv[++i], nullptr, 10);
+            } else {
+                stopOnC702SpinSamePcCount = 1000u;
+            }
         } else {
             printUsage(argv[0]);
             return 2;
@@ -1262,6 +1271,15 @@ int main(int argc, char** argv) {
             ++samePcRun;
         } else {
             samePcRun = 0;
+        }
+        if (stopOnC702SpinSamePcCount.has_value()) {
+            if (samePcRun >= *stopOnC702SpinSamePcCount &&
+                (cpu.PC == 0x414Fu || cpu.PC == 0x4152u) &&
+                c702Value == 0xFFu) {
+                std::cerr << "stop-on-c702-spin triggered at step=" << currentStep
+                          << " pc=" << hex16(cpu.PC) << '\n';
+                break;
+            }
         }
     }
 
