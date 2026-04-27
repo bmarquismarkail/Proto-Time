@@ -224,6 +224,10 @@ add_executable(time-smoke-gamegear-vdp-cram tests/smoke_gamegear_vdp_cram.cpp)
 target_link_libraries(time-smoke-gamegear-vdp-cram time-gamegear-core)
 add_test(NAME smoke_gamegear_vdp_cram COMMAND time-smoke-gamegear-vdp-cram)
 
+add_executable(time-smoke-gamegear-vdp-sprites tests/smoke_gamegear_vdp_sprites.cpp)
+target_link_libraries(time-smoke-gamegear-vdp-sprites time-gamegear-core)
+add_test(NAME smoke_gamegear_vdp_sprites COMMAND time-smoke-gamegear-vdp-sprites)
+
 add_executable(time-smoke-gamegear-vdp-line-irq tests/smoke_gamegear_vdp_line_irq.cpp)
 target_link_libraries(time-smoke-gamegear-vdp-line-irq time-gamegear-core)
 add_test(NAME smoke_gamegear_vdp_line_irq COMMAND time-smoke-gamegear-vdp-line-irq)
