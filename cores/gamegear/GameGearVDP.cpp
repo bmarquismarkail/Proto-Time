@@ -331,9 +331,7 @@ bool GameGearVDP::takeVBlankEntered() {
 }
 
 bool GameGearVDP::takeIrqAsserted() {
-    const bool ready = irqAsserted_;
-    irqAsserted_ = false;
-    return ready;
+    return irqAsserted_;
 }
 
 uint8_t GameGearVDP::currentScanline() const noexcept {

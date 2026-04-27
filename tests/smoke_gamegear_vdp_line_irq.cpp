@@ -31,11 +31,14 @@ int main() {
     memory.writeIoPort(0xBFu, 0x10u);
     memory.writeIoPort(0xBFu, 0x80u); // register 0x00 = 0x10
     assert(vdp.isIrqAsserted());
+    assert(vdp.takeIrqAsserted());
+    assert(vdp.takeIrqAsserted());
 
     // 3) Control-port read clears line interrupt pending and deasserts IRQ if none other pending
     (void)memory.readIoPort(0xBFu);
     assert(!vdp.isLineInterruptPending());
     assert(!vdp.isIrqAsserted());
+    assert(!vdp.takeIrqAsserted());
 
     // 4) Frame interrupt and line interrupt do not incorrectly clear each other before status read
     // Reconfigure: reload=1, enable line IRQ and vblank IRQ

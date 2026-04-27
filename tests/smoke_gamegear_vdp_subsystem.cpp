@@ -211,6 +211,7 @@ int main()
         assert(!docVdp.takeIrqAsserted());
         docVdp.step(228u);
         assert(docVdp.takeIrqAsserted());
+        assert(docVdp.takeIrqAsserted());
         (void)docMemory.readIoPort(0xBFu);
         assert(!docVdp.takeIrqAsserted());
 

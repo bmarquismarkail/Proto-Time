@@ -152,6 +152,9 @@ add_executable(time-smoke-gamegear-vblank-irq tests/smoke_gamegear_vblank_irq.cp
 target_link_libraries(time-smoke-gamegear-vblank-irq time-gamegear-core)
 add_test(NAME smoke_gamegear_vblank_irq COMMAND time-smoke-gamegear-vblank-irq)
 
+add_executable(time-probe-gamegear-wait-loop EXCLUDE_FROM_ALL tests/probe_gamegear_wait_loop.cpp)
+target_link_libraries(time-probe-gamegear-wait-loop time-gamegear-core)
+
 add_executable(time-smoke-ei-reti tests/smoke_ei_reti.cpp)
 target_link_libraries(time-smoke-ei-reti time-gamegear-core)
 add_test(NAME smoke_ei_reti COMMAND time-smoke-ei-reti)
