@@ -2,6 +2,7 @@
 #include "cores/gamegear/Z80Interpreter.hpp"
 #undef private
 
+#include "cores/gamegear/GameGearCartridge.hpp"
 #include "cores/gamegear/GameGearInput.hpp"
 #include "cores/gamegear/GameGearMapperFactory.hpp"
 #include "cores/gamegear/GameGearMemoryMap.hpp"
@@ -93,6 +94,68 @@ struct VdpRegisterWriteEvent {
     uint8_t lineReload = 0;
 };
 
+struct BankState {
+    bool available = false;
+    std::array<uint8_t, 3> registers{};
+    uint8_t control = 0;
+};
+
+struct CpuSnapshot {
+    uint64_t step = 0;
+    uint16_t pc = 0;
+    uint16_t af = 0;
+    uint16_t bc = 0;
+    uint16_t de = 0;
+    uint16_t hl = 0;
+    uint16_t ix = 0;
+    uint16_t iy = 0;
+    uint16_t sp = 0;
+    BankState banks{};
+    uint8_t c702Before = 0;
+    uint8_t c702After = 0;
+    OpcodeWindow opcodes{};
+};
+
+struct BranchEvent {
+    uint64_t step = 0;
+    uint16_t pc = 0;
+    uint16_t target = 0;
+    uint16_t fallthrough = 0;
+    uint8_t opcode = 0;
+    uint8_t operand0 = 0;
+    uint8_t operand1 = 0;
+    bool conditional = false;
+    bool taken = false;
+    bool inNeighborhoodBefore4B24 = false;
+    CpuSnapshot snapshot{};
+};
+
+struct ControlEvent {
+    uint64_t step = 0;
+    std::string kind;
+    uint16_t pc = 0;
+    uint16_t target = 0;
+    uint16_t spBefore = 0;
+    uint16_t spAfter = 0;
+    CpuSnapshot snapshot{};
+};
+
+struct CycleTrace {
+    bool valid = false;
+    bool reached4B24 = false;
+    bool cleared = false;
+    uint64_t setStep = 0;
+    uint64_t clearStep = 0;
+    CpuSnapshot setSnapshot{};
+    CpuSnapshot clearSnapshot{};
+    std::vector<BranchEvent> preSetBranches;
+    std::vector<ControlEvent> preSetControl;
+    std::vector<BranchEvent> branchHead;
+    std::vector<BranchEvent> branches;
+    std::vector<ControlEvent> controlHead;
+    std::vector<ControlEvent> control;
+};
+
 template <typename T>
 void pushTail(std::vector<T>& events, const T& event, std::size_t limit) {
     events.push_back(event);
@@ -154,12 +217,100 @@ void printOpcodeWindow(const OpcodeWindow& window) {
     }
 }
 
+void printBankState(const BankState& banks) {
+    if (!banks.available) {
+        std::cout << " bank4000=n/a bank8000=n/a mapper_control=n/a";
+        return;
+    }
+    std::cout << " bank4000=" << hex8(banks.registers[1])
+              << " bank8000=" << hex8(banks.registers[2])
+              << " bank0=" << hex8(banks.registers[0])
+              << " mapper_control=" << hex8(banks.control);
+}
+
+template <typename T>
+std::vector<T> takeTail(const std::vector<T>& events, std::size_t limit) {
+    if (events.size() <= limit) {
+        return events;
+    }
+    return std::vector<T>(events.end() - static_cast<std::ptrdiff_t>(limit), events.end());
+}
+
 bool isVdpDataPort(uint8_t port) {
     return (port & 0xC1u) == 0x80u;
 }
 
 bool isVdpControlPort(uint8_t port) {
     return (port & 0xC1u) == 0x81u;
+}
+
+bool isTracePc(uint16_t pc) {
+    return pc == 0x44D0u || pc == 0x4500u || pc == 0x4B24u ||
+           pc == 0x414Fu || pc == 0x4152u;
+}
+
+bool inMegaManRegion(uint16_t pc) {
+    return pc >= 0x4000u && pc < 0x4C00u;
+}
+
+bool in4B24BranchNeighborhood(uint16_t pc) {
+    return pc >= 0x4B10u && pc < 0x4B24u;
+}
+
+bool isConditionalRelativeBranch(uint8_t opcode) {
+    return opcode == 0x10u || opcode == 0x20u || opcode == 0x28u ||
+           opcode == 0x30u || opcode == 0x38u;
+}
+
+bool isConditionalAbsoluteControl(uint8_t opcode) {
+    switch (opcode) {
+    case 0xC2u:
+    case 0xCAu:
+    case 0xD2u:
+    case 0xDAu:
+    case 0xE2u:
+    case 0xEAu:
+    case 0xF2u:
+    case 0xFAu:
+    case 0xC4u:
+    case 0xCCu:
+    case 0xD4u:
+    case 0xDCu:
+    case 0xE4u:
+    case 0xECu:
+    case 0xF4u:
+    case 0xFCu:
+    case 0xC0u:
+    case 0xC8u:
+    case 0xD0u:
+    case 0xD8u:
+    case 0xE0u:
+    case 0xE8u:
+    case 0xF0u:
+    case 0xF8u:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool isCallOpcode(uint8_t opcode) {
+    return opcode == 0xCDu || opcode == 0xC4u || opcode == 0xCCu ||
+           opcode == 0xD4u || opcode == 0xDCu || opcode == 0xE4u ||
+           opcode == 0xECu || opcode == 0xF4u || opcode == 0xFCu;
+}
+
+bool isRetOpcode(uint8_t opcode) {
+    return opcode == 0xC9u || opcode == 0xC0u || opcode == 0xC8u ||
+           opcode == 0xD0u || opcode == 0xD8u || opcode == 0xE0u ||
+           opcode == 0xE8u || opcode == 0xF0u || opcode == 0xF8u ||
+           opcode == 0xD9u;
+}
+
+bool isBranchOpcode(uint8_t opcode) {
+    return isConditionalRelativeBranch(opcode) || isConditionalAbsoluteControl(opcode) ||
+           opcode == 0x18u || opcode == 0xC3u || opcode == 0xE9u || isCallOpcode(opcode) ||
+           isRetOpcode(opcode);
 }
 
 void printUsage(const char* argv0) {
@@ -206,6 +357,7 @@ int main(int argc, char** argv) {
         std::cerr << "failed to create cartridge mapper\n";
         return 1;
     }
+    auto* debugCart = dynamic_cast<GameGearCartridge*>(cart.get());
 
     mem.setCartridge(cart.get());
     mem.setInput(&input);
@@ -224,6 +376,10 @@ int main(int argc, char** argv) {
     std::vector<InterruptEvent> interruptEvents;
     std::vector<VdpRegisterWriteEvent> vdpRegisterWrites;
     std::vector<IoEvent> bfStatusReads;
+    std::vector<CpuSnapshot> tracePcHits;
+    std::vector<BranchEvent> branchEvents;
+    std::vector<BranchEvent> branchNeighborhoodEvents;
+    std::vector<ControlEvent> controlEvents;
     std::map<uint8_t, uint64_t> readCounts;
     std::map<uint8_t, uint64_t> writeCounts;
     std::map<uint8_t, uint8_t> lastRead;
@@ -254,6 +410,49 @@ int main(int argc, char** argv) {
     std::optional<uint64_t> firstC702ClearAfterNonzeroStep;
     std::optional<IoEvent> firstBfStatusReadAfterC702Nonzero;
     std::optional<IoEvent> firstBfStatusReadAfterInterruptAfterC702Nonzero;
+    CycleTrace activeCycle;
+    CycleTrace lastSuccessfulCycle;
+    CycleTrace finalCycle;
+    std::map<uint16_t, uint64_t> tracePcCounts;
+
+    auto bankState = [&]() {
+        BankState state{};
+        if (debugCart != nullptr) {
+            state.available = true;
+            state.registers = debugCart->bankRegisters();
+            state.control = debugCart->controlRegister();
+        }
+        return state;
+    };
+    auto snapshotCpu = [&](uint16_t pc, uint8_t before, uint8_t after) {
+        return CpuSnapshot{
+            currentStep,
+            pc,
+            cpu.AF,
+            cpu.BC,
+            cpu.DE,
+            cpu.HL,
+            cpu.IX,
+            cpu.IY,
+            cpu.SP,
+            bankState(),
+            before,
+            after,
+            captureOpcodeWindow(mem, pc),
+        };
+    };
+    auto pushCycleBranch = [&](CycleTrace& cycle, const BranchEvent& event) {
+        if (cycle.branchHead.size() < 80u) {
+            cycle.branchHead.push_back(event);
+        }
+        pushTail(cycle.branches, event, 80u);
+    };
+    auto pushCycleControl = [&](CycleTrace& cycle, const ControlEvent& event) {
+        if (cycle.controlHead.size() < 80u) {
+            cycle.controlHead.push_back(event);
+        }
+        pushTail(cycle.control, event, 80u);
+    };
 
     auto record = [&](char kind, uint8_t port, uint8_t value) {
         if (!isWatchedPort(port)) {
@@ -444,9 +643,139 @@ int main(int argc, char** argv) {
         interruptServedThisStep = false;
         ++pcCounts[cpu.PC];
         recentPcs[recentPcIndex++ % recentPcs.size()] = cpu.PC;
+        const uint8_t c702BeforeStep = c702Value;
         const uint8_t opcodeAtPc = mem.read(cpu.PC);
         const uint8_t nextOpcodeByte = mem.read(static_cast<uint16_t>(cpu.PC + 1u));
+        const uint8_t thirdOpcodeByte = mem.read(static_cast<uint16_t>(cpu.PC + 2u));
+        const uint16_t preStepSp = cpu.SP;
         const auto cycles = cpu.step();
+        const auto postStepSnapshot = snapshotCpu(lastPc, c702BeforeStep, c702Value);
+        if (isTracePc(lastPc)) {
+            ++tracePcCounts[lastPc];
+            pushTail(tracePcHits, postStepSnapshot, tailLimit);
+        }
+        if (lastPc == 0x4500u) {
+            if (activeCycle.valid && !activeCycle.reached4B24) {
+                finalCycle = activeCycle;
+            }
+            activeCycle = CycleTrace{};
+            activeCycle.valid = true;
+            activeCycle.setStep = currentStep;
+            activeCycle.setSnapshot = postStepSnapshot;
+            activeCycle.preSetBranches = takeTail(branchEvents, 30u);
+            activeCycle.preSetControl = takeTail(controlEvents, 30u);
+        } else if (lastPc == 0x4B24u) {
+            if (activeCycle.valid) {
+                activeCycle.reached4B24 = true;
+                if (c702Value == 0u) {
+                    activeCycle.cleared = true;
+                    activeCycle.clearStep = currentStep;
+                    activeCycle.clearSnapshot = postStepSnapshot;
+                    lastSuccessfulCycle = activeCycle;
+                    activeCycle = CycleTrace{};
+                }
+            }
+        }
+        if (isBranchOpcode(opcodeAtPc)) {
+            uint16_t fallthrough = static_cast<uint16_t>(lastPc + 1u);
+            uint16_t target = cpu.PC;
+            bool conditional = false;
+            bool taken = true;
+            if (opcodeAtPc == 0x18u || isConditionalRelativeBranch(opcodeAtPc)) {
+                fallthrough = static_cast<uint16_t>(lastPc + 2u);
+                target = static_cast<uint16_t>(fallthrough + static_cast<int8_t>(nextOpcodeByte));
+                conditional = opcodeAtPc != 0x18u;
+                taken = cpu.PC == target;
+            } else if (opcodeAtPc == 0xC3u || isConditionalAbsoluteControl(opcodeAtPc) || isCallOpcode(opcodeAtPc)) {
+                fallthrough = static_cast<uint16_t>(lastPc + 3u);
+                target = static_cast<uint16_t>(nextOpcodeByte | (static_cast<uint16_t>(thirdOpcodeByte) << 8u));
+                conditional = opcodeAtPc != 0xC3u && opcodeAtPc != 0xCDu;
+                taken = cpu.PC == target || (isCallOpcode(opcodeAtPc) && cpu.PC == target);
+            } else if (opcodeAtPc == 0xE9u) {
+                fallthrough = static_cast<uint16_t>(lastPc + 1u);
+                target = cpu.PC;
+                taken = true;
+            } else if (isRetOpcode(opcodeAtPc)) {
+                fallthrough = static_cast<uint16_t>(lastPc + 1u);
+                target = cpu.PC;
+                conditional = opcodeAtPc != 0xC9u && opcodeAtPc != 0xD9u;
+                taken = cpu.PC != fallthrough;
+            }
+            const BranchEvent branch{
+                currentStep,
+                lastPc,
+                target,
+                fallthrough,
+                opcodeAtPc,
+                nextOpcodeByte,
+                thirdOpcodeByte,
+                conditional,
+                taken,
+                in4B24BranchNeighborhood(lastPc),
+                postStepSnapshot,
+            };
+            if (inMegaManRegion(lastPc) || inMegaManRegion(target) || branch.inNeighborhoodBefore4B24) {
+                pushTail(branchEvents, branch, tailLimit);
+            }
+            if (branch.inNeighborhoodBefore4B24) {
+                pushTail(branchNeighborhoodEvents, branch, tailLimit);
+            }
+            if (activeCycle.valid) {
+                pushCycleBranch(activeCycle, branch);
+            }
+        }
+        if (isCallOpcode(opcodeAtPc)) {
+            const uint16_t target = static_cast<uint16_t>(nextOpcodeByte | (static_cast<uint16_t>(thirdOpcodeByte) << 8u));
+            const uint16_t fallthrough = static_cast<uint16_t>(lastPc + 3u);
+            const bool taken = cpu.PC == target;
+            if (taken && inMegaManRegion(target)) {
+                const ControlEvent event{
+                    currentStep,
+                    "CALL",
+                    lastPc,
+                    target,
+                    preStepSp,
+                    cpu.SP,
+                    postStepSnapshot,
+                };
+                pushTail(controlEvents, event, tailLimit);
+                if (activeCycle.valid) {
+                    pushCycleControl(activeCycle, event);
+                }
+            } else if (!taken && inMegaManRegion(fallthrough)) {
+                const ControlEvent event{
+                    currentStep,
+                    "CALL_NOT_TAKEN",
+                    lastPc,
+                    target,
+                    preStepSp,
+                    cpu.SP,
+                    postStepSnapshot,
+                };
+                pushTail(controlEvents, event, tailLimit);
+                if (activeCycle.valid) {
+                    pushCycleControl(activeCycle, event);
+                }
+            }
+        } else if (isRetOpcode(opcodeAtPc)) {
+            const uint16_t fallthrough = static_cast<uint16_t>(lastPc + 1u);
+            const bool taken = cpu.PC != fallthrough;
+            if (taken && (inMegaManRegion(lastPc) || inMegaManRegion(cpu.PC))) {
+                const ControlEvent event{
+                    currentStep,
+                    "RET",
+                    lastPc,
+                    cpu.PC,
+                    preStepSp,
+                    cpu.SP,
+                    postStepSnapshot,
+                };
+                pushTail(controlEvents, event, tailLimit);
+                if (activeCycle.valid) {
+                    pushCycleControl(activeCycle, event);
+                }
+            }
+        }
         if (interruptServedThisStep) {
             inInterruptRoutine = true;
             lastInterruptStep = currentStep;
@@ -490,6 +819,119 @@ int main(int argc, char** argv) {
     std::sort(hotPcs.begin(), hotPcs.end(), [](const auto& lhs, const auto& rhs) {
         return lhs.second > rhs.second;
     });
+    if (activeCycle.valid) {
+        finalCycle = activeCycle;
+    }
+
+    auto printSnapshot = [&](const CpuSnapshot& snapshot) {
+        std::cout << "step=" << snapshot.step
+                  << " pc=" << hex16(snapshot.pc)
+                  << " af=" << hex16(snapshot.af)
+                  << " bc=" << hex16(snapshot.bc)
+                  << " de=" << hex16(snapshot.de)
+                  << " hl=" << hex16(snapshot.hl)
+                  << " ix=" << hex16(snapshot.ix)
+                  << " iy=" << hex16(snapshot.iy)
+                  << " sp=" << hex16(snapshot.sp);
+        printBankState(snapshot.banks);
+        std::cout << " c702_before=" << hex8(snapshot.c702Before)
+                  << " c702_after=" << hex8(snapshot.c702After)
+                  << " opcodes";
+        printOpcodeWindow(snapshot.opcodes);
+    };
+    auto printBranch = [&](const BranchEvent& branch) {
+        std::cout << "step=" << branch.step
+                  << " pc=" << hex16(branch.pc)
+                  << " opcode=" << hex8(branch.opcode)
+                  << " operands=" << hex8(branch.operand0) << ',' << hex8(branch.operand1)
+                  << " target=" << hex16(branch.target)
+                  << " fallthrough=" << hex16(branch.fallthrough)
+                  << " conditional=" << (branch.conditional ? "yes" : "no")
+                  << " taken=" << (branch.taken ? "yes" : "no")
+                  << " near_4b24=" << (branch.inNeighborhoodBefore4B24 ? "yes" : "no")
+                  << " regs af=" << hex16(branch.snapshot.af)
+                  << " bc=" << hex16(branch.snapshot.bc)
+                  << " de=" << hex16(branch.snapshot.de)
+                  << " hl=" << hex16(branch.snapshot.hl)
+                  << " ix=" << hex16(branch.snapshot.ix)
+                  << " iy=" << hex16(branch.snapshot.iy)
+                  << " sp=" << hex16(branch.snapshot.sp)
+                  << " c702_before=" << hex8(branch.snapshot.c702Before)
+                  << " c702_after=" << hex8(branch.snapshot.c702After);
+        printBankState(branch.snapshot.banks);
+    };
+    auto printControl = [&](const ControlEvent& event) {
+        std::cout << "step=" << event.step
+                  << " kind=" << event.kind
+                  << " pc=" << hex16(event.pc)
+                  << " target=" << hex16(event.target)
+                  << " sp_before=" << hex16(event.spBefore)
+                  << " sp_after=" << hex16(event.spAfter)
+                  << " regs af=" << hex16(event.snapshot.af)
+                  << " bc=" << hex16(event.snapshot.bc)
+                  << " de=" << hex16(event.snapshot.de)
+                  << " hl=" << hex16(event.snapshot.hl)
+                  << " ix=" << hex16(event.snapshot.ix)
+                  << " iy=" << hex16(event.snapshot.iy)
+                  << " c702_before=" << hex8(event.snapshot.c702Before)
+                  << " c702_after=" << hex8(event.snapshot.c702After);
+        printBankState(event.snapshot.banks);
+    };
+    auto printCycle = [&](const char* label, const CycleTrace& cycle) {
+        std::cout << label
+                  << " valid=" << (cycle.valid ? "yes" : "no")
+                  << " reached_4b24=" << (cycle.reached4B24 ? "yes" : "no")
+                  << " cleared=" << (cycle.cleared ? "yes" : "no")
+                  << " set_step=" << (cycle.valid ? std::to_string(cycle.setStep) : std::string("n/a"))
+                  << " clear_step=" << (cycle.reached4B24 ? std::to_string(cycle.clearStep) : std::string("n/a"))
+                  << '\n';
+        if (cycle.valid) {
+            std::cout << "  set_snapshot ";
+            printSnapshot(cycle.setSnapshot);
+            std::cout << '\n';
+        }
+        if (cycle.reached4B24) {
+            std::cout << "  clear_snapshot ";
+            printSnapshot(cycle.clearSnapshot);
+            std::cout << '\n';
+        }
+        std::cout << "  pre_set_control_tail\n";
+        for (const auto& event : cycle.preSetControl) {
+            std::cout << "    ";
+            printControl(event);
+            std::cout << '\n';
+        }
+        std::cout << "  pre_set_branch_tail\n";
+        for (const auto& event : cycle.preSetBranches) {
+            std::cout << "    ";
+            printBranch(event);
+            std::cout << '\n';
+        }
+        std::cout << "  control_head\n";
+        for (const auto& event : cycle.controlHead) {
+            std::cout << "    ";
+            printControl(event);
+            std::cout << '\n';
+        }
+        std::cout << "  control_tail\n";
+        for (const auto& event : cycle.control) {
+            std::cout << "    ";
+            printControl(event);
+            std::cout << '\n';
+        }
+        std::cout << "  branch_head\n";
+        for (const auto& event : cycle.branchHead) {
+            std::cout << "    ";
+            printBranch(event);
+            std::cout << '\n';
+        }
+        std::cout << "  branch_tail\n";
+        for (const auto& event : cycle.branches) {
+            std::cout << "    ";
+            printBranch(event);
+            std::cout << '\n';
+        }
+    };
 
     std::cout << "steps=" << currentStep << " pc=" << hex16(cpu.PC)
               << " sp=" << hex16(cpu.SP) << " af=" << hex16(cpu.AF)
@@ -693,6 +1135,89 @@ int main(int argc, char** argv) {
                   << " ie1_line=" << (event.ie1 ? "enabled" : "disabled")
                   << " line_reload=" << hex8(event.lineReload)
                   << '\n';
+    }
+
+    std::cout << "trace_pc_counts";
+    for (const uint16_t pc : {0x44D0u, 0x4500u, 0x4B24u, 0x414Fu, 0x4152u}) {
+        std::cout << ' ' << hex16(pc) << '=' << tracePcCounts[pc];
+    }
+    std::cout << '\n';
+
+    std::cout << "trace_pc_hits\n";
+    for (const auto& hit : tracePcHits) {
+        std::cout << "  ";
+        printSnapshot(hit);
+        std::cout << '\n';
+    }
+
+    std::cout << "control_events\n";
+    for (const auto& event : controlEvents) {
+        std::cout << "  ";
+        printControl(event);
+        std::cout << '\n';
+    }
+
+    std::cout << "branch_neighborhood_before_4b24\n";
+    for (const auto& event : branchNeighborhoodEvents) {
+        std::cout << "  ";
+        printBranch(event);
+        std::cout << '\n';
+    }
+
+    std::cout << "branch_events_tail\n";
+    for (const auto& event : branchEvents) {
+        std::cout << "  ";
+        printBranch(event);
+        std::cout << '\n';
+    }
+
+    std::cout << "cycle_comparison_summary"
+              << " last_success_valid=" << (lastSuccessfulCycle.valid ? "yes" : "no")
+              << " final_valid=" << (finalCycle.valid ? "yes" : "no")
+              << " final_4500_step=" << (finalCycle.valid ? std::to_string(finalCycle.setStep) : std::string("n/a"))
+              << " reached_4b24_after_final_4500="
+              << (finalCycle.valid && finalCycle.reached4B24 ? "yes" : "no")
+              << '\n';
+    printCycle("last_successful_set_clear_cycle", lastSuccessfulCycle);
+    printCycle("final_set_stuck_cycle", finalCycle);
+
+    std::cout << "cycle_branch_first_difference ";
+    if (!lastSuccessfulCycle.valid || !finalCycle.valid) {
+        std::cout << "n/a missing_cycle\n";
+    } else {
+        const auto compareCount = std::min(lastSuccessfulCycle.branchHead.size(), finalCycle.branchHead.size());
+        std::optional<std::size_t> diffIndex;
+        for (std::size_t i = 0; i < compareCount; ++i) {
+            const auto& lhs = lastSuccessfulCycle.branchHead[i];
+            const auto& rhs = finalCycle.branchHead[i];
+            if (lhs.pc != rhs.pc || lhs.opcode != rhs.opcode || lhs.target != rhs.target ||
+                lhs.taken != rhs.taken) {
+                diffIndex = i;
+                break;
+            }
+        }
+        if (!diffIndex.has_value() && lastSuccessfulCycle.branchHead.size() != finalCycle.branchHead.size()) {
+            diffIndex = compareCount;
+        }
+        if (!diffIndex.has_value()) {
+            std::cout << "none branch_sequences_match_in_head\n";
+        } else {
+            std::cout << "index=" << *diffIndex << '\n';
+            if (*diffIndex < lastSuccessfulCycle.branchHead.size()) {
+                std::cout << "  success ";
+                printBranch(lastSuccessfulCycle.branchHead[*diffIndex]);
+                std::cout << '\n';
+            } else {
+                std::cout << "  success <no branch at this index>\n";
+            }
+            if (*diffIndex < finalCycle.branchHead.size()) {
+                std::cout << "  final ";
+                printBranch(finalCycle.branchHead[*diffIndex]);
+                std::cout << '\n';
+            } else {
+                std::cout << "  final <no branch at this index>\n";
+            }
+        }
     }
 
     return 0;
