@@ -140,6 +140,33 @@ struct ControlEvent {
     CpuSnapshot snapshot{};
 };
 
+struct TimingSnapshot {
+    uint64_t step = 0;
+    uint64_t cpuCycles = 0;
+    std::string cycleName;
+    std::string label;
+    uint16_t pc = 0;
+    uint16_t pcAfter = 0;
+    uint8_t statusValue = 0;
+    bool hasStatusValue = false;
+    uint8_t scanline = 0;
+    uint32_t vdpDot = 0;
+    bool hasVdpDot = false;
+    uint8_t vCounter = 0;
+    uint8_t hCounter = 0;
+    bool framePending = false;
+    bool linePending = false;
+    bool irqAsserted = false;
+    bool machineIrqPending = false;
+    uint8_t reg0 = 0;
+    uint8_t reg1 = 0;
+    uint8_t reg10 = 0;
+    uint8_t im = 0;
+    bool ime = false;
+    bool iff1 = false;
+    bool iff2 = false;
+};
+
 struct CycleTrace {
     bool valid = false;
     bool reached4B24 = false;
@@ -154,6 +181,8 @@ struct CycleTrace {
     std::vector<BranchEvent> branches;
     std::vector<ControlEvent> controlHead;
     std::vector<ControlEvent> control;
+    std::vector<TimingSnapshot> timingMilestones;
+    std::vector<TimingSnapshot> timing;
 };
 
 template <typename T>
@@ -161,6 +190,42 @@ void pushTail(std::vector<T>& events, const T& event, std::size_t limit) {
     events.push_back(event);
     if (events.size() > limit) {
         events.erase(events.begin());
+    }
+}
+
+bool isCycleTimingMilestone(const std::string& label) {
+    return label == "pc_4500_before" ||
+           label == "pc_4500_after" ||
+           label == "ret_after_4500_before" ||
+           label == "pc_4090_before" ||
+           label == "pc_4095_before" ||
+           label == "interrupt_entry_0038" ||
+           label == "bf_status_read_before" ||
+           label == "bf_status_read_after" ||
+           label == "pc_4b24_clear_after";
+}
+
+void pushUniqueTimingMilestone(std::vector<TimingSnapshot>& milestones, const TimingSnapshot& timing) {
+    const auto sameLabelCount = std::count_if(milestones.begin(), milestones.end(), [&](const TimingSnapshot& existing) {
+        return existing.label == timing.label;
+    });
+    if ((timing.label == "pc_4095_before" ||
+         timing.label == "interrupt_entry_0038" ||
+         timing.label == "bf_status_read_before" ||
+         timing.label == "bf_status_read_after") &&
+        sameLabelCount >= 4) {
+        return;
+    }
+
+    const auto duplicate = std::find_if(milestones.begin(), milestones.end(), [&](const TimingSnapshot& existing) {
+        return existing.step == timing.step &&
+               existing.cpuCycles == timing.cpuCycles &&
+               existing.label == timing.label &&
+               existing.pc == timing.pc &&
+               existing.pcAfter == timing.pcAfter;
+    });
+    if (duplicate == milestones.end()) {
+        milestones.push_back(timing);
     }
 }
 
@@ -380,6 +445,7 @@ int main(int argc, char** argv) {
     std::vector<BranchEvent> branchEvents;
     std::vector<BranchEvent> branchNeighborhoodEvents;
     std::vector<ControlEvent> controlEvents;
+    std::vector<VdpRegisterWriteEvent> vdpWritesBetweenClearAndSet;
     std::map<uint8_t, uint64_t> readCounts;
     std::map<uint8_t, uint64_t> writeCounts;
     std::map<uint8_t, uint8_t> lastRead;
@@ -398,6 +464,7 @@ int main(int argc, char** argv) {
     uint64_t interruptProviderCalls = 0;
     uint64_t interruptProviderServed = 0;
     uint64_t currentStep = 0;
+    uint64_t totalCpuCycles = 0;
     uint16_t currentInstructionPc = cpu.PC;
     uint8_t c702Value = mem.read(0xC702u);
     bool c702BecameNonzero = c702Value != 0u;
@@ -414,6 +481,10 @@ int main(int argc, char** argv) {
     CycleTrace lastSuccessfulCycle;
     CycleTrace finalCycle;
     std::map<uint16_t, uint64_t> tracePcCounts;
+    std::vector<TimingSnapshot> timingSnapshots;
+    std::vector<TimingSnapshot> bfTimingSinceLastClear;
+    bool collectBfTimingSinceLastClear = false;
+    bool collectVdpWritesBetweenClearAndSet = false;
 
     auto bankState = [&]() {
         BankState state{};
@@ -452,6 +523,47 @@ int main(int argc, char** argv) {
             cycle.controlHead.push_back(event);
         }
         pushTail(cycle.control, event, 80u);
+    };
+    auto captureTiming = [&](std::string cycleName,
+                             std::string label,
+                             uint16_t pc,
+                             uint16_t pcAfter,
+                             std::optional<uint8_t> statusValue = std::nullopt) {
+        return TimingSnapshot{
+            currentStep,
+            totalCpuCycles,
+            std::move(cycleName),
+            std::move(label),
+            pc,
+            pcAfter,
+            statusValue.value_or(0u),
+            statusValue.has_value(),
+            vdp.currentScanline(),
+            0u,
+            false,
+            vdp.readVCounter(),
+            vdp.readHCounter(),
+            vdp.isFrameInterruptPending(),
+            vdp.isLineInterruptPending(),
+            vdp.isIrqAsserted(),
+            interruptRequested,
+            trackedVdpRegisters[0x00u],
+            trackedVdpRegisters[0x01u],
+            trackedVdpRegisters[0x0Au],
+            cpu.interruptMode_,
+            cpu.IME,
+            cpu.IFF1,
+            cpu.IFF2,
+        };
+    };
+    auto recordTiming = [&](const TimingSnapshot& timing) {
+        pushTail(timingSnapshots, timing, tailLimit);
+        if (activeCycle.valid) {
+            if (isCycleTimingMilestone(timing.label)) {
+                pushUniqueTimingMilestone(activeCycle.timingMilestones, timing);
+            }
+            pushTail(activeCycle.timing, timing, 120u);
+        }
     };
 
     auto record = [&](char kind, uint8_t port, uint8_t value) {
@@ -512,6 +624,20 @@ int main(int argc, char** argv) {
                      trackedVdpRegisters[0x0Au],
                  },
                  tailLimit);
+        if (collectVdpWritesBetweenClearAndSet) {
+            pushTail(vdpWritesBetweenClearAndSet,
+                     VdpRegisterWriteEvent{
+                         currentStep,
+                         currentInstructionPc,
+                         reg,
+                         value,
+                         vdp.currentScanline(),
+                         ie0,
+                         ie1,
+                         trackedVdpRegisters[0x0Au],
+                     },
+                     tailLimit);
+        }
     };
     auto observeIoAccess = [&](char kind, uint8_t port, uint8_t value) {
         if (kind == 'W' && isVdpControlPort(port)) {
@@ -605,9 +731,33 @@ int main(int argc, char** argv) {
         });
     cpu.setIoInterface(
         [&](uint8_t port) {
+            std::optional<TimingSnapshot> bfBeforeRead;
+            if (isVdpControlPort(port)) {
+                bfBeforeRead = captureTiming(activeCycle.valid ? "after_4500" : "outside_cycle",
+                                             "bf_status_read_before",
+                                             currentInstructionPc,
+                                             currentInstructionPc);
+            }
             const auto value = mem.readIoPort(port);
             observeIoAccess('R', port, value);
             record('R', port, value);
+            if (isVdpControlPort(port)) {
+                if (bfBeforeRead.has_value()) {
+                    recordTiming(*bfBeforeRead);
+                    if (collectBfTimingSinceLastClear) {
+                        bfTimingSinceLastClear.push_back(*bfBeforeRead);
+                    }
+                }
+                auto bfAfterRead = captureTiming(activeCycle.valid ? "after_4500" : "outside_cycle",
+                                                 "bf_status_read_after",
+                                                 currentInstructionPc,
+                                                 currentInstructionPc,
+                                                 value);
+                recordTiming(bfAfterRead);
+                if (collectBfTimingSinceLastClear) {
+                    bfTimingSinceLastClear.push_back(bfAfterRead);
+                }
+            }
             return value;
         },
         [&](uint8_t port, uint8_t value) {
@@ -648,7 +798,19 @@ int main(int argc, char** argv) {
         const uint8_t nextOpcodeByte = mem.read(static_cast<uint16_t>(cpu.PC + 1u));
         const uint8_t thirdOpcodeByte = mem.read(static_cast<uint16_t>(cpu.PC + 2u));
         const uint16_t preStepSp = cpu.SP;
+        auto preStepTiming = captureTiming(activeCycle.valid ? "after_4500" : "outside_cycle",
+                                           "pc_before_execute",
+                                           lastPc,
+                                           lastPc);
+        if (lastPc == 0x4090u || lastPc == 0x4095u ||
+            (lastPc == 0x4516u && activeCycle.valid)) {
+            preStepTiming.label = lastPc == 0x4090u ? "pc_4090_before" :
+                                  lastPc == 0x4095u ? "pc_4095_before" :
+                                                       "ret_after_4500_before";
+            recordTiming(preStepTiming);
+        }
         const auto cycles = cpu.step();
+        totalCpuCycles += cycles;
         const auto postStepSnapshot = snapshotCpu(lastPc, c702BeforeStep, c702Value);
         if (isTracePc(lastPc)) {
             ++tracePcCounts[lastPc];
@@ -658,12 +820,20 @@ int main(int argc, char** argv) {
             if (activeCycle.valid && !activeCycle.reached4B24) {
                 finalCycle = activeCycle;
             }
+            if (collectVdpWritesBetweenClearAndSet) {
+                collectVdpWritesBetweenClearAndSet = false;
+            }
             activeCycle = CycleTrace{};
             activeCycle.valid = true;
             activeCycle.setStep = currentStep;
             activeCycle.setSnapshot = postStepSnapshot;
             activeCycle.preSetBranches = takeTail(branchEvents, 30u);
             activeCycle.preSetControl = takeTail(controlEvents, 30u);
+            preStepTiming.cycleName = "after_4500";
+            preStepTiming.label = "pc_4500_before";
+            recordTiming(preStepTiming);
+            auto post4500Timing = captureTiming("after_4500", "pc_4500_after", lastPc, cpu.PC);
+            recordTiming(post4500Timing);
         } else if (lastPc == 0x4B24u) {
             if (activeCycle.valid) {
                 activeCycle.reached4B24 = true;
@@ -671,6 +841,12 @@ int main(int argc, char** argv) {
                     activeCycle.cleared = true;
                     activeCycle.clearStep = currentStep;
                     activeCycle.clearSnapshot = postStepSnapshot;
+                    auto clearTiming = captureTiming("after_4500", "pc_4b24_clear_after", lastPc, cpu.PC);
+                    recordTiming(clearTiming);
+                    collectBfTimingSinceLastClear = true;
+                    bfTimingSinceLastClear.clear();
+                    collectVdpWritesBetweenClearAndSet = true;
+                    vdpWritesBetweenClearAndSet.clear();
                     lastSuccessfulCycle = activeCycle;
                     activeCycle = CycleTrace{};
                 }
@@ -798,11 +974,21 @@ int main(int argc, char** argv) {
                          ie1,
                      },
                      tailLimit);
+            auto irqTiming = captureTiming(activeCycle.valid ? "after_4500" : "outside_cycle",
+                                           "interrupt_entry_0038",
+                                           lastPc,
+                                           cpu.PC);
+            recordTiming(irqTiming);
         }
         vdp.step(cycles);
         psg.step(cycles);
         if (vdp.takeIrqAsserted()) {
             interruptRequested = true;
+            auto latchTiming = captureTiming(activeCycle.valid ? "after_4500" : "outside_cycle",
+                                             "machine_irq_latched_after_vdp_step",
+                                             lastPc,
+                                             cpu.PC);
+            recordTiming(latchTiming);
         }
         if (inInterruptRoutine &&
             (opcodeAtPc == 0xC9u || (opcodeAtPc == 0xEDu && (nextOpcodeByte == 0x45u || nextOpcodeByte == 0x4Du)))) {
@@ -877,6 +1063,37 @@ int main(int argc, char** argv) {
                   << " c702_after=" << hex8(event.snapshot.c702After);
         printBankState(event.snapshot.banks);
     };
+    auto printTiming = [&](const TimingSnapshot& timing) {
+        std::cout << "step=" << timing.step
+                  << " cpu_cycles=" << timing.cpuCycles
+                  << " cycle=" << timing.cycleName
+                  << " label=" << timing.label
+                  << " pc=" << hex16(timing.pc)
+                  << " pc_after=" << hex16(timing.pcAfter);
+        if (timing.hasStatusValue) {
+            std::cout << " status=" << hex8(timing.statusValue);
+        }
+        std::cout << " scanline=" << static_cast<int>(timing.scanline)
+                  << " vdp_dot=";
+        if (timing.hasVdpDot) {
+            std::cout << timing.vdpDot;
+        } else {
+            std::cout << "n/a";
+        }
+        std::cout << " vcounter=" << hex8(timing.vCounter)
+                  << " hcounter=" << hex8(timing.hCounter)
+                  << " frame_irq_pending=" << (timing.framePending ? "yes" : "no")
+                  << " line_irq_pending=" << (timing.linePending ? "yes" : "no")
+                  << " irq_asserted=" << (timing.irqAsserted ? "yes" : "no")
+                  << " machine_irq_pending=" << (timing.machineIrqPending ? "yes" : "no")
+                  << " reg0=" << hex8(timing.reg0)
+                  << " reg1=" << hex8(timing.reg1)
+                  << " reg10=" << hex8(timing.reg10)
+                  << " im=" << static_cast<int>(timing.im)
+                  << " ime=" << (timing.ime ? "yes" : "no")
+                  << " iff1=" << (timing.iff1 ? "yes" : "no")
+                  << " iff2=" << (timing.iff2 ? "yes" : "no");
+    };
     auto printCycle = [&](const char* label, const CycleTrace& cycle) {
         std::cout << label
                   << " valid=" << (cycle.valid ? "yes" : "no")
@@ -893,6 +1110,18 @@ int main(int argc, char** argv) {
         if (cycle.reached4B24) {
             std::cout << "  clear_snapshot ";
             printSnapshot(cycle.clearSnapshot);
+            std::cout << '\n';
+        }
+        std::cout << "  irq_timing_milestones\n";
+        for (const auto& timing : cycle.timingMilestones) {
+            std::cout << "    ";
+            printTiming(timing);
+            std::cout << '\n';
+        }
+        std::cout << "  irq_timing\n";
+        for (const auto& timing : cycle.timing) {
+            std::cout << "    ";
+            printTiming(timing);
             std::cout << '\n';
         }
         std::cout << "  pre_set_control_tail\n";
@@ -1137,6 +1366,33 @@ int main(int argc, char** argv) {
                   << '\n';
     }
 
+    std::cout << "vdp_register_writes_between_success_clear_and_final_set\n";
+    for (const auto& event : vdpWritesBetweenClearAndSet) {
+        std::cout << "  step=" << event.step
+                  << " pc=" << hex16(event.pc)
+                  << " reg=" << static_cast<int>(event.reg)
+                  << " value=" << hex8(event.value)
+                  << " scanline=" << static_cast<int>(event.scanline)
+                  << " ie0_frame=" << (event.ie0 ? "enabled" : "disabled")
+                  << " ie1_line=" << (event.ie1 ? "enabled" : "disabled")
+                  << " line_reload=" << hex8(event.lineReload)
+                  << '\n';
+    }
+
+    std::cout << "irq_timing_tail\n";
+    for (const auto& timing : timingSnapshots) {
+        std::cout << "  ";
+        printTiming(timing);
+        std::cout << '\n';
+    }
+
+    std::cout << "bf_status_reads_since_last_successful_clear\n";
+    for (const auto& timing : bfTimingSinceLastClear) {
+        std::cout << "  ";
+        printTiming(timing);
+        std::cout << '\n';
+    }
+
     std::cout << "trace_pc_counts";
     for (const uint16_t pc : {0x44D0u, 0x4500u, 0x4B24u, 0x414Fu, 0x4152u}) {
         std::cout << ' ' << hex16(pc) << '=' << tracePcCounts[pc];
@@ -1180,6 +1436,20 @@ int main(int argc, char** argv) {
               << '\n';
     printCycle("last_successful_set_clear_cycle", lastSuccessfulCycle);
     printCycle("final_set_stuck_cycle", finalCycle);
+
+    std::cout << "irq_timing_comparison\n";
+    std::cout << "  successful_cycle\n";
+    for (const auto& timing : lastSuccessfulCycle.timingMilestones) {
+        std::cout << "    ";
+        printTiming(timing);
+        std::cout << '\n';
+    }
+    std::cout << "  final_cycle\n";
+    for (const auto& timing : finalCycle.timingMilestones) {
+        std::cout << "    ";
+        printTiming(timing);
+        std::cout << '\n';
+    }
 
     std::cout << "cycle_branch_first_difference ";
     if (!lastSuccessfulCycle.valid || !finalCycle.valid) {
