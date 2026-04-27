@@ -52,6 +52,26 @@ struct MemEvent {
     OpcodeWindow opcodes{};
 };
 
+struct RamWriteEvent {
+    uint64_t step = 0;
+    uint16_t pc = 0;
+    uint16_t address = 0;
+    uint8_t previousValue = 0;
+    uint8_t value = 0;
+    uint8_t scanline = 0;
+    OpcodeWindow opcodes{};
+    uint16_t af = 0;
+    uint16_t bc = 0;
+    uint16_t de = 0;
+    uint16_t hl = 0;
+    uint16_t ix = 0;
+    uint16_t iy = 0;
+    uint16_t sp = 0;
+    bool machine_irq_pending = false;
+    bool vdp_frame_pending = false;
+    bool vdp_line_pending = false;
+};
+
 struct C702WriteEvent {
     uint64_t step = 0;
     uint16_t pc = 0;
@@ -518,6 +538,7 @@ int main(int argc, char** argv) {
 
     std::vector<IoEvent> events;
     std::vector<MemEvent> memEvents;
+    std::vector<RamWriteEvent> ramWrites;
     std::vector<C702WriteEvent> c702Writes;
     std::vector<C702ReadEvent> c702Reads;
     std::vector<InterruptEvent> interruptEvents;
@@ -786,6 +807,30 @@ int main(int argc, char** argv) {
             captureOpcodeWindow(mem, currentInstructionPc),
         }, tailLimit);
     };
+
+    auto recordRamWrite = [&](uint16_t address, uint8_t previousValue, uint8_t newValue) {
+        // Only track the targeted range explicitly: $C500-$C720
+        if (address < 0xC500u || address > 0xC720u) return;
+        RamWriteEvent ev{};
+        ev.step = currentStep;
+        ev.pc = currentInstructionPc;
+        ev.address = address;
+        ev.previousValue = previousValue;
+        ev.value = newValue;
+        ev.scanline = vdp.currentScanline();
+        ev.opcodes = captureOpcodeWindow(mem, currentInstructionPc);
+        ev.af = cpu.AF;
+        ev.bc = cpu.BC;
+        ev.de = cpu.DE;
+        ev.hl = cpu.HL;
+        ev.ix = cpu.IX;
+        ev.iy = cpu.IY;
+        ev.sp = cpu.SP;
+        ev.machine_irq_pending = interruptRequested;
+        ev.vdp_frame_pending = vdp.isFrameInterruptPending();
+        ev.vdp_line_pending = vdp.isLineInterruptPending();
+        ramWrites.push_back(ev);
+    };
     auto recordC702Read = [&](uint8_t value) {
         pushTail(c702Reads,
                  C702ReadEvent{
@@ -840,8 +885,14 @@ int main(int argc, char** argv) {
             return value;
         },
         [&](uint16_t address, uint8_t value) {
+            // capture previous value before the write
+            const uint8_t previous = mem.read(address);
             mem.write(address, value);
             recordMemWrite(address, value);
+            // record full metadata for writes to $C500-$C720
+            if (address >= 0xC500u && address <= 0xC720u) {
+                recordRamWrite(address, previous, value);
+            }
             if (address == 0xC702u) {
                 recordC702Write(value);
             }
@@ -1728,13 +1779,15 @@ int main(int argc, char** argv) {
     } else {
         const uint64_t windowStart = lastSuccessfulCycle.clearStep;
         const uint64_t windowEnd = finalCycle.setStep;
-        std::vector<std::tuple<uint16_t, uint8_t, uint8_t>> diffs;
+
+        std::map<uint16_t, std::pair<uint8_t, uint8_t>> diffsMap;
 
         auto recordDiffs = [&](uint16_t base, const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
             const std::size_t n = std::min(a.size(), b.size());
             for (std::size_t i = 0; i < n; ++i) {
                 if (a[i] != b[i]) {
-                    diffs.emplace_back(static_cast<uint16_t>(base + i), a[i], b[i]);
+                    const uint16_t addr = static_cast<uint16_t>(base + i);
+                    diffsMap[addr] = std::make_pair(a[i], b[i]);
                 }
             }
         };
@@ -1751,7 +1804,7 @@ int main(int argc, char** argv) {
             for (std::size_t i = 0; i < n; ++i) {
                 const auto a = lastSuccessfulCycle.setSnapshot.ram_ix_range[i];
                 const auto b = finalCycle.setSnapshot.ram_ix_range[i];
-                if (a != b) diffs.emplace_back(static_cast<uint16_t>(ixBase + static_cast<int>(i)), a, b);
+                if (a != b) diffsMap[static_cast<uint16_t>(ixBase + static_cast<int>(i))] = std::make_pair(a, b);
             }
         }
 
@@ -1762,21 +1815,43 @@ int main(int argc, char** argv) {
             for (std::size_t i = 0; i < n; ++i) {
                 const auto a = lastSuccessfulCycle.setSnapshot.ram_iy_range[i];
                 const auto b = finalCycle.setSnapshot.ram_iy_range[i];
-                if (a != b) diffs.emplace_back(static_cast<uint16_t>(iyBase + static_cast<int>(i)), a, b);
+                if (a != b) diffsMap[static_cast<uint16_t>(iyBase + static_cast<int>(i))] = std::make_pair(a, b);
             }
         }
 
-        if (diffs.empty()) {
+        if (diffsMap.empty()) {
             std::cout << "  no_ram_diffs_found_in_ranges\n";
         } else {
-            // For each diff, find the last writer in memEvents within window
-            for (const auto& [addr, oldv, newv] : diffs) {
+            // For each diff, find the last writer in the ramWrites window and print enhanced metadata
+            for (const auto& entry : diffsMap) {
+                const uint16_t addr = entry.first;
+                const uint8_t oldv = entry.second.first;
+                const uint8_t newv = entry.second.second;
                 std::cout << "  addr=" << hex16(addr)
                           << " old=" << hex8(oldv)
                           << " new=" << hex8(newv);
-                // search memEvents from back for last write to addr in [windowStart, windowEnd]
-                std::optional<MemEvent> lastWriter;
-                for (auto it = memEvents.rbegin(); it != memEvents.rend(); ++it) {
+
+                // determine IX/IY neighborhood membership (based on last successful snapshot)
+                const int ixBase = static_cast<int>(lastSuccessfulCycle.setSnapshot.ix) - 16;
+                const int ixLen = static_cast<int>(lastSuccessfulCycle.setSnapshot.ram_ix_range.size());
+                const int ixStart = ixBase;
+                const int ixEnd = ixBase + (ixLen > 0 ? (ixLen - 1) : 0);
+                const int iyBase = static_cast<int>(lastSuccessfulCycle.setSnapshot.iy) - 16;
+                const int iyLen = static_cast<int>(lastSuccessfulCycle.setSnapshot.ram_iy_range.size());
+                const int iyStart = iyBase;
+                const int iyEnd = iyBase + (iyLen > 0 ? (iyLen - 1) : 0);
+                const bool inIx = (static_cast<int>(addr) >= ixStart && static_cast<int>(addr) <= ixEnd);
+                const bool inIy = (static_cast<int>(addr) >= iyStart && static_cast<int>(addr) <= iyEnd);
+                std::cout << " in_ix_neighborhood=" << (inIx ? "yes" : "no")
+                          << " in_iy_neighborhood=" << (inIy ? "yes" : "no");
+
+                const bool highlight = (addr == 0xC503u || addr == 0xC603u || addr == 0xC703u || addr == 0xC702u);
+                if (highlight) {
+                    std::cout << " HIGHLIGHT";
+                }
+
+                std::optional<RamWriteEvent> lastWriter;
+                for (auto it = ramWrites.rbegin(); it != ramWrites.rend(); ++it) {
                     if (it->address == addr && it->step >= windowStart && it->step <= windowEnd) {
                         lastWriter = *it;
                         break;
@@ -1785,7 +1860,17 @@ int main(int argc, char** argv) {
                 if (lastWriter.has_value()) {
                     const auto& w = *lastWriter;
                     std::cout << " last_writer_step=" << w.step << " pc=" << hex16(w.pc)
-                              << " scanline=" << static_cast<int>(w.scanline) << " opcodes";
+                              << " prev=" << hex8(w.previousValue)
+                              << " written=" << hex8(w.value)
+                              << " scanline=" << static_cast<int>(w.scanline)
+                              << " machine_irq_pending=" << (w.machine_irq_pending ? "yes" : "no")
+                              << " vdp_frame_pending=" << (w.vdp_frame_pending ? "yes" : "no")
+                              << " vdp_line_pending=" << (w.vdp_line_pending ? "yes" : "no")
+                              << " regs af=" << hex16(w.af) << " bc=" << hex16(w.bc)
+                              << " de=" << hex16(w.de) << " hl=" << hex16(w.hl)
+                              << " ix=" << hex16(w.ix) << " iy=" << hex16(w.iy)
+                              << " sp=" << hex16(w.sp)
+                              << " opcodes";
                     printOpcodeWindow(w.opcodes);
                     std::cout << '\n';
                 } else {
