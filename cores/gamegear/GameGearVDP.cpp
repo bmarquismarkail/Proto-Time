@@ -429,20 +429,22 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
     const auto activeLines = activeDisplayLines();
     const bool mode4 = mode4Enabled();
     const auto nameBasePre = nameTableBase();
+    std::array<uint32_t, 16u> backgroundPalette{};
+    std::array<uint32_t, 16u> spritePalette{};
+    for (std::size_t color = 0u; color < backgroundPalette.size(); ++color) {
+        backgroundPalette[color] = decodedCram_[color];
+        spritePalette[color] = decodedCram_[16u + color];
+    }
+    const auto backdrop = spritePalette[static_cast<std::size_t>(registers_[7u] & 0x0Fu)];
     model.inVBlank = scanline_ >= activeLines + 1u;
     model.scanlineIndex = static_cast<uint8_t>(scanline_ & 0x00FFu);
     model.argbPixels.assign(
         static_cast<std::size_t>(model.width) * static_cast<std::size_t>(model.height),
-        paletteColor(0u));
-    model.semantics.resize(model.argbPixels.size());
+        backdrop);
     if (!model.displayEnabled) {
-        const auto backdrop = sampleCramColor(1u, static_cast<uint8_t>(registers_[7u] & 0x0Fu));
-        std::fill(model.argbPixels.begin(), model.argbPixels.end(), backdrop);
         return model;
     }
 
-    const auto backdrop = sampleCramColor(1u, static_cast<uint8_t>(registers_[7u] & 0x0Fu));
-    std::fill(model.argbPixels.begin(), model.argbPixels.end(), backdrop);
     if (!mode4 && (registers_[0u] & 0x02u) != 0u) {
         const bool graphicsII = (registers_[0u] & 0x02u) != 0u;
         const auto nameBase = static_cast<std::size_t>((registers_[2u] & 0x0Eu) << 10u);
@@ -468,16 +470,49 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
                 const auto colorCode = static_cast<uint8_t>(foreground ? (color >> 4u) : (color & 0x0Fu));
                 const auto pixelIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(model.width)
                                       + static_cast<std::size_t>(x);
-                model.argbPixels[pixelIndex] = colorCode == 0u ? backdrop : sampleCramColor(1u, colorCode);
+                model.argbPixels[pixelIndex] = colorCode == 0u ? backdrop : spritePalette[colorCode & 0x0Fu];
             }
         }
         return model;
     }
     const auto scrollX = readCompatRegister(8u);
     const auto scrollY = verticalScrollLatch_;
-    std::vector<bool> backgroundPriority(model.argbPixels.size(), false);
     const int viewportX = gameGearViewportXOffset(model.width);
     const int viewportY = gameGearViewportYOffset(model.height);
+    const auto satBase = spriteAttributeTableBase();
+    const auto spriteBase = spriteGeneratorBase();
+    const int zoom = spriteZoomMode() ? 2 : 1;
+    const int spriteHeight = (spriteTallMode() ? 16 : 8) * zoom;
+    bool hasVisibleSprites = false;
+    std::size_t visibleSpriteProbeCount = 0u;
+    for (std::size_t sprite = 0; sprite < 64u; ++sprite) {
+        const auto yIndex = satBase + sprite;
+        if (yIndex >= vram_.size()) {
+            break;
+        }
+        const uint8_t rawY = vram_[yIndex];
+        if (activeLines == 192u && rawY == 0xD0u) {
+            break;
+        }
+        if (rawY == 0xE0u) {
+            continue;
+        }
+        const int spriteY = static_cast<int>(rawY) + 1;
+        if (spriteY + spriteHeight > viewportY && spriteY < viewportY + model.height) {
+            hasVisibleSprites = true;
+            break;
+        }
+        ++visibleSpriteProbeCount;
+        if (visibleSpriteProbeCount >= kSpriteCount) {
+            break;
+        }
+    }
+    constexpr uint8_t kSpriteMaskBackgroundPriority = 0x01u;
+    constexpr uint8_t kSpriteMaskOccupied = 0x02u;
+    std::vector<uint8_t> spriteMask;
+    if (hasVisibleSprites) {
+        spriteMask.assign(model.argbPixels.size(), 0u);
+    }
     for (int y = 0; y < model.height; ++y) {
         const int vdpY = y + viewportY;
 
@@ -562,17 +597,22 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
             const auto colorCode = decodedPatternRows[tileX][static_cast<std::size_t>(sampleX)];
             const auto pixelIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(model.width)
                                   + static_cast<std::size_t>(x);
-            model.argbPixels[pixelIndex] = sampleCramColor(decoded.palette1 ? 1u : 0u, colorCode);
-            backgroundPriority[pixelIndex] = decoded.priority && colorCode != 0u;
+            model.argbPixels[pixelIndex] = decoded.palette1
+                ? spritePalette[colorCode & 0x0Fu]
+                : backgroundPalette[colorCode & 0x0Fu];
+            if (hasVisibleSprites) {
+                spriteMask[pixelIndex] = decoded.priority && colorCode != 0u
+                    ? kSpriteMaskBackgroundPriority
+                    : 0u;
+            }
         }
     }
 
-    const auto satBase = spriteAttributeTableBase();
-    const auto spriteBase = spriteGeneratorBase();
+    if (!hasVisibleSprites) {
+        return model;
+    }
+
     std::array<std::uint8_t, 240u> spritesOnLine{};
-    std::vector<bool> spriteOccupied(model.argbPixels.size(), false);
-    const int zoom = spriteZoomMode() ? 2 : 1;
-    const int spriteHeight = (spriteTallMode() ? 16 : 8) * zoom;
     std::size_t spriteCount = 0u;
     for (std::size_t sprite = 0; sprite < 64u; ++sprite) {
         const auto yIndex = satBase + sprite;
@@ -617,11 +657,12 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
                 }
                 const auto pixelIndex = static_cast<std::size_t>(screenY) * static_cast<std::size_t>(model.width)
                                       + static_cast<std::size_t>(screenX);
-                if (backgroundPriority[pixelIndex] || spriteOccupied[pixelIndex]) {
+                if ((spriteMask[pixelIndex] &
+                     (kSpriteMaskBackgroundPriority | kSpriteMaskOccupied)) != 0u) {
                     continue;
                 }
-                model.argbPixels[pixelIndex] = sampleCramColor(1u, colorCode);
-                spriteOccupied[pixelIndex] = true;
+                model.argbPixels[pixelIndex] = spritePalette[colorCode & 0x0Fu];
+                spriteMask[pixelIndex] |= kSpriteMaskOccupied;
             }
             if (screenY >= 0 && screenY < static_cast<int>(spritesOnLine.size())) {
                 spritesOnLine[static_cast<std::size_t>(screenY)] =

@@ -4,18 +4,12 @@
 #include <chrono>
 #include <cstdint>
 #include <iostream>
+#include <stdexcept>
 
-int main()
+namespace {
+
+void populateBackground(GameGearVDP& vdp)
 {
-    GameGearVDP vdp;
-    GameGearMemoryMap memory;
-    memory.setVdp(&vdp);
-    vdp.reset();
-
-    // Turn display on
-    memory.writeIoPort(0xBFu, 0x40u);
-    memory.writeIoPort(0xBFu, 0x81u);
-
     // Populate pattern table with pseudo-random data to exercise decoding
     for (std::size_t tile = 0; tile < 384u; ++tile) {
         for (std::size_t row = 0; row < 8u; ++row) {
@@ -37,14 +31,55 @@ int main()
             vdp.writeVram(entryAddr + 1u, static_cast<uint8_t>((tileIndex >> 8u) & 0xFFu));
         }
     }
+}
 
-    constexpr int kIterations = 2000;
-    for (int i = 0; i < kIterations; ++i) {
+void populateVisibleSprites(GameGearVDP& vdp)
+{
+    constexpr uint16_t satBase = 0xBF00u;
+    constexpr uint16_t xyBase = 0xBF80u;
+
+    for (std::size_t sprite = 0u; sprite < 40u; ++sprite) {
+        const auto y = static_cast<uint8_t>(23u + (sprite % 18u) * 8u);
+        const auto x = static_cast<uint8_t>(48u + (sprite % 20u) * 8u);
+        vdp.writeVram(static_cast<uint16_t>(satBase + sprite), y);
+        vdp.writeVram(static_cast<uint16_t>(xyBase + sprite * 2u), x);
+        vdp.writeVram(static_cast<uint16_t>(xyBase + sprite * 2u + 1u), static_cast<uint8_t>(sprite & 0xFFu));
+    }
+}
+
+void runFrames(GameGearVDP& vdp, int iterations)
+{
+    for (int i = 0; i < iterations; ++i) {
         const auto frame = vdp.buildFrameModel({160, 144});
         if (frame.argbPixels.empty()) {
-            std::cerr << "empty frame\n";
-            return 1;
+            throw std::runtime_error("empty frame");
         }
+    }
+}
+
+} // namespace
+
+int main()
+{
+    GameGearVDP vdp;
+    GameGearMemoryMap memory;
+    memory.setVdp(&vdp);
+    vdp.reset();
+
+    // Turn display on
+    memory.writeIoPort(0xBFu, 0x40u);
+    memory.writeIoPort(0xBFu, 0x81u);
+
+    populateBackground(vdp);
+
+    try {
+        constexpr int kIterations = 1000;
+        runFrames(vdp, kIterations);
+        populateVisibleSprites(vdp);
+        runFrames(vdp, kIterations);
+    } catch (const std::exception& ex) {
+        std::cerr << ex.what() << '\n';
+        return 1;
     }
 
     std::cout << "bench-done\n";
