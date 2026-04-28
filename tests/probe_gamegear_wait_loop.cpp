@@ -1731,6 +1731,25 @@ int main(int argc, char** argv) {
                 std::cout << '\n';
             }
         }
+        // Also surface any dedicated C14A write captures (full metadata)
+        if (address == 0xC14Au) {
+            for (const auto& w : c14aWrites) {
+                std::cout << "  c14a_step=" << w.step << " pc=" << hex16(w.pc)
+                          << " prev=" << hex8(w.previousValue) << " written=" << hex8(w.value)
+                          << " scanline=" << static_cast<int>(w.scanline)
+                          << " regs af=" << hex16(w.af) << " bc=" << hex16(w.bc)
+                          << " de=" << hex16(w.de) << " hl=" << hex16(w.hl)
+                          << " ix=" << hex16(w.ix) << " iy=" << hex16(w.iy)
+                          << " sp=" << hex16(w.sp)
+                          << " machine_irq_pending=" << (w.machine_irq_pending ? "yes" : "no")
+                          << " vdp_frame_pending=" << (w.vdp_frame_pending ? "yes" : "no")
+                          << " vdp_line_pending=" << (w.vdp_line_pending ? "yes" : "no")
+                          << " opcodes";
+                printOpcodeWindow(w.opcodes);
+                std::cout << '
+';
+            }
+        }
         // For C700..C710, also print dedicated ring history
         if (address >= 0xC700u && address <= 0xC710u) {
             const std::size_t idx = static_cast<std::size_t>(address - 0xC700u);
@@ -1751,7 +1770,7 @@ int main(int argc, char** argv) {
     };
 
     // Print histories for requested addresses
-    for (const uint16_t addr : {0xC702u, 0xC703u, 0xC503u, 0xC603u}) {
+    for (const uint16_t addr : {0xC14Au, 0xC702u, 0xC703u, 0xC503u, 0xC603u}) {
         printRamHistory(addr);
     }
 
