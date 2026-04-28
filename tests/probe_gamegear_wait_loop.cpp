@@ -210,6 +210,24 @@ struct MapperWriteEvent {
     OpcodeWindow opcodes{};
 };
 
+struct PointerWriteEvent {
+    uint64_t step = 0;
+    uint16_t pc = 0;
+    uint16_t address = 0;
+    uint8_t previousValue = 0;
+    uint8_t value = 0;
+    uint16_t af = 0;
+    uint16_t bc = 0;
+    uint16_t de = 0;
+    uint16_t hl = 0;
+    uint16_t ix = 0;
+    uint16_t iy = 0;
+    uint16_t sp = 0;
+    uint8_t scanline = 0;
+    BankState banks{};
+    OpcodeWindow opcodes{};
+};
+
 struct ControlEvent {
     uint64_t step = 0;
     std::string kind;
@@ -593,6 +611,17 @@ bool isTracePc(uint16_t pc) {
            pc == 0x414Fu || pc == 0x4152u;
 }
 
+bool in45D0To45F1(uint16_t pc) {
+    return pc >= 0x45D0u && pc <= 0x45F1u;
+}
+
+bool isPointerTrackedAddress(uint16_t address) {
+    return (address >= 0xC148u && address <= 0xC14Eu) ||
+           (address >= 0xC150u && address <= 0xC160u) ||
+           (address >= 0xC730u && address <= 0xC740u) ||
+           (address >= 0xC7B0u && address <= 0xC7C8u);
+}
+
 bool inMegaManRegion(uint16_t pc) {
     return pc >= 0x4000u && pc < 0x4C00u;
 }
@@ -743,6 +772,7 @@ int main(int argc, char** argv) {
     std::vector<MapperWriteEvent> mapperWrites;
     std::vector<MapperWriteEvent> mapperWritesSinceLastC14AClear;
     std::vector<MapperWriteEvent> mapperWritesLastC14AClearToFinalSet;
+    std::vector<PointerWriteEvent> pointerWrites;
     std::vector<ControlEvent> controlEvents;
     std::vector<VdpRegisterWriteEvent> vdpWritesBetweenClearAndSet;
     std::map<uint8_t, uint64_t> readCounts;
@@ -795,6 +825,10 @@ int main(int argc, char** argv) {
     pc4b7bLog << "step|pc|op0|op1|op2|op3|iy|ix|af|bc|de|hl|sp|scanline|machine_irq_pending|in_isr" << std::endl;
     std::ofstream pc45f1Log("/tmp/pc45f1_trace.log", std::ios::trunc);
     pc45f1Log << "step|bank4000|bank8000|bank0|mapper_control|op0|op1|af|flags|taken|flag_pc|flag_op0|flag_op1|flag_af_before|flag_af_after|bc|de|hl|ix|iy|sp|scanline|c148|c149|c14a|c14b|c14e" << std::endl;
+    std::ofstream pc45rangeLog("/tmp/pc45d0_45f1_trace.log", std::ios::trunc);
+    pc45rangeLog << "step|pc|op0|op1|op2|op3|af|bc|de|hl|ix|iy|sp|bank4000|bank8000|bank0|mapper_control|scanline|c148|c149|c14a|c14b|c14e|c736|c737|hl_byte_before|hl_minus1_byte_before" << std::endl;
+    std::ofstream pointerWriteLog("/tmp/pointer_ram_writes.log", std::ios::trunc);
+    pointerWriteLog << "step|pc|addr|prev|value|af|bc|de|hl|ix|iy|sp|bank4000|bank8000|bank0|mapper_control|scanline" << std::endl;
     uint64_t branch45F1Count = 0;
     std::optional<Branch45F1Event> branch45F1FirstSuccess;
     std::optional<Branch45F1Event> branch45F1FinalDivergent;
@@ -816,6 +850,27 @@ int main(int argc, char** argv) {
                 mapperWritesSinceLastC14AClear.erase(mapperWritesSinceLastC14AClear.begin());
             }
         }
+    };
+    auto pushPointerWrite = [&](PointerWriteEvent event) {
+        pushTail(pointerWrites, event, tailLimit);
+        pointerWriteLog << event.step << '|'
+                        << hex16(event.pc) << '|'
+                        << hex16(event.address) << '|'
+                        << hex8(event.previousValue) << '|'
+                        << hex8(event.value) << '|'
+                        << hex16(event.af) << '|'
+                        << hex16(event.bc) << '|'
+                        << hex16(event.de) << '|'
+                        << hex16(event.hl) << '|'
+                        << hex16(event.ix) << '|'
+                        << hex16(event.iy) << '|'
+                        << hex16(event.sp) << '|'
+                        << (event.banks.available ? hex8(event.banks.registers[1]) : std::string("n/a")) << '|'
+                        << (event.banks.available ? hex8(event.banks.registers[2]) : std::string("n/a")) << '|'
+                        << (event.banks.available ? hex8(event.banks.registers[0]) : std::string("n/a")) << '|'
+                        << (event.banks.available ? hex8(event.banks.control) : std::string("n/a")) << '|'
+                        << static_cast<int>(event.scanline)
+                        << '\n';
     };
     auto snapshotCpu = [&](uint16_t pc,
                            uint8_t before,
@@ -1144,6 +1199,25 @@ int main(int argc, char** argv) {
             if (address >= 0xC500u && address <= 0xC720u) {
                 recordRamWrite(address, previous, value);
             }
+            if (isPointerTrackedAddress(address)) {
+                pushPointerWrite(PointerWriteEvent{
+                    currentStep,
+                    currentInstructionPc,
+                    address,
+                    previous,
+                    value,
+                    cpu.AF,
+                    cpu.BC,
+                    cpu.DE,
+                    cpu.HL,
+                    cpu.IX,
+                    cpu.IY,
+                    cpu.SP,
+                    vdp.currentScanline(),
+                    bankState(),
+                    captureOpcodeWindow(mem, currentInstructionPc),
+                });
+            }
             // also record writes to the specific C14A flag (Mega Man wait)
             if (address == 0xC14Au) {
                 if (value == 0u) {
@@ -1257,8 +1331,41 @@ int main(int argc, char** argv) {
         const uint16_t preStepSp = cpu.SP;
         const uint64_t preInstructionCpuCycles = totalCpuCycles;
         const uint16_t afBeforeStep = cpu.AF;
+        const auto preRangeBanks = in45D0To45F1(lastPc) ? std::optional<BankState>(bankState()) : std::nullopt;
         const auto pre45F1Banks = lastPc == 0x45F1u ? std::optional<BankState>(bankState()) : std::nullopt;
         const auto pre45F1Opcodes = lastPc == 0x45F1u ? std::optional<OpcodeWindow>(captureOpcodeWindow(mem, lastPc)) : std::nullopt;
+        if (in45D0To45F1(lastPc) && preRangeBanks.has_value()) {
+            const uint8_t hlByteBefore = mem.read(cpu.HL);
+            const uint8_t hlMinus1ByteBefore = mem.read(static_cast<uint16_t>(cpu.HL - 1u));
+            pc45rangeLog << currentStep << '|'
+                         << hex16(lastPc) << '|'
+                         << hex8(opcodeAtPc) << '|'
+                         << hex8(nextOpcodeByte) << '|'
+                         << hex8(thirdOpcodeByte) << '|'
+                         << hex8(fourthOpcodeByte) << '|'
+                         << hex16(cpu.AF) << '|'
+                         << hex16(cpu.BC) << '|'
+                         << hex16(cpu.DE) << '|'
+                         << hex16(cpu.HL) << '|'
+                         << hex16(cpu.IX) << '|'
+                         << hex16(cpu.IY) << '|'
+                         << hex16(preStepSp) << '|'
+                         << hex8(preRangeBanks->registers[1]) << '|'
+                         << hex8(preRangeBanks->registers[2]) << '|'
+                         << hex8(preRangeBanks->registers[0]) << '|'
+                         << hex8(preRangeBanks->control) << '|'
+                         << static_cast<int>(vdp.currentScanline()) << '|'
+                         << hex8(mem.read(0xC148u)) << '|'
+                         << hex8(mem.read(0xC149u)) << '|'
+                         << hex8(mem.read(0xC14Au)) << '|'
+                         << hex8(mem.read(0xC14Bu)) << '|'
+                         << hex8(mem.read(0xC14Eu)) << '|'
+                         << hex8(mem.read(0xC736u)) << '|'
+                         << hex8(mem.read(0xC737u)) << '|'
+                         << hex8(hlByteBefore) << '|'
+                         << hex8(hlMinus1ByteBefore)
+                         << '\n';
+        }
         std::optional<TimingSnapshot> preStepTiming;
         if (lastPc == 0x4090u || lastPc == 0x4095u ||
             (lastPc == 0x4516u && activeCycle.valid) || lastPc == 0x4500u) {
@@ -1992,6 +2099,26 @@ int main(int argc, char** argv) {
     for (const auto& event : mapperWritesLastC14AClearToFinalSet) {
         std::cout << "  ";
         printMapperWrite(event);
+        std::cout << '\n';
+    }
+    std::cout << "range_45d0_45f1_trace full_trace=/tmp/pc45d0_45f1_trace.log\n";
+    std::cout << "pointer_ram_writes count=" << pointerWrites.size()
+              << " full_trace=/tmp/pointer_ram_writes.log\n";
+    for (const auto& event : pointerWrites) {
+        std::cout << "  step=" << event.step
+                  << " pc=" << hex16(event.pc)
+                  << " addr=" << hex16(event.address)
+                  << " prev=" << hex8(event.previousValue)
+                  << " value=" << hex8(event.value)
+                  << " af=" << hex16(event.af)
+                  << " bc=" << hex16(event.bc)
+                  << " de=" << hex16(event.de)
+                  << " hl=" << hex16(event.hl)
+                  << " ix=" << hex16(event.ix)
+                  << " iy=" << hex16(event.iy)
+                  << " sp=" << hex16(event.sp)
+                  << " scanline=" << static_cast<int>(event.scanline);
+        printBankState(event.banks);
         std::cout << '\n';
     }
 
