@@ -1105,12 +1105,15 @@ private:
             appendLog("sdl: audio service unavailable");
             return false;
         }
+        const auto sourceChannelCount = std::max<uint8_t>(audioService_->engine().config().channelCount, 1u);
+        const auto sourceChannelMultiplier = static_cast<std::size_t>(sourceChannelCount);
         audioService_->setBackendPausedOrClosed(true);
         if (!audioService_->configureEngine({
             .sourceSampleRate = kSourceAudioSampleRate,
             .deviceSampleRate = kSourceAudioSampleRate,
-            .ringBufferCapacitySamples = config_.audioRingBufferCapacitySamples,
-            .frameChunkSamples = kApuFrameSamples,
+            .channelCount = sourceChannelCount,
+            .ringBufferCapacitySamples = config_.audioRingBufferCapacitySamples * sourceChannelMultiplier,
+            .frameChunkSamples = kApuFrameSamples * sourceChannelMultiplier,
         })) {
             lastBackendError_ = "Audio engine configure rejected while backend active";
             appendLog("sdl: " + lastBackendError_);
@@ -1137,8 +1140,9 @@ private:
         if (!audioOutput_->open(audioService_->engine(), {
                 .backend = selectedAudioBackend_,
                 .requestedSampleRate = kSourceAudioSampleRate,
-                .callbackChunkSamples = static_cast<std::size_t>(std::max(config_.audioCallbackChunkSamples, 1)),
-                .channels = 1,
+                .callbackChunkSamples = static_cast<std::size_t>(std::max(config_.audioCallbackChunkSamples, 1)) *
+                                        sourceChannelMultiplier,
+                .channels = sourceChannelCount,
                 .testForcedDeviceSampleRate = config_.enableAudioResamplingDiagnostics
                                                 ? config_.testForcedAudioDeviceSampleRate
                                                 : 0,

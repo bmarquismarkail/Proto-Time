@@ -159,7 +159,8 @@ public:
         }
 
         AudioBufferView input{std::span<const int16_t>(output.data(), output.size()),
-                              engine_.config().deviceSampleRate};
+                              engine_.config().deviceSampleRate,
+                              engine_.config().channelCount};
         if (pipelineOutputScratch_.size() < output.size()) {
             engine_.notePipelineCapacitySkip();
             return;

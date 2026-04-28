@@ -73,5 +73,28 @@ int main()
     assert(std::filesystem::exists(outputPath));
     assert(std::filesystem::file_size(outputPath) > 0u);
     std::filesystem::remove(outputPath);
+
+    assert(service.configureEngine({
+        .sourceSampleRate = 48000,
+        .deviceSampleRate = 48000,
+        .channelCount = 2,
+        .ringBufferCapacitySamples = 4096,
+        .frameChunkSamples = 512,
+    }));
+    const auto stereoOutputPath = std::filesystem::temp_directory_path() / "bmmq_audio_out_stereo.raw";
+    if (std::filesystem::exists(stereoOutputPath)) {
+        std::filesystem::remove(stereoOutputPath);
+    }
+    assert(backend.open(engine, {
+        .requestedSampleRate = 48000,
+        .callbackChunkSamples = 512,
+        .channels = 2,
+        .filePath = stereoOutputPath,
+        .audioService = &service,
+    }));
+    assert(backend.deviceInfo().channels == 2);
+    backend.close();
+    assert(std::filesystem::exists(stereoOutputPath));
+    std::filesystem::remove(stereoOutputPath);
     return 0;
 }

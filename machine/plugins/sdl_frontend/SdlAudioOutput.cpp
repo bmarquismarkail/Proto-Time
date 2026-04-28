@@ -46,8 +46,8 @@ public:
             lastErrorCode_ = AudioOutputErrorCode::InvalidConfig;
             return false;
         }
-        if (config.channels != 1) {
-            lastError_ = "Only mono output is supported";
+        if (config.channels < 1 || config.channels > 2) {
+            lastError_ = "Only mono or stereo output is supported";
             lastErrorCode_ = AudioOutputErrorCode::UnsupportedConfig;
             return false;
         }
@@ -59,8 +59,11 @@ public:
         desired.format = AUDIO_S16SYS;
         desired.channels = static_cast<Uint8>(config.channels);
         const auto callbackChunkSamples = std::max<std::size_t>(config.callbackChunkSamples, 1u);
+        const auto callbackChunkFrames = std::max<std::size_t>(
+            1u,
+            callbackChunkSamples / static_cast<std::size_t>(std::max(config.channels, 1)));
         const auto clampedSamples = std::min(
-            callbackChunkSamples,
+            callbackChunkFrames,
             static_cast<std::size_t>(std::numeric_limits<Uint16>::max())
         );
         desired.samples = static_cast<Uint16>(clampedSamples);
@@ -76,7 +79,7 @@ public:
             return false;
         }
 
-        if (obtained.format != AUDIO_S16SYS || obtained.channels != 1) {
+        if (obtained.format != AUDIO_S16SYS || obtained.channels != desired.channels) {
             lastError_ = "SDL audio device format mismatch";
             lastErrorCode_ = AudioOutputErrorCode::UnsupportedConfig;
             close();
@@ -87,8 +90,10 @@ public:
         if (config.testForcedDeviceSampleRate > 0) {
             deviceInfo_.sampleRate = config.testForcedDeviceSampleRate;
         }
-        deviceInfo_.callbackChunkSamples = obtained.samples != 0 ? obtained.samples : desired.samples;
         deviceInfo_.channels = obtained.channels != 0 ? obtained.channels : desired.channels;
+        const auto obtainedFrames = obtained.samples != 0 ? obtained.samples : desired.samples;
+        deviceInfo_.callbackChunkSamples = static_cast<std::size_t>(obtainedFrames) *
+                                           static_cast<std::size_t>(deviceInfo_.channels);
 
         engine_->setDeviceSampleRate(deviceInfo_.sampleRate);
         if (!service_->configureFixedCallbackCapacity(deviceInfo_.callbackChunkSamples)) {

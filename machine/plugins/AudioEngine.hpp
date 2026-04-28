@@ -16,6 +16,7 @@ namespace BMMQ {
 struct AudioEngineConfig {
     int sourceSampleRate = 48000;
     int deviceSampleRate = 48000;
+    uint8_t channelCount = 1;
     std::size_t ringBufferCapacitySamples = 2048;
     std::size_t frameChunkSamples = 256;
 };
@@ -40,7 +41,7 @@ class AudioEngine {
 public:
     explicit AudioEngine(const AudioEngineConfig& config = {})
         : config_(config),
-          resampler_(config.sourceSampleRate, config.deviceSampleRate)
+          resampler_(config.sourceSampleRate, config.deviceSampleRate, config.channelCount)
     {
         initializeBuffer();
         resetStats();
@@ -50,7 +51,7 @@ public:
     void configure(const AudioEngineConfig& config)
     {
         config_ = config;
-        resampler_.configure(config_.sourceSampleRate, config_.deviceSampleRate);
+        resampler_.configure(config_.sourceSampleRate, config_.deviceSampleRate, config_.channelCount);
         initializeBuffer();
         resetStats();
         resetStream();
@@ -64,7 +65,7 @@ public:
     void setDeviceSampleRate(int deviceSampleRate)
     {
         config_.deviceSampleRate = std::max(deviceSampleRate, 1);
-        resampler_.configure(config_.sourceSampleRate, config_.deviceSampleRate);
+        resampler_.configure(config_.sourceSampleRate, config_.deviceSampleRate, config_.channelCount);
     }
 
     [[nodiscard]] std::size_t bufferedSamples() const noexcept

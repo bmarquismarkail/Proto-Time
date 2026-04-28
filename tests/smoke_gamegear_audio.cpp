@@ -43,12 +43,18 @@ int main()
     machine.pluginManager().add(std::move(audioPlugin));
     machine.pluginManager().initialize(machine.mutableView());
 
-    machine.runtimeContext().write8(0xFF26u, 0x80u);
-    machine.runtimeContext().write8(0xFF24u, 0x77u);
-    machine.runtimeContext().write8(0xFF25u, 0x11u);
-    machine.runtimeContext().write8(0xFF12u, 0xF0u);
-    machine.runtimeContext().write8(0xFF13u, 0x01u);
-    machine.runtimeContext().write8(0xFF14u, 0x80u);
+    // Program the PSG through native Game Gear I/O ports:
+    // stereo tone 0 left-only, period 0x031, loudest attenuation.
+    rom[0x0000u] = 0x3Eu; rom[0x0001u] = 0x10u; // LD A,$10
+    rom[0x0002u] = 0xD3u; rom[0x0003u] = 0x06u; // OUT ($06),A
+    rom[0x0004u] = 0x3Eu; rom[0x0005u] = 0x81u; // LD A,$81
+    rom[0x0006u] = 0xD3u; rom[0x0007u] = 0x7Eu; // OUT ($7E),A
+    rom[0x0008u] = 0x3Eu; rom[0x0009u] = 0x03u; // LD A,$03
+    rom[0x000Au] = 0xD3u; rom[0x000Bu] = 0x7Fu; // OUT ($7F),A
+    rom[0x000Cu] = 0x3Eu; rom[0x000Du] = 0x90u; // LD A,$90
+    rom[0x000Eu] = 0xD3u; rom[0x000Fu] = 0x40u; // OUT ($40),A
+    rom[0x0010u] = 0xC3u; rom[0x0011u] = 0x10u; rom[0x0012u] = 0x00u; // JP $0010
+    machine.loadRom(rom);
 
     for (uint16_t i = 0; i < 0x10u; ++i) {
         machine.runtimeContext().write8(static_cast<uint16_t>(0xFF30u + i), static_cast<uint8_t>(i));
@@ -69,6 +75,10 @@ int main()
     const auto recentSamples = machine.recentAudioSamples();
     assert(!recentSamples.empty());
     assert(hasNonZeroSample(recentSamples));
+    assert((recentSamples.size() % 2u) == 0u);
+    for (std::size_t i = 1; i < recentSamples.size(); i += 2u) {
+        assert(recentSamples[i] == 0);
+    }
     assert(machine.audioSampleRate() == 48000u);
     assert(machine.audioFrameCounter() > frameCounterAfterWarmup);
 
@@ -78,6 +88,7 @@ int main()
     assert((recorder->lastAudioState->nr52 & 0x0Fu) != 0u);
     assert(recorder->lastAudioState->waveRam.size() == 0x10u);
     assert(recorder->lastAudioState->sampleRate == 48000u);
+    assert(recorder->lastAudioState->channelCount == 2u);
     assert(recorder->lastAudioState->frameCounter >= 1u);
     assert(!recorder->lastAudioState->pcmSamples.empty());
     assert(hasNonZeroSample(recorder->lastAudioState->pcmSamples));

@@ -171,6 +171,9 @@ public:
     virtual uint32_t audioSampleRate() const {
         return 48000u;
     }
+    virtual uint8_t audioChannelCount() const {
+        return 1u;
+    }
     virtual uint64_t audioFrameCounter() const {
         return 0u;
     }
@@ -280,6 +283,10 @@ inline std::vector<int16_t> queryRecentAudioSamples(const Machine& machine) {
 
 inline uint32_t queryAudioSampleRate(const Machine& machine) {
     return machine.audioSampleRate();
+}
+
+inline uint8_t queryAudioChannelCount(const Machine& machine) {
+    return machine.audioChannelCount();
 }
 
 inline uint64_t queryAudioFrameCounter(const Machine& machine) {

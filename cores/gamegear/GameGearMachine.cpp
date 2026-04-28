@@ -230,6 +230,13 @@ uint16_t GameGearMachine::readRegisterPair(std::string_view name) const {
 }
 
 GameGearMachine::GameGearMachine() : impl(std::make_unique<Impl>()) {
+    (void)audioService().configureEngine({
+        .sourceSampleRate = 48000,
+        .deviceSampleRate = 48000,
+        .channelCount = 2u,
+        .ringBufferCapacitySamples = 4096u,
+        .frameChunkSamples = 512u,
+    });
     // Wire up CPU memory interface to memory map
     impl->cpu.setMemoryInterface(
         [this](uint16_t addr) { return impl->mem.read(addr); },
@@ -426,6 +433,10 @@ std::vector<int16_t> GameGearMachine::recentAudioSamples() const {
 
 uint32_t GameGearMachine::audioSampleRate() const {
     return impl->psg.sampleRate();
+}
+
+uint8_t GameGearMachine::audioChannelCount() const {
+    return impl->psg.outputChannelCount();
 }
 
 uint64_t GameGearMachine::audioFrameCounter() const {

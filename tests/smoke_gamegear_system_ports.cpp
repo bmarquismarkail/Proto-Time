@@ -1,5 +1,6 @@
 #include "cores/gamegear/GameGearInput.hpp"
 #include "cores/gamegear/GameGearMemoryMap.hpp"
+#include "cores/gamegear/GameGearPSG.hpp"
 #include "cores/gamegear/GameGearVDP.hpp"
 
 #include <cassert>
@@ -40,8 +41,11 @@ int main()
     {
         GameGearInput input;
         GameGearMemoryMap memory;
+        GameGearPSG psg;
         memory.setInput(&input);
+        memory.setPsg(&psg);
         input.reset();
+        psg.reset();
 
         assert(memory.readIoPort(0x00u) == 0xC0u);
         assert(memory.readIoPort(0x01u) == 0x7Fu);
@@ -62,6 +66,13 @@ int main()
         assert(memory.readIoPort(0x04u) == 0xFFu);
         assert(memory.readIoPort(0x05u) == 0x78u);
         assert(input.audioStereoControl() == 0x9Au);
+        assert(psg.stereoControl() == 0x9Au);
+
+        memory.writeIoPort(0x7Eu, 0x80u | 0x07u);
+        memory.writeIoPort(0x7Fu, 0x03u);
+        memory.writeIoPort(0x40u, 0x90u);
+        assert(psg.tonePeriod(0u) == 0x037u);
+        assert(psg.channelAttenuation(0u) == 0u);
     }
 
     {

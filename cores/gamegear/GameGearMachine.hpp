@@ -37,6 +37,7 @@ public:
     std::optional<uint32_t> currentDigitalInputMask() const override;
     std::vector<int16_t> recentAudioSamples() const override;
     uint32_t audioSampleRate() const override;
+    uint8_t audioChannelCount() const override;
     uint64_t audioFrameCounter() const override;
     std::optional<VideoDebugFrameModel> videoDebugFrameModel(
         const VideoDebugRenderRequest& request) const override;

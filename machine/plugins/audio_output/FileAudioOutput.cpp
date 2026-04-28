@@ -41,8 +41,8 @@ public:
             setError(AudioOutputErrorCode::InvalidPath, "File path is required");
             return false;
         }
-        if (config.channels != 1) {
-            setError(AudioOutputErrorCode::UnsupportedConfig, "Only mono output is supported");
+        if (config.channels < 1 || config.channels > 2) {
+            setError(AudioOutputErrorCode::UnsupportedConfig, "Only mono or stereo output is supported");
             return false;
         }
 
@@ -66,7 +66,7 @@ public:
             ? config.testForcedDeviceSampleRate
             : std::max(config.requestedSampleRate, 1);
         deviceInfo_.callbackChunkSamples = std::max<std::size_t>(config.callbackChunkSamples, 1u);
-        deviceInfo_.channels = 1;
+        deviceInfo_.channels = config.channels;
         engine_->setDeviceSampleRate(deviceInfo_.sampleRate);
         if (!service_->configureFixedCallbackCapacity(deviceInfo_.callbackChunkSamples)) {
             setError(AudioOutputErrorCode::InvalidConfig, "Failed to configure callback buffer capacity");
@@ -145,8 +145,10 @@ private:
         std::vector<int16_t> buffer(deviceInfo_.callbackChunkSamples, 0);
         auto sleepDuration = std::chrono::milliseconds(5);
         if (deviceInfo_.sampleRate > 0) {
+            const auto channels = std::max(deviceInfo_.channels, 1);
             const auto durationMs = static_cast<long long>(
-                (static_cast<double>(deviceInfo_.callbackChunkSamples) / deviceInfo_.sampleRate) * 1000.0
+                ((static_cast<double>(deviceInfo_.callbackChunkSamples) / static_cast<double>(channels)) /
+                 deviceInfo_.sampleRate) * 1000.0
             );
             sleepDuration = std::chrono::milliseconds(std::max(1LL, durationMs));
         }

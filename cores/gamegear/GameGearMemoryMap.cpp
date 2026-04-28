@@ -57,6 +57,9 @@ void GameGearMemoryMap::writeIoPort(uint8_t port, uint8_t value) {
         if (input) {
             input->writeSystemPort(port, value);
         }
+        if (port == 0x06u && psg) {
+            psg->writeStereoControl(value);
+        }
         return;
     }
     if (port >= 0x07u && port <= 0x3Fu) {

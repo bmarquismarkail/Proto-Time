@@ -32,6 +32,7 @@ VisualOverrideService& queryVisualOverrideService(Machine& machine);
 const VisualOverrideService& queryVisualOverrideService(const Machine& machine);
 std::vector<int16_t> queryRecentAudioSamples(const Machine& machine);
 uint32_t queryAudioSampleRate(const Machine& machine);
+uint8_t queryAudioChannelCount(const Machine& machine);
 uint64_t queryAudioFrameCounter(const Machine& machine);
 TimingService& queryTimingService(Machine& machine);
 const TimingService& queryTimingService(const Machine& machine);
@@ -112,6 +113,7 @@ struct AudioStateView {
     std::vector<uint8_t> waveRam;
     std::vector<int16_t> pcmSamples;
     uint32_t sampleRate = 48000;
+    uint8_t channelCount = 1;
     uint64_t frameCounter = 0;
     uint8_t nr10 = 0;
     uint8_t nr11 = 0;
@@ -309,6 +311,7 @@ struct MachineView {
         state.waveRam = readRegion(0xFF30u, 0x0010u);
         state.pcmSamples = queryRecentAudioSamples(machine);
         state.sampleRate = queryAudioSampleRate(machine);
+        state.channelCount = queryAudioChannelCount(machine);
         state.frameCounter = queryAudioFrameCounter(machine);
         state.nr10 = read8(0xFF10u);
         state.nr11 = read8(0xFF11u);

@@ -1,6 +1,19 @@
 #include "GameGearPSG.hpp"
 
 #include <algorithm>
+#include <array>
+
+namespace {
+constexpr std::array<int, 16> kAttenuationTable{{
+    8192, 6507, 5168, 4105, 3261, 2590, 2057, 1634,
+    1298, 1031, 819, 650, 516, 410, 326, 0,
+}};
+
+[[nodiscard]] int16_t clampSample(int value) noexcept
+{
+    return static_cast<int16_t>(std::clamp(value, -32768, 32767));
+}
+} // namespace
 
 GameGearPSG::GameGearPSG() {}
 GameGearPSG::~GameGearPSG() {}
@@ -9,6 +22,12 @@ void GameGearPSG::reset() {
     for (auto& tone : tones_) {
         tone = ToneChannel{};
     }
+    noiseControl_ = 0u;
+    noiseAttenuation_ = 0x0Fu;
+    noiseCounter_ = 0.0;
+    noiseLfsr_ = 0x8000u;
+    noiseOutputHigh_ = false;
+    stereoControl_ = 0xFFu;
     compatRegisters_.fill(0u);
     waveRam_.fill(0u);
     currentFrameSamples_.clear();
@@ -17,14 +36,14 @@ void GameGearPSG::reset() {
     frameCounter_ = 0u;
     latchedChannel_ = 0u;
     latchedVolume_ = false;
-    compatRegisters_[0x16u] = 0x70u;
+    compatRegisters_[0x16u] = 0x80u;
 }
 
 void GameGearPSG::step(uint32_t cpuCycles) {
     samplePhase_ += static_cast<uint64_t>(cpuCycles) * static_cast<uint64_t>(kSampleRate);
     while (samplePhase_ >= kClockHz) {
         samplePhase_ -= kClockHz;
-        produceSample();
+        produceFrame();
     }
 }
 
@@ -41,6 +60,13 @@ void GameGearPSG::writeData(uint8_t value) {
                                                                        static_cast<uint16_t>(value & 0x0Fu));
                 tones_[latchedChannel_].enabled = true;
             }
+        } else if (latchedVolume_) {
+            noiseAttenuation_ = static_cast<uint8_t>(value & 0x0Fu);
+        } else {
+            noiseControl_ = static_cast<uint8_t>(value & 0x07u);
+            noiseLfsr_ = 0x8000u;
+            noiseCounter_ = 0.0;
+            noiseOutputHigh_ = false;
         }
     } else if (latchedChannel_ < 3u && !latchedVolume_) {
         tones_[latchedChannel_].period = static_cast<uint16_t>((tones_[latchedChannel_].period & 0x000Fu) |
@@ -48,6 +74,10 @@ void GameGearPSG::writeData(uint8_t value) {
         tones_[latchedChannel_].enabled = true;
     }
     updateCompatStatus();
+}
+
+void GameGearPSG::writeStereoControl(uint8_t value) noexcept {
+    stereoControl_ = value;
 }
 
 uint8_t GameGearPSG::readCompatRegister(uint16_t addr) const noexcept {
@@ -110,16 +140,78 @@ uint32_t GameGearPSG::sampleRate() const noexcept {
     return kSampleRate;
 }
 
+uint8_t GameGearPSG::outputChannelCount() const noexcept {
+    return kOutputChannelCount;
+}
+
 uint64_t GameGearPSG::frameCounter() const noexcept {
     return frameCounter_;
 }
 
-void GameGearPSG::produceSample() {
-    currentFrameSamples_.push_back(mixSample());
-    if (currentFrameSamples_.size() >= kSamplesPerFrame) {
+uint8_t GameGearPSG::stereoControl() const noexcept {
+    return stereoControl_;
+}
+
+uint16_t GameGearPSG::tonePeriod(std::size_t channel) const noexcept {
+    return channel < tones_.size() ? tones_[channel].period : 0u;
+}
+
+uint8_t GameGearPSG::channelAttenuation(std::size_t channel) const noexcept {
+    if (channel < tones_.size()) {
+        return tones_[channel].attenuation;
+    }
+    return channel == 3u ? noiseAttenuation_ : 0x0Fu;
+}
+
+uint8_t GameGearPSG::noiseControl() const noexcept {
+    return noiseControl_;
+}
+
+void GameGearPSG::produceFrame() {
+    advanceGenerators();
+    const auto frame = mixFrame();
+    currentFrameSamples_.push_back(frame[0]);
+    currentFrameSamples_.push_back(frame[1]);
+    if (currentFrameSamples_.size() >= kFramesPerChunk * kOutputChannelCount) {
         recentSamples_ = currentFrameSamples_;
         currentFrameSamples_.clear();
         ++frameCounter_;
+    }
+}
+
+void GameGearPSG::advanceGenerators() {
+    constexpr double kCyclesPerSample = static_cast<double>(kClockHz) / static_cast<double>(kSampleRate);
+    for (auto& tone : tones_) {
+        if (!tone.enabled || tone.attenuation >= 0x0Fu) {
+            continue;
+        }
+        const auto period = static_cast<double>(std::max<uint16_t>(tone.period, 1u));
+        const auto togglePeriod = std::max(1.0, period * 16.0);
+        tone.counter += kCyclesPerSample;
+        while (tone.counter >= togglePeriod) {
+            tone.counter -= togglePeriod;
+            tone.outputHigh = !tone.outputHigh;
+        }
+    }
+
+    if (noiseAttenuation_ >= 0x0Fu) {
+        return;
+    }
+    const uint8_t rateSelect = static_cast<uint8_t>(noiseControl_ & 0x03u);
+    const uint16_t noisePeriod = rateSelect == 0u ? 0x10u
+        : rateSelect == 1u ? 0x20u
+        : rateSelect == 2u ? 0x40u
+        : std::max<uint16_t>(tones_[2].period, 1u);
+    noiseCounter_ += kCyclesPerSample;
+    const auto togglePeriod = static_cast<double>(noisePeriod) * 16.0;
+    while (noiseCounter_ >= togglePeriod) {
+        noiseCounter_ -= togglePeriod;
+        const bool whiteNoise = (noiseControl_ & 0x04u) != 0u;
+        const uint16_t feedback = whiteNoise
+            ? static_cast<uint16_t>((noiseLfsr_ ^ (noiseLfsr_ >> 3u)) & 0x0001u)
+            : static_cast<uint16_t>(noiseLfsr_ & 0x0001u);
+        noiseLfsr_ = static_cast<uint16_t>((noiseLfsr_ >> 1u) | static_cast<uint16_t>(feedback << 15u));
+        noiseOutputHigh_ = (noiseLfsr_ & 0x0001u) != 0u;
     }
 }
 
@@ -150,29 +242,58 @@ void GameGearPSG::updateCompatStatus() noexcept {
             status = static_cast<uint8_t>(status | static_cast<uint8_t>(1u << i));
         }
     }
+    if (noiseAttenuation_ < 0x0Fu) {
+        status = static_cast<uint8_t>(status | 0x08u);
+    }
     compatRegisters_[0x16u] = status;
 }
 
-int16_t GameGearPSG::mixSample() noexcept {
-    if ((compatRegisters_[0x16u] & 0x80u) == 0u) {
-        return 0;
-    }
-
-    int mixed = 0;
-    for (auto& tone : tones_) {
-        if (!tone.enabled || tone.attenuation >= 0x0Fu) {
+std::array<int16_t, 2> GameGearPSG::mixFrame() noexcept {
+    int left = 0;
+    int right = 0;
+    for (std::size_t channel = 0; channel < tones_.size(); ++channel) {
+        if (!tones_[channel].enabled || tones_[channel].attenuation >= 0x0Fu) {
             continue;
         }
-        const uint32_t period = tone.period == 0u ? 1u : tone.period;
-        const uint32_t togglePeriod = std::max<uint32_t>(1u, period * 16u);
-        tone.counter += 1u;
-        if (tone.counter >= togglePeriod) {
-            tone.counter = 0u;
-            tone.outputHigh = !tone.outputHigh;
+        const int amplitude = channelAmplitude(channel);
+        const int signedAmplitude = tones_[channel].outputHigh ? amplitude : -amplitude;
+        if (channelRoutedLeft(channel)) {
+            left += signedAmplitude;
         }
-        const int amplitude = (15 - static_cast<int>(tone.attenuation)) * 256;
-        mixed += tone.outputHigh ? amplitude : -amplitude;
+        if (channelRoutedRight(channel)) {
+            right += signedAmplitude;
+        }
     }
-    mixed = std::clamp(mixed, -32767, 32767);
-    return static_cast<int16_t>(mixed);
+
+    if (noiseAttenuation_ < 0x0Fu) {
+        const int amplitude = channelAmplitude(3u);
+        const int signedAmplitude = noiseOutputHigh_ ? amplitude : -amplitude;
+        if (channelRoutedLeft(3u)) {
+            left += signedAmplitude;
+        }
+        if (channelRoutedRight(3u)) {
+            right += signedAmplitude;
+        }
+    }
+
+    return {clampSample(left), clampSample(right)};
+}
+
+int GameGearPSG::channelAmplitude(std::size_t channel) const noexcept {
+    const uint8_t attenuation = channel < tones_.size() ? tones_[channel].attenuation : noiseAttenuation_;
+    return kAttenuationTable[std::min<uint8_t>(attenuation, 0x0Fu)];
+}
+
+bool GameGearPSG::channelRoutedLeft(std::size_t channel) const noexcept {
+    if (channel >= 4u) {
+        return false;
+    }
+    return (stereoControl_ & static_cast<uint8_t>(0x10u << channel)) != 0u;
+}
+
+bool GameGearPSG::channelRoutedRight(std::size_t channel) const noexcept {
+    if (channel >= 4u) {
+        return false;
+    }
+    return (stereoControl_ & static_cast<uint8_t>(0x01u << channel)) != 0u;
 }
