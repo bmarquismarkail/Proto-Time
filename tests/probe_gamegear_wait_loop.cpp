@@ -1746,8 +1746,7 @@ int main(int argc, char** argv) {
                           << " vdp_line_pending=" << (w.vdp_line_pending ? "yes" : "no")
                           << " opcodes";
                 printOpcodeWindow(w.opcodes);
-                std::cout << '
-';
+                std::cout << std::endl;
             }
         }
         // For C700..C710, also print dedicated ring history
@@ -1764,7 +1763,7 @@ int main(int argc, char** argv) {
                           << " sp=" << hex16(w.sp)
                           << " opcodes";
                 printOpcodeWindow(w.opcodes);
-                std::cout << '\n';
+                std::cout << std::endl;
             }
         }
     };
