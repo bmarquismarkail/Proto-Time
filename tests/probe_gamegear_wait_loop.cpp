@@ -600,6 +600,8 @@ int main(int argc, char** argv) {
     std::vector<IoEvent> events;
     std::vector<MemEvent> memEvents;
     std::vector<RamWriteEvent> ramWrites;
+    // Dedicated capture for writes to the C14A flag observed by the Mega Man wait loop
+    std::vector<RamWriteEvent> c14aWrites;
     // Dedicated small ring for C700-C710 writes (inclusive)
     std::array<std::vector<RamWriteEvent>, 0x11> c700History;
     // Fast lookup of the last seen ram write per address
@@ -959,6 +961,12 @@ int main(int argc, char** argv) {
             if (address == 0xC702u) {
                 recordC702Read(value);
             }
+            // record reads to the C14A wait flag so we can see who is polling it
+            if (address == 0xC14Au) {
+                pushTail(memEvents,
+                         MemEvent{currentStep, currentInstructionPc, address, value, vdp.currentScanline(), captureOpcodeWindow(mem, currentInstructionPc)},
+                         tailLimit);
+            }
             return value;
         },
         [&](uint16_t address, uint8_t value) {
@@ -969,6 +977,33 @@ int main(int argc, char** argv) {
             // record full metadata for writes to $C500-$C720
             if (address >= 0xC500u && address <= 0xC720u) {
                 recordRamWrite(address, previous, value);
+            }
+            // also record writes to the specific C14A flag (Mega Man wait)
+            if (address == 0xC14Au) {
+                RamWriteEvent ev{};
+                ev.step = currentStep;
+                ev.pc = currentInstructionPc;
+                ev.address = address;
+                ev.previousValue = previous;
+                ev.value = value;
+                ev.scanline = vdp.currentScanline();
+                ev.opcodes = captureOpcodeWindow(mem, currentInstructionPc);
+                ev.af = cpu.AF;
+                ev.bc = cpu.BC;
+                ev.de = cpu.DE;
+                ev.hl = cpu.HL;
+                ev.ix = cpu.IX;
+                ev.iy = cpu.IY;
+                ev.sp = cpu.SP;
+                ev.machine_irq_pending = interruptRequested;
+                ev.vdp_frame_pending = vdp.isFrameInterruptPending();
+                ev.vdp_line_pending = vdp.isLineInterruptPending();
+                c14aWrites.push_back(ev);
+                // also surface the write into generic memEvents for the recent_ram_writes list
+                pushTail(memEvents,
+                         MemEvent{currentStep, currentInstructionPc, address, value, vdp.currentScanline(), captureOpcodeWindow(mem, currentInstructionPc)},
+                         tailLimit);
+                lastRamWrite[address] = ev;
             }
             if (address == 0xC702u) {
                 recordC702Write(value);
