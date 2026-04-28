@@ -482,7 +482,8 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
     const auto satBase = spriteAttributeTableBase();
     const auto spriteBase = spriteGeneratorBase();
     const int zoom = spriteZoomMode() ? 2 : 1;
-    const int spriteHeight = (spriteTallMode() ? 16 : 8) * zoom;
+    const bool tallSprites = spriteTallMode();
+    const int spriteHeight = (tallSprites ? 16 : 8) * zoom;
     bool hasVisibleSprites = false;
     std::size_t visibleSpriteProbeCount = 0u;
     for (std::size_t sprite = 0; sprite < 64u; ++sprite) {
@@ -513,6 +514,11 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
     if (hasVisibleSprites) {
         spriteMask.assign(model.argbPixels.size(), 0u);
     }
+    const bool useSimpleBackgroundPath =
+        !smsMode_ &&
+        (scrollX & 0x07u) == 0u &&
+        (registers_[0u] & 0xA0u) == 0u &&
+        !(activeLines == 192u && scrollY > 223u);
     for (int y = 0; y < model.height; ++y) {
         const int vdpY = y + viewportY;
 
@@ -537,6 +543,61 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
         std::array<std::array<uint8_t, 8>, kTilesPerRow> decodedPatternRows{};
         std::array<int, kTilesPerRow> decodedPatternRowY{};
         decodedPatternRowY.fill(-1);
+
+        if (useSimpleBackgroundPath) {
+            const auto scrolledY = static_cast<std::size_t>((vdpY + scrollY) & 0xFF);
+            const auto tileY = scrolledY / 8u;
+            const auto pixelY = scrolledY % 8u;
+            const auto startingColumn = static_cast<std::size_t>((32u - (scrollX >> 3u)) & 0x1Fu);
+            for (int x = 0; x < model.width; ++x) {
+                const int vdpX = x + viewportX;
+                const auto scrolledX = static_cast<std::size_t>(vdpX) & 0xFFu;
+                const auto tileX = (startingColumn + (scrolledX / 8u)) % 32u;
+                const auto pixelX = scrolledX % 8u;
+
+                if (!decodedValid[tileX] || decodedEntryRows[tileX] != tileY) {
+                    const auto entry = backgroundTileEntry(tileX, tileY, nameBasePre, activeLines);
+                    decodedEntries[tileX].tileIndex = static_cast<uint16_t>(((entry >> 0u) & 0x01FFu));
+                    decodedEntries[tileX].flipH = (entry & 0x0200u) != 0u;
+                    decodedEntries[tileX].flipV = (entry & 0x0400u) != 0u;
+                    decodedEntries[tileX].palette1 = (entry & 0x0800u) != 0u;
+                    decodedEntries[tileX].priority = (entry & 0x1000u) != 0u;
+                    decodedEntryRows[tileX] = tileY;
+                    decodedValid[tileX] = true;
+                }
+                const auto& decoded = decodedEntries[tileX];
+                const auto sampleX = decoded.flipH ? (7u - pixelX) : pixelX;
+                const auto sampleY = decoded.flipV ? (7u - pixelY) : pixelY;
+                if (decodedPatternRowY[tileX] != static_cast<int>(sampleY)) {
+                    const auto tileBase = (static_cast<std::size_t>(decoded.tileIndex) * 32u) % vram_.size();
+                    const auto rowBase = (tileBase + static_cast<std::size_t>(sampleY) * 4u) % vram_.size();
+                    const auto plane0 = vram_[rowBase];
+                    const auto plane1 = vram_[(rowBase + 1u) % vram_.size()];
+                    const auto plane2 = vram_[(rowBase + 2u) % vram_.size()];
+                    const auto plane3 = vram_[(rowBase + 3u) % vram_.size()];
+                    for (std::size_t px = 0; px < 8u; ++px) {
+                        const auto bit = static_cast<uint8_t>(7u - static_cast<uint8_t>(px));
+                        decodedPatternRows[tileX][px] = static_cast<uint8_t>((((plane3 >> bit) & 0x01u) << 3u) |
+                                                                              (((plane2 >> bit) & 0x01u) << 2u) |
+                                                                              (((plane1 >> bit) & 0x01u) << 1u) |
+                                                                              ((plane0 >> bit) & 0x01u));
+                    }
+                    decodedPatternRowY[tileX] = static_cast<int>(sampleY);
+                }
+                const auto colorCode = decodedPatternRows[tileX][static_cast<std::size_t>(sampleX)];
+                const auto pixelIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(model.width)
+                                      + static_cast<std::size_t>(x);
+                model.argbPixels[pixelIndex] = decoded.palette1
+                    ? spritePalette[colorCode & 0x0Fu]
+                    : backgroundPalette[colorCode & 0x0Fu];
+                if (hasVisibleSprites) {
+                    spriteMask[pixelIndex] = decoded.priority && colorCode != 0u
+                        ? kSpriteMaskBackgroundPriority
+                        : 0u;
+                }
+            }
+            continue;
+        }
 
         for (int x = 0; x < model.width; ++x) {
             const int vdpX = x + viewportX;
