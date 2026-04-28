@@ -193,6 +193,14 @@ struct Branch45F1Event {
     uint8_t c14a = 0;
     uint8_t c14b = 0;
     uint8_t c14e = 0;
+    uint8_t c736 = 0;
+    uint8_t c737 = 0;
+    uint8_t c73c = 0;
+    uint8_t c73d = 0;
+    uint16_t c7b7 = 0;
+    uint16_t c7b9 = 0;
+    uint16_t c7cd = 0;
+    uint16_t c7cf = 0;
     uint8_t scanline = 0;
 };
 
@@ -824,9 +832,9 @@ int main(int argc, char** argv) {
     std::ofstream pc4b7bLog("/tmp/pc_4b7b.log", std::ios::trunc);
     pc4b7bLog << "step|pc|op0|op1|op2|op3|iy|ix|af|bc|de|hl|sp|scanline|machine_irq_pending|in_isr" << std::endl;
     std::ofstream pc45f1Log("/tmp/pc45f1_trace.log", std::ios::trunc);
-    pc45f1Log << "step|bank4000|bank8000|bank0|mapper_control|op0|op1|af|flags|taken|flag_pc|flag_op0|flag_op1|flag_af_before|flag_af_after|bc|de|hl|ix|iy|sp|scanline|c148|c149|c14a|c14b|c14e" << std::endl;
+    pc45f1Log << "step|bank4000|bank8000|bank0|mapper_control|op0|op1|af|flags|taken|flag_pc|flag_op0|flag_op1|flag_af_before|flag_af_after|bc|de|hl|ix|iy|sp|scanline|c148|c149|c14a|c14b|c14e|c736|c737|c73c|c73d|c7b7|c7b9|c7cd|c7cf" << std::endl;
     std::ofstream pc45rangeLog("/tmp/pc45d0_45f1_trace.log", std::ios::trunc);
-    pc45rangeLog << "step|pc|op0|op1|op2|op3|af|bc|de|hl|ix|iy|sp|bank4000|bank8000|bank0|mapper_control|scanline|c148|c149|c14a|c14b|c14e|c736|c737|hl_byte_before|hl_minus1_byte_before" << std::endl;
+    pc45rangeLog << "step|pc|op0|op1|op2|op3|af|bc|de|hl|ix|iy|sp|bank4000|bank8000|bank0|mapper_control|scanline|c148|c149|c14a|c14b|c14e|c736|c737|c73c|c73d|c7b7|c7b9|c7cd|c7cf|hl_byte_before|hl_minus1_byte_before" << std::endl;
     std::ofstream pointerWriteLog("/tmp/pointer_ram_writes.log", std::ios::trunc);
     pointerWriteLog << "step|pc|addr|prev|value|af|bc|de|hl|ix|iy|sp|bank4000|bank8000|bank0|mapper_control|scanline" << std::endl;
     uint64_t branch45F1Count = 0;
@@ -1362,6 +1370,16 @@ int main(int argc, char** argv) {
                          << hex8(mem.read(0xC14Eu)) << '|'
                          << hex8(mem.read(0xC736u)) << '|'
                          << hex8(mem.read(0xC737u)) << '|'
+                         << hex8(mem.read(0xC73Cu)) << '|'
+                         << hex8(mem.read(0xC73Du)) << '|'
+                         << hex16(static_cast<uint16_t>(mem.read(0xC7B7u) |
+                                                       (static_cast<uint16_t>(mem.read(0xC7B8u)) << 8u))) << '|'
+                         << hex16(static_cast<uint16_t>(mem.read(0xC7B9u) |
+                                                       (static_cast<uint16_t>(mem.read(0xC7BAu)) << 8u))) << '|'
+                         << hex16(static_cast<uint16_t>(mem.read(0xC7CDu) |
+                                                       (static_cast<uint16_t>(mem.read(0xC7CEu)) << 8u))) << '|'
+                         << hex16(static_cast<uint16_t>(mem.read(0xC7CFu) |
+                                                       (static_cast<uint16_t>(mem.read(0xC7D0u)) << 8u))) << '|'
                          << hex8(hlByteBefore) << '|'
                          << hex8(hlMinus1ByteBefore)
                          << '\n';
@@ -1408,6 +1426,18 @@ int main(int argc, char** argv) {
                 mem.read(0xC14Au),
                 mem.read(0xC14Bu),
                 mem.read(0xC14Eu),
+                mem.read(0xC736u),
+                mem.read(0xC737u),
+                mem.read(0xC73Cu),
+                mem.read(0xC73Du),
+                static_cast<uint16_t>(mem.read(0xC7B7u) |
+                                      (static_cast<uint16_t>(mem.read(0xC7B8u)) << 8u)),
+                static_cast<uint16_t>(mem.read(0xC7B9u) |
+                                      (static_cast<uint16_t>(mem.read(0xC7BAu)) << 8u)),
+                static_cast<uint16_t>(mem.read(0xC7CDu) |
+                                      (static_cast<uint16_t>(mem.read(0xC7CEu)) << 8u)),
+                static_cast<uint16_t>(mem.read(0xC7CFu) |
+                                      (static_cast<uint16_t>(mem.read(0xC7D0u)) << 8u)),
                 vdp.currentScanline(),
             };
             ++branch45F1Count;
@@ -1433,7 +1463,11 @@ int main(int argc, char** argv) {
                       << hex16(event.ix) << '|' << hex16(event.iy) << '|' << hex16(event.sp) << '|'
                       << static_cast<int>(event.scanline) << '|'
                       << hex8(event.c148) << '|' << hex8(event.c149) << '|' << hex8(event.c14a) << '|'
-                      << hex8(event.c14b) << '|' << hex8(event.c14e) << '\n';
+                      << hex8(event.c14b) << '|' << hex8(event.c14e) << '|'
+                      << hex8(event.c736) << '|' << hex8(event.c737) << '|'
+                      << hex8(event.c73c) << '|' << hex8(event.c73d) << '|'
+                      << hex16(event.c7b7) << '|' << hex16(event.c7b9) << '|'
+                      << hex16(event.c7cd) << '|' << hex16(event.c7cf) << '\n';
             pushTail(branch45F1Events, event, tailLimit);
         }
         if (updatesZFlag(opcodeAtPc, nextOpcodeByte)) {
@@ -1809,7 +1843,15 @@ int main(int argc, char** argv) {
                   << " c149=" << hex8(event.c149)
                   << " c14a=" << hex8(event.c14a)
                   << " c14b=" << hex8(event.c14b)
-                  << " c14e=" << hex8(event.c14e);
+                  << " c14e=" << hex8(event.c14e)
+                  << " c736=" << hex8(event.c736)
+                  << " c737=" << hex8(event.c737)
+                  << " c73c=" << hex8(event.c73c)
+                  << " c73d=" << hex8(event.c73d)
+                  << " c7b7=" << hex16(event.c7b7)
+                  << " c7b9=" << hex16(event.c7b9)
+                  << " c7cd=" << hex16(event.c7cd)
+                  << " c7cf=" << hex16(event.c7cf);
         printBankState(event.banks);
         std::cout << " opcodes";
         printOpcodeWindow(event.opcodes);
