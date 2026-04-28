@@ -30,12 +30,41 @@ int main() {
         assert(vdp.readHCounter() == 0u);
     }
 
-    // Mode4 vertical mapping (224 and 240 line modes)
+    // Game Gear mode keeps fixed 192-line timing even when SMS extended-height bits are set.
     {
         GameGearVDP vdp;
         GameGearMemoryMap memory;
         memory.setVdp(&vdp);
         vdp.reset();
+
+        memory.writeIoPort(0xBFu, 0x06u);
+        memory.writeIoPort(0xBFu, 0x80u); // reg0 = 0x06
+        memory.writeIoPort(0xBFu, 0x50u);
+        memory.writeIoPort(0xBFu, 0x81u); // reg1 = display on + SMS 224-line selector
+
+        vdp.step(228u * 193u);
+        assert(vdp.takeVBlankEntered());
+        assert(vdp.readVCounter() == 193u);
+
+        vdp.reset();
+        memory.setVdp(&vdp);
+        memory.writeIoPort(0xBFu, 0x06u);
+        memory.writeIoPort(0xBFu, 0x80u); // reg0 = 0x06
+        memory.writeIoPort(0xBFu, 0x48u);
+        memory.writeIoPort(0xBFu, 0x81u); // reg1 = display on + SMS 240-line selector
+
+        vdp.step(228u * 193u);
+        assert(vdp.takeVBlankEntered());
+        assert(vdp.readVCounter() == 193u);
+    }
+
+    // SMS compatibility mode still honors Mode4 vertical mapping (224 and 240 line modes).
+    {
+        GameGearVDP vdp;
+        GameGearMemoryMap memory;
+        memory.setVdp(&vdp);
+        vdp.reset();
+        vdp.setSmsMode(true);
 
         // Enable mode4 (reg0 bits 1+2) and set reg1 to select 224-line mode (m1=1,m3=0)
         memory.writeIoPort(0xBFu, 0x06u);
@@ -54,6 +83,7 @@ int main() {
 
         // Now test 240-line mode (m1=0, m3=1)
         vdp.reset();
+        vdp.setSmsMode(true);
         memory.setVdp(&vdp);
         memory.writeIoPort(0xBFu, 0x06u);
         memory.writeIoPort(0xBFu, 0x80u); // reg0 = 0x06

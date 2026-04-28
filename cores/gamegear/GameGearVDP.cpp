@@ -493,6 +493,7 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
             bool priority = false;
         };
         std::array<DecodedBgEntry, kTilesPerRow> decodedEntries{};
+        std::array<std::size_t, kTilesPerRow> decodedEntryRows{};
         std::array<bool, kTilesPerRow> decodedValid{};
 
         // Per-tile per-row decoded pattern pixels (8 color indexes for the
@@ -504,33 +505,36 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
 
         for (int x = 0; x < model.width; ++x) {
             const int vdpX = x + viewportX;
-            const bool fixedTopRows = (registers_[0u] & 0x40u) != 0u && vdpY < 16;
+            const bool fixedTopRows = smsMode_ && (registers_[0u] & 0x40u) != 0u && vdpY < 16;
             const bool fixedRightColumns = (registers_[0u] & 0x80u) != 0u && vdpX >= 192;
             const auto effectiveScrollX = static_cast<uint8_t>(fixedTopRows ? 0u : scrollX);
-            const auto effectiveScrollY = static_cast<uint8_t>(fixedRightColumns ? 0u : scrollY);
+            const auto effectiveScrollY = static_cast<uint8_t>(fixedRightColumns
+                ? 0u
+                : (activeLines == 192u && scrollY > 223u ? (scrollY & 0x1Fu) : scrollY));
             if ((registers_[0u] & 0x20u) != 0u && vdpX < 8) {
                 continue;
             }
             const auto fineScrollX = static_cast<std::size_t>(effectiveScrollX & 0x07u);
-            if (fineScrollX != 0u && static_cast<std::size_t>(vdpX) < fineScrollX) {
+            if (fineScrollX != 0u && vdpX < static_cast<int>(fineScrollX)) {
                 continue;
             }
             const auto scrolledY = static_cast<std::size_t>((vdpY + effectiveScrollY) & 0xFF);
             const auto tileY = scrolledY / 8u;
             const auto pixelY = scrolledY % 8u;
             const auto startingColumn = static_cast<std::size_t>((32u - (effectiveScrollX >> 3u)) & 0x1Fu);
-            const auto scrolledX = static_cast<std::size_t>((vdpX + fineScrollX) & 0xFF);
+            const auto scrolledX = static_cast<std::size_t>(vdpX - static_cast<int>(fineScrollX)) & 0xFFu;
             const auto tileX = (startingColumn + (scrolledX / 8u)) % 32u;
             const auto pixelX = scrolledX % 8u;
 
             // Decode the name-table entry at most once per tile cell for this row.
-            if (!decodedValid[tileX]) {
+            if (!decodedValid[tileX] || decodedEntryRows[tileX] != tileY) {
                 const auto entry = backgroundTileEntry(tileX, tileY, nameBasePre, activeLines);
                 decodedEntries[tileX].tileIndex = static_cast<uint16_t>(((entry >> 0u) & 0x01FFu));
                 decodedEntries[tileX].flipH = (entry & 0x0200u) != 0u;
                 decodedEntries[tileX].flipV = (entry & 0x0400u) != 0u;
                 decodedEntries[tileX].palette1 = (entry & 0x0800u) != 0u;
                 decodedEntries[tileX].priority = (entry & 0x1000u) != 0u;
+                decodedEntryRows[tileX] = tileY;
                 decodedValid[tileX] = true;
             }
             const auto &decoded = decodedEntries[tileX];
@@ -770,7 +774,7 @@ bool GameGearVDP::mode4Enabled() const noexcept {
 }
 
 std::size_t GameGearVDP::activeDisplayLines() const noexcept {
-    if (mode4Enabled() && (registers_[0u] & 0x02u) != 0u) {
+    if (smsMode_ && mode4Enabled() && (registers_[0u] & 0x02u) != 0u) {
         const bool m1 = (registers_[1u] & 0x10u) != 0u;
         const bool m3 = (registers_[1u] & 0x08u) != 0u;
         if (m1 && !m3) {

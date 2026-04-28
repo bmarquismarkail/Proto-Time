@@ -2,6 +2,8 @@
 #include "cores/gamegear/GameGearVDP.hpp"
 
 #include <cassert>
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <iostream>
 
@@ -334,6 +336,188 @@ int main()
         }
         if (colorZeroModel.argbPixels[0] != 0xFFFFFFFFu) {
             return fail("Game Gear background color 0 did not render from background palette color 0");
+        }
+    }
+
+    {
+        GameGearVDP scrollVdp;
+        GameGearMemoryMap scrollMemory;
+        scrollMemory.setVdp(&scrollVdp);
+        scrollVdp.reset();
+
+        scrollMemory.writeIoPort(0xBFu, 0x40u);
+        scrollMemory.writeIoPort(0xBFu, 0x81u); // display on
+
+        auto writeCramColor = [&](std::size_t colorIndex) {
+            const auto address = static_cast<uint8_t>(colorIndex * 2u);
+            const auto value = static_cast<uint8_t>(colorIndex & 0x0Fu);
+            scrollMemory.writeIoPort(0xBFu, address);
+            scrollMemory.writeIoPort(0xBFu, 0xC0u);
+            scrollMemory.writeIoPort(0xBEu, value);
+            scrollMemory.writeIoPort(0xBEu, value);
+        };
+
+        for (std::size_t colorIndex = 0; colorIndex < 16u; ++colorIndex) {
+            writeCramColor(colorIndex);
+        }
+
+        auto colorCodeFor = [](std::size_t tileIndex, std::size_t pixelX, std::size_t pixelY) {
+            return static_cast<uint8_t>(((tileIndex + pixelX + pixelY) % 15u) + 1u);
+        };
+
+        auto writePatternTile = [&](std::size_t tileIndex) {
+            const uint16_t addr = static_cast<uint16_t>(0x8000u + tileIndex * 32u);
+            scrollMemory.writeIoPort(0xBFu, static_cast<uint8_t>(addr & 0x00FFu));
+            scrollMemory.writeIoPort(0xBFu, static_cast<uint8_t>(((addr >> 8u) & 0x3Fu) | 0x40u));
+            for (int row = 0; row < 8; ++row) {
+                uint8_t plane0 = 0u;
+                uint8_t plane1 = 0u;
+                uint8_t plane2 = 0u;
+                uint8_t plane3 = 0u;
+                for (std::size_t pixel = 0; pixel < 8u; ++pixel) {
+                    const auto colorCode = colorCodeFor(tileIndex, pixel, static_cast<std::size_t>(row));
+                    const auto bit = static_cast<uint8_t>(7u - static_cast<uint8_t>(pixel));
+                    if ((colorCode & 0x01u) != 0u) plane0 |= static_cast<uint8_t>(1u << bit);
+                    if ((colorCode & 0x02u) != 0u) plane1 |= static_cast<uint8_t>(1u << bit);
+                    if ((colorCode & 0x04u) != 0u) plane2 |= static_cast<uint8_t>(1u << bit);
+                    if ((colorCode & 0x08u) != 0u) plane3 |= static_cast<uint8_t>(1u << bit);
+                }
+                scrollMemory.writeIoPort(0xBEu, plane0);
+                scrollMemory.writeIoPort(0xBEu, plane1);
+                scrollMemory.writeIoPort(0xBEu, plane2);
+                scrollMemory.writeIoPort(0xBEu, plane3);
+            }
+        };
+
+        auto writeNameEntry = [&](std::size_t tileX, std::size_t tileY, uint16_t entry) {
+            const uint16_t entryAddr = static_cast<uint16_t>(0x8000u + 0x3800u + (tileY * 32u + tileX) * 2u);
+            scrollMemory.writeIoPort(0xBFu, static_cast<uint8_t>(entryAddr & 0x00FFu));
+            scrollMemory.writeIoPort(0xBFu, static_cast<uint8_t>(((entryAddr >> 8u) & 0x3Fu) | 0x40u));
+            scrollMemory.writeIoPort(0xBEu, static_cast<uint8_t>(entry & 0x00FFu));
+            scrollMemory.writeIoPort(0xBEu, static_cast<uint8_t>((entry >> 8u) & 0x00FFu));
+        };
+
+        for (std::size_t tile = 0; tile < 32u; ++tile) {
+            writePatternTile(tile);
+            writeNameEntry(tile, 1u, static_cast<uint16_t>(tile));
+            writeNameEntry(tile, 3u, static_cast<uint16_t>(tile));
+        }
+        for (std::size_t row = 0; row < 28u; ++row) {
+            const auto tileIndex = 32u + row;
+            writePatternTile(tileIndex);
+            writeNameEntry(10u, row, static_cast<uint16_t>(tileIndex));
+        }
+
+        auto expected = [&](std::size_t tileIndex, std::size_t pixelX, std::size_t pixelY) {
+            return scrollVdp.debugDecodedCramColor(colorCodeFor(tileIndex, pixelX, pixelY));
+        };
+
+        auto writeScrollX = [&](uint8_t value) {
+            scrollMemory.writeIoPort(0xBFu, value);
+            scrollMemory.writeIoPort(0xBFu, 0x88u);
+        };
+
+        writeScrollX(0x01u);
+        const auto onePixelModel = scrollVdp.buildFrameModel({160, 144});
+        if (onePixelModel.argbPixels.empty()) {
+            return fail("Game Gear one-pixel scroll model unexpectedly empty");
+        }
+        if (onePixelModel.argbPixels[0] != expected(5u, 7u, 0u)) {
+            return fail("Game Gear horizontal scroll by 1 pixel did not sample the previous tile's last pixel");
+        }
+
+        const auto onePixelFullModel = scrollVdp.buildFrameModel({256, 192});
+        if (onePixelFullModel.argbPixels.empty()) {
+            return fail("Full VDP one-pixel scroll model unexpectedly empty");
+        }
+        if (onePixelModel.argbPixels[0] != onePixelFullModel.argbPixels[24u * 256u + 48u]) {
+            return fail("Game Gear viewport crop was applied before horizontal scroll sampling");
+        }
+
+        writeScrollX(0x07u);
+        const auto fineScrollModel = scrollVdp.buildFrameModel({160, 144});
+        if (fineScrollModel.argbPixels.empty()) {
+            return fail("Game Gear fine-scroll model unexpectedly empty");
+        }
+        if (fineScrollModel.argbPixels[0] != expected(5u, 1u, 0u)) {
+            return fail("Game Gear fine-scroll 7 phase was not pixel-granular");
+        }
+
+        writeScrollX(0x08u);
+        const auto coarseScrollModel = scrollVdp.buildFrameModel({160, 144});
+        if (coarseScrollModel.argbPixels.empty()) {
+            return fail("Game Gear coarse-scroll model unexpectedly empty");
+        }
+        if (coarseScrollModel.argbPixels[0] != expected(5u, 0u, 0u)) {
+            return fail("Game Gear horizontal scroll crossing 7->8 did not advance smoothly");
+        }
+
+        writeScrollX(0xF8u);
+        const auto horizontalWrapModel = scrollVdp.buildFrameModel({160, 144});
+        if (horizontalWrapModel.argbPixels.empty()) {
+            return fail("Game Gear horizontal wrap model unexpectedly empty");
+        }
+        if (horizontalWrapModel.argbPixels[0] != expected(7u, 0u, 0u)) {
+            return fail("Game Gear horizontal scroll did not wrap the 32-column name table correctly");
+        }
+
+        writeScrollX(0x08u);
+        scrollMemory.writeIoPort(0xBFu, 0x40u);
+        scrollMemory.writeIoPort(0xBFu, 0x80u); // reg0 bit 6 has no effect in native GG mode
+        const auto horizontalLockModel = scrollVdp.buildFrameModel({256, 192});
+        if (horizontalLockModel.argbPixels.empty()) {
+            return fail("Game Gear horizontal-lock model unexpectedly empty");
+        }
+        if (horizontalLockModel.argbPixels[8u * 256u + 8u] != expected(0u, 0u, 0u)) {
+            return fail("Game Gear native mode incorrectly applied SMS horizontal scroll lock");
+        }
+        if (horizontalLockModel.argbPixels[24u * 256u + 48u] != expected(5u, 0u, 0u)) {
+            return fail("Game Gear horizontal scroll changed outside the documented native-mode behavior");
+        }
+
+        scrollMemory.writeIoPort(0xBFu, 0x00u);
+        scrollMemory.writeIoPort(0xBFu, 0x80u); // clear scroll-lock bits
+        writeScrollX(0x00u);
+
+        auto writeScrollY = [&](uint8_t value) {
+            const auto currentLine = scrollVdp.currentScanline();
+            if (currentLine <= 192u) {
+                scrollVdp.step(228u * static_cast<uint32_t>(193u - currentLine));
+            }
+            scrollMemory.writeIoPort(0xBFu, value);
+            scrollMemory.writeIoPort(0xBFu, 0x89u);
+        };
+
+        writeScrollY(0x01u);
+        const auto verticalOnePixelModel = scrollVdp.buildFrameModel({160, 144});
+        if (verticalOnePixelModel.argbPixels.empty()) {
+            return fail("Game Gear vertical one-pixel scroll model unexpectedly empty");
+        }
+        if (verticalOnePixelModel.argbPixels[32u] != expected(35u, 0u, 1u)) {
+            return fail("Game Gear vertical scroll by 1 pixel did not sample the next tile row pixel");
+        }
+
+        writeScrollY(0xFFu);
+        const auto verticalWrapModel = scrollVdp.buildFrameModel({160, 144});
+        if (verticalWrapModel.argbPixels.empty()) {
+            return fail("Game Gear vertical wrap model unexpectedly empty");
+        }
+        if (verticalWrapModel.argbPixels[32u] != expected(38u, 0u, 7u)) {
+            return fail("Game Gear 192-line vertical scroll did not wrap through the 32-line overflow window");
+        }
+
+        scrollMemory.writeIoPort(0xBFu, 0x80u);
+        scrollMemory.writeIoPort(0xBFu, 0x80u); // reg0: vertical scroll lock for right columns
+        writeScrollY(0x01u);
+        const auto verticalLockModel = scrollVdp.buildFrameModel({160, 144});
+        if (verticalLockModel.argbPixels.empty()) {
+            return fail("Game Gear vertical-lock model unexpectedly empty");
+        }
+        if (verticalLockModel.argbPixels[32u] != expected(35u, 0u, 1u)) {
+            return fail("Game Gear vertical scroll lock incorrectly affected left columns");
+        }
+        if (verticalLockModel.argbPixels[144u] != expected(24u, 0u, 0u)) {
+            return fail("Game Gear right-column vertical scroll lock did not force scroll Y to zero");
         }
     }
 
