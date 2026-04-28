@@ -159,6 +159,57 @@ struct BranchEvent {
     CpuSnapshot snapshot{};
 };
 
+struct FlagSetterEvent {
+    uint64_t step = 0;
+    uint16_t pc = 0;
+    uint8_t opcode = 0;
+    uint8_t operand0 = 0;
+    uint8_t operand1 = 0;
+    uint8_t operand2 = 0;
+    uint16_t afBefore = 0;
+    uint16_t afAfter = 0;
+    OpcodeWindow opcodes{};
+};
+
+struct Branch45F1Event {
+    uint64_t step = 0;
+    bool taken = false;
+    uint16_t target = 0;
+    uint16_t fallthrough = 0;
+    uint8_t opcode = 0;
+    uint8_t operand = 0;
+    uint16_t af = 0;
+    uint16_t bc = 0;
+    uint16_t de = 0;
+    uint16_t hl = 0;
+    uint16_t ix = 0;
+    uint16_t iy = 0;
+    uint16_t sp = 0;
+    BankState banks{};
+    OpcodeWindow opcodes{};
+    FlagSetterEvent flagSetter{};
+    uint8_t c148 = 0;
+    uint8_t c149 = 0;
+    uint8_t c14a = 0;
+    uint8_t c14b = 0;
+    uint8_t c14e = 0;
+    uint8_t scanline = 0;
+};
+
+struct MapperWriteEvent {
+    uint64_t step = 0;
+    uint16_t pc = 0;
+    uint16_t address = 0;
+    uint8_t previousValue = 0;
+    uint8_t value = 0;
+    uint8_t c148 = 0;
+    uint8_t c14a = 0;
+    uint8_t scanline = 0;
+    BankState before{};
+    BankState after{};
+    OpcodeWindow opcodes{};
+};
+
 struct ControlEvent {
     uint64_t step = 0;
     std::string kind;
@@ -310,6 +361,80 @@ std::string hex16(uint16_t value) {
     out << "0x" << std::hex << std::uppercase << std::setw(4) << std::setfill('0')
         << static_cast<int>(value);
     return out.str();
+}
+
+std::string flagsSummary(uint8_t f) {
+    std::ostringstream out;
+    out << "S=" << ((f & 0x80u) != 0u ? 1 : 0)
+        << " Z=" << ((f & 0x40u) != 0u ? 1 : 0)
+        << " H=" << ((f & 0x10u) != 0u ? 1 : 0)
+        << " PV=" << ((f & 0x04u) != 0u ? 1 : 0)
+        << " N=" << ((f & 0x02u) != 0u ? 1 : 0)
+        << " C=" << ((f & 0x01u) != 0u ? 1 : 0);
+    return out.str();
+}
+
+std::string decodeBrief(uint8_t opcode, uint8_t operand0, uint8_t operand1, uint8_t operand2) {
+    (void)operand2;
+    std::ostringstream out;
+    switch (opcode) {
+    case 0x00u: return "NOP";
+    case 0x10u: out << "DJNZ " << hex8(operand0); return out.str();
+    case 0x18u: out << "JR " << hex8(operand0); return out.str();
+    case 0x20u: out << "JR NZ," << hex8(operand0); return out.str();
+    case 0x28u: out << "JR Z," << hex8(operand0); return out.str();
+    case 0x30u: out << "JR NC," << hex8(operand0); return out.str();
+    case 0x38u: out << "JR C," << hex8(operand0); return out.str();
+    case 0x21u:
+        out << "LD HL," << hex16(static_cast<uint16_t>(operand0 | (static_cast<uint16_t>(operand1) << 8u)));
+        return out.str();
+    case 0x32u:
+        out << "LD (" << hex16(static_cast<uint16_t>(operand0 | (static_cast<uint16_t>(operand1) << 8u))) << "),A";
+        return out.str();
+    case 0x3Au:
+        out << "LD A,(" << hex16(static_cast<uint16_t>(operand0 | (static_cast<uint16_t>(operand1) << 8u))) << ")";
+        return out.str();
+    case 0x3Eu: out << "LD A," << hex8(operand0); return out.str();
+    case 0x77u: return "LD (HL),A";
+    case 0x7Eu: return "LD A,(HL)";
+    case 0xAFu: return "XOR A";
+    case 0xA7u: return "AND A";
+    case 0xB7u: return "OR A";
+    case 0xBEu: return "CP (HL)";
+    case 0xC9u: return "RET";
+    case 0xCDu:
+        out << "CALL " << hex16(static_cast<uint16_t>(operand0 | (static_cast<uint16_t>(operand1) << 8u)));
+        return out.str();
+    default:
+        out << "OP " << hex8(opcode);
+        if (opcode == 0xCBu || opcode == 0xDDu || opcode == 0xEDu || opcode == 0xFDu) {
+            out << ' ' << hex8(operand0);
+        }
+        return out.str();
+    }
+}
+
+bool updatesZFlag(uint8_t opcode, uint8_t operand0) {
+    if (opcode == 0xCBu || opcode == 0xEDu) {
+        return true;
+    }
+    if (opcode == 0xDDu || opcode == 0xFDu) {
+        return operand0 == 0x34u || operand0 == 0x35u || operand0 == 0x86u ||
+               operand0 == 0x8Eu || operand0 == 0x96u || operand0 == 0x9Eu ||
+               operand0 == 0xA6u || operand0 == 0xAEu || operand0 == 0xB6u ||
+               operand0 == 0xBEu || operand0 == 0xCBu;
+    }
+    if ((opcode >= 0x80u && opcode <= 0xBFu) || opcode == 0x04u || opcode == 0x05u ||
+        opcode == 0x0Cu || opcode == 0x0Du || opcode == 0x14u || opcode == 0x15u ||
+        opcode == 0x1Cu || opcode == 0x1Du || opcode == 0x24u || opcode == 0x25u ||
+        opcode == 0x2Cu || opcode == 0x2Du || opcode == 0x34u || opcode == 0x35u ||
+        opcode == 0x3Cu || opcode == 0x3Du || opcode == 0x27u || opcode == 0x2Fu ||
+        opcode == 0x37u || opcode == 0x3Fu || opcode == 0xC6u || opcode == 0xCEu ||
+        opcode == 0xD6u || opcode == 0xDEu || opcode == 0xE6u || opcode == 0xEEu ||
+        opcode == 0xF6u || opcode == 0xFEu) {
+        return true;
+    }
+    return false;
 }
 
 std::string opcodeKey(uint8_t opcode, uint8_t operand0, uint8_t operand1, uint8_t operand2) {
@@ -614,6 +739,10 @@ int main(int argc, char** argv) {
     std::vector<CpuSnapshot> tracePcHits;
     std::vector<BranchEvent> branchEvents;
     std::vector<BranchEvent> branchNeighborhoodEvents;
+    std::vector<Branch45F1Event> branch45F1Events;
+    std::vector<MapperWriteEvent> mapperWrites;
+    std::vector<MapperWriteEvent> mapperWritesSinceLastC14AClear;
+    std::vector<MapperWriteEvent> mapperWritesLastC14AClearToFinalSet;
     std::vector<ControlEvent> controlEvents;
     std::vector<VdpRegisterWriteEvent> vdpWritesBetweenClearAndSet;
     std::map<uint8_t, uint64_t> readCounts;
@@ -645,6 +774,8 @@ int main(int argc, char** argv) {
     bool c702RepeatedZeroWrite = false;
     std::optional<uint64_t> firstC702NonzeroStep;
     std::optional<uint64_t> firstC702ClearAfterNonzeroStep;
+    std::optional<uint64_t> lastC14AClearStep;
+    std::optional<uint64_t> finalC14ASetStep;
     std::optional<IoEvent> firstBfStatusReadAfterC702Nonzero;
     std::optional<IoEvent> firstBfStatusReadAfterInterruptAfterC702Nonzero;
     CycleTrace activeCycle;
@@ -662,6 +793,11 @@ int main(int argc, char** argv) {
     iyChangeLog << "step|pc|op0|op1|op2|op3|oldIY|newIY|oldIX|newIX|af|bc|de|hl|sp|scanline|machine_irq_pending|in_isr" << std::endl;
     std::ofstream pc4b7bLog("/tmp/pc_4b7b.log", std::ios::trunc);
     pc4b7bLog << "step|pc|op0|op1|op2|op3|iy|ix|af|bc|de|hl|sp|scanline|machine_irq_pending|in_isr" << std::endl;
+    std::ofstream pc45f1Log("/tmp/pc45f1_trace.log", std::ios::trunc);
+    pc45f1Log << "step|bank4000|bank8000|bank0|mapper_control|op0|op1|af|flags|taken|flag_pc|flag_op0|flag_op1|flag_af_before|flag_af_after|bc|de|hl|ix|iy|sp|scanline|c148|c149|c14a|c14b|c14e" << std::endl;
+    uint64_t branch45F1Count = 0;
+    std::optional<Branch45F1Event> branch45F1FirstSuccess;
+    std::optional<Branch45F1Event> branch45F1FinalDivergent;
 
     auto bankState = [&]() {
         BankState state{};
@@ -672,7 +808,20 @@ int main(int argc, char** argv) {
         }
         return state;
     };
-    auto snapshotCpu = [&](uint16_t pc, uint8_t before, uint8_t after) {
+    auto pushMapperWrite = [&](MapperWriteEvent event) {
+        pushTail(mapperWrites, event, tailLimit);
+        if (lastC14AClearStep.has_value()) {
+            mapperWritesSinceLastC14AClear.push_back(event);
+            if (mapperWritesSinceLastC14AClear.size() > tailLimit) {
+                mapperWritesSinceLastC14AClear.erase(mapperWritesSinceLastC14AClear.begin());
+            }
+        }
+    };
+    auto snapshotCpu = [&](uint16_t pc,
+                           uint8_t before,
+                           uint8_t after,
+                           bool includeMemoryRanges = false,
+                           bool includeOpcodeWindow = false) {
         // helper to read an inclusive range from memory and return a vector
         auto readRange = [&](int start, int end) {
             std::vector<uint8_t> out;
@@ -688,12 +837,12 @@ int main(int argc, char** argv) {
 
         const uint16_t ix = cpu.IX;
         const uint16_t iy = cpu.IY;
-        const auto r_c700 = readRange(0xC700, 0xC720);
-        const auto r_c780 = readRange(0xC780, 0xC7C0);
-        const auto r_c880 = readRange(0xC880, 0xC8A0);
-        const auto r_c4e0 = readRange(0xC4E0, 0xC720);
-        const auto r_ix = readRange(static_cast<int>(ix) - 16, static_cast<int>(ix) + 32);
-        const auto r_iy = readRange(static_cast<int>(iy) - 16, static_cast<int>(iy) + 32);
+        const auto r_c700 = includeMemoryRanges ? readRange(0xC700, 0xC720) : std::vector<uint8_t>{};
+        const auto r_c780 = includeMemoryRanges ? readRange(0xC780, 0xC7C0) : std::vector<uint8_t>{};
+        const auto r_c880 = includeMemoryRanges ? readRange(0xC880, 0xC8A0) : std::vector<uint8_t>{};
+        const auto r_c4e0 = includeMemoryRanges ? readRange(0xC4E0, 0xC720) : std::vector<uint8_t>{};
+        const auto r_ix = includeMemoryRanges ? readRange(static_cast<int>(ix) - 16, static_cast<int>(ix) + 32) : std::vector<uint8_t>{};
+        const auto r_iy = includeMemoryRanges ? readRange(static_cast<int>(iy) - 16, static_cast<int>(iy) + 32) : std::vector<uint8_t>{};
 
         return CpuSnapshot{
             currentStep,
@@ -708,7 +857,7 @@ int main(int argc, char** argv) {
             bankState(),
             before,
             after,
-            captureOpcodeWindow(mem, pc),
+            includeOpcodeWindow ? captureOpcodeWindow(mem, pc) : OpcodeWindow{},
             r_c700,
             r_c780,
             r_c880,
@@ -972,7 +1121,24 @@ int main(int argc, char** argv) {
         [&](uint16_t address, uint8_t value) {
             // capture previous value before the write
             const uint8_t previous = mem.read(address);
+            const bool mapperWrite = address >= 0xFFFCu;
+            const auto mapperBefore = mapperWrite ? bankState() : BankState{};
             mem.write(address, value);
+            if (mapperWrite) {
+                pushMapperWrite(MapperWriteEvent{
+                    currentStep,
+                    currentInstructionPc,
+                    address,
+                    previous,
+                    value,
+                    mem.read(0xC148u),
+                    mem.read(0xC14Au),
+                    vdp.currentScanline(),
+                    mapperBefore,
+                    bankState(),
+                    captureOpcodeWindow(mem, currentInstructionPc),
+                });
+            }
             recordMemWrite(address, value);
             // record full metadata for writes to $C500-$C720
             if (address >= 0xC500u && address <= 0xC720u) {
@@ -980,6 +1146,13 @@ int main(int argc, char** argv) {
             }
             // also record writes to the specific C14A flag (Mega Man wait)
             if (address == 0xC14Au) {
+                if (value == 0u) {
+                    lastC14AClearStep = currentStep;
+                    mapperWritesSinceLastC14AClear.clear();
+                } else if (value == 0xFFu) {
+                    finalC14ASetStep = currentStep;
+                    mapperWritesLastC14AClearToFinalSet = mapperWritesSinceLastC14AClear;
+                }
                 RamWriteEvent ev{};
                 ev.step = currentStep;
                 ev.pc = currentInstructionPc;
@@ -1065,6 +1238,7 @@ int main(int argc, char** argv) {
 
     uint16_t prevIY = cpu.IY;
     uint16_t prevIX = cpu.IX;
+    FlagSetterEvent lastFlagSetter{};
     for (currentStep = 0; currentStep < maxSteps; ++currentStep) {
         if (pressStartAt.has_value() && currentStep == *pressStartAt) {
             input.setLogicalButtons(BMMQ::inputButtonMask(BMMQ::InputButton::Meta2));
@@ -1082,20 +1256,92 @@ int main(int argc, char** argv) {
         const uint8_t fourthOpcodeByte = mem.read(static_cast<uint16_t>(cpu.PC + 3u));
         const uint16_t preStepSp = cpu.SP;
         const uint64_t preInstructionCpuCycles = totalCpuCycles;
-        auto preStepTiming = captureTiming(activeCycle.valid ? "after_4500" : "outside_cycle",
-                                           "pc_before_execute",
-                                           lastPc,
-                                           lastPc);
+        const uint16_t afBeforeStep = cpu.AF;
+        const auto pre45F1Banks = lastPc == 0x45F1u ? std::optional<BankState>(bankState()) : std::nullopt;
+        const auto pre45F1Opcodes = lastPc == 0x45F1u ? std::optional<OpcodeWindow>(captureOpcodeWindow(mem, lastPc)) : std::nullopt;
+        std::optional<TimingSnapshot> preStepTiming;
         if (lastPc == 0x4090u || lastPc == 0x4095u ||
-            (lastPc == 0x4516u && activeCycle.valid)) {
-            preStepTiming.label = lastPc == 0x4090u ? "pc_4090_before" :
-                                  lastPc == 0x4095u ? "pc_4095_before" :
-                                                       "ret_after_4500_before";
-            recordTiming(preStepTiming);
+            (lastPc == 0x4516u && activeCycle.valid) || lastPc == 0x4500u) {
+            preStepTiming = captureTiming(activeCycle.valid ? "after_4500" : "outside_cycle",
+                                          "pc_before_execute",
+                                          lastPc,
+                                          lastPc);
+            if (lastPc != 0x4500u) {
+                preStepTiming->label = lastPc == 0x4090u ? "pc_4090_before" :
+                                       lastPc == 0x4095u ? "pc_4095_before" :
+                                                           "ret_after_4500_before";
+                recordTiming(*preStepTiming);
+            }
         }
         const auto cycles = cpu.step();
         totalCpuCycles += cycles;
         const auto postStepSnapshot = snapshotCpu(lastPc, c702BeforeStep, c702Value);
+        if (lastPc == 0x45F1u && pre45F1Banks.has_value() && pre45F1Opcodes.has_value()) {
+            const uint16_t fallthrough = static_cast<uint16_t>(lastPc + 2u);
+            const uint16_t target = static_cast<uint16_t>(fallthrough + static_cast<int8_t>(nextOpcodeByte));
+            Branch45F1Event event{
+                currentStep,
+                cpu.PC == target,
+                target,
+                fallthrough,
+                opcodeAtPc,
+                nextOpcodeByte,
+                afBeforeStep,
+                cpu.BC,
+                cpu.DE,
+                cpu.HL,
+                cpu.IX,
+                cpu.IY,
+                preStepSp,
+                *pre45F1Banks,
+                *pre45F1Opcodes,
+                lastFlagSetter,
+                mem.read(0xC148u),
+                mem.read(0xC149u),
+                mem.read(0xC14Au),
+                mem.read(0xC14Bu),
+                mem.read(0xC14Eu),
+                vdp.currentScanline(),
+            };
+            ++branch45F1Count;
+            if (!event.taken && event.banks.available && event.banks.registers[2] == 0x19u &&
+                !branch45F1FirstSuccess.has_value()) {
+                branch45F1FirstSuccess = event;
+            }
+            if (event.taken && event.banks.available && event.banks.registers[2] == 0x12u) {
+                branch45F1FinalDivergent = event;
+            }
+            pc45f1Log << event.step << '|'
+                      << (event.banks.available ? hex8(event.banks.registers[1]) : std::string("n/a")) << '|'
+                      << (event.banks.available ? hex8(event.banks.registers[2]) : std::string("n/a")) << '|'
+                      << (event.banks.available ? hex8(event.banks.registers[0]) : std::string("n/a")) << '|'
+                      << (event.banks.available ? hex8(event.banks.control) : std::string("n/a")) << '|'
+                      << hex8(event.opcode) << '|' << hex8(event.operand) << '|'
+                      << hex16(event.af) << '|' << flagsSummary(static_cast<uint8_t>(event.af & 0x00FFu)) << '|'
+                      << (event.taken ? "yes" : "no") << '|'
+                      << hex16(event.flagSetter.pc) << '|' << hex8(event.flagSetter.opcode) << '|'
+                      << hex8(event.flagSetter.operand0) << '|'
+                      << hex16(event.flagSetter.afBefore) << '|' << hex16(event.flagSetter.afAfter) << '|'
+                      << hex16(event.bc) << '|' << hex16(event.de) << '|' << hex16(event.hl) << '|'
+                      << hex16(event.ix) << '|' << hex16(event.iy) << '|' << hex16(event.sp) << '|'
+                      << static_cast<int>(event.scanline) << '|'
+                      << hex8(event.c148) << '|' << hex8(event.c149) << '|' << hex8(event.c14a) << '|'
+                      << hex8(event.c14b) << '|' << hex8(event.c14e) << '\n';
+            pushTail(branch45F1Events, event, tailLimit);
+        }
+        if (updatesZFlag(opcodeAtPc, nextOpcodeByte)) {
+            lastFlagSetter = FlagSetterEvent{
+                currentStep,
+                lastPc,
+                opcodeAtPc,
+                nextOpcodeByte,
+                thirdOpcodeByte,
+                fourthOpcodeByte,
+                afBeforeStep,
+                cpu.AF,
+                captureOpcodeWindow(mem, lastPc),
+            };
+        }
         // record whenever PC==0x4B7B so we can inspect IY at each execution
         if (lastPc == 0x4B7Bu) {
             const uint8_t o0 = opcodeAtPc;
@@ -1158,9 +1404,12 @@ int main(int argc, char** argv) {
             activeCycle.setSnapshot = postStepSnapshot;
             activeCycle.preSetBranches = takeTail(branchEvents, 30u);
             activeCycle.preSetControl = takeTail(controlEvents, 30u);
-            preStepTiming.cycleName = "after_4500";
-            preStepTiming.label = "pc_4500_before";
-            recordTiming(preStepTiming);
+            if (!preStepTiming.has_value()) {
+                preStepTiming = captureTiming("outside_cycle", "pc_before_execute", lastPc, lastPc);
+            }
+            preStepTiming->cycleName = "after_4500";
+            preStepTiming->label = "pc_4500_before";
+            recordTiming(*preStepTiming);
             auto post4500Timing = captureTiming("after_4500", "pc_4500_after", lastPc, cpu.PC);
             recordTiming(post4500Timing);
         }
@@ -1420,6 +1669,101 @@ int main(int argc, char** argv) {
                   << " c702_after=" << hex8(event.snapshot.c702After);
         printBankState(event.snapshot.banks);
     };
+    auto printFlagSetter = [&](const FlagSetterEvent& event) {
+        std::cout << "step=" << event.step
+                  << " pc=" << hex16(event.pc)
+                  << " opcode=" << hex8(event.opcode)
+                  << " operands=" << hex8(event.operand0) << ',' << hex8(event.operand1) << ',' << hex8(event.operand2)
+                  << " decode=\"" << decodeBrief(event.opcode, event.operand0, event.operand1, event.operand2) << '"'
+                  << " af_before=" << hex16(event.afBefore)
+                  << " flags_before={" << flagsSummary(static_cast<uint8_t>(event.afBefore & 0x00FFu)) << '}'
+                  << " af_after=" << hex16(event.afAfter)
+                  << " flags_after={" << flagsSummary(static_cast<uint8_t>(event.afAfter & 0x00FFu)) << '}';
+    };
+    auto printBranch45F1 = [&](const Branch45F1Event& event) {
+        std::cout << "step=" << event.step
+                  << " pc=0x45F1"
+                  << " opcode=" << hex8(event.opcode)
+                  << " operand=" << hex8(event.operand)
+                  << " target=" << hex16(event.target)
+                  << " fallthrough=" << hex16(event.fallthrough)
+                  << " taken=" << (event.taken ? "yes" : "no")
+                  << " a=" << hex8(static_cast<uint8_t>(event.af >> 8u))
+                  << " f=" << hex8(static_cast<uint8_t>(event.af & 0x00FFu))
+                  << " flags={" << flagsSummary(static_cast<uint8_t>(event.af & 0x00FFu)) << '}'
+                  << " bc=" << hex16(event.bc)
+                  << " de=" << hex16(event.de)
+                  << " hl=" << hex16(event.hl)
+                  << " ix=" << hex16(event.ix)
+                  << " iy=" << hex16(event.iy)
+                  << " sp=" << hex16(event.sp)
+                  << " scanline=" << static_cast<int>(event.scanline)
+                  << " c148=" << hex8(event.c148)
+                  << " c149=" << hex8(event.c149)
+                  << " c14a=" << hex8(event.c14a)
+                  << " c14b=" << hex8(event.c14b)
+                  << " c14e=" << hex8(event.c14e);
+        printBankState(event.banks);
+        std::cout << " opcodes";
+        printOpcodeWindow(event.opcodes);
+        std::cout << " flag_setter ";
+        printFlagSetter(event.flagSetter);
+    };
+    auto printMapperWrite = [&](const MapperWriteEvent& event) {
+        std::cout << "step=" << event.step
+                  << " pc=" << hex16(event.pc)
+                  << " addr=" << hex16(event.address)
+                  << " prev_mirror=" << hex8(event.previousValue)
+                  << " value=" << hex8(event.value)
+                  << " c148=" << hex8(event.c148)
+                  << " c14a=" << hex8(event.c14a)
+                  << " scanline=" << static_cast<int>(event.scanline)
+                  << " before";
+        printBankState(event.before);
+        std::cout << " after";
+        printBankState(event.after);
+        std::cout << " opcodes";
+        printOpcodeWindow(event.opcodes);
+    };
+    auto instructionLength = [](uint8_t opcode, uint8_t operand0) {
+        if (opcode == 0xCBu || opcode == 0xEDu) return 2u;
+        if (opcode == 0xDDu || opcode == 0xFDu) return operand0 == 0xCBu ? 4u : 2u;
+        switch (opcode) {
+        case 0x01u: case 0x11u: case 0x21u: case 0x22u: case 0x2Au: case 0x31u:
+        case 0x32u: case 0x3Au: case 0xC2u: case 0xC3u: case 0xC4u: case 0xCAu:
+        case 0xCCu: case 0xCDu: case 0xD2u: case 0xD4u: case 0xDAu: case 0xDCu:
+        case 0xE2u: case 0xE4u: case 0xEAu: case 0xECu: case 0xF2u: case 0xF4u:
+        case 0xFAu: case 0xFCu:
+            return 3u;
+        case 0x06u: case 0x0Eu: case 0x10u: case 0x16u: case 0x18u: case 0x1Eu:
+        case 0x20u: case 0x26u: case 0x28u: case 0x2Eu: case 0x30u: case 0x36u:
+        case 0x38u: case 0x3Eu: case 0xC6u: case 0xCEu: case 0xD3u: case 0xD6u:
+        case 0xDBu: case 0xDEu: case 0xE6u: case 0xEEu: case 0xF6u: case 0xFEu:
+            return 2u;
+        default:
+            return 1u;
+        }
+    };
+    auto printDecodedBankContext = [&](uint8_t bank, uint16_t start, uint16_t end) {
+        std::cout << "decoded_45d0_4610 bank=" << hex8(bank) << '\n';
+        uint16_t pc = start;
+        while (pc <= end) {
+            const std::size_t offset = static_cast<std::size_t>(bank) * 0x4000u + static_cast<std::size_t>(pc & 0x3FFFu);
+            const uint8_t b0 = offset < rom.size() ? rom[offset] : 0xFFu;
+            const uint8_t b1 = offset + 1u < rom.size() ? rom[offset + 1u] : 0xFFu;
+            const uint8_t b2 = offset + 2u < rom.size() ? rom[offset + 2u] : 0xFFu;
+            const uint8_t b3 = offset + 3u < rom.size() ? rom[offset + 3u] : 0xFFu;
+            const auto len = instructionLength(b0, b1);
+            std::cout << "  " << hex16(pc) << " bank=" << hex8(bank)
+                      << " rom_offset=0x" << std::hex << std::uppercase << offset << std::dec
+                      << " bytes=" << hex8(b0);
+            if (len > 1u) std::cout << ' ' << hex8(b1);
+            if (len > 2u) std::cout << ' ' << hex8(b2);
+            if (len > 3u) std::cout << ' ' << hex8(b3);
+            std::cout << "  " << decodeBrief(b0, b1, b2, b3) << '\n';
+            pc = static_cast<uint16_t>(pc + len);
+        }
+    };
     auto printTiming = [&](const TimingSnapshot& timing) {
         std::cout << "step=" << timing.step
                   << " cpu_cycles=" << timing.cpuCycles
@@ -1603,6 +1947,53 @@ int main(int argc, char** argv) {
                       ? (trackedIe1 ? "suspicious_ie1_enabled" : "expected_ie1_disabled")
                       : "no")
               << '\n';
+
+    printDecodedBankContext(0x19u, 0x45D0u, 0x4610u);
+    printDecodedBankContext(0x12u, 0x45D0u, 0x4610u);
+
+    std::cout << "branch_45f1_events count=" << branch45F1Count
+              << " tail_count=" << branch45F1Events.size()
+              << " full_trace=/tmp/pc45f1_trace.log\n";
+    for (const auto& event : branch45F1Events) {
+        std::cout << "  ";
+        printBranch45F1(event);
+        std::cout << '\n';
+    }
+    if (branch45F1Count != 0u) {
+        std::cout << "branch_45f1_success_vs_final\n";
+        if (branch45F1FirstSuccess.has_value()) {
+            std::cout << "  success ";
+            printBranch45F1(*branch45F1FirstSuccess);
+            std::cout << '\n';
+        } else {
+            std::cout << "  success n/a\n";
+        }
+        if (branch45F1FinalDivergent.has_value()) {
+            std::cout << "  final ";
+            printBranch45F1(*branch45F1FinalDivergent);
+            std::cout << '\n';
+        } else {
+            std::cout << "  final n/a\n";
+        }
+    }
+
+    std::cout << "mapper_writes_recent count=" << mapperWrites.size() << '\n';
+    for (const auto& event : mapperWrites) {
+        std::cout << "  ";
+        printMapperWrite(event);
+        std::cout << '\n';
+    }
+    std::cout << "mapper_writes_last_c14a_clear_to_final_set"
+              << " clear_step="
+              << (lastC14AClearStep.has_value() ? std::to_string(*lastC14AClearStep) : std::string("n/a"))
+              << " final_set_step="
+              << (finalC14ASetStep.has_value() ? std::to_string(*finalC14ASetStep) : std::string("n/a"))
+              << " count=" << mapperWritesLastC14AClearToFinalSet.size() << '\n';
+    for (const auto& event : mapperWritesLastC14AClearToFinalSet) {
+        std::cout << "  ";
+        printMapperWrite(event);
+        std::cout << '\n';
+    }
 
     std::cout << "opcode_window";
     for (int offset = -8; offset <= 8; ++offset) {
