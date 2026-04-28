@@ -256,6 +256,10 @@ add_executable(time-smoke-gamegear-save-persistence tests/smoke_gamegear_save_pe
 target_link_libraries(time-smoke-gamegear-save-persistence time-gamegear-core)
 add_test(NAME smoke_gamegear_save_persistence COMMAND time-smoke-gamegear-save-persistence)
 
+add_executable(time-smoke-gamegear-rom-baseline tests/smoke_gamegear_rom_baseline.cpp)
+target_link_libraries(time-smoke-gamegear-rom-baseline time-gamegear-core)
+add_test(NAME smoke_gamegear_rom_baseline COMMAND time-smoke-gamegear-rom-baseline)
+
 add_executable(time-smoke-snapshot tests/smoke_snapshot.cpp)
 add_test(NAME smoke_snapshot COMMAND time-smoke-snapshot)
 add_executable(time-smoke-register-snapshot tests/smoke_register_snapshot.cpp)
