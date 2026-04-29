@@ -429,8 +429,12 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
     const auto activeLines = activeDisplayLines();
     const bool mode4 = mode4Enabled();
     const auto nameBasePre = nameTableBase();
-    const auto* backgroundPalette = decodedCram_.data();
-    const auto* spritePalette = decodedCram_.data() + 16u;
+    std::array<uint32_t, 16u> backgroundPalette{};
+    std::array<uint32_t, 16u> spritePalette{};
+    for (std::size_t color = 0u; color < backgroundPalette.size(); ++color) {
+        backgroundPalette[color] = decodedCram_[color];
+        spritePalette[color] = decodedCram_[16u + color];
+    }
     const auto backdrop = spritePalette[static_cast<std::size_t>(registers_[7u] & 0x0Fu)];
     model.inVBlank = scanline_ >= activeLines + 1u;
     model.scanlineIndex = static_cast<uint8_t>(scanline_ & 0x00FFu);
@@ -515,6 +519,19 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
         (scrollX & 0x07u) == 0u &&
         (registers_[0u] & 0xA0u) == 0u &&
         !(activeLines == 192u && scrollY > 223u);
+    std::vector<std::size_t> simpleTileXs;
+    std::vector<std::size_t> simplePixelXs;
+    if (useSimpleBackgroundPath) {
+        simpleTileXs.resize(static_cast<std::size_t>(model.width));
+        simplePixelXs.resize(static_cast<std::size_t>(model.width));
+        const auto startingColumn = static_cast<std::size_t>((32u - (scrollX >> 3u)) & 0x1Fu);
+        for (int x = 0; x < model.width; ++x) {
+            const auto scrolledX = static_cast<std::size_t>(x + viewportX) & 0xFFu;
+            const auto index = static_cast<std::size_t>(x);
+            simpleTileXs[index] = (startingColumn + (scrolledX / 8u)) % 32u;
+            simplePixelXs[index] = scrolledX % 8u;
+        }
+    }
     for (int y = 0; y < model.height; ++y) {
         const int vdpY = y + viewportY;
 
@@ -532,50 +549,42 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
         std::array<DecodedBgEntry, kTilesPerRow> decodedEntries{};
         std::array<std::size_t, kTilesPerRow> decodedEntryRows{};
         std::array<bool, kTilesPerRow> decodedValid{};
-        auto* decodedEntriesPtr = decodedEntries.data();
-        auto* decodedEntryRowsPtr = decodedEntryRows.data();
-        auto* decodedValidPtr = decodedValid.data();
-
         // Per-tile per-row decoded pattern pixels (8 color indexes for the
         // currently decoded sampleY). `decodedPatternRowY` stores the
         // sampleY last decoded for that tile; -1 indicates no row decoded yet.
         std::array<std::array<uint8_t, 8>, kTilesPerRow> decodedPatternRows{};
         std::array<int, kTilesPerRow> decodedPatternRowY{};
         decodedPatternRowY.fill(-1);
-        auto* decodedPatternRowsPtr = decodedPatternRows.data();
-        auto* decodedPatternRowYPtr = decodedPatternRowY.data();
 
         if (useSimpleBackgroundPath) {
             const auto scrolledY = static_cast<std::size_t>((vdpY + scrollY) & 0xFF);
             const auto tileY = scrolledY / 8u;
             const auto pixelY = scrolledY % 8u;
-            const auto startingColumn = static_cast<std::size_t>((32u - (scrollX >> 3u)) & 0x1Fu);
             const auto wrappedTileY = tileY % 32u;
             const auto rowNameBase = nameBasePre + wrappedTileY * kTilesPerRow * 2u;
             for (int x = 0; x < model.width; ++x) {
-                const int vdpX = x + viewportX;
-                const auto scrolledX = static_cast<std::size_t>(vdpX) & 0xFFu;
-                const auto tileX = (startingColumn + (scrolledX / 8u)) % 32u;
-                const auto pixelX = scrolledX % 8u;
+                const auto index = static_cast<std::size_t>(x);
+                const auto tileX = simpleTileXs[index];
+                const auto pixelX = simplePixelXs[index];
 
-                if (!decodedValidPtr[tileX] || decodedEntryRowsPtr[tileX] != tileY) {
+                if (!decodedValid[tileX] || decodedEntryRows[tileX] != tileY) {
                     const auto entryIndex = rowNameBase + tileX * 2u;
                     const auto entry = entryIndex + 1u < vram_.size()
                         ? static_cast<uint16_t>(vram_[entryIndex] |
                                                 (static_cast<uint16_t>(vram_[entryIndex + 1u]) << 8u))
                         : 0u;
-                    decodedEntriesPtr[tileX].tileIndex = static_cast<uint16_t>(((entry >> 0u) & 0x01FFu));
-                    decodedEntriesPtr[tileX].flipH = (entry & 0x0200u) != 0u;
-                    decodedEntriesPtr[tileX].flipV = (entry & 0x0400u) != 0u;
-                    decodedEntriesPtr[tileX].palette1 = (entry & 0x0800u) != 0u;
-                    decodedEntriesPtr[tileX].priority = (entry & 0x1000u) != 0u;
-                    decodedEntryRowsPtr[tileX] = tileY;
-                    decodedValidPtr[tileX] = true;
+                    decodedEntries[tileX].tileIndex = static_cast<uint16_t>(((entry >> 0u) & 0x01FFu));
+                    decodedEntries[tileX].flipH = (entry & 0x0200u) != 0u;
+                    decodedEntries[tileX].flipV = (entry & 0x0400u) != 0u;
+                    decodedEntries[tileX].palette1 = (entry & 0x0800u) != 0u;
+                    decodedEntries[tileX].priority = (entry & 0x1000u) != 0u;
+                    decodedEntryRows[tileX] = tileY;
+                    decodedValid[tileX] = true;
                 }
-                const auto& decoded = decodedEntriesPtr[tileX];
+                const auto& decoded = decodedEntries[tileX];
                 const auto sampleX = decoded.flipH ? (7u - pixelX) : pixelX;
                 const auto sampleY = decoded.flipV ? (7u - pixelY) : pixelY;
-                if (decodedPatternRowYPtr[tileX] != static_cast<int>(sampleY)) {
+                if (decodedPatternRowY[tileX] != static_cast<int>(sampleY)) {
                     const auto tileBase = (static_cast<std::size_t>(decoded.tileIndex) * 32u) % vram_.size();
                     const auto rowBase = (tileBase + static_cast<std::size_t>(sampleY) * 4u) % vram_.size();
                     const auto plane0 = vram_[rowBase];
@@ -584,14 +593,14 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
                     const auto plane3 = vram_[(rowBase + 3u) % vram_.size()];
                     for (std::size_t px = 0; px < 8u; ++px) {
                         const auto bit = static_cast<uint8_t>(7u - static_cast<uint8_t>(px));
-                        decodedPatternRowsPtr[tileX][px] = static_cast<uint8_t>((((plane3 >> bit) & 0x01u) << 3u) |
-                                                                                 (((plane2 >> bit) & 0x01u) << 2u) |
-                                                                                 (((plane1 >> bit) & 0x01u) << 1u) |
-                                                                                 ((plane0 >> bit) & 0x01u));
+                        decodedPatternRows[tileX][px] = static_cast<uint8_t>((((plane3 >> bit) & 0x01u) << 3u) |
+                                                                              (((plane2 >> bit) & 0x01u) << 2u) |
+                                                                              (((plane1 >> bit) & 0x01u) << 1u) |
+                                                                              ((plane0 >> bit) & 0x01u));
                     }
-                    decodedPatternRowYPtr[tileX] = static_cast<int>(sampleY);
+                    decodedPatternRowY[tileX] = static_cast<int>(sampleY);
                 }
-                const auto colorCode = decodedPatternRowsPtr[tileX][static_cast<std::size_t>(sampleX)];
+                const auto colorCode = decodedPatternRows[tileX][static_cast<std::size_t>(sampleX)];
                 const auto pixelIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(model.width)
                                       + static_cast<std::size_t>(x);
                 model.argbPixels[pixelIndex] = decoded.palette1
@@ -630,23 +639,23 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
             const auto pixelX = scrolledX % 8u;
 
             // Decode the name-table entry at most once per tile cell for this row.
-            if (!decodedValidPtr[tileX] || decodedEntryRowsPtr[tileX] != tileY) {
+            if (!decodedValid[tileX] || decodedEntryRows[tileX] != tileY) {
                 const auto entry = backgroundTileEntry(tileX, tileY, nameBasePre, activeLines);
-                decodedEntriesPtr[tileX].tileIndex = static_cast<uint16_t>(((entry >> 0u) & 0x01FFu));
-                decodedEntriesPtr[tileX].flipH = (entry & 0x0200u) != 0u;
-                decodedEntriesPtr[tileX].flipV = (entry & 0x0400u) != 0u;
-                decodedEntriesPtr[tileX].palette1 = (entry & 0x0800u) != 0u;
-                decodedEntriesPtr[tileX].priority = (entry & 0x1000u) != 0u;
-                decodedEntryRowsPtr[tileX] = tileY;
-                decodedValidPtr[tileX] = true;
+                decodedEntries[tileX].tileIndex = static_cast<uint16_t>(((entry >> 0u) & 0x01FFu));
+                decodedEntries[tileX].flipH = (entry & 0x0200u) != 0u;
+                decodedEntries[tileX].flipV = (entry & 0x0400u) != 0u;
+                decodedEntries[tileX].palette1 = (entry & 0x0800u) != 0u;
+                decodedEntries[tileX].priority = (entry & 0x1000u) != 0u;
+                decodedEntryRows[tileX] = tileY;
+                decodedValid[tileX] = true;
             }
-            const auto &decoded = decodedEntriesPtr[tileX];
+            const auto &decoded = decodedEntries[tileX];
             const auto sampleX = decoded.flipH ? (7u - pixelX) : pixelX;
             const auto sampleY = decoded.flipV ? (7u - pixelY) : pixelY;
 
             // Decode the 4 bitplane bytes for this tile row once and reuse
             // the resulting 8 color indexes for pixels in the tile.
-            if (decodedPatternRowYPtr[tileX] != static_cast<int>(sampleY)) {
+            if (decodedPatternRowY[tileX] != static_cast<int>(sampleY)) {
                 const auto tileBase = (static_cast<std::size_t>(decoded.tileIndex) * 32u) % vram_.size();
                 const auto rowBase = (tileBase + static_cast<std::size_t>(sampleY) * 4u) % vram_.size();
                 const auto plane0 = vram_[rowBase];
@@ -655,14 +664,14 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
                 const auto plane3 = vram_[(rowBase + 3u) % vram_.size()];
                 for (std::size_t px = 0; px < 8u; ++px) {
                     const auto bit = static_cast<uint8_t>(7u - static_cast<uint8_t>(px));
-                    decodedPatternRowsPtr[tileX][px] = static_cast<uint8_t>((((plane3 >> bit) & 0x01u) << 3u) |
-                                                                             (((plane2 >> bit) & 0x01u) << 2u) |
-                                                                             (((plane1 >> bit) & 0x01u) << 1u) |
-                                                                             ((plane0 >> bit) & 0x01u));
+                    decodedPatternRows[tileX][px] = static_cast<uint8_t>((((plane3 >> bit) & 0x01u) << 3u) |
+                                                                          (((plane2 >> bit) & 0x01u) << 2u) |
+                                                                          (((plane1 >> bit) & 0x01u) << 1u) |
+                                                                          ((plane0 >> bit) & 0x01u));
                 }
-                decodedPatternRowYPtr[tileX] = static_cast<int>(sampleY);
+                decodedPatternRowY[tileX] = static_cast<int>(sampleY);
             }
-            const auto colorCode = decodedPatternRowsPtr[tileX][static_cast<std::size_t>(sampleX)];
+            const auto colorCode = decodedPatternRows[tileX][static_cast<std::size_t>(sampleX)];
             const auto pixelIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(model.width)
                                   + static_cast<std::size_t>(x);
             model.argbPixels[pixelIndex] = decoded.palette1
