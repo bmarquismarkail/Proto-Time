@@ -2,6 +2,7 @@
 #include "cores/gamegear/GameGearVDP.hpp"
 
 #include <cassert>
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -156,6 +157,11 @@ int main()
     memory.writeIoPort(0xBFu, 0x22u);
     memory.writeIoPort(0xBFu, 0xC0u); // CRAM addr 0x22
     const auto before = vdp.buildFrameModel({160, 144});
+    assert(!before.argbPixels.empty());
+    const auto backdrop = before.argbPixels.front();
+    assert(std::all_of(before.argbPixels.begin(), before.argbPixels.end(), [backdrop](uint32_t pixel) {
+        return pixel == backdrop;
+    }));
     memory.writeIoPort(0xBEu, 0x00u); // even write only latches
     const auto afterEvenWrite = vdp.buildFrameModel({160, 144});
     assert(afterEvenWrite.argbPixels == before.argbPixels);
@@ -518,6 +524,41 @@ int main()
         }
         if (verticalLockModel.argbPixels[144u] != expected(24u, 0u, 0u)) {
             return fail("Game Gear right-column vertical scroll lock did not force scroll Y to zero");
+        }
+
+        scrollVdp.setSmsMode(true);
+        writeScrollX(0x00u);
+        writeScrollY(0x00u);
+        writeNameEntry(0u, 0u, 0u);
+        writeNameEntry(1u, 0u, 1u);
+        scrollMemory.writeIoPort(0xBFu, 0x20u);
+        scrollMemory.writeIoPort(0xBFu, 0x80u); // SMS left-column blanking
+        const auto smsBlankingModel = scrollVdp.buildFrameModel({256, 192});
+        if (smsBlankingModel.argbPixels.empty()) {
+            return fail("Game Gear SMS blanking model unexpectedly empty");
+        }
+        const auto backdropPixel = scrollVdp.debugDecodedCramColor(16u);
+        if (smsBlankingModel.argbPixels[0] != backdropPixel) {
+            return fail("Game Gear SMS left-column blanking did not hide the first visible column");
+        }
+        if (smsBlankingModel.argbPixels[8u] == backdropPixel) {
+            return fail("Game Gear SMS left-column blanking hid more than the first visible column");
+        }
+
+        writeScrollX(0x08u);
+        writeNameEntry(0u, 0u, 0u);
+        writeNameEntry(31u, 0u, 2u);
+        scrollMemory.writeIoPort(0xBFu, 0x40u);
+        scrollMemory.writeIoPort(0xBFu, 0x80u); // SMS fixed top-row behavior
+        const auto smsTopLockModel = scrollVdp.buildFrameModel({256, 192});
+        if (smsTopLockModel.argbPixels.empty()) {
+            return fail("Game Gear SMS top-row-lock model unexpectedly empty");
+        }
+        if (smsTopLockModel.argbPixels[0] != expected(0u, 0u, 0u)) {
+            return fail("Game Gear SMS fixed top row did not keep horizontal scroll locked");
+        }
+        if (smsTopLockModel.argbPixels[24u * 256u] != expected(2u, 0u, 0u)) {
+            return fail("Game Gear SMS fixed top row incorrectly locked lower scanlines too");
         }
     }
 

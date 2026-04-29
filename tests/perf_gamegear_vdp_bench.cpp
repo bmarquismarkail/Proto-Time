@@ -66,6 +66,12 @@ int main()
     memory.setVdp(&vdp);
     vdp.reset();
 
+    constexpr int kIterations = 1000;
+
+    // Measure the frame-clear path before enabling display and populating
+    // any visible content.
+    runFrames(vdp, kIterations);
+
     // Turn display on
     memory.writeIoPort(0xBFu, 0x40u);
     memory.writeIoPort(0xBFu, 0x81u);
@@ -73,7 +79,6 @@ int main()
     populateBackground(vdp);
 
     try {
-        constexpr int kIterations = 1000;
         runFrames(vdp, kIterations);
         populateVisibleSprites(vdp);
         runFrames(vdp, kIterations);
