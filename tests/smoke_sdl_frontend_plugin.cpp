@@ -198,6 +198,8 @@ int main(int argc, char** argv)
     assert(frontend->stats().framesPrepared == framesPreparedBeforeVisualObservation);
     const auto renderAttemptsBeforeManualPublish = frontend->stats().renderAttempts;
     const auto framesPreparedBeforeManualPublish = frontend->stats().framesPrepared;
+    const auto videoRealtimePacketsBeforeManualPublish = frontend->stats().videoRealtimePacketsAccepted;
+    const auto videoDebugSnapshotsBeforeManualPublish = frontend->stats().videoDebugSnapshotsBuilt;
     frontend->onVideoEvent(BMMQ::MachineEvent{
         BMMQ::MachineEventType::VBlank,
         BMMQ::PluginCategory::Video,
@@ -209,6 +211,8 @@ int main(int argc, char** argv)
     }, machine.view());
     assert(frontend->stats().framesPrepared == framesPreparedBeforeManualPublish + 1u);
     assert(frontend->stats().renderAttempts == renderAttemptsBeforeManualPublish);
+    assert(frontend->stats().videoRealtimePacketsAccepted == videoRealtimePacketsBeforeManualPublish + 1u);
+    assert(frontend->stats().videoDebugSnapshotsBuilt == videoDebugSnapshotsBeforeManualPublish);
     if (frontend->backendReady()) {
         assert(frontend->serviceFrontend());
     }
@@ -231,10 +235,13 @@ int main(int argc, char** argv)
     assert(stats.inputPolls >= 1);
     assert(stats.inputSamplesProvided >= 1);
     assert(stats.framesPrepared >= 1);
-    assert(stats.videoStateSnapshots >= stats.framesPrepared);
+    assert(stats.videoRealtimePacketsAccepted >= stats.framesPrepared);
+    assert(stats.videoDebugSnapshotsBuilt == stats.videoStateSnapshots);
     assert(stats.videoFramesPublished >= stats.framesPrepared);
     assert(stats.videoMailboxHighWaterFrames >= 1u);
     assert(stats.videoPresentCount >= stats.framesPresented);
+    assert(stats.audioRealtimePacketsAccepted >= 1u);
+    assert(stats.audioStateSnapshotsBuilt == 0u);
     assert(stats.audioPreviewsBuilt >= 1);
     assert(stats.buttonTransitions >= 3);
     assert(stats.eventPumpCalls >= 2);
@@ -277,6 +284,8 @@ int main(int argc, char** argv)
         const auto lowWaterBefore = frontend->stats().audioQueueLowWaterHits;
         const auto framesPreparedBefore = frontend->stats().framesPrepared;
         const auto framesPublishedBefore = frontend->stats().videoFramesPublished;
+        const auto videoRealtimePacketsBefore = frontend->stats().videoRealtimePacketsAccepted;
+        const auto videoDebugSnapshotsBefore = frontend->stats().videoDebugSnapshotsBuilt;
         const auto renderAttemptsBefore = frontend->stats().renderAttempts;
         const auto audioEventsBeforeLowWater = frontend->stats().audioEvents;
         frontend->onVideoEvent(BMMQ::MachineEvent{
@@ -291,6 +300,8 @@ int main(int argc, char** argv)
         assert(frontend->stats().audioQueueLowWaterHits == lowWaterBefore + 1u);
         assert(frontend->stats().framesPrepared == framesPreparedBefore + 1u);
         assert(frontend->stats().videoFramesPublished == framesPublishedBefore + 1u);
+        assert(frontend->stats().videoRealtimePacketsAccepted == videoRealtimePacketsBefore + 1u);
+        assert(frontend->stats().videoDebugSnapshotsBuilt == videoDebugSnapshotsBefore);
         assert(frontend->stats().renderAttempts == renderAttemptsBefore);
 
         for (uint8_t y = 0; y < 24u; ++y) {
@@ -325,7 +336,7 @@ int main(int argc, char** argv)
         assert(frontend->stats().audioQueueLowWaterHits == lowWaterBeforePendingScanline);
         assert(frontend->stats().framesPrepared == framesPreparedBeforePendingScanline + 1u);
         assert(frontend->stats().videoFramesPublished == framesPublishedBeforePendingScanline + 1u);
-        assert(frontend->stats().videoStateSnapshots >= videoStateSnapshotsBeforePendingScanline + 1u);
+        assert(frontend->stats().videoStateSnapshots == videoStateSnapshotsBeforePendingScanline);
 
         const auto nextAudioFrame = machine.audioFrameCounter() + 1u;
         assert(stepUntilAudioFrames(machine, nextAudioFrame));

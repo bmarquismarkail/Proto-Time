@@ -190,6 +190,28 @@ public:
         }
         return adapter->buildFrameModel(*this, request);
     }
+    virtual std::optional<RealtimeVideoPacket> realtimeVideoPacket(const VideoDebugRenderRequest& request) const {
+        const auto model = videoDebugFrameModel(request);
+        if (!model.has_value()) {
+            return std::nullopt;
+        }
+        RealtimeVideoPacket packet;
+        packet.width = model->width;
+        packet.height = model->height;
+        packet.displayEnabled = model->displayEnabled;
+        packet.inVBlank = model->inVBlank;
+        packet.scanlineIndex = model->scanlineIndex;
+        packet.argbPixels = model->argbPixels;
+        return packet;
+    }
+    virtual std::optional<RealtimeAudioPacket> realtimeAudioPacket() const {
+        RealtimeAudioPacket packet;
+        packet.sampleRate = audioSampleRate();
+        packet.channelCount = audioChannelCount();
+        packet.frameCounter = audioFrameCounter();
+        packet.pcmSamples = recentAudioSamples();
+        return packet;
+    }
     virtual bool supportsVisualPacks() const noexcept {
         return visualDebugAdapter() != nullptr && !visualTargetId().empty();
     }
@@ -235,6 +257,15 @@ inline std::optional<uint32_t> queryDigitalInputMask(const Machine& machine) {
 inline std::optional<VideoDebugFrameModel> queryVideoDebugFrameModel(const Machine& machine,
                                                                      const VideoDebugRenderRequest& request) {
     return machine.videoDebugFrameModel(request);
+}
+
+inline std::optional<RealtimeVideoPacket> queryRealtimeVideoPacket(const Machine& machine,
+                                                                   const VideoDebugRenderRequest& request) {
+    return machine.realtimeVideoPacket(request);
+}
+
+inline std::optional<RealtimeAudioPacket> queryRealtimeAudioPacket(const Machine& machine) {
+    return machine.realtimeAudioPacket();
 }
 
 inline AudioService& queryAudioService(Machine& machine) {

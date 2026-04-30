@@ -34,6 +34,11 @@ std::vector<int16_t> queryRecentAudioSamples(const Machine& machine);
 uint32_t queryAudioSampleRate(const Machine& machine);
 uint8_t queryAudioChannelCount(const Machine& machine);
 uint64_t queryAudioFrameCounter(const Machine& machine);
+struct RealtimeVideoPacket;
+struct RealtimeAudioPacket;
+std::optional<RealtimeVideoPacket> queryRealtimeVideoPacket(const Machine& machine,
+                                                            const VideoDebugRenderRequest& request);
+std::optional<RealtimeAudioPacket> queryRealtimeAudioPacket(const Machine& machine);
 TimingService& queryTimingService(Machine& machine);
 const TimingService& queryTimingService(const Machine& machine);
 
@@ -69,6 +74,41 @@ enum class MachineEventType : uint8_t {
     VisualPackMiss = 17,
     FrameCompositionStarted = 18,
     FrameCompositionCompleted = 19,
+};
+
+struct RealtimeVideoPacket {
+    MachineEventType eventType = MachineEventType::VBlank;
+    int width = 0;
+    int height = 0;
+    bool displayEnabled = false;
+    bool inVBlank = false;
+    std::optional<std::uint16_t> scanlineIndex;
+    std::uint64_t generation = 0;
+    std::vector<std::uint32_t> argbPixels;
+
+    [[nodiscard]] bool empty() const noexcept
+    {
+        return width <= 0 ||
+               height <= 0 ||
+               argbPixels.size() != static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+    }
+
+    [[nodiscard]] std::size_t pixelCount() const noexcept
+    {
+        return argbPixels.size();
+    }
+};
+
+struct RealtimeAudioPacket {
+    std::uint32_t sampleRate = 48000u;
+    std::uint8_t channelCount = 1u;
+    std::uint64_t frameCounter = 0;
+    std::vector<std::int16_t> pcmSamples;
+
+    [[nodiscard]] bool empty() const noexcept
+    {
+        return pcmSamples.empty();
+    }
 };
 
 struct IoRegionDescriptor {
@@ -299,6 +339,12 @@ struct MachineView {
         return queryVideoDebugFrameModel(machine, request);
     }
 
+    [[nodiscard]] std::optional<RealtimeVideoPacket> realtimeVideoPacket(
+        const VideoDebugRenderRequest& request) const
+    {
+        return queryRealtimeVideoPacket(machine, request);
+    }
+
     [[nodiscard]] std::optional<AudioStateView> audioState() const {
         const auto registerRegion = findRegion(PluginCategory::Audio, "APU Registers");
         if (!registerRegion.has_value()) {
@@ -335,6 +381,11 @@ struct MachineView {
         state.nr51 = read8(0xFF25u);
         state.nr52 = read8(0xFF26u);
         return state;
+    }
+
+    [[nodiscard]] std::optional<RealtimeAudioPacket> realtimeAudioPacket() const
+    {
+        return queryRealtimeAudioPacket(machine);
     }
 
     [[nodiscard]] std::optional<SerialStateView> serialState() const {

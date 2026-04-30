@@ -255,6 +255,54 @@ public:
         return submitFrame(engine_.buildDebugFrame(model, generation));
     }
 
+    [[nodiscard]] bool submitRealtimeVideoPacket(const MachineEvent& event, const RealtimeVideoPacket& packet)
+    {
+        if (event.type == MachineEventType::RomLoaded) {
+            engine_.advanceGeneration();
+            resetScanlineCapture();
+            return true;
+        }
+
+        if (packet.empty()) {
+            syncEngineDiagnostics();
+            return false;
+        }
+
+        if (event.type == MachineEventType::VideoScanlineReady) {
+            syncEngineDiagnostics();
+            return false;
+        }
+
+        const bool shouldPublishFrame =
+            event.type == MachineEventType::VBlank ||
+            engine_.lastValidFrame().has_value() == false ||
+            !packet.displayEnabled ||
+            event.type == MachineEventType::MemoryWriteObserved;
+        if (!shouldPublishFrame) {
+            syncEngineDiagnostics();
+            return false;
+        }
+
+        if (event.type == MachineEventType::VBlank && hasCompleteScanlineFrame()) {
+            auto frame = *scanlineFrame_;
+            resetScanlineCapture();
+            return submitFrame(frame);
+        }
+        if (event.type == MachineEventType::VBlank && hasPartialScanlineFrame()) {
+            syncEngineDiagnostics();
+            return false;
+        }
+
+        resetScanlineCapture();
+        VideoFramePacket frame;
+        frame.width = packet.width;
+        frame.height = packet.height;
+        frame.generation = packet.generation != 0u ? packet.generation : engine_.currentGeneration();
+        frame.source = VideoFrameSource::MachineSnapshot;
+        frame.pixels = packet.argbPixels;
+        return submitFrame(frame);
+    }
+
     [[nodiscard]] bool submitFrame(const VideoFramePacket& frame)
     {
         const auto submitResult = engine_.submitFrame(frame);

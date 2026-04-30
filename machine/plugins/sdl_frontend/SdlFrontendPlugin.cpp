@@ -508,8 +508,17 @@ public:
         if (shouldSampleVideoState) {
             const bool deferPresentForAudioLowWater =
                 event.type == BMMQ::MachineEventType::VBlank && shouldDeferVideoFrameForAudioLowWater();
-            BMMQ::VideoDebugFrameModel* videoModel = modelForVideoEvent(event, view);
-            if (videoModel != nullptr) {
+            if (trySubmitRealtimeVideoPacket(event, view)) {
+                submittedVideoFrame = true;
+                syncVideoTransportStats();
+                ++stats_.framesPrepared;
+                frameDirty_ = true;
+                if (deferPresentForAudioLowWater) {
+                    ++stats_.audioQueueLowWaterHits;
+                    videoPresentDeferredForAudioLowWater_ = true;
+                    appendLog("sdl: deferred video presentation while audio buffer was low");
+                }
+            } else if (BMMQ::VideoDebugFrameModel* videoModel = modelForVideoEvent(event, view); videoModel != nullptr) {
                 if (videoService_ != nullptr && videoService_->submitVideoDebugModel(event, *videoModel)) {
                     submittedVideoFrame = true;
                     if (event.type == BMMQ::MachineEventType::VBlank) {
@@ -557,8 +566,17 @@ public:
             return;
         }
         ++stats_.audioEvents;
-        lastAudioState_ = view.audioState();
-        if (lastAudioState_.has_value()) {
+        if (const auto packet = view.realtimeAudioPacket(); packet.has_value()) {
+            ++stats_.audioRealtimePacketsAccepted;
+            lastAudioPreview_ = buildAudioPreview(*packet);
+            ++stats_.audioPreviewsBuilt;
+            ++audioPreviewGeneration_;
+            if (audioService_ != nullptr) {
+                audioService_->appendRecentPcm(packet->pcmSamples, packet->frameCounter);
+            }
+            lastAudioState_.reset();
+        } else if (const auto audioState = snapshotAudioState(view); audioState.has_value()) {
+            lastAudioState_ = audioState;
             lastAudioPreview_ = buildAudioPreview(*lastAudioState_);
             ++stats_.audioPreviewsBuilt;
             ++audioPreviewGeneration_;
@@ -566,6 +584,7 @@ public:
                 audioService_->appendRecentPcm(lastAudioState_->pcmSamples, lastAudioState_->frameCounter);
             }
         } else {
+            ++stats_.audioRealtimePacketsSkipped;
             lastAudioPreview_.reset();
             if (audioService_ != nullptr && audioService_->canPerformReset()) {
                 (void)audioService_->resetStats();
@@ -878,11 +897,63 @@ private:
 
     std::optional<BMMQ::VideoDebugFrameModel> snapshotVideoDebugModel(const BMMQ::MachineView& view)
     {
+        ++stats_.videoDebugSnapshotsBuilt;
         ++stats_.videoStateSnapshots;
         return view.videoDebugFrameModel({
             .frameWidth = std::max(config_.frameWidth, 1),
             .frameHeight = std::max(config_.frameHeight, 1),
         });
+    }
+
+    std::optional<BMMQ::AudioStateView> snapshotAudioState(const BMMQ::MachineView& view)
+    {
+        ++stats_.audioStateSnapshotsBuilt;
+        return view.audioState();
+    }
+
+    [[nodiscard]] bool trySubmitRealtimeVideoPacket(const BMMQ::MachineEvent& event,
+                                                    const BMMQ::MachineView& view)
+    {
+        if (videoService_ == nullptr || event.type == BMMQ::MachineEventType::VideoScanlineReady) {
+            ++stats_.videoRealtimePacketsSkipped;
+            return false;
+        }
+
+        auto packet = view.realtimeVideoPacket({
+            .frameWidth = std::max(config_.frameWidth, 1),
+            .frameHeight = std::max(config_.frameHeight, 1),
+        });
+        if (!packet.has_value()) {
+            ++stats_.videoRealtimePacketsSkipped;
+            return false;
+        }
+
+        packet->eventType = event.type;
+        packet->generation = videoService_->engine().currentGeneration();
+        if (!videoService_->submitRealtimeVideoPacket(event, *packet)) {
+            ++stats_.videoRealtimePacketsSkipped;
+            return false;
+        }
+
+        ++stats_.videoRealtimePacketsAccepted;
+        if (event.type == BMMQ::MachineEventType::VBlank) {
+            lastVideoDebugModel_ = debugModelFromRealtimePacket(*packet);
+            scanlineVideoDebugModel_.reset();
+        }
+        return true;
+    }
+
+    [[nodiscard]] static BMMQ::VideoDebugFrameModel debugModelFromRealtimePacket(const BMMQ::RealtimeVideoPacket& packet)
+    {
+        BMMQ::VideoDebugFrameModel model;
+        model.width = packet.width;
+        model.height = packet.height;
+        model.displayEnabled = packet.displayEnabled;
+        model.inVBlank = packet.inVBlank;
+        model.scanlineIndex = packet.scanlineIndex;
+        model.argbPixels = packet.argbPixels;
+        model.semantics.resize(model.argbPixels.size());
+        return model;
     }
 
     BMMQ::VideoDebugFrameModel* modelForVideoEvent(const BMMQ::MachineEvent& event,
@@ -1273,6 +1344,24 @@ private:
             }
         }
         audioPhase_ = phase;
+        return preview;
+    }
+
+    [[nodiscard]] BMMQ::SdlAudioPreviewBuffer buildAudioPreview(const BMMQ::RealtimeAudioPacket& packet) const
+    {
+        BMMQ::SdlAudioPreviewBuffer preview;
+        const int defaultSampleRate = audioService_ != nullptr ? audioService_->engine().config().deviceSampleRate : 48000;
+        preview.sampleRate = packet.sampleRate != 0u ? static_cast<int>(packet.sampleRate) : defaultSampleRate;
+        preview.channels = static_cast<int>(std::max<std::uint8_t>(packet.channelCount, 1u));
+        const auto sampleCount = std::max(config_.audioPreviewSampleCount, 8);
+        preview.samples.resize(static_cast<std::size_t>(sampleCount), 0);
+        if (!packet.pcmSamples.empty()) {
+            const auto copyCount = std::min<std::size_t>(preview.samples.size(), packet.pcmSamples.size());
+            const auto start = packet.pcmSamples.size() - copyCount;
+            std::copy_n(packet.pcmSamples.begin() + static_cast<std::ptrdiff_t>(start),
+                        copyCount,
+                        preview.samples.begin());
+        }
         return preview;
     }
 
