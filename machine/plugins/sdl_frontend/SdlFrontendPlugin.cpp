@@ -876,7 +876,9 @@ private:
         if (attemptAudio) {
             ++stats_.lifecycleRecoveryAudioAttemptCount;
             const bool reopened = ensureAudioDevice();
-            if (reopened) {
+            syncAudioTransportStats();
+            const bool transportPrimed = audioService_ != nullptr && audioService_->isOutputTransportPrimed();
+            if (reopened && transportPrimed) {
                 ++stats_.lifecycleRecoveryAudioSuccessCount;
             } else {
                 ++stats_.lifecycleRecoveryAudioFailureCount;
@@ -1104,7 +1106,9 @@ private:
         stats_.audioTransportWorkerWakeCount = transportStats.workerWakeCount;
         stats_.audioTransportStaleEpochDropCount = transportStats.staleEpochDropCount;
         stats_.audioTransportEpochBumpCount = transportStats.epochBumpCount;
+        stats_.audioTransportPrimedTransitionCount = transportStats.primedTransitionCount;
         stats_.audioTransportLifecycleEpoch = transportStats.lifecycleEpoch;
+        stats_.audioTransportPrimedForDrain = transportStats.primedForDrain;
         stats_.lastQueuedAudioBytes = queuedAudioBytes();
         stats_.peakQueuedAudioBytes = std::max<std::uint32_t>(
             stats_.peakQueuedAudioBytes,

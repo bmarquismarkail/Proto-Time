@@ -37,7 +37,9 @@ struct AudioOutputTransportStats {
     std::size_t workerWakeCount = 0;
     std::size_t staleEpochDropCount = 0;
     std::size_t epochBumpCount = 0;
+    std::size_t primedTransitionCount = 0;
     std::uint64_t lifecycleEpoch = 1;
+    bool primedForDrain = false;
 };
 
 class AudioService {
@@ -337,6 +339,18 @@ public:
         auto& block = readyBlocks_[writeIndex];
         block.samples = producerScratch_;
         block.epoch = transportEpoch_.load(std::memory_order_acquire);
+        const auto currentEpoch = block.epoch;
+        auto primedEpoch = transportPrimedEpoch_.load(std::memory_order_acquire);
+        while (primedEpoch != currentEpoch &&
+               !transportPrimedEpoch_.compare_exchange_weak(
+                   primedEpoch,
+                   currentEpoch,
+                   std::memory_order_acq_rel,
+                   std::memory_order_acquire)) {
+        }
+        if (primedEpoch != currentEpoch) {
+            transportPrimedTransitionCount_.fetch_add(1u, std::memory_order_relaxed);
+        }
         readyWriteIndex_.store(nextWriteIndex, std::memory_order_release);
         transportWorkerProducedBlocks_.fetch_add(1u, std::memory_order_relaxed);
         noteReadyQueueHighWater(readyQueueDepth());
@@ -397,7 +411,15 @@ public:
         stats.staleEpochDropCount = transportStaleEpochDropCount_.load(std::memory_order_relaxed);
         stats.epochBumpCount = transportEpochBumpCount_.load(std::memory_order_relaxed);
         stats.lifecycleEpoch = transportEpoch_.load(std::memory_order_acquire);
+        stats.primedTransitionCount = transportPrimedTransitionCount_.load(std::memory_order_relaxed);
+        stats.primedForDrain = transportPrimedEpoch_.load(std::memory_order_acquire) == stats.lifecycleEpoch;
         return stats;
+    }
+
+    [[nodiscard]] bool isOutputTransportPrimed() const noexcept
+    {
+        const auto currentEpoch = transportEpoch_.load(std::memory_order_acquire);
+        return transportPrimedEpoch_.load(std::memory_order_acquire) == currentEpoch;
     }
 
     // Synchronous compatibility helper. Do not call this from audio callback/output threads;
@@ -524,6 +546,7 @@ private:
     {
         transportEpoch_.fetch_add(1u, std::memory_order_release);
         transportEpochBumpCount_.fetch_add(1u, std::memory_order_relaxed);
+        transportPrimedEpoch_.store(0u, std::memory_order_release);
         clearReadyQueue();
     }
 
@@ -568,6 +591,7 @@ private:
         transportDroppedReadyBlocks_.store(0u, std::memory_order_relaxed);
         transportWorkerWakeCount_.store(0u, std::memory_order_relaxed);
         transportStaleEpochDropCount_.store(0u, std::memory_order_relaxed);
+        transportPrimedTransitionCount_.store(0u, std::memory_order_relaxed);
     }
 
     AudioEngine engine_{};
@@ -604,6 +628,8 @@ private:
     std::atomic<std::size_t> transportStaleEpochDropCount_{0};
     std::atomic<std::size_t> transportEpochBumpCount_{0};
     std::atomic<std::uint64_t> transportEpoch_{1};
+    std::atomic<std::uint64_t> transportPrimedEpoch_{0};
+    std::atomic<std::size_t> transportPrimedTransitionCount_{0};
     std::atomic<bool> enforceLifecycleContract_{false};
     std::atomic<std::size_t> lifecycleMutationScopeDepth_{0};
     mutable std::atomic<std::size_t> lifecycleContractDeniedCalls_{0};
