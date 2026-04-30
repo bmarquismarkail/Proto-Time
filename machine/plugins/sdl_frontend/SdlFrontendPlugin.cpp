@@ -154,7 +154,11 @@ public:
 
         bool presented = false;
         if (hadFrame && (frameDirty_ || visibilityChanged)) {
-            presented = presentLatestFrame();
+            if (frameDirty_ && shouldDeferVideoFrameForAudioLowWater()) {
+                videoPresentDeferredForAudioLowWater_ = true;
+            } else {
+                presented = presentLatestFrame();
+            }
         }
 
         const bool audioActive = hasAudioState || (audioService_ != nullptr && audioService_->engine().bufferedSamples() != 0u);
@@ -502,11 +506,8 @@ public:
 
         bool submittedVideoFrame = false;
         if (shouldSampleVideoState) {
-            if (event.type == BMMQ::MachineEventType::VBlank && shouldDeferVideoFrameForAudioLowWater()) {
-                ++stats_.audioQueueLowWaterHits;
-                appendLog("sdl: skipped video frame preparation while audio buffer was low");
-                return;
-            }
+            const bool deferPresentForAudioLowWater =
+                event.type == BMMQ::MachineEventType::VBlank && shouldDeferVideoFrameForAudioLowWater();
             BMMQ::VideoDebugFrameModel* videoModel = modelForVideoEvent(event, view);
             if (videoModel != nullptr) {
                 if (videoService_ != nullptr && videoService_->submitVideoDebugModel(event, *videoModel)) {
@@ -518,8 +519,10 @@ public:
                     syncVideoTransportStats();
                     ++stats_.framesPrepared;
                     frameDirty_ = true;
-                    if (config_.autoPresentOnVideoEvent) {
-                        presentLatestFrame();
+                    if (deferPresentForAudioLowWater) {
+                        ++stats_.audioQueueLowWaterHits;
+                        videoPresentDeferredForAudioLowWater_ = true;
+                        appendLog("sdl: deferred video presentation while audio buffer was low");
                     }
                 }
             } else {
@@ -926,7 +929,7 @@ private:
         (void)videoService_->configure({
             .frameWidth = std::max(config_.frameWidth, 1),
             .frameHeight = std::max(config_.frameHeight, 1),
-            .queueCapacityFrames = 3,
+            .mailboxDepthFrames = 2,
         });
         (void)videoService_->configurePresenter({
             .windowTitle = config_.windowTitle,
@@ -972,10 +975,20 @@ private:
         if (videoService_ == nullptr) {
             return;
         }
+        const auto& diagnostics = videoService_->diagnostics();
+        stats_.videoFramesPublished = diagnostics.publishedFrameCount;
+        stats_.videoPresentCount = diagnostics.presentCount;
+        stats_.videoPresentFallbackCount = diagnostics.presentFallbackCount;
+        stats_.videoMailboxDepth = diagnostics.mailboxDepth;
+        stats_.videoMailboxHighWaterFrames = diagnostics.mailboxHighWaterMark;
+        stats_.videoMailboxStaleDropCount = diagnostics.staleFrameDropCount;
+        stats_.videoMailboxOverwriteCount = diagnostics.overwriteCount;
+        stats_.videoLastPublishedGeneration = diagnostics.lastPublishedGeneration;
+        stats_.videoLastPresentedGeneration = diagnostics.lastPresentedGeneration;
         if (const auto& frame = videoService_->engine().lastValidFrame(); frame.has_value()) {
-            const auto framesSubmitted = videoService_->engine().stats().framesSubmitted;
+            const auto publishedFrames = videoService_->engine().stats().publishedFrameCount;
             const bool frameChanged = !lastFrame_.has_value() ||
-                                      lastSyncedVideoFrameSubmission_ != framesSubmitted ||
+                                      lastSyncedVideoFramePublication_ != publishedFrames ||
                                       lastFrame_->width != frame->width ||
                                       lastFrame_->height != frame->height ||
                                       lastFrame_->pixelCount() != frame->pixelCount();
@@ -986,7 +999,7 @@ private:
                 compatFrame.generation = frame->generation;
                 compatFrame.pixels = frame->pixels;
                 lastFrame_ = std::move(compatFrame);
-                lastSyncedVideoFrameSubmission_ = framesSubmitted;
+                lastSyncedVideoFramePublication_ = publishedFrames;
             }
         }
         if (videoPresenter_ != nullptr) {
@@ -1026,6 +1039,7 @@ private:
         }
         ++stats_.framesPresented;
         frameDirty_ = false;
+        videoPresentDeferredForAudioLowWater_ = false;
         lastRenderSummary_ = "Presented frame " + std::to_string(lastFrame_->width) + "x" + std::to_string(lastFrame_->height);
         return true;
     }
@@ -1271,8 +1285,9 @@ private:
     std::optional<BMMQ::SdlAudioPreviewBuffer> lastAudioPreview_;
     std::optional<BMMQ::DigitalInputStateView> lastInputState_;
     std::optional<BMMQ::SdlFrameBuffer> lastFrame_;
-    std::size_t lastSyncedVideoFrameSubmission_ = 0;
+    std::size_t lastSyncedVideoFramePublication_ = 0;
     bool frameDirty_ = false;
+    bool videoPresentDeferredForAudioLowWater_ = false;
     std::optional<uint32_t> queuedDigitalInputMask_;
     bool quitRequested_ = false;
     bool windowVisible_ = false;

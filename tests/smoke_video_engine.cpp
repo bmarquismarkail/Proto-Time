@@ -115,7 +115,7 @@ int main()
     BMMQ::VideoEngine genericEngine({
         .frameWidth = 4,
         .frameHeight = 2,
-        .queueCapacityFrames = 1,
+        .mailboxDepthFrames = 1,
     });
     const auto genericModel = makeGenericDebugModel();
     const auto genericFrame = genericEngine.buildDebugFrame(genericModel, 1u);
@@ -124,7 +124,7 @@ int main()
     BMMQ::VideoEngine engine({
         .frameWidth = 32,
         .frameHeight = 24,
-        .queueCapacityFrames = 2,
+        .mailboxDepthFrames = 2,
     });
 
     const auto state = makeDebugVideoState();
@@ -153,23 +153,26 @@ int main()
 
     const auto submitA = engine.submitFrame(frameA);
     assert(submitA.accepted);
-    assert(!submitA.droppedOldest);
+    assert(!submitA.overwroteOldFrame);
     const auto submitB = engine.submitFrame(frameB);
     assert(submitB.accepted);
-    assert(!submitB.droppedOldest);
+    assert(!submitB.overwroteOldFrame);
     const auto submitC = engine.submitFrame(frameC);
     assert(submitC.accepted);
-    assert(submitC.droppedOldest);
-    assert(engine.stats().droppedFrameCount == 1u);
-    assert(engine.stats().frameQueueHighWaterMark == 2u);
+    assert(submitC.overwroteOldFrame);
+    assert(engine.stats().overwriteCount == 1u);
+    assert(engine.stats().mailboxHighWaterMark == 2u);
+    assert(engine.stats().publishedFrameCount == 3u);
+    assert(engine.stats().lastPublishedGeneration == 9u);
 
-    auto consumed = engine.tryConsumeFrame();
-    assert(consumed.has_value());
-    assert(consumed->generation == 8u);
-    consumed = engine.tryConsumeFrame();
+    auto consumed = engine.tryConsumeLatestFrame();
     assert(consumed.has_value());
     assert(consumed->generation == 9u);
-    assert(!engine.tryConsumeFrame().has_value());
+    assert(engine.stats().consumedFrameCount == 1u);
+    assert(engine.stats().staleFrameDropCount == 1u);
+    assert(engine.stats().lastConsumedGeneration == 9u);
+    assert(!engine.tryConsumeLatestFrame().has_value());
+    assert(engine.mailboxFrameCount() == 0u);
 
     engine.advanceGeneration();
     assert(engine.currentGeneration() == 1u);
@@ -179,7 +182,7 @@ int main()
     BMMQ::VideoEngine blankEngine({
         .frameWidth = 4,
         .frameHeight = 3,
-        .queueCapacityFrames = 1,
+        .mailboxDepthFrames = 1,
     });
     const auto blank = blankEngine.fallbackFrame();
     assert(blank.width == 4);
@@ -190,7 +193,7 @@ int main()
     BMMQ::VideoEngine fullFrameEngine({
         .frameWidth = 160,
         .frameHeight = 144,
-        .queueCapacityFrames = 2,
+        .mailboxDepthFrames = 2,
     });
     BMMQ::AudioEngine audioEngine({
         .sourceSampleRate = 48000,
@@ -221,7 +224,7 @@ int main()
     BMMQ::VideoEngine inactiveVisualEngine({
         .frameWidth = 160,
         .frameHeight = 144,
-        .queueCapacityFrames = 1,
+        .mailboxDepthFrames = 1,
     });
     inactiveVisualEngine.setVisualOverrideService(&inactiveVisualService);
     const auto inactiveStart = std::chrono::steady_clock::now();
@@ -239,7 +242,7 @@ int main()
     BMMQ::VideoEngine captureVisualEngine({
         .frameWidth = 160,
         .frameHeight = 144,
-        .queueCapacityFrames = 1,
+        .mailboxDepthFrames = 1,
     });
     captureVisualEngine.setVisualOverrideService(&captureVisualService);
     const auto captureStart = std::chrono::steady_clock::now();

@@ -18,7 +18,7 @@ int main()
     BMMQ::VideoService service(BMMQ::VideoEngineConfig{
         .frameWidth = 8,
         .frameHeight = 8,
-        .queueCapacityFrames = 2,
+        .mailboxDepthFrames = 2,
     });
 
     auto headless = std::make_unique<BMMQ::HeadlessFrameDumper>();

@@ -123,7 +123,7 @@ int main()
     assert(service.configure({
         .frameWidth = 32,
         .frameHeight = 24,
-        .queueCapacityFrames = 2,
+        .mailboxDepthFrames = 2,
     }));
 
     assert(service.addProcessor(std::make_unique<PassthroughVideoProcessor>()));
@@ -138,22 +138,25 @@ int main()
     assert(!service.configure({
         .frameWidth = 16,
         .frameHeight = 16,
-        .queueCapacityFrames = 2,
+        .mailboxDepthFrames = 2,
     }));
     assert(!service.addProcessor(std::make_unique<PassthroughVideoProcessor>()));
     service.setBackendActiveForTesting(false);
 
     BMMQ::VideoFramePacket frame = BMMQ::makeBlankVideoFrame(32, 24, 3u);
     assert(service.submitFrame(frame));
+    assert(service.diagnostics().presentCount == 0u);
     assert(service.presentOneFrame());
     assert(capturePtr->captureCount == 1u);
     assert(capturePtr->lastGeneration == 3u);
     assert(service.diagnostics().lastPresentedGeneration == 3u);
+    assert(service.diagnostics().presentCount == 1u);
+    assert(service.diagnostics().lastPublishedGeneration == 3u);
 
     BMMQ::VideoService scanlineService(BMMQ::VideoEngineConfig{
         .frameWidth = 8,
         .frameHeight = 2,
-        .queueCapacityFrames = 1,
+        .mailboxDepthFrames = 1,
     });
     auto line0 = Visual::makeSemanticModelFromState(makeSplitScrollState(0u, 0u), 8, 2);
     auto line1 = Visual::makeSemanticModelFromState(makeSplitScrollState(1u, 8u), 8, 2);
@@ -165,14 +168,14 @@ int main()
         .address = 0xFF44u,
         .value = 0u,
     }, line0));
-    assert(scanlineService.engine().queuedFrameCount() == 0u);
+    assert(scanlineService.engine().mailboxFrameCount() == 0u);
     assert(!scanlineService.submitVideoDebugModel(BMMQ::MachineEvent{
         .type = BMMQ::MachineEventType::VideoScanlineReady,
         .category = BMMQ::PluginCategory::Video,
         .address = 0xFF44u,
         .value = 1u,
     }, line1));
-    assert(scanlineService.engine().queuedFrameCount() == 0u);
+    assert(scanlineService.engine().mailboxFrameCount() == 0u);
     assert(scanlineService.submitVideoDebugModel(BMMQ::MachineEvent{
         .type = BMMQ::MachineEventType::VBlank,
         .category = BMMQ::PluginCategory::Video,
@@ -180,7 +183,7 @@ int main()
         .value = 144u,
     }, vblank));
 
-    auto splitFrame = scanlineService.engine().tryConsumeFrame();
+    auto splitFrame = scanlineService.engine().tryConsumeLatestFrame();
     assert(splitFrame.has_value());
     assert(splitFrame->width == 8);
     assert(splitFrame->height == 2);
@@ -195,7 +198,7 @@ int main()
     auto replacement = std::make_unique<BMMQ::VideoService>(BMMQ::VideoEngineConfig{
         .frameWidth = 4,
         .frameHeight = 4,
-        .queueCapacityFrames = 1,
+        .mailboxDepthFrames = 1,
     });
     assert(machine.setVideoService(std::move(replacement)));
     assert(machine.videoService().engine().config().frameWidth == 4);

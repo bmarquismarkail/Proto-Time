@@ -196,6 +196,22 @@ int main(int argc, char** argv)
     }, machine.view());
     assert(frontend->stats().videoStateSnapshots == snapshotsBeforeVisualObservation);
     assert(frontend->stats().framesPrepared == framesPreparedBeforeVisualObservation);
+    const auto renderAttemptsBeforeManualPublish = frontend->stats().renderAttempts;
+    const auto framesPreparedBeforeManualPublish = frontend->stats().framesPrepared;
+    frontend->onVideoEvent(BMMQ::MachineEvent{
+        BMMQ::MachineEventType::VBlank,
+        BMMQ::PluginCategory::Video,
+        0,
+        0xFF44u,
+        machine.runtimeContext().read8(0xFF44u),
+        nullptr,
+        "manual vblank publish regression"
+    }, machine.view());
+    assert(frontend->stats().framesPrepared == framesPreparedBeforeManualPublish + 1u);
+    assert(frontend->stats().renderAttempts == renderAttemptsBeforeManualPublish);
+    if (frontend->backendReady()) {
+        assert(frontend->serviceFrontend());
+    }
 
     const auto pumpedBeforeStep = frontend->pumpBackendEvents();
     (void)pumpedBeforeStep;
@@ -215,8 +231,10 @@ int main(int argc, char** argv)
     assert(stats.inputPolls >= 1);
     assert(stats.inputSamplesProvided >= 1);
     assert(stats.framesPrepared >= 1);
-    assert(stats.renderAttempts >= 1);
     assert(stats.videoStateSnapshots >= stats.framesPrepared);
+    assert(stats.videoFramesPublished >= stats.framesPrepared);
+    assert(stats.videoMailboxHighWaterFrames >= 1u);
+    assert(stats.videoPresentCount >= stats.framesPresented);
     assert(stats.audioPreviewsBuilt >= 1);
     assert(stats.buttonTransitions >= 3);
     assert(stats.eventPumpCalls >= 2);
@@ -258,6 +276,8 @@ int main(int argc, char** argv)
 
         const auto lowWaterBefore = frontend->stats().audioQueueLowWaterHits;
         const auto framesPreparedBefore = frontend->stats().framesPrepared;
+        const auto framesPublishedBefore = frontend->stats().videoFramesPublished;
+        const auto renderAttemptsBefore = frontend->stats().renderAttempts;
         const auto audioEventsBeforeLowWater = frontend->stats().audioEvents;
         frontend->onVideoEvent(BMMQ::MachineEvent{
             BMMQ::MachineEventType::VBlank,
@@ -269,7 +289,9 @@ int main(int argc, char** argv)
             "audio-low-water video pressure regression"
         }, machine.view());
         assert(frontend->stats().audioQueueLowWaterHits == lowWaterBefore + 1u);
-        assert(frontend->stats().framesPrepared == framesPreparedBefore);
+        assert(frontend->stats().framesPrepared == framesPreparedBefore + 1u);
+        assert(frontend->stats().videoFramesPublished == framesPublishedBefore + 1u);
+        assert(frontend->stats().renderAttempts == renderAttemptsBefore);
 
         for (uint8_t y = 0; y < 24u; ++y) {
             auto scanlineModel = Visual::makeSemanticModelFromState(
@@ -289,6 +311,7 @@ int main(int argc, char** argv)
         assert(machine.videoService().hasPartialScanlineFrame());
         const auto lowWaterBeforePendingScanline = frontend->stats().audioQueueLowWaterHits;
         const auto framesPreparedBeforePendingScanline = frontend->stats().framesPrepared;
+        const auto framesPublishedBeforePendingScanline = frontend->stats().videoFramesPublished;
         const auto videoStateSnapshotsBeforePendingScanline = frontend->stats().videoStateSnapshots;
         frontend->onVideoEvent(BMMQ::MachineEvent{
             BMMQ::MachineEventType::VBlank,
@@ -301,6 +324,7 @@ int main(int argc, char** argv)
         }, machine.view());
         assert(frontend->stats().audioQueueLowWaterHits == lowWaterBeforePendingScanline);
         assert(frontend->stats().framesPrepared == framesPreparedBeforePendingScanline + 1u);
+        assert(frontend->stats().videoFramesPublished == framesPublishedBeforePendingScanline + 1u);
         assert(frontend->stats().videoStateSnapshots >= videoStateSnapshotsBeforePendingScanline + 1u);
 
         const auto nextAudioFrame = machine.audioFrameCounter() + 1u;
@@ -321,8 +345,7 @@ int main(int argc, char** argv)
     assert(frontend->lastFrame()->width == 32);
     assert(frontend->lastFrame()->height == 24);
     assert(frontend->lastFrame()->pixelCount() == 32u * 24u);
-    assert(!frontend->lastRenderSummary().empty());
-    assert(frontend->windowVisible());
+    assert(frontend->windowVisibilityRequested());
 
     frontend->releaseButton(BMMQ::InputButton::Up);
     assert(frontend->queuedDigitalInputMask().has_value());

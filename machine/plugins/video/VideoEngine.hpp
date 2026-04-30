@@ -22,19 +22,23 @@ namespace BMMQ {
 struct VideoEngineConfig {
     int frameWidth = 160;
     int frameHeight = 144;
-    std::size_t queueCapacityFrames = 3;
+    std::size_t mailboxDepthFrames = 2;
 };
 
 struct VideoEngineStats {
-    std::size_t droppedFrameCount = 0;
-    std::size_t frameQueueHighWaterMark = 0;
-    std::size_t framesSubmitted = 0;
-    std::size_t framesConsumed = 0;
+    std::size_t publishedFrameCount = 0;
+    std::size_t consumedFrameCount = 0;
+    std::size_t staleFrameDropCount = 0;
+    std::size_t overwriteCount = 0;
+    std::size_t mailboxHighWaterMark = 0;
+    std::size_t mailboxDepth = 0;
+    std::uint64_t lastPublishedGeneration = 0;
+    std::uint64_t lastConsumedGeneration = 0;
 };
 
 struct VideoSubmitResult {
     bool accepted = false;
-    bool droppedOldest = false;
+    bool overwroteOldFrame = false;
 };
 
 class VideoEngine {
@@ -124,27 +128,37 @@ public:
             return {};
         }
 
-        bool droppedOldest = false;
+        bool overwroteOldFrame = false;
         lastValidFrame_ = frame;
-        if (queuedFrames_.size() >= config_.queueCapacityFrames) {
-            ++stats_.droppedFrameCount;
-            queuedFrames_.pop_front();
-            droppedOldest = true;
+        if (mailboxFrames_.size() >= config_.mailboxDepthFrames) {
+            ++stats_.overwriteCount;
+            mailboxFrames_.pop_front();
+            overwroteOldFrame = true;
         }
-        queuedFrames_.push_back(frame);
-        ++stats_.framesSubmitted;
-        stats_.frameQueueHighWaterMark = std::max(stats_.frameQueueHighWaterMark, queuedFrames_.size());
-        return VideoSubmitResult{.accepted = true, .droppedOldest = droppedOldest};
+        mailboxFrames_.push_back(frame);
+        ++stats_.publishedFrameCount;
+        stats_.mailboxDepth = mailboxFrames_.size();
+        stats_.mailboxHighWaterMark = std::max(stats_.mailboxHighWaterMark, mailboxFrames_.size());
+        stats_.lastPublishedGeneration = frame.generation;
+        return VideoSubmitResult{.accepted = true, .overwroteOldFrame = overwroteOldFrame};
     }
 
-    [[nodiscard]] std::optional<VideoFramePacket> tryConsumeFrame()
+    [[nodiscard]] std::optional<VideoFramePacket> tryConsumeLatestFrame()
     {
-        if (queuedFrames_.empty()) {
+        if (mailboxFrames_.empty()) {
             return std::nullopt;
         }
-        auto frame = queuedFrames_.front();
-        queuedFrames_.pop_front();
-        ++stats_.framesConsumed;
+
+        while (mailboxFrames_.size() > 1u) {
+            mailboxFrames_.pop_front();
+            ++stats_.staleFrameDropCount;
+        }
+
+        auto frame = mailboxFrames_.back();
+        mailboxFrames_.pop_back();
+        ++stats_.consumedFrameCount;
+        stats_.mailboxDepth = mailboxFrames_.size();
+        stats_.lastConsumedGeneration = frame.generation;
         return frame;
     }
 
@@ -168,9 +182,9 @@ public:
         return stats_;
     }
 
-    [[nodiscard]] std::size_t queuedFrameCount() const noexcept
+    [[nodiscard]] std::size_t mailboxFrameCount() const noexcept
     {
-        return queuedFrames_.size();
+        return mailboxFrames_.size();
     }
 
     std::uint64_t advanceGeneration() noexcept
@@ -191,18 +205,20 @@ private:
     {
         config.frameWidth = std::max(config.frameWidth, 1);
         config.frameHeight = std::max(config.frameHeight, 1);
-        config.queueCapacityFrames = std::max<std::size_t>(config.queueCapacityFrames, 1u);
+        config.mailboxDepthFrames = std::max<std::size_t>(config.mailboxDepthFrames, 1u);
         return config;
     }
 
     void initializeQueue()
     {
-        queuedFrames_.clear();
+        mailboxFrames_.clear();
+        stats_.mailboxDepth = 0u;
     }
 
     void clearQueue() noexcept
     {
-        queuedFrames_.clear();
+        mailboxFrames_.clear();
+        stats_.mailboxDepth = 0u;
     }
 
     void resetVisualResourceCache() const
@@ -578,7 +594,7 @@ private:
     VideoEngineConfig config_{};
     VisualOverrideService* visualOverrideService_ = nullptr;
     mutable std::unordered_map<std::string, VisualResourceCacheEntry> visualResourceCache_{};
-    std::deque<VideoFramePacket> queuedFrames_{};
+    std::deque<VideoFramePacket> mailboxFrames_{};
     std::optional<VideoFramePacket> lastValidFrame_{};
     VideoEngineStats stats_{};
     std::uint64_t currentGeneration_ = 0;

@@ -28,11 +28,17 @@ enum class VideoLifecycleState {
 
 struct VideoServiceDiagnostics {
     std::size_t presentFailureCount = 0;
-    std::size_t droppedFrameCount = 0;
     std::size_t compatibilityFallbackCount = 0;
+    std::size_t presentFallbackCount = 0;
+    std::size_t publishedFrameCount = 0;
+    std::size_t presentCount = 0;
+    std::size_t staleFrameDropCount = 0;
+    std::size_t overwriteCount = 0;
     bool headlessModeActive = true;
     std::string lastBackendError;
-    std::size_t frameQueueHighWaterMark = 0;
+    std::size_t mailboxDepth = 0;
+    std::size_t mailboxHighWaterMark = 0;
+    uint64_t lastPublishedGeneration = 0;
     uint64_t lastPresentedGeneration = 0;
     std::string activeBackendName;
     VideoLifecycleState state = VideoLifecycleState::Headless;
@@ -258,9 +264,10 @@ public:
 
     [[nodiscard]] bool presentOneFrame()
     {
-        auto frame = engine_.tryConsumeFrame();
+        auto frame = engine_.tryConsumeLatestFrame();
         if (!frame.has_value()) {
             frame = engine_.fallbackFrame();
+            ++diagnostics_.presentFallbackCount;
         }
 
         VideoFramePacket processed = *frame;
@@ -285,6 +292,7 @@ public:
         }
 
         diagnostics_.lastPresentedGeneration = processed.generation;
+        ++diagnostics_.presentCount;
         syncEngineDiagnostics();
         if (presenter_ == nullptr) {
             setState(VideoLifecycleState::Headless);
@@ -352,8 +360,12 @@ private:
     void syncEngineDiagnostics() const noexcept
     {
         const auto engineStats = engine_.stats();
-        diagnostics_.droppedFrameCount = engineStats.droppedFrameCount;
-        diagnostics_.frameQueueHighWaterMark = engineStats.frameQueueHighWaterMark;
+        diagnostics_.publishedFrameCount = engineStats.publishedFrameCount;
+        diagnostics_.staleFrameDropCount = engineStats.staleFrameDropCount;
+        diagnostics_.overwriteCount = engineStats.overwriteCount;
+        diagnostics_.mailboxDepth = engineStats.mailboxDepth;
+        diagnostics_.mailboxHighWaterMark = engineStats.mailboxHighWaterMark;
+        diagnostics_.lastPublishedGeneration = engineStats.lastPublishedGeneration;
         diagnostics_.state = state_;
         diagnostics_.headlessModeActive = state_ == VideoLifecycleState::Headless || presenter_ == nullptr;
     }

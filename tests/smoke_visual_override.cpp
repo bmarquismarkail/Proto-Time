@@ -25,7 +25,7 @@ std::unique_ptr<BMMQ::VideoService> makeGameBoyVideoService()
     auto videoService = std::make_unique<BMMQ::VideoService>(BMMQ::VideoEngineConfig{
         .frameWidth = 8,
         .frameHeight = 8,
-        .queueCapacityFrames = 1,
+        .mailboxDepthFrames = 1,
     });
     videoService->setVisualDebugAdapter(&GB::gameBoyVisualDebugAdapter());
     return videoService;

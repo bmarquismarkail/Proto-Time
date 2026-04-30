@@ -49,6 +49,15 @@ struct SdlFrontendStats {
     std::size_t framesPrepared = 0;
     std::size_t framesPresented = 0;
     std::size_t renderAttempts = 0;
+    std::size_t videoFramesPublished = 0;
+    std::size_t videoPresentCount = 0;
+    std::size_t videoPresentFallbackCount = 0;
+    std::size_t videoMailboxDepth = 0;
+    std::size_t videoMailboxHighWaterFrames = 0;
+    std::size_t videoMailboxStaleDropCount = 0;
+    std::size_t videoMailboxOverwriteCount = 0;
+    std::uint64_t videoLastPublishedGeneration = 0;
+    std::uint64_t videoLastPresentedGeneration = 0;
     std::size_t videoStateSnapshots = 0;
     std::size_t audioPreviewsBuilt = 0;
     // Audio metrics are read from the shared AudioService/AudioEngine and are global
