@@ -5,8 +5,10 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <atomic>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "../InputTypes.hpp"
@@ -34,10 +36,19 @@ struct SdlFrontendConfig {
     bool enableInput = true;
     VideoPresenterMode videoPresenterMode = VideoPresenterMode::Auto;
     bool autoInitializeBackend = false;
+    bool enableRenderServiceThread = false;
     bool createHiddenWindowOnInitialize = false;
     bool pumpBackendEventsOnInputSample = true;
     bool autoPresentOnVideoEvent = true;
     bool showWindowOnPresent = false;
+};
+
+enum class SdlRenderServiceState : uint8_t {
+    Stopped = 0,
+    Starting,
+    Active,
+    Stopping,
+    Faulted,
 };
 
 struct SdlFrontendStats {
@@ -126,6 +137,14 @@ struct SdlFrontendStats {
     std::size_t eventPumpCalls = 0;
     std::size_t backendEventsTranslated = 0;
     std::size_t serviceCalls = 0;
+    std::size_t renderServiceLoopCount = 0;
+    std::size_t renderServicePresentAttempts = 0;
+    std::size_t renderServicePresentSuccessCount = 0;
+    std::size_t renderServicePresentFailureCount = 0;
+    std::size_t renderServiceEventPumpCount = 0;
+    std::size_t renderServiceSleepCount = 0;
+    std::size_t renderServiceSleepOvershootCount = 0;
+    SdlRenderServiceState renderServiceState = SdlRenderServiceState::Stopped;
 };
 
 enum class SdlFrontendHostEventType : uint8_t {

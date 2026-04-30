@@ -77,6 +77,7 @@ int main(int argc, char** argv)
     config.audioPreviewSampleCount = 64;
     config.autoInitializeBackend = false;
     config.autoPresentOnVideoEvent = false;
+    config.enableRenderServiceThread = true;
     // Create the window hidden on initialize in tests to avoid platform
     // differences in default window visibility (headless CI vs local SDL).
     config.createHiddenWindowOnInitialize = true;
@@ -117,7 +118,11 @@ int main(int argc, char** argv)
     if (initResult) {
         assert(frontend->backendReady());
     }
-    assert(frontend->stats().eventPumpCalls == 0);
+    if (initResult) {
+        assert(frontend->stats().renderServiceState != BMMQ::SdlRenderServiceState::Stopped);
+    } else {
+        assert(frontend->stats().renderServiceState == BMMQ::SdlRenderServiceState::Stopped);
+    }
     assert(!frontend->windowVisible());
     assert(!frontend->windowVisibilityRequested());
     frontend->requestWindowVisibility(true);
@@ -239,7 +244,7 @@ int main(int argc, char** argv)
     assert(stats.videoDebugSnapshotsBuilt == stats.videoStateSnapshots);
     assert(stats.videoFramesPublished >= stats.framesPrepared);
     assert(stats.videoPublishedPixelBytes >= stats.videoFramesPublished * 4u);
-    assert(stats.videoPublishedRealtimeFrameCount >= stats.framesPrepared);
+    assert(stats.videoPublishedRealtimeFrameCount + stats.videoPublishedDebugFrameCount >= stats.framesPrepared);
     assert(stats.videoPresentFreshFrameCount >= stats.framesPresented);
     assert(stats.videoMailboxHighWaterFrames >= 1u);
     assert(stats.videoPresentCount >= stats.framesPresented);
@@ -252,6 +257,15 @@ int main(int argc, char** argv)
     assert(stats.buttonTransitions >= 3);
     assert(stats.eventPumpCalls >= 2);
     assert(stats.serviceCalls >= 1);
+    if (initResult) {
+        assert(stats.renderServiceState != BMMQ::SdlRenderServiceState::Stopped);
+    } else {
+        assert(stats.renderServiceState == BMMQ::SdlRenderServiceState::Stopped);
+    }
+    if (initResult) {
+        assert(stats.renderServiceLoopCount >= 1u);
+        assert(stats.renderServiceSleepCount >= 1u);
+    }
     assert(!frontend->diagnostics().empty());
     assert(frontend->lastVideoDebugModel().has_value());
     assert(frontend->lastVideoDebugModel()->displayEnabled);

@@ -7,7 +7,9 @@
 #include "SdlAudioOutput.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
+#include <condition_variable>
 
     enum class ControlAction : uint8_t {
         PauseToggle = 0,
@@ -38,10 +40,12 @@
 #include <cctype>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -73,6 +77,11 @@ public:
         setMaxEntryCount(256u);
     }
 
+    ~SdlFrontendPluginImpl() override
+    {
+        shutdownBackend();
+    }
+
     [[nodiscard]] const BMMQ::SdlFrontendConfig& config() const noexcept override
     {
         return config_;
@@ -80,6 +89,8 @@ public:
 
     [[nodiscard]] const BMMQ::SdlFrontendStats& stats() const noexcept override
     {
+        std::scoped_lock<std::mutex> lock(sharedStateMutex_);
+        stats_.renderServiceState = renderServiceState_.load(std::memory_order_acquire);
         syncAudioTransportStats();
         return stats_;
     }
@@ -140,10 +151,24 @@ public:
 
     bool serviceFrontend() override
     {
+        std::scoped_lock<std::mutex> lock(sharedStateMutex_);
         ++stats_.serviceCalls;
+        stats_.renderServiceState = renderServiceState_.load(std::memory_order_acquire);
+        if (renderServiceActive()) {
+            syncVideoTransportStats();
+            syncAudioTransportStats();
+            const bool hasVideoWork = config_.enableVideo && (frameDirty_ || lastFrame_.has_value());
+            const bool hasAudioState = config_.enableAudio && lastAudioState_.has_value();
+            const bool hadAudioPreview = config_.enableAudio && lastAudioPreview_.has_value();
+            return hasVideoWork || hasAudioState || hadAudioPreview || quitRequested_;
+        }
+
         std::size_t handledEvents = 0;
         if (!config_.pumpBackendEventsOnInputSample) {
             handledEvents = pumpBackendEvents();
+            if (handledEvents != 0u) {
+                ++stats_.renderServiceEventPumpCount;
+            }
         }
 
         syncVideoTransportStats();
@@ -154,10 +179,16 @@ public:
 
         bool presented = false;
         if (hadFrame && (frameDirty_ || visibilityChanged)) {
+            ++stats_.renderServicePresentAttempts;
             if (frameDirty_ && shouldDeferVideoFrameForAudioLowWater()) {
                 videoPresentDeferredForAudioLowWater_ = true;
             } else {
                 presented = presentLatestFrame();
+                if (presented) {
+                    ++stats_.renderServicePresentSuccessCount;
+                } else {
+                    ++stats_.renderServicePresentFailureCount;
+                }
             }
         }
 
@@ -386,6 +417,7 @@ public:
 
     bool tryInitializeBackend() override
     {
+        std::scoped_lock<std::mutex> lock(sharedStateMutex_);
         ++stats_.backendInitAttempts;
         lastBackendError_.clear();
 
@@ -418,6 +450,7 @@ public:
         }
 
         backendReady_ = true;
+        startRenderServiceIfNeeded();
         appendLog("sdl: backend initialized");
         return true;
 #else
@@ -490,6 +523,7 @@ public:
 
     void onVideoEvent(const BMMQ::MachineEvent& event, const BMMQ::MachineView& view) override
     {
+        std::scoped_lock<std::mutex> lock(sharedStateMutex_);
         if (!config_.enableVideo) {
             return;
         }
@@ -513,6 +547,7 @@ public:
                 syncVideoTransportStats();
                 ++stats_.framesPrepared;
                 frameDirty_ = true;
+                renderServiceWakeCv_.notify_all();
                 if (deferPresentForAudioLowWater) {
                     ++stats_.audioQueueLowWaterHits;
                     videoPresentDeferredForAudioLowWater_ = true;
@@ -528,6 +563,7 @@ public:
                     syncVideoTransportStats();
                     ++stats_.framesPrepared;
                     frameDirty_ = true;
+                    renderServiceWakeCv_.notify_all();
                     if (deferPresentForAudioLowWater) {
                         ++stats_.audioQueueLowWaterHits;
                         videoPresentDeferredForAudioLowWater_ = true;
@@ -562,6 +598,7 @@ public:
 
     void onAudioEvent(const BMMQ::MachineEvent& event, const BMMQ::MachineView& view) override
     {
+        std::scoped_lock<std::mutex> lock(sharedStateMutex_);
         if (!config_.enableAudio) {
             return;
         }
@@ -605,11 +642,12 @@ public:
 
     std::optional<BMMQ::InputButtonMask> sampleDigitalInput() override
     {
+        std::scoped_lock<std::mutex> lock(sharedStateMutex_);
         if (!config_.enableInput) {
             return std::nullopt;
         }
         ++stats_.inputPolls;
-        if (config_.pumpBackendEventsOnInputSample) {
+        if (config_.pumpBackendEventsOnInputSample && !renderServiceActive()) {
             pumpBackendEvents();
         }
         if (queuedDigitalInputMask_.has_value()) {
@@ -672,6 +710,91 @@ public:
     }
 
 private:
+    [[nodiscard]] bool renderServiceActive() const noexcept
+    {
+        return renderServiceState_.load(std::memory_order_acquire) == BMMQ::SdlRenderServiceState::Active;
+    }
+
+    void setRenderServiceState(BMMQ::SdlRenderServiceState state) noexcept
+    {
+        renderServiceState_.store(state, std::memory_order_release);
+        stats_.renderServiceState = state;
+    }
+
+    void startRenderServiceIfNeeded()
+    {
+        if (!config_.enableRenderServiceThread || !config_.enableVideo) {
+            setRenderServiceState(BMMQ::SdlRenderServiceState::Stopped);
+            return;
+        }
+        if (renderServiceThread_.joinable()) {
+            return;
+        }
+
+        renderServiceStopRequested_.store(false, std::memory_order_release);
+        setRenderServiceState(BMMQ::SdlRenderServiceState::Starting);
+        renderServiceThread_ = std::thread([this]() { renderServiceLoop(); });
+    }
+
+    void stopRenderService()
+    {
+        if (!renderServiceThread_.joinable()) {
+            setRenderServiceState(BMMQ::SdlRenderServiceState::Stopped);
+            return;
+        }
+
+        setRenderServiceState(BMMQ::SdlRenderServiceState::Stopping);
+        renderServiceStopRequested_.store(true, std::memory_order_release);
+        renderServiceWakeCv_.notify_all();
+        renderServiceThread_.join();
+        setRenderServiceState(BMMQ::SdlRenderServiceState::Stopped);
+    }
+
+    void renderServiceLoop()
+    {
+        setRenderServiceState(BMMQ::SdlRenderServiceState::Active);
+        auto lastWake = std::chrono::steady_clock::now();
+        const auto sleepInterval = std::chrono::milliseconds(2);
+
+        while (!renderServiceStopRequested_.load(std::memory_order_acquire)) {
+            {
+                std::scoped_lock<std::mutex> lock(sharedStateMutex_);
+                ++stats_.renderServiceLoopCount;
+                const auto handled = pumpBackendEvents();
+                if (handled != 0u) {
+                    ++stats_.renderServiceEventPumpCount;
+                }
+                syncVideoTransportStats();
+                const bool hadFrame = config_.enableVideo && lastFrame_.has_value();
+                const bool visibilityChanged = windowVisible_ != windowVisibilityRequested_;
+                if (hadFrame && (frameDirty_ || visibilityChanged)) {
+                    ++stats_.renderServicePresentAttempts;
+                    if (frameDirty_ && shouldDeferVideoFrameForAudioLowWater()) {
+                        videoPresentDeferredForAudioLowWater_ = true;
+                    } else if (presentLatestFrame()) {
+                        ++stats_.renderServicePresentSuccessCount;
+                    } else {
+                        ++stats_.renderServicePresentFailureCount;
+                    }
+                }
+                applyWindowVisibilityRequest();
+            }
+
+            ++stats_.renderServiceSleepCount;
+            std::unique_lock<std::mutex> waitLock(renderServiceWaitMutex_);
+            const auto beforeWait = std::chrono::steady_clock::now();
+            renderServiceWakeCv_.wait_for(waitLock, sleepInterval, [this] {
+                return renderServiceStopRequested_.load(std::memory_order_acquire);
+            });
+            const auto wakeTime = std::chrono::steady_clock::now();
+            if (wakeTime - beforeWait > sleepInterval + std::chrono::milliseconds(2)) {
+                ++stats_.renderServiceSleepOvershootCount;
+            }
+            lastWake = wakeTime;
+            (void)lastWake;
+        }
+    }
+
     [[nodiscard]] std::size_t computeAudioSafetyMarginSamples() const noexcept
     {
         const auto callbackChunk =
@@ -1144,6 +1267,8 @@ private:
 
     void shutdownBackend() noexcept
     {
+        stopRenderService();
+        std::scoped_lock<std::mutex> lock(sharedStateMutex_);
         if (audioService_ != nullptr) {
             audioService_->setBackendPausedOrClosed(true);
         }
@@ -1166,6 +1291,7 @@ private:
             (void)audioService_->resetStream();
         }
         backendReady_ = false;
+        stats_.renderServiceState = renderServiceState_.load(std::memory_order_acquire);
     }
 
     [[nodiscard]] bool hasAudibleChannelOneState(const BMMQ::AudioStateView& state) const noexcept
@@ -1411,6 +1537,12 @@ private:
     BMMQ::SdlVideoPresenter* videoPresenter_ = nullptr;
     std::unique_ptr<BMMQ::IAudioOutputBackend> audioOutput_ = std::make_unique<BMMQ::SdlAudioOutputBackend>();
     std::string selectedAudioBackend_ = "sdl";
+    mutable std::mutex sharedStateMutex_;
+    std::atomic<BMMQ::SdlRenderServiceState> renderServiceState_{BMMQ::SdlRenderServiceState::Stopped};
+    std::atomic<bool> renderServiceStopRequested_{false};
+    std::thread renderServiceThread_{};
+    std::mutex renderServiceWaitMutex_{};
+    std::condition_variable renderServiceWakeCv_{};
 };
 
 BMMQ::ISdlFrontendPlugin* createSdlFrontendPlugin(const BMMQ::SdlFrontendConfig* config)
