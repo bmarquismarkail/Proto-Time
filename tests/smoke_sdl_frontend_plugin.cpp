@@ -240,6 +240,9 @@ int main(int argc, char** argv)
     assert(stats.videoFramesPublished >= stats.framesPrepared);
     assert(stats.videoMailboxHighWaterFrames >= 1u);
     assert(stats.videoPresentCount >= stats.framesPresented);
+    assert(stats.configuredPresenterMode == BMMQ::VideoPresenterMode::Auto);
+    assert(stats.videoPresenterRenderCount >= stats.framesPresented);
+    assert(stats.videoPresenterTextureUploadCount >= stats.framesPresented);
     assert(stats.audioRealtimePacketsAccepted >= 1u);
     assert(stats.audioStateSnapshotsBuilt == 0u);
     assert(stats.audioPreviewsBuilt >= 1);

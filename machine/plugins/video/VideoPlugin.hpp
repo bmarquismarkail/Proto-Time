@@ -1,12 +1,24 @@
 #ifndef BMMQ_VIDEO_PLUGIN_HPP
 #define BMMQ_VIDEO_PLUGIN_HPP
 
+#include <cstddef>
 #include <string_view>
 
 #include "VideoCapabilities.hpp"
 #include "VideoFrame.hpp"
 
 namespace BMMQ {
+
+struct VideoPresenterDiagnostics {
+    VideoPresenterMode configuredMode = VideoPresenterMode::Auto;
+    VideoPresenterMode activeMode = VideoPresenterMode::Auto;
+    bool usedSoftwareFallback = false;
+    std::size_t softwareFallbackCount = 0;
+    std::size_t textureRecreateCount = 0;
+    std::size_t textureUploadCount = 0;
+    std::size_t presentCount = 0;
+    std::string_view rendererName{};
+};
 
 class IVideoPresenterPlugin {
 public:
@@ -23,6 +35,10 @@ public:
     [[nodiscard]] virtual bool ready() const noexcept = 0;
     virtual bool present(const VideoFramePacket& frame) noexcept = 0;
     [[nodiscard]] virtual std::string_view lastError() const noexcept = 0;
+    [[nodiscard]] virtual VideoPresenterDiagnostics diagnostics() const noexcept
+    {
+        return {};
+    }
 };
 
 class IVideoFrameProcessorPlugin {

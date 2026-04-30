@@ -1009,6 +1009,7 @@ private:
                 static_cast<std::uint32_t>(std::numeric_limits<int>::max()))),
             .frameWidth = std::max(config_.frameWidth, 1),
             .frameHeight = std::max(config_.frameHeight, 1),
+            .mode = config_.videoPresenterMode,
             .createHiddenWindowOnOpen = config_.createHiddenWindowOnInitialize,
             .showWindowOnPresent = config_.showWindowOnPresent,
         });
@@ -1056,6 +1057,14 @@ private:
         stats_.videoMailboxOverwriteCount = diagnostics.overwriteCount;
         stats_.videoLastPublishedGeneration = diagnostics.lastPublishedGeneration;
         stats_.videoLastPresentedGeneration = diagnostics.lastPresentedGeneration;
+        stats_.configuredPresenterMode = diagnostics.configuredPresenterMode;
+        stats_.activePresenterMode = diagnostics.activePresenterMode;
+        stats_.videoPresenterUsedSoftwareFallback = diagnostics.presenterUsedSoftwareFallback;
+        stats_.videoPresenterSoftwareFallbackCount = diagnostics.presenterSoftwareFallbackCount;
+        stats_.videoPresenterTextureRecreateCount = diagnostics.presenterTextureRecreateCount;
+        stats_.videoPresenterTextureUploadCount = diagnostics.presenterTextureUploadCount;
+        stats_.videoPresenterRenderCount = diagnostics.presenterRenderCount;
+        stats_.videoPresenterRendererName = diagnostics.presenterRendererName;
         if (const auto& frame = videoService_->engine().lastValidFrame(); frame.has_value()) {
             const auto publishedFrames = videoService_->engine().stats().publishedFrameCount;
             const bool frameChanged = !lastFrame_.has_value() ||

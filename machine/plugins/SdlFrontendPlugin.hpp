@@ -12,6 +12,7 @@
 #include "../InputTypes.hpp"
 #include "input/InputPlugin.hpp"
 #include "IoPlugin.hpp"
+#include "video/VideoFrame.hpp"
 
 namespace BMMQ {
 
@@ -31,6 +32,7 @@ struct SdlFrontendConfig {
     bool enableVideo = true;
     bool enableAudio = true;
     bool enableInput = true;
+    VideoPresenterMode videoPresenterMode = VideoPresenterMode::Auto;
     bool autoInitializeBackend = false;
     bool createHiddenWindowOnInitialize = false;
     bool pumpBackendEventsOnInputSample = true;
@@ -58,6 +60,14 @@ struct SdlFrontendStats {
     std::size_t videoMailboxOverwriteCount = 0;
     std::uint64_t videoLastPublishedGeneration = 0;
     std::uint64_t videoLastPresentedGeneration = 0;
+    VideoPresenterMode configuredPresenterMode = VideoPresenterMode::Auto;
+    VideoPresenterMode activePresenterMode = VideoPresenterMode::Auto;
+    bool videoPresenterUsedSoftwareFallback = false;
+    std::size_t videoPresenterSoftwareFallbackCount = 0;
+    std::size_t videoPresenterTextureRecreateCount = 0;
+    std::size_t videoPresenterTextureUploadCount = 0;
+    std::size_t videoPresenterRenderCount = 0;
+    std::string videoPresenterRendererName;
     std::size_t videoRealtimePacketsAccepted = 0;
     std::size_t videoRealtimePacketsSkipped = 0;
     std::size_t videoDebugSnapshotsBuilt = 0;

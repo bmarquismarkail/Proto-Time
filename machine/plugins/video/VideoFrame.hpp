@@ -19,6 +19,12 @@ enum class VideoFrameSource : uint8_t {
     LastValidFallback = 2,
 };
 
+enum class VideoPresenterMode : uint8_t {
+    Auto = 0,
+    Hardware = 1,
+    Software = 2,
+};
+
 struct VideoFramePacket {
     int width = 160;
     int height = 144;
@@ -43,6 +49,7 @@ struct VideoPresenterConfig {
     int scale = 2;
     int frameWidth = 160;
     int frameHeight = 144;
+    VideoPresenterMode mode = VideoPresenterMode::Auto;
     bool createHiddenWindowOnOpen = true;
     bool showWindowOnPresent = false;
 };

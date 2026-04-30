@@ -38,6 +38,14 @@ struct VideoServiceDiagnostics {
     std::string lastBackendError;
     std::size_t mailboxDepth = 0;
     std::size_t mailboxHighWaterMark = 0;
+    VideoPresenterMode configuredPresenterMode = VideoPresenterMode::Auto;
+    VideoPresenterMode activePresenterMode = VideoPresenterMode::Auto;
+    bool presenterUsedSoftwareFallback = false;
+    std::size_t presenterSoftwareFallbackCount = 0;
+    std::size_t presenterTextureRecreateCount = 0;
+    std::size_t presenterTextureUploadCount = 0;
+    std::size_t presenterRenderCount = 0;
+    std::string presenterRendererName;
     uint64_t lastPublishedGeneration = 0;
     uint64_t lastPresentedGeneration = 0;
     std::string activeBackendName;
@@ -115,6 +123,7 @@ public:
         presenterConfig_ = config;
         presenterConfig_.frameWidth = std::max(presenterConfig_.frameWidth, 1);
         presenterConfig_.frameHeight = std::max(presenterConfig_.frameHeight, 1);
+        diagnostics_.configuredPresenterMode = presenterConfig_.mode;
         return true;
     }
 
@@ -414,6 +423,17 @@ private:
         diagnostics_.mailboxDepth = engineStats.mailboxDepth;
         diagnostics_.mailboxHighWaterMark = engineStats.mailboxHighWaterMark;
         diagnostics_.lastPublishedGeneration = engineStats.lastPublishedGeneration;
+        diagnostics_.configuredPresenterMode = presenterConfig_.mode;
+        if (presenter_ != nullptr) {
+            const auto presenterDiagnostics = presenter_->diagnostics();
+            diagnostics_.activePresenterMode = presenterDiagnostics.activeMode;
+            diagnostics_.presenterUsedSoftwareFallback = presenterDiagnostics.usedSoftwareFallback;
+            diagnostics_.presenterSoftwareFallbackCount = presenterDiagnostics.softwareFallbackCount;
+            diagnostics_.presenterTextureRecreateCount = presenterDiagnostics.textureRecreateCount;
+            diagnostics_.presenterTextureUploadCount = presenterDiagnostics.textureUploadCount;
+            diagnostics_.presenterRenderCount = presenterDiagnostics.presentCount;
+            diagnostics_.presenterRendererName = std::string(presenterDiagnostics.rendererName);
+        }
         diagnostics_.state = state_;
         diagnostics_.headlessModeActive = state_ == VideoLifecycleState::Headless || presenter_ == nullptr;
     }

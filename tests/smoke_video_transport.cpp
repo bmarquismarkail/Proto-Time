@@ -36,11 +36,53 @@ int main()
 
     auto sdl = std::make_unique<BMMQ::SdlVideoPresenter>();
     assert(service.attachPresenter(std::move(sdl)));
-    const bool opened = service.resume();
-    if (opened) {
-        assert(service.submitFrame(BMMQ::makeBlankVideoFrame(8, 8, 12u)));
+    assert(service.configurePresenter({
+        .windowTitle = "software",
+        .scale = 1,
+        .frameWidth = 8,
+        .frameHeight = 8,
+        .mode = BMMQ::VideoPresenterMode::Software,
+        .createHiddenWindowOnOpen = true,
+        .showWindowOnPresent = false,
+    }));
+    assert(service.resume());
+    assert(service.submitFrame(BMMQ::makeBlankVideoFrame(8, 8, 12u)));
+    (void)service.presentOneFrame();
+    assert(service.diagnostics().configuredPresenterMode == BMMQ::VideoPresenterMode::Software);
+    assert(service.diagnostics().activePresenterMode == BMMQ::VideoPresenterMode::Software);
+    assert(service.diagnostics().presenterTextureUploadCount >= 1u);
+    assert(service.diagnostics().presenterRenderCount >= 1u);
+    assert(service.pause());
+
+    assert(service.configurePresenter({
+        .windowTitle = "auto",
+        .scale = 1,
+        .frameWidth = 8,
+        .frameHeight = 8,
+        .mode = BMMQ::VideoPresenterMode::Auto,
+        .createHiddenWindowOnOpen = true,
+        .showWindowOnPresent = false,
+    }));
+    assert(service.resume());
+    assert(service.submitFrame(BMMQ::makeBlankVideoFrame(8, 8, 13u)));
+    (void)service.presentOneFrame();
+    assert(service.diagnostics().configuredPresenterMode == BMMQ::VideoPresenterMode::Auto);
+    assert(service.pause());
+
+    assert(service.configurePresenter({
+        .windowTitle = "hardware",
+        .scale = 1,
+        .frameWidth = 8,
+        .frameHeight = 8,
+        .mode = BMMQ::VideoPresenterMode::Hardware,
+        .createHiddenWindowOnOpen = true,
+        .showWindowOnPresent = false,
+    }));
+    const bool openedHardware = service.resume();
+    if (openedHardware) {
+        assert(service.submitFrame(BMMQ::makeBlankVideoFrame(8, 8, 14u)));
         (void)service.presentOneFrame();
-        assert(!service.diagnostics().activeBackendName.empty());
+        assert(service.diagnostics().activePresenterMode == BMMQ::VideoPresenterMode::Hardware);
         assert(service.pause());
     } else {
         assert(service.state() == BMMQ::VideoLifecycleState::Faulted);

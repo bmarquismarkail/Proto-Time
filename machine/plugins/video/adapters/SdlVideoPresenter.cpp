@@ -66,6 +66,11 @@ bool SdlVideoPresenter::open(const VideoPresenterConfig& config)
     config_.frameHeight = std::max(config_.frameHeight, 1);
     config_.scale = std::max(config_.scale, 1);
     lastError_.clear();
+    diagnostics_ = {};
+    diagnostics_.configuredMode = config_.mode;
+    diagnostics_.activeMode = config_.mode;
+    rendererNameStorage_.clear();
+    diagnostics_.rendererName = rendererNameStorage_;
 
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
     if (ready_) {
@@ -159,43 +164,24 @@ bool SdlVideoPresenter::present(const VideoFramePacket& frame) noexcept
         windowVisible_ = windowVisibilityRequested_;
     }
 
-    if (renderer_ == nullptr) {
-        SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
-        renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_SOFTWARE);
-        if (renderer_ == nullptr) {
-            lastError_ = SDL_GetError();
-            return false;
-        }
-        SDL_RenderSetLogicalSize(renderer_, frame.width, frame.height);
+    if (!ensureRenderer(frame.width, frame.height)) {
+        return false;
     }
 
-    if (texture_ == nullptr || textureWidth_ != frame.width || textureHeight_ != frame.height) {
-        if (texture_ != nullptr) {
-            SDL_DestroyTexture(texture_);
-            texture_ = nullptr;
-        }
-        SDL_RenderSetLogicalSize(renderer_, frame.width, frame.height);
-        texture_ = SDL_CreateTexture(renderer_,
-                                     SDL_PIXELFORMAT_ARGB8888,
-                                     SDL_TEXTUREACCESS_STREAMING,
-                                     frame.width,
-                                     frame.height);
-        if (texture_ == nullptr) {
-            lastError_ = SDL_GetError();
-            return false;
-        }
-        textureWidth_ = frame.width;
-        textureHeight_ = frame.height;
+    if (!ensureTexture(frame.width, frame.height)) {
+        return false;
     }
 
     if (SDL_UpdateTexture(texture_, nullptr, frame.pixels.data(), frame.width * static_cast<int>(sizeof(uint32_t))) != 0) {
         lastError_ = SDL_GetError();
         return false;
     }
+    ++diagnostics_.textureUploadCount;
 
     SDL_RenderClear(renderer_);
     SDL_RenderCopy(renderer_, texture_, nullptr, nullptr);
     SDL_RenderPresent(renderer_);
+    ++diagnostics_.presentCount;
     lastError_.clear();
     return true;
 #else
@@ -208,6 +194,11 @@ bool SdlVideoPresenter::present(const VideoFramePacket& frame) noexcept
 std::string_view SdlVideoPresenter::lastError() const noexcept
 {
     return lastError_;
+}
+
+VideoPresenterDiagnostics SdlVideoPresenter::diagnostics() const noexcept
+{
+    return diagnostics_;
 }
 
 bool SdlVideoPresenter::windowVisible() const noexcept
@@ -223,6 +214,99 @@ void SdlVideoPresenter::requestWindowVisibility(bool visible) noexcept
 bool SdlVideoPresenter::windowVisibilityRequested() const noexcept
 {
     return windowVisibilityRequested_;
+}
+
+bool SdlVideoPresenter::ensureRenderer(int frameWidth, int frameHeight) noexcept
+{
+#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
+    if (renderer_ != nullptr) {
+        return true;
+    }
+
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
+
+    const auto assignRendererMetadata = [this]() {
+        SDL_RendererInfo rendererInfo{};
+        if (SDL_GetRendererInfo(renderer_, &rendererInfo) == 0 && rendererInfo.name != nullptr) {
+            rendererNameStorage_ = rendererInfo.name;
+        } else {
+            rendererNameStorage_.clear();
+        }
+        diagnostics_.rendererName = rendererNameStorage_;
+    };
+
+    auto createSoftwareRenderer = [&]() -> bool {
+        renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_SOFTWARE);
+        if (renderer_ == nullptr) {
+            lastError_ = SDL_GetError();
+            return false;
+        }
+        diagnostics_.activeMode = VideoPresenterMode::Software;
+        SDL_RenderSetLogicalSize(renderer_, frameWidth, frameHeight);
+        assignRendererMetadata();
+        return true;
+    };
+
+    if (config_.mode == VideoPresenterMode::Software) {
+        return createSoftwareRenderer();
+    }
+
+    renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    if (renderer_ != nullptr) {
+        diagnostics_.activeMode = VideoPresenterMode::Hardware;
+        SDL_RenderSetLogicalSize(renderer_, frameWidth, frameHeight);
+        assignRendererMetadata();
+        return true;
+    }
+
+    const std::string acceleratedError = SDL_GetError();
+    if (config_.mode == VideoPresenterMode::Hardware) {
+        lastError_ = "accelerated renderer required but unavailable: " + acceleratedError;
+        return false;
+    }
+
+    if (!createSoftwareRenderer()) {
+        return false;
+    }
+    diagnostics_.usedSoftwareFallback = true;
+    ++diagnostics_.softwareFallbackCount;
+    return true;
+#else
+    (void)frameWidth;
+    (void)frameHeight;
+    return false;
+#endif
+}
+
+bool SdlVideoPresenter::ensureTexture(int frameWidth, int frameHeight) noexcept
+{
+#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
+    if (texture_ != nullptr && textureWidth_ == frameWidth && textureHeight_ == frameHeight) {
+        return true;
+    }
+    if (texture_ != nullptr) {
+        SDL_DestroyTexture(texture_);
+        texture_ = nullptr;
+    }
+    SDL_RenderSetLogicalSize(renderer_, frameWidth, frameHeight);
+    texture_ = SDL_CreateTexture(renderer_,
+                                 SDL_PIXELFORMAT_ARGB8888,
+                                 SDL_TEXTUREACCESS_STREAMING,
+                                 frameWidth,
+                                 frameHeight);
+    if (texture_ == nullptr) {
+        lastError_ = SDL_GetError();
+        return false;
+    }
+    textureWidth_ = frameWidth;
+    textureHeight_ = frameHeight;
+    ++diagnostics_.textureRecreateCount;
+    return true;
+#else
+    (void)frameWidth;
+    (void)frameHeight;
+    return false;
+#endif
 }
 
 } // namespace BMMQ

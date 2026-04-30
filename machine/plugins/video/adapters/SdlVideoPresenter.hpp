@@ -29,13 +29,19 @@ public:
     [[nodiscard]] bool ready() const noexcept override;
     bool present(const VideoFramePacket& frame) noexcept override;
     [[nodiscard]] std::string_view lastError() const noexcept override;
+    [[nodiscard]] VideoPresenterDiagnostics diagnostics() const noexcept override;
     [[nodiscard]] bool windowVisible() const noexcept;
     void requestWindowVisibility(bool visible) noexcept;
     [[nodiscard]] bool windowVisibilityRequested() const noexcept;
 
 private:
+    bool ensureRenderer(int frameWidth, int frameHeight) noexcept;
+    bool ensureTexture(int frameWidth, int frameHeight) noexcept;
+
     VideoPresenterConfig config_{};
     std::string lastError_{};
+    VideoPresenterDiagnostics diagnostics_{};
+    std::string rendererNameStorage_{};
     bool ready_ = false;
     bool windowVisible_ = false;
     bool windowVisibilityRequested_ = false;
