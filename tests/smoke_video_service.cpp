@@ -152,6 +152,10 @@ int main()
     assert(service.diagnostics().lastPresentedGeneration == 3u);
     assert(service.diagnostics().presentCount == 1u);
     assert(service.diagnostics().lastPublishedGeneration == 3u);
+    assert(service.diagnostics().presentFromFreshFrameCount == 1u);
+    assert(service.diagnostics().publishedDebugFrameCount >= 1u);
+    assert(service.diagnostics().publishedRealtimeFrameCount == 0u);
+    assert(service.diagnostics().publishedPixelBytes >= frame.pixelCount() * sizeof(std::uint32_t));
 
     BMMQ::VideoService scanlineService(BMMQ::VideoEngineConfig{
         .frameWidth = 8,

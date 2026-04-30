@@ -27,11 +27,14 @@ struct VideoEngineConfig {
 
 struct VideoEngineStats {
     std::size_t publishedFrameCount = 0;
+    std::size_t publishedDebugFrameCount = 0;
+    std::size_t publishedRealtimeFrameCount = 0;
     std::size_t consumedFrameCount = 0;
     std::size_t staleFrameDropCount = 0;
     std::size_t overwriteCount = 0;
     std::size_t mailboxHighWaterMark = 0;
     std::size_t mailboxDepth = 0;
+    std::size_t publishedPixelBytes = 0;
     std::uint64_t lastPublishedGeneration = 0;
     std::uint64_t lastConsumedGeneration = 0;
 };
@@ -124,6 +127,11 @@ public:
 
     [[nodiscard]] VideoSubmitResult submitFrame(const VideoFramePacket& frame)
     {
+        return submitPresentPacket(makePresentPacket(VideoFramePacket(frame)));
+    }
+
+    [[nodiscard]] VideoSubmitResult submitPresentPacket(const VideoPresentPacket& frame)
+    {
         if (frame.empty()) {
             return {};
         }
@@ -137,13 +145,19 @@ public:
         }
         mailboxFrames_.push_back(frame);
         ++stats_.publishedFrameCount;
+        if (frame.source == VideoFrameSource::RealtimeSnapshot) {
+            ++stats_.publishedRealtimeFrameCount;
+        } else {
+            ++stats_.publishedDebugFrameCount;
+        }
+        stats_.publishedPixelBytes += frame.pixelCount() * sizeof(std::uint32_t);
         stats_.mailboxDepth = mailboxFrames_.size();
         stats_.mailboxHighWaterMark = std::max(stats_.mailboxHighWaterMark, mailboxFrames_.size());
         stats_.lastPublishedGeneration = frame.generation;
         return VideoSubmitResult{.accepted = true, .overwroteOldFrame = overwroteOldFrame};
     }
 
-    [[nodiscard]] std::optional<VideoFramePacket> tryConsumeLatestFrame()
+    [[nodiscard]] std::optional<VideoPresentPacket> tryConsumeLatestFrame()
     {
         if (mailboxFrames_.empty()) {
             return std::nullopt;
@@ -162,17 +176,17 @@ public:
         return frame;
     }
 
-    [[nodiscard]] VideoFramePacket fallbackFrame() const
+    [[nodiscard]] VideoPresentPacket fallbackFrame() const
     {
         if (lastValidFrame_.has_value()) {
             auto frame = *lastValidFrame_;
             frame.source = VideoFrameSource::LastValidFallback;
             return frame;
         }
-        return makeBlankVideoFrame(config_.frameWidth, config_.frameHeight, currentGeneration_);
+        return makePresentPacket(makeBlankVideoFrame(config_.frameWidth, config_.frameHeight, currentGeneration_));
     }
 
-    [[nodiscard]] const std::optional<VideoFramePacket>& lastValidFrame() const noexcept
+    [[nodiscard]] const std::optional<VideoPresentPacket>& lastValidFrame() const noexcept
     {
         return lastValidFrame_;
     }
@@ -594,8 +608,8 @@ private:
     VideoEngineConfig config_{};
     VisualOverrideService* visualOverrideService_ = nullptr;
     mutable std::unordered_map<std::string, VisualResourceCacheEntry> visualResourceCache_{};
-    std::deque<VideoFramePacket> mailboxFrames_{};
-    std::optional<VideoFramePacket> lastValidFrame_{};
+    std::deque<VideoPresentPacket> mailboxFrames_{};
+    std::optional<VideoPresentPacket> lastValidFrame_{};
     VideoEngineStats stats_{};
     std::uint64_t currentGeneration_ = 0;
 };

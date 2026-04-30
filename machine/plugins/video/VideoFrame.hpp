@@ -15,8 +15,9 @@ enum class VideoFrameFormat : uint8_t {
 
 enum class VideoFrameSource : uint8_t {
     MachineSnapshot = 0,
-    BlankFallback = 1,
-    LastValidFallback = 2,
+    RealtimeSnapshot = 1,
+    BlankFallback = 2,
+    LastValidFallback = 3,
 };
 
 enum class VideoPresenterMode : uint8_t {
@@ -26,6 +27,25 @@ enum class VideoPresenterMode : uint8_t {
 };
 
 struct VideoFramePacket {
+    int width = 160;
+    int height = 144;
+    VideoFrameFormat format = VideoFrameFormat::Argb8888;
+    VideoFrameSource source = VideoFrameSource::MachineSnapshot;
+    uint64_t generation = 0;
+    std::vector<uint32_t> pixels;
+
+    [[nodiscard]] bool empty() const noexcept
+    {
+        return pixels.empty();
+    }
+
+    [[nodiscard]] std::size_t pixelCount() const noexcept
+    {
+        return pixels.size();
+    }
+};
+
+struct VideoPresentPacket {
     int width = 160;
     int height = 144;
     VideoFrameFormat format = VideoFrameFormat::Argb8888;
@@ -62,6 +82,30 @@ struct VideoPresenterConfig {
     frame.generation = generation;
     frame.source = VideoFrameSource::BlankFallback;
     frame.pixels.assign(static_cast<std::size_t>(frame.width) * static_cast<std::size_t>(frame.height), 0xFF000000u);
+    return frame;
+}
+
+[[nodiscard]] inline VideoPresentPacket makePresentPacket(VideoFramePacket frame)
+{
+    VideoPresentPacket present;
+    present.width = frame.width;
+    present.height = frame.height;
+    present.format = frame.format;
+    present.source = frame.source;
+    present.generation = frame.generation;
+    present.pixels = std::move(frame.pixels);
+    return present;
+}
+
+[[nodiscard]] inline VideoFramePacket makeFramePacket(VideoPresentPacket packet)
+{
+    VideoFramePacket frame;
+    frame.width = packet.width;
+    frame.height = packet.height;
+    frame.format = packet.format;
+    frame.source = packet.source;
+    frame.generation = packet.generation;
+    frame.pixels = std::move(packet.pixels);
     return frame;
 }
 

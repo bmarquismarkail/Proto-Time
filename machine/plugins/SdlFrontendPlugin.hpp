@@ -68,6 +68,14 @@ struct SdlFrontendStats {
     std::size_t videoPresenterTextureUploadCount = 0;
     std::size_t videoPresenterRenderCount = 0;
     std::string videoPresenterRendererName;
+    std::size_t videoPublishedDebugFrameCount = 0;
+    std::size_t videoPublishedRealtimeFrameCount = 0;
+    std::size_t videoPublishedPixelBytes = 0;
+    std::size_t videoPresentFreshFrameCount = 0;
+    std::size_t videoPresentGenerationGap0 = 0;
+    std::size_t videoPresentGenerationGap1 = 0;
+    std::size_t videoPresentGenerationGap2To3 = 0;
+    std::size_t videoPresentGenerationGap4Plus = 0;
     std::size_t videoRealtimePacketsAccepted = 0;
     std::size_t videoRealtimePacketsSkipped = 0;
     std::size_t videoDebugSnapshotsBuilt = 0;

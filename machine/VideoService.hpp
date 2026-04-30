@@ -32,6 +32,7 @@ struct VideoServiceDiagnostics {
     std::size_t presentFallbackCount = 0;
     std::size_t publishedFrameCount = 0;
     std::size_t presentCount = 0;
+    std::size_t presentFromFreshFrameCount = 0;
     std::size_t staleFrameDropCount = 0;
     std::size_t overwriteCount = 0;
     bool headlessModeActive = true;
@@ -46,6 +47,13 @@ struct VideoServiceDiagnostics {
     std::size_t presenterTextureUploadCount = 0;
     std::size_t presenterRenderCount = 0;
     std::string presenterRendererName;
+    std::size_t publishedDebugFrameCount = 0;
+    std::size_t publishedRealtimeFrameCount = 0;
+    std::size_t publishedPixelBytes = 0;
+    std::size_t presentGenerationGap0 = 0;
+    std::size_t presentGenerationGap1 = 0;
+    std::size_t presentGenerationGap2To3 = 0;
+    std::size_t presentGenerationGap4Plus = 0;
     uint64_t lastPublishedGeneration = 0;
     uint64_t lastPresentedGeneration = 0;
     std::string activeBackendName;
@@ -303,13 +311,15 @@ public:
         }
 
         resetScanlineCapture();
-        VideoFramePacket frame;
-        frame.width = packet.width;
-        frame.height = packet.height;
-        frame.generation = packet.generation != 0u ? packet.generation : engine_.currentGeneration();
-        frame.source = VideoFrameSource::MachineSnapshot;
-        frame.pixels = packet.argbPixels;
-        return submitFrame(frame);
+        VideoPresentPacket present;
+        present.width = packet.width;
+        present.height = packet.height;
+        present.generation = packet.generation != 0u ? packet.generation : engine_.currentGeneration();
+        present.source = VideoFrameSource::RealtimeSnapshot;
+        present.pixels = packet.argbPixels;
+        const auto submitResult = engine_.submitPresentPacket(present);
+        syncEngineDiagnostics();
+        return submitResult.accepted;
     }
 
     [[nodiscard]] bool submitFrame(const VideoFramePacket& frame)
@@ -322,12 +332,16 @@ public:
     [[nodiscard]] bool presentOneFrame()
     {
         auto frame = engine_.tryConsumeLatestFrame();
+        bool usedFallback = false;
         if (!frame.has_value()) {
             frame = engine_.fallbackFrame();
             ++diagnostics_.presentFallbackCount;
+            usedFallback = true;
+        } else {
+            ++diagnostics_.presentFromFreshFrameCount;
         }
 
-        VideoFramePacket processed = *frame;
+        VideoFramePacket processed = makeFramePacket(std::move(*frame));
         for (auto& processor : processors_) {
             if (!isLiveCompatible(processor->capabilities())) {
                 ++diagnostics_.compatibilityFallbackCount;
@@ -349,6 +363,21 @@ public:
         }
 
         diagnostics_.lastPresentedGeneration = processed.generation;
+        const auto publishedGeneration = diagnostics_.lastPublishedGeneration;
+        if (publishedGeneration >= processed.generation) {
+            const auto generationGap = static_cast<std::size_t>(publishedGeneration - processed.generation);
+            if (generationGap == 0u) {
+                ++diagnostics_.presentGenerationGap0;
+            } else if (generationGap == 1u) {
+                ++diagnostics_.presentGenerationGap1;
+            } else if (generationGap <= 3u) {
+                ++diagnostics_.presentGenerationGap2To3;
+            } else {
+                ++diagnostics_.presentGenerationGap4Plus;
+            }
+        } else if (!usedFallback) {
+            ++diagnostics_.presentGenerationGap0;
+        }
         ++diagnostics_.presentCount;
         syncEngineDiagnostics();
         if (presenter_ == nullptr) {
@@ -422,6 +451,9 @@ private:
         diagnostics_.overwriteCount = engineStats.overwriteCount;
         diagnostics_.mailboxDepth = engineStats.mailboxDepth;
         diagnostics_.mailboxHighWaterMark = engineStats.mailboxHighWaterMark;
+        diagnostics_.publishedDebugFrameCount = engineStats.publishedDebugFrameCount;
+        diagnostics_.publishedRealtimeFrameCount = engineStats.publishedRealtimeFrameCount;
+        diagnostics_.publishedPixelBytes = engineStats.publishedPixelBytes;
         diagnostics_.lastPublishedGeneration = engineStats.lastPublishedGeneration;
         diagnostics_.configuredPresenterMode = presenterConfig_.mode;
         if (presenter_ != nullptr) {

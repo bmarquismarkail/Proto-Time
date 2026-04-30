@@ -1065,6 +1065,14 @@ private:
         stats_.videoPresenterTextureUploadCount = diagnostics.presenterTextureUploadCount;
         stats_.videoPresenterRenderCount = diagnostics.presenterRenderCount;
         stats_.videoPresenterRendererName = diagnostics.presenterRendererName;
+        stats_.videoPublishedDebugFrameCount = diagnostics.publishedDebugFrameCount;
+        stats_.videoPublishedRealtimeFrameCount = diagnostics.publishedRealtimeFrameCount;
+        stats_.videoPublishedPixelBytes = diagnostics.publishedPixelBytes;
+        stats_.videoPresentFreshFrameCount = diagnostics.presentFromFreshFrameCount;
+        stats_.videoPresentGenerationGap0 = diagnostics.presentGenerationGap0;
+        stats_.videoPresentGenerationGap1 = diagnostics.presentGenerationGap1;
+        stats_.videoPresentGenerationGap2To3 = diagnostics.presentGenerationGap2To3;
+        stats_.videoPresentGenerationGap4Plus = diagnostics.presentGenerationGap4Plus;
         if (const auto& frame = videoService_->engine().lastValidFrame(); frame.has_value()) {
             const auto publishedFrames = videoService_->engine().stats().publishedFrameCount;
             const bool frameChanged = !lastFrame_.has_value() ||

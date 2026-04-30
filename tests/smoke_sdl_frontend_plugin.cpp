@@ -238,6 +238,9 @@ int main(int argc, char** argv)
     assert(stats.videoRealtimePacketsAccepted >= stats.framesPrepared);
     assert(stats.videoDebugSnapshotsBuilt == stats.videoStateSnapshots);
     assert(stats.videoFramesPublished >= stats.framesPrepared);
+    assert(stats.videoPublishedPixelBytes >= stats.videoFramesPublished * 4u);
+    assert(stats.videoPublishedRealtimeFrameCount >= stats.framesPrepared);
+    assert(stats.videoPresentFreshFrameCount >= stats.framesPresented);
     assert(stats.videoMailboxHighWaterFrames >= 1u);
     assert(stats.videoPresentCount >= stats.framesPresented);
     assert(stats.configuredPresenterMode == BMMQ::VideoPresenterMode::Auto);
