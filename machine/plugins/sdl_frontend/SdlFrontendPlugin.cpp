@@ -466,7 +466,7 @@ public:
             }
 
             initializedBackendFlags_ = initFlags;
-            const bool videoReady = !config_.enableVideo || ensureVideoPresenter();
+            const bool videoReady = !config_.enableVideo || ensureVideoPresenter(false);
             if (!videoReady) {
                 appendLog("sdl: continuing without live video output");
             }
@@ -486,9 +486,7 @@ public:
         };
 
         if (lifecycleCoordinator_ != nullptr) {
-            return lifecycleCoordinator_->runTransition(
-                BMMQ::MachineTransitionReason::ConfigReconfigure,
-                initAction);
+            return lifecycleCoordinator_->transitionConfigReconfigure(initAction);
         }
         return initAction().success;
 #else
@@ -537,7 +535,7 @@ public:
         }
         videoService_ = &view.videoService();
         timingService_ = &view.timingService();
-        configureVideoService();
+        (void)configureVideoService();
         appendLog("sdl: attached");
         if (config_.autoInitializeBackend) {
             tryInitializeBackend();
@@ -1165,38 +1163,53 @@ private:
         return &*scanlineVideoDebugModel_;
     }
 
-    void configureVideoService()
+    [[nodiscard]] bool configureVideoService(bool coordinatorOwned = true)
     {
         if (videoService_ == nullptr) {
-            return;
+            return false;
         }
-        (void)videoService_->pause();
-        (void)videoService_->configure({
-            .frameWidth = std::max(config_.frameWidth, 1),
-            .frameHeight = std::max(config_.frameHeight, 1),
-            .mailboxDepthFrames = 2,
-        });
-        videoService_->setPresenterPolicy(config_.videoPresenterPolicy);
-        (void)videoService_->configurePresenter({
-            .windowTitle = config_.windowTitle,
-            .scale = static_cast<int>(std::min<std::uint32_t>(
-                std::max(config_.windowScale, 1u),
-                static_cast<std::uint32_t>(std::numeric_limits<int>::max()))),
-            .frameWidth = std::max(config_.frameWidth, 1),
-            .frameHeight = std::max(config_.frameHeight, 1),
-            .mode = presenterModeForPolicy(config_.videoPresenterPolicy),
-            .createHiddenWindowOnOpen = config_.createHiddenWindowOnInitialize,
-            .showWindowOnPresent = config_.showWindowOnPresent,
-        });
-        if (config_.enableVideo) {
-            auto presenter = std::make_unique<BMMQ::SdlVideoPresenter>();
-            videoPresenter_ = presenter.get();
-            videoPresenter_->requestWindowVisibility(windowVisibilityRequested_);
-            (void)videoService_->attachPresenter(std::move(presenter));
+        const auto configureAction = [this]() -> BMMQ::MachineTransitionMutationResult {
+            const bool configured = videoService_->configure({
+                .frameWidth = std::max(config_.frameWidth, 1),
+                .frameHeight = std::max(config_.frameHeight, 1),
+                .mailboxDepthFrames = 2,
+            });
+            videoService_->setPresenterPolicy(config_.videoPresenterPolicy);
+            const bool presenterConfigured = configured && videoService_->configurePresenter({
+                .windowTitle = config_.windowTitle,
+                .scale = static_cast<int>(std::min<std::uint32_t>(
+                    std::max(config_.windowScale, 1u),
+                    static_cast<std::uint32_t>(std::numeric_limits<int>::max()))),
+                .frameWidth = std::max(config_.frameWidth, 1),
+                .frameHeight = std::max(config_.frameHeight, 1),
+                .mode = presenterModeForPolicy(config_.videoPresenterPolicy),
+                .createHiddenWindowOnOpen = config_.createHiddenWindowOnInitialize,
+                .showWindowOnPresent = config_.showWindowOnPresent,
+            });
+            bool presenterAttached = true;
+            if (config_.enableVideo) {
+                auto presenter = std::make_unique<BMMQ::SdlVideoPresenter>();
+                videoPresenter_ = presenter.get();
+                videoPresenter_->requestWindowVisibility(windowVisibilityRequested_);
+                presenterAttached = presenterConfigured && videoService_->attachPresenter(std::move(presenter));
+                if (!presenterAttached) {
+                    videoPresenter_ = nullptr;
+                }
+            }
+            const bool videoReady = presenterConfigured && presenterAttached;
+            return BMMQ::MachineTransitionMutationResult{
+                .success = videoReady,
+                .videoReady = videoReady,
+                .audioReady = true,
+            };
+        };
+        if (coordinatorOwned && lifecycleCoordinator_ != nullptr) {
+            return lifecycleCoordinator_->transitionConfigReconfigure(configureAction);
         }
+        return configureAction().success;
     }
 
-    bool ensureVideoPresenter()
+    bool ensureVideoPresenter(bool coordinatorOwned = true)
     {
         if (!config_.enableVideo) {
             return true;
@@ -1207,9 +1220,24 @@ private:
             return false;
         }
         if (videoPresenter_ == nullptr) {
-            configureVideoService();
+            if (!configureVideoService(coordinatorOwned)) {
+                lastBackendError_ = "Video service configure failed";
+                appendLog("sdl: " + lastBackendError_);
+                return false;
+            }
         }
-        if (!videoService_->resume()) {
+        const auto resumeAction = [this]() -> BMMQ::MachineTransitionMutationResult {
+            const bool resumed = videoService_ != nullptr && videoService_->resume();
+            return BMMQ::MachineTransitionMutationResult{
+                .success = resumed,
+                .videoReady = resumed,
+                .audioReady = true,
+            };
+        };
+        const bool resumed = coordinatorOwned && lifecycleCoordinator_ != nullptr
+                                 ? lifecycleCoordinator_->transitionVideoBackendRestart(resumeAction)
+                                 : resumeAction().success;
+        if (!resumed) {
             lastBackendError_ = videoService_->diagnostics().lastBackendError;
             appendLog("sdl: video presenter open failed: " + lastBackendError_);
             return false;
@@ -1364,9 +1392,7 @@ private:
             return result;
         };
         if (lifecycleCoordinator_ != nullptr) {
-            (void)lifecycleCoordinator_->runTransition(
-                BMMQ::MachineTransitionReason::ConfigReconfigure,
-                shutdownAction);
+            (void)lifecycleCoordinator_->transitionConfigReconfigure(shutdownAction);
         } else {
             (void)shutdownAction();
         }

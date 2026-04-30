@@ -82,6 +82,20 @@ public:
     }
 
     [[nodiscard]] bool runTransition(MachineTransitionReason reason, const TransitionMutation& mutation);
+    [[nodiscard]] bool transitionAudioBackendRestart(const TransitionMutation& mutation)
+    {
+        return runTransition(MachineTransitionReason::AudioBackendRestart, mutation);
+    }
+
+    [[nodiscard]] bool transitionVideoBackendRestart(const TransitionMutation& mutation)
+    {
+        return runTransition(MachineTransitionReason::VideoBackendRestart, mutation);
+    }
+
+    [[nodiscard]] bool transitionConfigReconfigure(const TransitionMutation& mutation)
+    {
+        return runTransition(MachineTransitionReason::ConfigReconfigure, mutation);
+    }
 
     [[nodiscard]] MachineLifecycleCoordinatorStats stats() const noexcept
     {

@@ -1,8 +1,10 @@
 #include <cassert>
+#include <memory>
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
 #include "machine/MachineLifecycleCoordinator.hpp"
+#include "machine/plugins/video/adapters/HeadlessFrameDumper.hpp"
 
 int main()
 {
@@ -32,6 +34,16 @@ int main()
         .frameHeight = 16,
         .mailboxDepthFrames = 2,
     }));
+    assert(!video.configurePresenter({
+        .windowTitle = "contract-deny",
+        .scale = 1,
+        .frameWidth = 16,
+        .frameHeight = 16,
+        .mode = BMMQ::VideoPresenterMode::Software,
+        .createHiddenWindowOnOpen = true,
+        .showWindowOnPresent = false,
+    }));
+    assert(!video.attachPresenter(std::make_unique<BMMQ::HeadlessFrameDumper>()));
     assert(audio.lifecycleContractDeniedCalls() > audioDeniedBefore);
     assert(video.lifecycleContractDeniedCalls() > videoDeniedBefore);
 
@@ -50,7 +62,15 @@ int main()
             .frameWidth = 16,
             .frameHeight = 16,
             .mailboxDepthFrames = 2,
-        });
+        }) && video.configurePresenter({
+            .windowTitle = "contract-allow",
+            .scale = 1,
+            .frameWidth = 16,
+            .frameHeight = 16,
+            .mode = BMMQ::VideoPresenterMode::Software,
+            .createHiddenWindowOnOpen = true,
+            .showWindowOnPresent = false,
+        }) && video.attachPresenter(std::make_unique<BMMQ::HeadlessFrameDumper>());
         return BMMQ::MachineTransitionMutationResult{
             .success = audioOk && videoOk,
             .videoReady = videoOk,
