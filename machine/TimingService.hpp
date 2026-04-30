@@ -19,6 +19,9 @@ struct TimingConfig {
     std::chrono::nanoseconds minSleepQuantum = std::chrono::milliseconds(1);
     std::uint32_t maxExecutionSlicesPerWake = 4;
     double maxCyclesPerWake = 4096.0;
+    bool adaptiveSleepEnabled = true;
+    std::chrono::nanoseconds sleepSpinWindow = std::chrono::microseconds(200);
+    std::chrono::nanoseconds sleepSpinCap = std::chrono::microseconds(250);
     bool throttled = true;
 };
 
@@ -46,6 +49,14 @@ struct TimingStats {
     std::uint64_t wakeBurstSliceLimitHitCount = 0;
     std::uint64_t wakeBurstCycleLimitHitCount = 0;
     std::uint64_t sleepCalls = 0;
+    std::uint64_t sleepWakeEarlyCount = 0;
+    std::uint64_t sleepWakeLateCount = 0;
+    std::uint64_t sleepWakeJitterUnder100usCount = 0;
+    std::uint64_t sleepWakeJitter100To500usCount = 0;
+    std::uint64_t sleepWakeJitter500usTo2msCount = 0;
+    std::uint64_t sleepWakeJitterOver2msCount = 0;
+    std::uint64_t sleepWakeLateStreakCurrent = 0;
+    std::uint64_t sleepWakeLateStreakHighWater = 0;
     std::uint64_t sleepOvershootCount = 0;
     std::chrono::nanoseconds sleepOvershootHighWater = std::chrono::nanoseconds::zero();
     std::chrono::nanoseconds sleepOvershootLast = std::chrono::nanoseconds::zero();

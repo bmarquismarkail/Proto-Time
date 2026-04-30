@@ -25,6 +25,15 @@ void sanitizeTimingConfig(TimingConfig& config) noexcept
     if (config.maxCyclesPerWake <= 0.0) {
         config.maxCyclesPerWake = config.minInstructionCycles;
     }
+    if (config.sleepSpinWindow < std::chrono::nanoseconds::zero()) {
+        config.sleepSpinWindow = std::chrono::nanoseconds::zero();
+    }
+    if (config.sleepSpinCap < std::chrono::nanoseconds::zero()) {
+        config.sleepSpinCap = std::chrono::nanoseconds::zero();
+    }
+    if (config.sleepSpinWindow > config.sleepSpinCap) {
+        config.sleepSpinWindow = config.sleepSpinCap;
+    }
 }
 } // namespace
 
@@ -378,14 +387,35 @@ void TimingService::noteHostSleep(std::chrono::nanoseconds requested, std::chron
 {
     std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
     ++stats_.sleepCalls;
-    if (actual <= requested) {
+    const auto delta = actual - requested;
+    const auto absDelta = delta >= std::chrono::nanoseconds::zero() ? delta : -delta;
+
+    if (absDelta < std::chrono::microseconds(100)) {
+        ++stats_.sleepWakeJitterUnder100usCount;
+    } else if (absDelta < std::chrono::microseconds(500)) {
+        ++stats_.sleepWakeJitter100To500usCount;
+    } else if (absDelta < std::chrono::milliseconds(2)) {
+        ++stats_.sleepWakeJitter500usTo2msCount;
+    } else {
+        ++stats_.sleepWakeJitterOver2msCount;
+    }
+
+    if (delta < std::chrono::nanoseconds::zero()) {
+        ++stats_.sleepWakeEarlyCount;
+        stats_.sleepWakeLateStreakCurrent = 0;
         stats_.sleepOvershootLast = std::chrono::nanoseconds::zero();
         return;
     }
-    const auto overshoot = actual - requested;
-    stats_.sleepOvershootLast = overshoot;
-    ++stats_.sleepOvershootCount;
-    stats_.sleepOvershootHighWater = std::max(stats_.sleepOvershootHighWater, overshoot);
+
+    ++stats_.sleepWakeLateCount;
+    ++stats_.sleepWakeLateStreakCurrent;
+    stats_.sleepWakeLateStreakHighWater =
+        std::max(stats_.sleepWakeLateStreakHighWater, stats_.sleepWakeLateStreakCurrent);
+    stats_.sleepOvershootLast = delta;
+    if (delta > std::chrono::nanoseconds::zero()) {
+        ++stats_.sleepOvershootCount;
+        stats_.sleepOvershootHighWater = std::max(stats_.sleepOvershootHighWater, delta);
+    }
 }
 
 void TimingService::noteFrontendServiceTick(std::uint32_t scheduledTicks,

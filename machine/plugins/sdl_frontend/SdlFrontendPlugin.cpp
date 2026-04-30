@@ -1131,6 +1131,14 @@ private:
         stats_.timingWakeBurstCyclesLast = timingStats.wakeBurstCyclesLast;
         stats_.timingWakeBurstCyclesHighWater = timingStats.wakeBurstCyclesHighWater;
         stats_.timingSleepCalls = timingStats.sleepCalls;
+        stats_.timingSleepWakeEarlyCount = timingStats.sleepWakeEarlyCount;
+        stats_.timingSleepWakeLateCount = timingStats.sleepWakeLateCount;
+        stats_.timingSleepWakeJitterUnder100usCount = timingStats.sleepWakeJitterUnder100usCount;
+        stats_.timingSleepWakeJitter100To500usCount = timingStats.sleepWakeJitter100To500usCount;
+        stats_.timingSleepWakeJitter500usTo2msCount = timingStats.sleepWakeJitter500usTo2msCount;
+        stats_.timingSleepWakeJitterOver2msCount = timingStats.sleepWakeJitterOver2msCount;
+        stats_.timingSleepWakeLateStreakCurrent = timingStats.sleepWakeLateStreakCurrent;
+        stats_.timingSleepWakeLateStreakHighWater = timingStats.sleepWakeLateStreakHighWater;
         stats_.timingSleepOvershootCount = timingStats.sleepOvershootCount;
         stats_.timingSleepOvershootHighWaterNanos = timingStats.sleepOvershootHighWater.count();
         stats_.timingSleepOvershootLastNanos = timingStats.sleepOvershootLast.count();

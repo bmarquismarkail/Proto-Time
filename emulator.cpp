@@ -172,6 +172,9 @@ int main(int argc, char** argv)
         timingConfig.minSleepQuantum = kMinSleepQuantum;
         timingConfig.maxExecutionSlicesPerWake = 4u;
         timingConfig.maxCyclesPerWake = static_cast<double>(cpuClockHz) * 0.004;
+        timingConfig.adaptiveSleepEnabled = true;
+        timingConfig.sleepSpinWindow = std::chrono::microseconds(200);
+        timingConfig.sleepSpinCap = std::chrono::microseconds(250);
         timingConfig.throttled = !options.unthrottled;
         timingService.configure(timingConfig);
         BMMQ::TimingEngine timingEngine(timingConfig);
@@ -328,7 +331,20 @@ int main(int argc, char** argv)
                     if (nextWakeTime > idleNow) {
                         const auto requestedSleep = std::chrono::duration_cast<std::chrono::nanoseconds>(nextWakeTime - idleNow);
                         const auto beforeSleep = SteadyClock::now();
-                        std::this_thread::sleep_until(nextWakeTime);
+                        if (timingConfig.adaptiveSleepEnabled && requestedSleep > timingConfig.sleepSpinWindow &&
+                            timingConfig.sleepSpinWindow > std::chrono::nanoseconds::zero()) {
+                            const auto coarseWake = nextWakeTime - timingConfig.sleepSpinWindow;
+                            std::this_thread::sleep_until(coarseWake);
+                            const auto spinStart = SteadyClock::now();
+                            while (SteadyClock::now() < nextWakeTime) {
+                                if (SteadyClock::now() - spinStart >= timingConfig.sleepSpinCap) {
+                                    break;
+                                }
+                                std::this_thread::yield();
+                            }
+                        } else {
+                            std::this_thread::sleep_until(nextWakeTime);
+                        }
                         const auto afterSleep = SteadyClock::now();
                         const auto actualSleep = std::chrono::duration_cast<std::chrono::nanoseconds>(afterSleep - beforeSleep);
                         timingService.noteHostSleep(requestedSleep, actualSleep);

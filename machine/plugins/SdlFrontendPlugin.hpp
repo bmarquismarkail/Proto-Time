@@ -169,6 +169,14 @@ struct SdlFrontendStats {
     double timingWakeBurstCyclesLast = 0.0;
     double timingWakeBurstCyclesHighWater = 0.0;
     std::uint64_t timingSleepCalls = 0;
+    std::uint64_t timingSleepWakeEarlyCount = 0;
+    std::uint64_t timingSleepWakeLateCount = 0;
+    std::uint64_t timingSleepWakeJitterUnder100usCount = 0;
+    std::uint64_t timingSleepWakeJitter100To500usCount = 0;
+    std::uint64_t timingSleepWakeJitter500usTo2msCount = 0;
+    std::uint64_t timingSleepWakeJitterOver2msCount = 0;
+    std::uint64_t timingSleepWakeLateStreakCurrent = 0;
+    std::uint64_t timingSleepWakeLateStreakHighWater = 0;
     std::uint64_t timingSleepOvershootCount = 0;
     std::int64_t timingSleepOvershootHighWaterNanos = 0;
     std::int64_t timingSleepOvershootLastNanos = 0;

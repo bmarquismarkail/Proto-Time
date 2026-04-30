@@ -275,6 +275,13 @@ int main(int argc, char** argv)
            stats.timingFrontendTicksExecuted + stats.timingFrontendTicksMerged);
     assert(stats.timingFrontendTickDelayHighWaterNanos >= stats.timingFrontendTickDelayLastNanos);
     assert(stats.timingFrontendTickDelayHighWaterNanos >= 0);
+    assert(stats.timingSleepWakeLateStreakHighWater >= stats.timingSleepWakeLateStreakCurrent);
+    assert(stats.timingSleepWakeEarlyCount + stats.timingSleepWakeLateCount <= stats.timingSleepCalls);
+    assert(stats.timingSleepWakeJitterUnder100usCount +
+               stats.timingSleepWakeJitter100To500usCount +
+               stats.timingSleepWakeJitter500usTo2msCount +
+               stats.timingSleepWakeJitterOver2msCount <=
+           stats.timingSleepCalls);
     if (initResult) {
         assert(stats.renderServiceState != BMMQ::SdlRenderServiceState::Stopped);
     } else {

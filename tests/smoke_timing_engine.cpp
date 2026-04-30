@@ -24,10 +24,13 @@ int main()
     cfg.throttled = true;
     cfg.maxExecutionSlicesPerWake = 0u;
     cfg.maxCyclesPerWake = 0.0;
+    cfg.sleepSpinWindow = std::chrono::microseconds(400);
+    cfg.sleepSpinCap = std::chrono::microseconds(200);
 
     BMMQ::TimingEngine engine(cfg);
     CHECK_TRUE(engine.config().maxExecutionSlicesPerWake >= 1u);
     CHECK_TRUE(engine.config().maxCyclesPerWake >= engine.config().minInstructionCycles);
+    CHECK_TRUE(engine.config().sleepSpinWindow <= engine.config().sleepSpinCap);
 
     const auto t0 = SteadyClock::now();
     engine.start(t0);
