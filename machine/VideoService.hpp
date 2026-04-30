@@ -2,6 +2,7 @@
 #define BMMQ_VIDEO_SERVICE_HPP
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <memory>
 #include <mutex>
@@ -113,6 +114,9 @@ public:
 
     [[nodiscard]] bool configure(const VideoEngineConfig& config)
     {
+        if (!allowLifecycleMutation()) {
+            return false;
+        }
         std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
         if (!configurationAllowed()) {
             return false;
@@ -128,6 +132,9 @@ public:
 
     [[nodiscard]] bool configurePresenter(const VideoPresenterConfig& config)
     {
+        if (!allowLifecycleMutation()) {
+            return false;
+        }
         std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
         if (!configurationAllowed()) {
             return false;
@@ -142,6 +149,9 @@ public:
 
     [[nodiscard]] bool attachPresenter(std::unique_ptr<IVideoPresenterPlugin> presenter)
     {
+        if (!allowLifecycleMutation()) {
+            return false;
+        }
         std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
         if (!configurationAllowed() || presenter == nullptr) {
             return false;
@@ -159,6 +169,9 @@ public:
 
     [[nodiscard]] bool detachPresenter()
     {
+        if (!allowLifecycleMutation()) {
+            return false;
+        }
         std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
         if (presenter_ != nullptr) {
             presenter_->close();
@@ -173,6 +186,9 @@ public:
 
     [[nodiscard]] bool resume()
     {
+        if (!allowLifecycleMutation()) {
+            return false;
+        }
         std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
         if (presenter_ == nullptr) {
             setState(VideoLifecycleState::Headless);
@@ -192,6 +208,9 @@ public:
 
     [[nodiscard]] bool pause()
     {
+        if (!allowLifecycleMutation()) {
+            return false;
+        }
         std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
         if (presenter_ != nullptr) {
             presenter_->close();
@@ -205,8 +224,34 @@ public:
 
     void setBackendActiveForTesting(bool active) noexcept
     {
+        if (!allowLifecycleMutation()) {
+            return;
+        }
         std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
         setState(active ? VideoLifecycleState::Active : VideoLifecycleState::Paused);
+    }
+
+    void setLifecycleContractEnforced(bool enforced) noexcept
+    {
+        enforceLifecycleContract_.store(enforced, std::memory_order_release);
+    }
+
+    void beginLifecycleMutationScope() noexcept
+    {
+        lifecycleMutationScopeDepth_.fetch_add(1u, std::memory_order_acq_rel);
+    }
+
+    void endLifecycleMutationScope() noexcept
+    {
+        const auto depth = lifecycleMutationScopeDepth_.load(std::memory_order_acquire);
+        if (depth != 0u) {
+            lifecycleMutationScopeDepth_.fetch_sub(1u, std::memory_order_acq_rel);
+        }
+    }
+
+    [[nodiscard]] std::size_t lifecycleContractDeniedCalls() const noexcept
+    {
+        return lifecycleContractDeniedCalls_.load(std::memory_order_relaxed);
     }
 
     [[nodiscard]] bool addProcessor(std::unique_ptr<IVideoFrameProcessorPlugin> processor)
@@ -452,6 +497,18 @@ public:
     }
 
 private:
+    [[nodiscard]] bool allowLifecycleMutation() const noexcept
+    {
+        if (!enforceLifecycleContract_.load(std::memory_order_acquire)) {
+            return true;
+        }
+        if (lifecycleMutationScopeDepth_.load(std::memory_order_acquire) != 0u) {
+            return true;
+        }
+        lifecycleContractDeniedCalls_.fetch_add(1u, std::memory_order_relaxed);
+        return false;
+    }
+
     [[nodiscard]] bool configurationAllowed() const noexcept
     {
         return state_ == VideoLifecycleState::Detached ||
@@ -610,6 +667,9 @@ private:
     std::size_t scanlineCaptureCount_ = 0;
     uint64_t lifecycleEpoch_ = 1;
     std::size_t lifecycleEpochBumpCount_ = 0;
+    std::atomic<bool> enforceLifecycleContract_{false};
+    std::atomic<std::size_t> lifecycleMutationScopeDepth_{0};
+    mutable std::atomic<std::size_t> lifecycleContractDeniedCalls_{0};
 };
 
 } // namespace BMMQ

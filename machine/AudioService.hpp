@@ -119,6 +119,9 @@ public:
 
     [[nodiscard]] bool configureOutputTransport(AudioOutputTransportConfig config)
     {
+        if (!allowLifecycleMutation()) {
+            return false;
+        }
         if (!guardResetSafety(false)) {
             return false;
         }
@@ -149,6 +152,9 @@ public:
 
     [[nodiscard]] bool startOutputTransport()
     {
+        if (!allowLifecycleMutation()) {
+            return false;
+        }
         if (!guardResetSafety(false)) {
             return false;
         }
@@ -172,6 +178,9 @@ public:
 
     void stopOutputTransport() noexcept
     {
+        if (!allowLifecycleMutation()) {
+            return;
+        }
         const bool wasRunning = outputTransportRunning_.load(std::memory_order_acquire);
         outputTransportStopRequested_.store(true, std::memory_order_release);
         outputTransportCv_.notify_all();
@@ -200,6 +209,29 @@ public:
         return transportEpoch_.load(std::memory_order_acquire);
     }
 
+    void setLifecycleContractEnforced(bool enforced) noexcept
+    {
+        enforceLifecycleContract_.store(enforced, std::memory_order_release);
+    }
+
+    void beginLifecycleMutationScope() noexcept
+    {
+        lifecycleMutationScopeDepth_.fetch_add(1u, std::memory_order_acq_rel);
+    }
+
+    void endLifecycleMutationScope() noexcept
+    {
+        const auto depth = lifecycleMutationScopeDepth_.load(std::memory_order_acquire);
+        if (depth != 0u) {
+            lifecycleMutationScopeDepth_.fetch_sub(1u, std::memory_order_acq_rel);
+        }
+    }
+
+    [[nodiscard]] std::size_t lifecycleContractDeniedCalls() const noexcept
+    {
+        return lifecycleContractDeniedCalls_.load(std::memory_order_relaxed);
+    }
+
     void bumpLifecycleEpochBarrier() noexcept
     {
         std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
@@ -210,6 +242,9 @@ public:
     // Reset/configure is only safe when this is true and the output transport worker is stopped.
     void setBackendPausedOrClosed(bool pausedOrClosed) noexcept
     {
+        if (!allowLifecycleMutation()) {
+            return;
+        }
         std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
         backendPausedOrClosed_.store(pausedOrClosed, std::memory_order_release);
         if (pausedOrClosed) {
@@ -221,6 +256,9 @@ public:
     // In debug builds, unsafe calls trigger an assertion and return early.
     [[nodiscard]] bool resetStream() noexcept
     {
+        if (!allowLifecycleMutation()) {
+            return false;
+        }
         if (!guardResetSafety(true)) {
             return false;
         }
@@ -237,6 +275,9 @@ public:
     // In debug builds, unsafe calls trigger an assertion and return early.
     [[nodiscard]] bool resetStats() noexcept
     {
+        if (!allowLifecycleMutation()) {
+            return false;
+        }
         if (!guardResetSafety(true)) {
             return false;
         }
@@ -253,6 +294,9 @@ public:
     // In debug builds, unsafe calls trigger an assertion and return early.
     [[nodiscard]] bool configureEngine(const AudioEngineConfig& config)
     {
+        if (!allowLifecycleMutation()) {
+            return false;
+        }
         if (!guardResetSafety(true)) {
             return false;
         }
@@ -365,6 +409,18 @@ public:
     }
 
 private:
+    [[nodiscard]] bool allowLifecycleMutation() const noexcept
+    {
+        if (!enforceLifecycleContract_.load(std::memory_order_acquire)) {
+            return true;
+        }
+        if (lifecycleMutationScopeDepth_.load(std::memory_order_acquire) != 0u) {
+            return true;
+        }
+        lifecycleContractDeniedCalls_.fetch_add(1u, std::memory_order_relaxed);
+        return false;
+    }
+
     struct ReadyBlock {
         std::vector<int16_t> samples{};
         std::uint64_t epoch = 1;
@@ -548,6 +604,9 @@ private:
     std::atomic<std::size_t> transportStaleEpochDropCount_{0};
     std::atomic<std::size_t> transportEpochBumpCount_{0};
     std::atomic<std::uint64_t> transportEpoch_{1};
+    std::atomic<bool> enforceLifecycleContract_{false};
+    std::atomic<std::size_t> lifecycleMutationScopeDepth_{0};
+    mutable std::atomic<std::size_t> lifecycleContractDeniedCalls_{0};
 };
 
 } // namespace BMMQ

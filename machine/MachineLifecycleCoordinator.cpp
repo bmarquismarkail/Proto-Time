@@ -5,6 +5,37 @@
 
 namespace BMMQ {
 
+namespace {
+class LifecycleMutationScope {
+public:
+    LifecycleMutationScope(AudioService* audio, VideoService* video)
+        : audio_(audio),
+          video_(video)
+    {
+        if (audio_ != nullptr) {
+            audio_->beginLifecycleMutationScope();
+        }
+        if (video_ != nullptr) {
+            video_->beginLifecycleMutationScope();
+        }
+    }
+
+    ~LifecycleMutationScope()
+    {
+        if (video_ != nullptr) {
+            video_->endLifecycleMutationScope();
+        }
+        if (audio_ != nullptr) {
+            audio_->endLifecycleMutationScope();
+        }
+    }
+
+private:
+    AudioService* audio_ = nullptr;
+    VideoService* video_ = nullptr;
+};
+} // namespace
+
 bool MachineLifecycleCoordinator::pauseLanesLocked(bool& wasVideoActive) noexcept
 {
     bool ok = true;
@@ -45,6 +76,7 @@ bool MachineLifecycleCoordinator::bumpEpochsLocked() noexcept
 bool MachineLifecycleCoordinator::runTransition(MachineTransitionReason reason, const TransitionMutation& mutation)
 {
     std::lock_guard<std::mutex> lock(mutex_);
+    LifecycleMutationScope mutationScope(audioService_, videoService_);
     const auto start = std::chrono::steady_clock::now();
     ++stats_.transitionCount;
     ++stats_.reasonCounts[static_cast<std::size_t>(reason)];
