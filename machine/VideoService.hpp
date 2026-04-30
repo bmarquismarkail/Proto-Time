@@ -54,6 +54,9 @@ struct VideoServiceDiagnostics {
     std::size_t presentGenerationGap1 = 0;
     std::size_t presentGenerationGap2To3 = 0;
     std::size_t presentGenerationGap4Plus = 0;
+    std::size_t staleEpochDropCount = 0;
+    std::size_t lifecycleEpochBumpCount = 0;
+    uint64_t lifecycleEpoch = 1;
     uint64_t lastPublishedGeneration = 0;
     uint64_t lastPresentedGeneration = 0;
     std::string activeBackendName;
@@ -115,6 +118,7 @@ public:
             return false;
         }
         engine_.configure(config);
+        bumpLifecycleEpochLocked();
         resetScanlineCapture();
         presenterConfig_.frameWidth = engine_.config().frameWidth;
         presenterConfig_.frameHeight = engine_.config().frameHeight;
@@ -132,6 +136,7 @@ public:
         presenterConfig_.frameWidth = std::max(presenterConfig_.frameWidth, 1);
         presenterConfig_.frameHeight = std::max(presenterConfig_.frameHeight, 1);
         diagnostics_.configuredPresenterMode = presenterConfig_.mode;
+        bumpLifecycleEpochLocked();
         return true;
     }
 
@@ -144,6 +149,7 @@ public:
         if (presenter_ != nullptr) {
             presenter_->close();
         }
+        bumpLifecycleEpochLocked();
         presenter_ = std::move(presenter);
         diagnostics_.activeBackendName = std::string(presenter_->name());
         diagnostics_.lastBackendError.clear();
@@ -158,6 +164,7 @@ public:
             presenter_->close();
             presenter_.reset();
         }
+        bumpLifecycleEpochLocked();
         diagnostics_.activeBackendName.clear();
         diagnostics_.lastBackendError.clear();
         setState(VideoLifecycleState::Headless);
@@ -178,6 +185,7 @@ public:
         }
         diagnostics_.activeBackendName = std::string(presenter_->name());
         diagnostics_.lastBackendError.clear();
+        bumpLifecycleEpochLocked();
         setState(VideoLifecycleState::Active);
         return true;
     }
@@ -187,6 +195,7 @@ public:
         std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
         if (presenter_ != nullptr) {
             presenter_->close();
+            bumpLifecycleEpochLocked();
             setState(VideoLifecycleState::Paused);
         } else {
             setState(VideoLifecycleState::Headless);
@@ -235,6 +244,7 @@ public:
     {
         if (event.type == MachineEventType::RomLoaded) {
             engine_.advanceGeneration();
+            bumpLifecycleEpochLocked();
             resetScanlineCapture();
             return true;
         }
@@ -276,6 +286,7 @@ public:
     {
         if (event.type == MachineEventType::RomLoaded) {
             engine_.advanceGeneration();
+            bumpLifecycleEpochLocked();
             resetScanlineCapture();
             return true;
         }
@@ -315,6 +326,7 @@ public:
         present.width = packet.width;
         present.height = packet.height;
         present.generation = packet.generation != 0u ? packet.generation : engine_.currentGeneration();
+        present.lifecycleEpoch = lifecycleEpoch_;
         present.source = VideoFrameSource::RealtimeSnapshot;
         present.pixels = packet.argbPixels;
         const auto submitResult = engine_.submitPresentPacket(present);
@@ -324,17 +336,30 @@ public:
 
     [[nodiscard]] bool submitFrame(const VideoFramePacket& frame)
     {
-        const auto submitResult = engine_.submitFrame(frame);
+        auto adjusted = frame;
+        adjusted.lifecycleEpoch = lifecycleEpoch_;
+        const auto submitResult = engine_.submitFrame(adjusted);
         syncEngineDiagnostics();
         return submitResult.accepted;
     }
 
     [[nodiscard]] bool presentOneFrame()
     {
-        auto frame = engine_.tryConsumeLatestFrame();
+        std::optional<VideoPresentPacket> frame{};
+        while (true) {
+            frame = engine_.tryConsumeLatestFrame();
+            if (!frame.has_value()) {
+                break;
+            }
+            if (frame->lifecycleEpoch == lifecycleEpoch_) {
+                break;
+            }
+            ++diagnostics_.staleEpochDropCount;
+        }
         bool usedFallback = false;
         if (!frame.has_value()) {
             frame = engine_.fallbackFrame();
+            frame->lifecycleEpoch = lifecycleEpoch_;
             ++diagnostics_.presentFallbackCount;
             usedFallback = true;
         } else {
@@ -403,6 +428,8 @@ public:
     void advanceGeneration() noexcept
     {
         engine_.advanceGeneration();
+        std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
+        bumpLifecycleEpochLocked();
         resetScanlineCapture();
         syncEngineDiagnostics();
     }
@@ -455,6 +482,8 @@ private:
         diagnostics_.publishedRealtimeFrameCount = engineStats.publishedRealtimeFrameCount;
         diagnostics_.publishedPixelBytes = engineStats.publishedPixelBytes;
         diagnostics_.lastPublishedGeneration = engineStats.lastPublishedGeneration;
+        diagnostics_.lifecycleEpoch = lifecycleEpoch_;
+        diagnostics_.lifecycleEpochBumpCount = lifecycleEpochBumpCount_;
         diagnostics_.configuredPresenterMode = presenterConfig_.mode;
         if (presenter_ != nullptr) {
             const auto presenterDiagnostics = presenter_->diagnostics();
@@ -554,6 +583,12 @@ private:
         }
     }
 
+    void bumpLifecycleEpochLocked() noexcept
+    {
+        ++lifecycleEpoch_;
+        ++lifecycleEpochBumpCount_;
+    }
+
     VideoEngine engine_{};
     VisualOverrideService* visualOverrideService_ = nullptr;
     const IVisualDebugAdapter* visualDebugAdapter_ = nullptr;
@@ -567,6 +602,8 @@ private:
     std::optional<VideoFramePacket> scanlineFrame_{};
     std::vector<bool> scanlinesCaptured_{};
     std::size_t scanlineCaptureCount_ = 0;
+    uint64_t lifecycleEpoch_ = 1;
+    std::size_t lifecycleEpochBumpCount_ = 0;
 };
 
 } // namespace BMMQ

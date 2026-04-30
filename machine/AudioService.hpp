@@ -35,6 +35,9 @@ struct AudioOutputTransportStats {
     std::size_t workerProducedBlocks = 0;
     std::size_t droppedReadyBlocks = 0;
     std::size_t workerWakeCount = 0;
+    std::size_t staleEpochDropCount = 0;
+    std::size_t epochBumpCount = 0;
+    std::uint64_t lifecycleEpoch = 1;
 };
 
 class AudioService {
@@ -130,12 +133,15 @@ public:
         config.readyQueueChunks = std::max<std::size_t>(config.readyQueueChunks, 1u);
 
         outputTransportConfig_ = config;
-        readyBlocks_.assign(config.readyQueueChunks + 1u,
-                            std::vector<int16_t>(config.callbackChunkSamples, 0));
+        readyBlocks_.assign(config.readyQueueChunks + 1u, ReadyBlock{});
+        for (auto& block : readyBlocks_) {
+            block.samples.assign(config.callbackChunkSamples, 0);
+            block.epoch = transportEpoch_.load(std::memory_order_acquire);
+        }
         producerScratch_.assign(config.callbackChunkSamples, 0);
         transportPipelineScratch_.assign(config.callbackChunkSamples, 0);
-        readyReadIndex_.store(0u, std::memory_order_release);
-        readyWriteIndex_.store(0u, std::memory_order_release);
+        clearReadyQueue();
+        bumpTransportEpochLocked();
         resetTransportStats();
         outputTransportConfigured_ = true;
         return true;
@@ -155,6 +161,7 @@ public:
             return true;
         }
 
+        bumpTransportEpochLocked();
         outputTransportStopRequested_.store(false, std::memory_order_release);
         outputTransportRunning_.store(true, std::memory_order_release);
         backendPausedOrClosed_.store(false, std::memory_order_release);
@@ -173,8 +180,7 @@ public:
         }
         if (wasRunning) {
             outputTransportRunning_.store(false, std::memory_order_release);
-            readyReadIndex_.store(0u, std::memory_order_release);
-            readyWriteIndex_.store(0u, std::memory_order_release);
+            clearReadyQueue();
         }
         if (backendPausedOrClosed_.load(std::memory_order_acquire)) {
             backendPausedOrClosed_.store(true, std::memory_order_release);
@@ -189,12 +195,20 @@ public:
                !outputTransportRunning_.load(std::memory_order_acquire);
     }
 
+    [[nodiscard]] std::uint64_t lifecycleEpoch() const noexcept
+    {
+        return transportEpoch_.load(std::memory_order_acquire);
+    }
+
     // Marks whether the backend callback/output thread is paused/closed.
     // Reset/configure is only safe when this is true and the output transport worker is stopped.
     void setBackendPausedOrClosed(bool pausedOrClosed) noexcept
     {
         std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
         backendPausedOrClosed_.store(pausedOrClosed, std::memory_order_release);
+        if (pausedOrClosed) {
+            bumpTransportEpochLocked();
+        }
     }
 
     // Not real-time safe. Requires canPerformReset() == true.
@@ -209,6 +223,7 @@ public:
             return false;
         }
         engine_.resetStream();
+        bumpTransportEpochLocked();
         return true;
     }
 
@@ -224,6 +239,7 @@ public:
             return false;
         }
         engine_.resetStats();
+        bumpTransportEpochLocked();
         return true;
     }
 
@@ -242,6 +258,7 @@ public:
         callbackCapacitySamples_ = std::max<std::size_t>(engine_.config().frameChunkSamples, 1u);
         pipeline_.configureFixedCapacity(callbackCapacitySamples_);
         pipelineOutputScratch_.assign(callbackCapacitySamples_, 0);
+        bumpTransportEpochLocked();
         return true;
     }
 
@@ -267,7 +284,9 @@ public:
         renderForOutputWithScratch(
             std::span<int16_t>(producerScratch_.data(), producerScratch_.size()),
             transportPipelineScratch_);
-        readyBlocks_[writeIndex] = producerScratch_;
+        auto& block = readyBlocks_[writeIndex];
+        block.samples = producerScratch_;
+        block.epoch = transportEpoch_.load(std::memory_order_acquire);
         readyWriteIndex_.store(nextWriteIndex, std::memory_order_release);
         transportWorkerProducedBlocks_.fetch_add(1u, std::memory_order_relaxed);
         noteReadyQueueHighWater(readyQueueDepth());
@@ -281,27 +300,37 @@ public:
             return;
         }
 
-        const auto readIndex = readyReadIndex_.load(std::memory_order_relaxed);
-        if (readIndex == readyWriteIndex_.load(std::memory_order_acquire)) {
-            std::fill(output.begin(), output.end(), 0);
-            transportUnderrunCount_.fetch_add(1u, std::memory_order_relaxed);
-            transportSilenceSamplesFilled_.fetch_add(output.size(), std::memory_order_relaxed);
+        const auto currentEpoch = transportEpoch_.load(std::memory_order_acquire);
+        while (true) {
+            const auto readIndex = readyReadIndex_.load(std::memory_order_relaxed);
+            if (readIndex == readyWriteIndex_.load(std::memory_order_acquire)) {
+                std::fill(output.begin(), output.end(), 0);
+                transportUnderrunCount_.fetch_add(1u, std::memory_order_relaxed);
+                transportSilenceSamplesFilled_.fetch_add(output.size(), std::memory_order_relaxed);
+                outputTransportCv_.notify_one();
+                return;
+            }
+
+            const auto& block = readyBlocks_[readIndex];
+            if (block.epoch != currentEpoch) {
+                transportStaleEpochDropCount_.fetch_add(1u, std::memory_order_relaxed);
+                readyReadIndex_.store(nextReadyIndex(readIndex), std::memory_order_release);
+                continue;
+            }
+
+            const auto copyCount = std::min(output.size(), block.samples.size());
+            if (copyCount > 0u) {
+                std::memmove(output.data(), block.samples.data(), copyCount * sizeof(int16_t));
+            }
+            if (copyCount < output.size()) {
+                std::fill(output.begin() + static_cast<std::ptrdiff_t>(copyCount), output.end(), 0);
+                transportSilenceSamplesFilled_.fetch_add(output.size() - copyCount, std::memory_order_relaxed);
+            }
+
+            readyReadIndex_.store(nextReadyIndex(readIndex), std::memory_order_release);
             outputTransportCv_.notify_one();
             return;
         }
-
-        const auto& block = readyBlocks_[readIndex];
-        const auto copyCount = std::min(output.size(), block.size());
-        if (copyCount > 0u) {
-            std::memmove(output.data(), block.data(), copyCount * sizeof(int16_t));
-        }
-        if (copyCount < output.size()) {
-            std::fill(output.begin() + static_cast<std::ptrdiff_t>(copyCount), output.end(), 0);
-            transportSilenceSamplesFilled_.fetch_add(output.size() - copyCount, std::memory_order_relaxed);
-        }
-
-        readyReadIndex_.store(nextReadyIndex(readIndex), std::memory_order_release);
-        outputTransportCv_.notify_one();
     }
 
     [[nodiscard]] AudioOutputTransportStats transportStats() const noexcept
@@ -315,6 +344,9 @@ public:
         stats.workerProducedBlocks = transportWorkerProducedBlocks_.load(std::memory_order_relaxed);
         stats.droppedReadyBlocks = transportDroppedReadyBlocks_.load(std::memory_order_relaxed);
         stats.workerWakeCount = transportWorkerWakeCount_.load(std::memory_order_relaxed);
+        stats.staleEpochDropCount = transportStaleEpochDropCount_.load(std::memory_order_relaxed);
+        stats.epochBumpCount = transportEpochBumpCount_.load(std::memory_order_relaxed);
+        stats.lifecycleEpoch = transportEpoch_.load(std::memory_order_acquire);
         return stats;
     }
 
@@ -327,6 +359,11 @@ public:
     }
 
 private:
+    struct ReadyBlock {
+        std::vector<int16_t> samples{};
+        std::uint64_t epoch = 1;
+    };
+
     void renderForOutputWithScratch(std::span<int16_t> output, std::vector<int16_t>& scratch) noexcept
     {
         engine_.render(output);
@@ -415,6 +452,19 @@ private:
         return nextReadyIndex(writeIndex) != readyReadIndex_.load(std::memory_order_acquire);
     }
 
+    void clearReadyQueue() noexcept
+    {
+        readyReadIndex_.store(0u, std::memory_order_release);
+        readyWriteIndex_.store(0u, std::memory_order_release);
+    }
+
+    void bumpTransportEpochLocked() noexcept
+    {
+        transportEpoch_.fetch_add(1u, std::memory_order_release);
+        transportEpochBumpCount_.fetch_add(1u, std::memory_order_relaxed);
+        clearReadyQueue();
+    }
+
     [[nodiscard]] std::chrono::milliseconds outputTransportWakePeriod() const noexcept
     {
         const auto channels = std::max<int>(outputTransportConfig_.channelCount, 1);
@@ -455,6 +505,7 @@ private:
         transportWorkerProducedBlocks_.store(0u, std::memory_order_relaxed);
         transportDroppedReadyBlocks_.store(0u, std::memory_order_relaxed);
         transportWorkerWakeCount_.store(0u, std::memory_order_relaxed);
+        transportStaleEpochDropCount_.store(0u, std::memory_order_relaxed);
     }
 
     AudioEngine engine_{};
@@ -471,7 +522,7 @@ private:
 
     AudioOutputTransportConfig outputTransportConfig_{};
     bool outputTransportConfigured_ = false;
-    std::vector<std::vector<int16_t>> readyBlocks_{};
+    std::vector<ReadyBlock> readyBlocks_{};
     std::vector<int16_t> producerScratch_{};
     std::vector<int16_t> transportPipelineScratch_{};
     std::atomic<std::size_t> readyReadIndex_{0};
@@ -488,6 +539,9 @@ private:
     std::atomic<std::size_t> transportWorkerProducedBlocks_{0};
     std::atomic<std::size_t> transportDroppedReadyBlocks_{0};
     std::atomic<std::size_t> transportWorkerWakeCount_{0};
+    std::atomic<std::size_t> transportStaleEpochDropCount_{0};
+    std::atomic<std::size_t> transportEpochBumpCount_{0};
+    std::atomic<std::uint64_t> transportEpoch_{1};
 };
 
 } // namespace BMMQ

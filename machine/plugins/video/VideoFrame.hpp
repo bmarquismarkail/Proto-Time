@@ -32,6 +32,7 @@ struct VideoFramePacket {
     VideoFrameFormat format = VideoFrameFormat::Argb8888;
     VideoFrameSource source = VideoFrameSource::MachineSnapshot;
     uint64_t generation = 0;
+    uint64_t lifecycleEpoch = 1;
     std::vector<uint32_t> pixels;
 
     [[nodiscard]] bool empty() const noexcept
@@ -51,6 +52,7 @@ struct VideoPresentPacket {
     VideoFrameFormat format = VideoFrameFormat::Argb8888;
     VideoFrameSource source = VideoFrameSource::MachineSnapshot;
     uint64_t generation = 0;
+    uint64_t lifecycleEpoch = 1;
     std::vector<uint32_t> pixels;
 
     [[nodiscard]] bool empty() const noexcept
@@ -93,6 +95,7 @@ struct VideoPresenterConfig {
     present.format = frame.format;
     present.source = frame.source;
     present.generation = frame.generation;
+    present.lifecycleEpoch = frame.lifecycleEpoch;
     present.pixels = std::move(frame.pixels);
     return present;
 }
@@ -105,6 +108,7 @@ struct VideoPresenterConfig {
     frame.format = packet.format;
     frame.source = packet.source;
     frame.generation = packet.generation;
+    frame.lifecycleEpoch = packet.lifecycleEpoch;
     frame.pixels = std::move(packet.pixels);
     return frame;
 }

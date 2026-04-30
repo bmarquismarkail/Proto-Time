@@ -998,6 +998,9 @@ private:
         stats_.audioTransportWorkerProducedBlocks = transportStats.workerProducedBlocks;
         stats_.audioTransportDroppedReadyBlocks = transportStats.droppedReadyBlocks;
         stats_.audioTransportWorkerWakeCount = transportStats.workerWakeCount;
+        stats_.audioTransportStaleEpochDropCount = transportStats.staleEpochDropCount;
+        stats_.audioTransportEpochBumpCount = transportStats.epochBumpCount;
+        stats_.audioTransportLifecycleEpoch = transportStats.lifecycleEpoch;
         stats_.lastQueuedAudioBytes = queuedAudioBytes();
         stats_.peakQueuedAudioBytes = std::max<std::uint32_t>(
             stats_.peakQueuedAudioBytes,
@@ -1196,6 +1199,9 @@ private:
         stats_.videoPresentGenerationGap1 = diagnostics.presentGenerationGap1;
         stats_.videoPresentGenerationGap2To3 = diagnostics.presentGenerationGap2To3;
         stats_.videoPresentGenerationGap4Plus = diagnostics.presentGenerationGap4Plus;
+        stats_.videoStaleEpochDropCount = diagnostics.staleEpochDropCount;
+        stats_.videoLifecycleEpochBumpCount = diagnostics.lifecycleEpochBumpCount;
+        stats_.videoLifecycleEpoch = diagnostics.lifecycleEpoch;
         if (const auto& frame = videoService_->engine().lastValidFrame(); frame.has_value()) {
             const auto publishedFrames = videoService_->engine().stats().publishedFrameCount;
             const bool frameChanged = !lastFrame_.has_value() ||

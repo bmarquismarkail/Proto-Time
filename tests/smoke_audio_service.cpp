@@ -164,6 +164,11 @@ int main()
         std::cerr << "audio service did not configure output transport" << '\n';
         return 1;
     }
+    const auto transportEpochAfterConfigure = view.audioService().transportStats().lifecycleEpoch;
+    if (transportEpochAfterConfigure == 0u) {
+        std::cerr << "audio transport lifecycle epoch did not initialize" << '\n';
+        return 1;
+    }
     std::vector<int16_t> emptyDrain(4, 123);
     view.audioService().drainReadyOutput(std::span<int16_t>(emptyDrain.data(), emptyDrain.size()));
     if (!std::all_of(emptyDrain.begin(), emptyDrain.end(), [](int16_t sample) { return sample == 0; })) {
@@ -220,11 +225,22 @@ int main()
         std::cerr << "audio service did not start output transport" << '\n';
         return 1;
     }
+    const auto transportStatsAfterStart = view.audioService().transportStats();
+    if (transportStatsAfterStart.lifecycleEpoch < transportEpochAfterConfigure ||
+        transportStatsAfterStart.epochBumpCount == 0u) {
+        std::cerr << "audio transport epoch did not bump on start" << '\n';
+        return 1;
+    }
     assert(!view.audioService().canPerformReset());
     assert(!view.audioService().configureFixedCallbackCapacity(4u));
     assert(!view.audioService().addProcessor(std::make_unique<PassthroughProcessor>()));
     view.audioService().stopOutputTransport();
     view.audioService().setBackendPausedOrClosed(true);
+    const auto transportStatsAfterPause = view.audioService().transportStats();
+    if (transportStatsAfterPause.lifecycleEpoch < transportStatsAfterStart.lifecycleEpoch) {
+        std::cerr << "audio transport epoch regressed after pause/close barrier" << '\n';
+        return 1;
+    }
     assert(view.audioService().canPerformReset());
 
     assert(!machine.setAudioService(nullptr));

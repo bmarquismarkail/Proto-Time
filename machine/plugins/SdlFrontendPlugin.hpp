@@ -87,6 +87,9 @@ struct SdlFrontendStats {
     std::size_t videoPresentGenerationGap1 = 0;
     std::size_t videoPresentGenerationGap2To3 = 0;
     std::size_t videoPresentGenerationGap4Plus = 0;
+    std::size_t videoStaleEpochDropCount = 0;
+    std::size_t videoLifecycleEpochBumpCount = 0;
+    std::uint64_t videoLifecycleEpoch = 1;
     std::size_t videoRealtimePacketsAccepted = 0;
     std::size_t videoRealtimePacketsSkipped = 0;
     std::size_t videoDebugSnapshotsBuilt = 0;
@@ -122,6 +125,9 @@ struct SdlFrontendStats {
     std::size_t audioTransportWorkerProducedBlocks = 0;
     std::size_t audioTransportDroppedReadyBlocks = 0;
     std::size_t audioTransportWorkerWakeCount = 0;
+    std::size_t audioTransportStaleEpochDropCount = 0;
+    std::size_t audioTransportEpochBumpCount = 0;
+    std::uint64_t audioTransportLifecycleEpoch = 1;
     std::size_t audioQueueWrites = 0;
     std::size_t audioSamplesQueued = 0;
     std::size_t audioQueueLowWaterHits = 0;

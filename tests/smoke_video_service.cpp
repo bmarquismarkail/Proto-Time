@@ -156,6 +156,21 @@ int main()
     assert(service.diagnostics().publishedDebugFrameCount >= 1u);
     assert(service.diagnostics().publishedRealtimeFrameCount == 0u);
     assert(service.diagnostics().publishedPixelBytes >= frame.pixelCount() * sizeof(std::uint32_t));
+    BMMQ::VideoFramePacket staleFrame = BMMQ::makeBlankVideoFrame(32, 24, 4u);
+    assert(service.submitFrame(staleFrame));
+    const auto lifecycleEpochBeforePresenterConfig = service.diagnostics().lifecycleEpoch;
+    assert(service.configurePresenter({
+        .windowTitle = "epoch-bump",
+        .scale = 1,
+        .frameWidth = 32,
+        .frameHeight = 24,
+        .mode = BMMQ::VideoPresenterMode::Auto,
+        .createHiddenWindowOnOpen = true,
+        .showWindowOnPresent = false,
+    }));
+    assert(service.diagnostics().lifecycleEpoch == lifecycleEpochBeforePresenterConfig + 1u);
+    assert(service.presentOneFrame());
+    assert(service.diagnostics().presentFallbackCount >= 1u);
 
     BMMQ::VideoService scanlineService(BMMQ::VideoEngineConfig{
         .frameWidth = 8,
