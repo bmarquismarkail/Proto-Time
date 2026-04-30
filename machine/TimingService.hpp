@@ -17,6 +17,8 @@ struct TimingConfig {
     // Minimum host sleep quantum; deficits smaller than this should
     // not trigger a `sleep_until()` call in the emulator idle loop.
     std::chrono::nanoseconds minSleepQuantum = std::chrono::milliseconds(1);
+    std::uint32_t maxExecutionSlicesPerWake = 4;
+    double maxCyclesPerWake = 4096.0;
     bool throttled = true;
 };
 
@@ -40,6 +42,17 @@ struct TimingStats {
     std::uint64_t frontendServiceChecks = 0;
     double lastExecutionSliceCycles = 0.0;
     double currentExecutionSliceCycles = 0.0;
+    std::uint64_t wakeBurstSamples = 0;
+    std::uint64_t wakeBurstSliceLimitHitCount = 0;
+    std::uint64_t wakeBurstCycleLimitHitCount = 0;
+    std::uint64_t sleepCalls = 0;
+    std::uint64_t sleepOvershootCount = 0;
+    std::chrono::nanoseconds sleepOvershootHighWater = std::chrono::nanoseconds::zero();
+    std::chrono::nanoseconds sleepOvershootLast = std::chrono::nanoseconds::zero();
+    std::uint32_t wakeBurstSlicesLast = 0;
+    std::uint32_t wakeBurstSlicesHighWater = 0;
+    double wakeBurstCyclesLast = 0.0;
+    double wakeBurstCyclesHighWater = 0.0;
 };
 
 struct TimingControlState {
@@ -113,6 +126,10 @@ public:
 
     [[nodiscard]] const TimingConfig& config() const noexcept { return config_; }
     [[nodiscard]] TimingStats stats() const noexcept;
+    void recordWakeBurst(double burstCycles, std::uint32_t burstSlices) noexcept;
+    void noteWakeBurstSliceLimitHit() noexcept;
+    void noteWakeBurstCycleLimitHit() noexcept;
+    void noteHostSleep(std::chrono::nanoseconds requested, std::chrono::nanoseconds actual) noexcept;
 
 private:
     // Protects access to the service-level configuration and the

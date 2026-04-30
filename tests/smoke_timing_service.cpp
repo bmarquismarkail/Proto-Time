@@ -120,6 +120,22 @@ int main()
     CHECK_TRUE(subQuantumSvc.nextWakeTime(subNow) <= subNow);
     CHECK_TRUE(subQuantumSvc.stats().sleepSkippedForSmallDeficit >= 1u);
 
+    subQuantumSvc.recordWakeBurst(120.0, 3u);
+    subQuantumSvc.noteWakeBurstSliceLimitHit();
+    subQuantumSvc.noteWakeBurstCycleLimitHit();
+    subQuantumSvc.noteHostSleep(std::chrono::microseconds(50), std::chrono::microseconds(75));
+    {
+        const auto s6 = subQuantumSvc.stats();
+        CHECK_TRUE(s6.wakeBurstSamples >= 1u);
+        CHECK_TRUE(s6.wakeBurstCyclesLast >= 120.0);
+        CHECK_TRUE(s6.wakeBurstSlicesLast >= 3u);
+        CHECK_TRUE(s6.wakeBurstSliceLimitHitCount >= 1u);
+        CHECK_TRUE(s6.wakeBurstCycleLimitHitCount >= 1u);
+        CHECK_TRUE(s6.sleepCalls >= 1u);
+        CHECK_TRUE(s6.sleepOvershootCount >= 1u);
+        CHECK_TRUE(s6.sleepOvershootHighWater >= std::chrono::microseconds(25));
+    }
+
     return 0;
 }
 

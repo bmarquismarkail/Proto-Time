@@ -175,6 +175,7 @@ public:
         std::scoped_lock<std::mutex> lock(sharedStateMutex_);
         ++stats_.serviceCalls;
         stats_.renderServiceState = renderServiceState_.load(std::memory_order_acquire);
+        syncTimingStats();
         applyLifecycleRecoveryPolicy();
         if (renderServiceActive()) {
             syncVideoTransportStats();
@@ -1113,6 +1114,26 @@ private:
         stats_.peakQueuedAudioBytes = std::max<std::uint32_t>(
             stats_.peakQueuedAudioBytes,
             static_cast<std::uint32_t>(stats_.audioBufferedHighWaterSamples * sizeof(int16_t)));
+    }
+
+    void syncTimingStats() noexcept
+    {
+        if (timingService_ == nullptr) {
+            return;
+        }
+        const auto timingStats = timingService_->stats();
+        stats_.timingCycleDebt = timingStats.cycleDebt;
+        stats_.timingWakeBurstSamples = timingStats.wakeBurstSamples;
+        stats_.timingWakeBurstSliceLimitHitCount = timingStats.wakeBurstSliceLimitHitCount;
+        stats_.timingWakeBurstCycleLimitHitCount = timingStats.wakeBurstCycleLimitHitCount;
+        stats_.timingWakeBurstSlicesLast = timingStats.wakeBurstSlicesLast;
+        stats_.timingWakeBurstSlicesHighWater = timingStats.wakeBurstSlicesHighWater;
+        stats_.timingWakeBurstCyclesLast = timingStats.wakeBurstCyclesLast;
+        stats_.timingWakeBurstCyclesHighWater = timingStats.wakeBurstCyclesHighWater;
+        stats_.timingSleepCalls = timingStats.sleepCalls;
+        stats_.timingSleepOvershootCount = timingStats.sleepOvershootCount;
+        stats_.timingSleepOvershootHighWaterNanos = timingStats.sleepOvershootHighWater.count();
+        stats_.timingSleepOvershootLastNanos = timingStats.sleepOvershootLast.count();
     }
 
     [[nodiscard]] bool shouldDeferVideoFrameForAudioLowWater() const noexcept

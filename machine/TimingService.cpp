@@ -19,6 +19,12 @@ void sanitizeTimingConfig(TimingConfig& config) noexcept
     if (config.frontendServiceSliceSeconds <= 0.0) {
         config.frontendServiceSliceSeconds = config.executionSliceSeconds;
     }
+    if (config.maxExecutionSlicesPerWake == 0u) {
+        config.maxExecutionSlicesPerWake = 1u;
+    }
+    if (config.maxCyclesPerWake <= 0.0) {
+        config.maxCyclesPerWake = config.minInstructionCycles;
+    }
 }
 } // namespace
 
@@ -343,6 +349,43 @@ TimingStats TimingService::stats() const noexcept
 {
     std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
     return stats_;
+}
+
+void TimingService::recordWakeBurst(double burstCycles, std::uint32_t burstSlices) noexcept
+{
+    std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
+    const auto sanitizedCycles = std::max(0.0, burstCycles);
+    stats_.wakeBurstCyclesLast = sanitizedCycles;
+    stats_.wakeBurstSlicesLast = burstSlices;
+    stats_.wakeBurstCyclesHighWater = std::max(stats_.wakeBurstCyclesHighWater, sanitizedCycles);
+    stats_.wakeBurstSlicesHighWater = std::max(stats_.wakeBurstSlicesHighWater, burstSlices);
+    ++stats_.wakeBurstSamples;
+}
+
+void TimingService::noteWakeBurstSliceLimitHit() noexcept
+{
+    std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
+    ++stats_.wakeBurstSliceLimitHitCount;
+}
+
+void TimingService::noteWakeBurstCycleLimitHit() noexcept
+{
+    std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
+    ++stats_.wakeBurstCycleLimitHitCount;
+}
+
+void TimingService::noteHostSleep(std::chrono::nanoseconds requested, std::chrono::nanoseconds actual) noexcept
+{
+    std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
+    ++stats_.sleepCalls;
+    if (actual <= requested) {
+        stats_.sleepOvershootLast = std::chrono::nanoseconds::zero();
+        return;
+    }
+    const auto overshoot = actual - requested;
+    stats_.sleepOvershootLast = overshoot;
+    ++stats_.sleepOvershootCount;
+    stats_.sleepOvershootHighWater = std::max(stats_.sleepOvershootHighWater, overshoot);
 }
 
 } // namespace BMMQ

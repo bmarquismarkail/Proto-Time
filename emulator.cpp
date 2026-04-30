@@ -169,6 +169,8 @@ int main(int argc, char** argv)
         timingConfig.frontendServiceSliceSeconds = kFrontendServiceSliceSeconds;
         timingConfig.maxCatchUp = kMaxCatchUpWindow;
         timingConfig.minSleepQuantum = kMinSleepQuantum;
+        timingConfig.maxExecutionSlicesPerWake = 4u;
+        timingConfig.maxCyclesPerWake = static_cast<double>(cpuClockHz) * 0.004;
         timingConfig.throttled = !options.unthrottled;
         timingService.configure(timingConfig);
         BMMQ::TimingEngine timingEngine(timingConfig);
@@ -239,14 +241,25 @@ int main(int argc, char** argv)
 
             bool executedInstruction = false;
             bool executionSliceActive = false;
+            std::uint32_t wakeExecutionSlices = 0u;
+            double wakeExecutionCycles = 0.0;
             while (timingEngine.canExecute() && gStopRequested == 0) {
                 if (options.stepLimit.has_value() && steps >= *options.stepLimit) {
+                    break;
+                }
+                if (wakeExecutionSlices >= timingConfig.maxExecutionSlicesPerWake) {
+                    timingService.noteWakeBurstSliceLimitHit();
+                    break;
+                }
+                if (wakeExecutionCycles >= timingConfig.maxCyclesPerWake) {
+                    timingService.noteWakeBurstCycleLimitHit();
                     break;
                 }
 
                 if (!executionSliceActive) {
                     timingEngine.beginExecutionSlice();
                     executionSliceActive = true;
+                    ++wakeExecutionSlices;
                 }
 
                 machine.step();
@@ -255,6 +268,7 @@ int main(int argc, char** argv)
 
                 const auto retiredCycles = static_cast<double>(machine.runtimeContext().getLastFeedback().retiredCycles);
                 const auto chargedCycles = std::max(kMinInstructionCycles, retiredCycles);
+                wakeExecutionCycles += chargedCycles;
                 timingEngine.charge(retiredCycles);
                 const auto sliceDecision = timingEngine.recordExecutionSliceCycles(chargedCycles);
 
@@ -266,6 +280,7 @@ int main(int argc, char** argv)
                     break;
                 }
             }
+            timingService.recordWakeBurst(wakeExecutionCycles, wakeExecutionSlices);
             timingService.publishEngineStats(timingEngine.stats());
 
             if (gStopRequested != 0) {
@@ -292,7 +307,12 @@ int main(int argc, char** argv)
 
                 if (timingSleepDue || frontendSleepDue) {
                     if (nextWakeTime > idleNow) {
+                        const auto requestedSleep = std::chrono::duration_cast<std::chrono::nanoseconds>(nextWakeTime - idleNow);
+                        const auto beforeSleep = SteadyClock::now();
                         std::this_thread::sleep_until(nextWakeTime);
+                        const auto afterSleep = SteadyClock::now();
+                        const auto actualSleep = std::chrono::duration_cast<std::chrono::nanoseconds>(afterSleep - beforeSleep);
+                        timingService.noteHostSleep(requestedSleep, actualSleep);
                     }
                 }
             }

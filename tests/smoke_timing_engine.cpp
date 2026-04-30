@@ -22,8 +22,12 @@ int main()
     cfg.maxCatchUp = std::chrono::milliseconds(8);
     cfg.minSleepQuantum = std::chrono::microseconds(10);
     cfg.throttled = true;
+    cfg.maxExecutionSlicesPerWake = 0u;
+    cfg.maxCyclesPerWake = 0.0;
 
     BMMQ::TimingEngine engine(cfg);
+    CHECK_TRUE(engine.config().maxExecutionSlicesPerWake >= 1u);
+    CHECK_TRUE(engine.config().maxCyclesPerWake >= engine.config().minInstructionCycles);
 
     const auto t0 = SteadyClock::now();
     engine.start(t0);
