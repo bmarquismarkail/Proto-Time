@@ -45,9 +45,11 @@ struct VideoServiceDiagnostics {
     std::size_t mailboxDepth = 0;
     std::size_t mailboxHighWaterMark = 0;
     VideoPresenterMode configuredPresenterMode = VideoPresenterMode::Auto;
+    VideoPresenterPolicy configuredPresenterPolicy = VideoPresenterPolicy::HardwarePreferredWithFallback;
     VideoPresenterMode activePresenterMode = VideoPresenterMode::Auto;
     bool presenterUsedSoftwareFallback = false;
     std::size_t presenterSoftwareFallbackCount = 0;
+    VideoPresenterFallbackReason presenterLastFallbackReason = VideoPresenterFallbackReason::None;
     std::size_t presenterTextureRecreateCount = 0;
     std::size_t presenterTextureUploadCount = 0;
     std::size_t presenterRenderCount = 0;
@@ -155,6 +157,18 @@ public:
         diagnostics_.configuredPresenterMode = presenterConfig_.mode;
         bumpLifecycleEpochLocked();
         return true;
+    }
+
+    void setPresenterPolicy(VideoPresenterPolicy policy) noexcept
+    {
+        std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
+        presenterPolicy_ = policy;
+        diagnostics_.configuredPresenterPolicy = policy;
+    }
+
+    [[nodiscard]] VideoPresenterPolicy presenterPolicy() const noexcept
+    {
+        return presenterPolicy_;
     }
 
     [[nodiscard]] bool attachPresenter(std::unique_ptr<IVideoPresenterPlugin> presenter)
@@ -574,11 +588,13 @@ private:
         diagnostics_.lifecycleEpoch = lifecycleEpoch_;
         diagnostics_.lifecycleEpochBumpCount = lifecycleEpochBumpCount_;
         diagnostics_.configuredPresenterMode = presenterConfig_.mode;
+        diagnostics_.configuredPresenterPolicy = presenterPolicy_;
         if (presenter_ != nullptr) {
             const auto presenterDiagnostics = presenter_->diagnostics();
             diagnostics_.activePresenterMode = presenterDiagnostics.activeMode;
             diagnostics_.presenterUsedSoftwareFallback = presenterDiagnostics.usedSoftwareFallback;
             diagnostics_.presenterSoftwareFallbackCount = presenterDiagnostics.softwareFallbackCount;
+            diagnostics_.presenterLastFallbackReason = presenterDiagnostics.lastFallbackReason;
             diagnostics_.presenterTextureRecreateCount = presenterDiagnostics.textureRecreateCount;
             diagnostics_.presenterTextureUploadCount = presenterDiagnostics.textureUploadCount;
             diagnostics_.presenterRenderCount = presenterDiagnostics.presentCount;
@@ -693,6 +709,7 @@ private:
     std::size_t scanlineCaptureCount_ = 0;
     uint64_t lifecycleEpoch_ = 1;
     std::size_t lifecycleEpochBumpCount_ = 0;
+    VideoPresenterPolicy presenterPolicy_ = VideoPresenterPolicy::HardwarePreferredWithFallback;
     std::atomic<bool> enforceLifecycleContract_{false};
     std::atomic<std::size_t> lifecycleMutationScopeDepth_{0};
     mutable std::atomic<std::size_t> lifecycleContractDeniedCalls_{0};

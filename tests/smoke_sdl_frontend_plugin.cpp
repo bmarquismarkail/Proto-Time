@@ -78,6 +78,7 @@ int main(int argc, char** argv)
     config.autoInitializeBackend = false;
     config.autoPresentOnVideoEvent = false;
     config.enableRenderServiceThread = true;
+    config.videoPresenterPolicy = BMMQ::VideoPresenterPolicy::HardwarePreferredWithFallback;
     // Create the window hidden on initialize in tests to avoid platform
     // differences in default window visibility (headless CI vs local SDL).
     config.createHiddenWindowOnInitialize = true;
@@ -256,7 +257,11 @@ int main(int argc, char** argv)
     assert(stats.videoMailboxOverwriteCount ==
            stats.videoMailboxOverwriteDebugCount + stats.videoMailboxOverwriteRealtimeCount);
     assert(stats.videoPresentCount >= stats.framesPresented);
-    assert(stats.configuredPresenterMode == BMMQ::VideoPresenterMode::Auto);
+    assert(stats.configuredPresenterMode == BMMQ::VideoPresenterMode::Hardware);
+    assert(stats.configuredPresenterPolicy == BMMQ::VideoPresenterPolicy::HardwarePreferredWithFallback);
+    assert(stats.videoPresenterLastFallbackReason == BMMQ::VideoPresenterFallbackReason::None ||
+           stats.videoPresenterLastFallbackReason == BMMQ::VideoPresenterFallbackReason::HardwareRendererUnavailable ||
+           stats.videoPresenterLastFallbackReason == BMMQ::VideoPresenterFallbackReason::RuntimePresentFailure);
     assert(stats.videoPresenterRenderCount >= stats.framesPresented);
     assert(stats.videoPresenterTextureUploadCount >= stats.framesPresented);
     assert(stats.audioRealtimePacketsAccepted >= 1u);

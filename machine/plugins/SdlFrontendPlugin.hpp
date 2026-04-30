@@ -16,6 +16,7 @@
 #include "input/InputPlugin.hpp"
 #include "IoPlugin.hpp"
 #include "video/VideoFrame.hpp"
+#include "video/VideoPlugin.hpp"
 
 namespace BMMQ {
 
@@ -42,6 +43,7 @@ struct SdlFrontendConfig {
     bool pumpBackendEventsOnInputSample = true;
     bool autoPresentOnVideoEvent = true;
     bool showWindowOnPresent = false;
+    VideoPresenterPolicy videoPresenterPolicy = VideoPresenterPolicy::HardwarePreferredWithFallback;
 };
 
 enum class SdlRenderServiceState : uint8_t {
@@ -77,9 +79,11 @@ struct SdlFrontendStats {
     std::uint64_t videoLastPublishedGeneration = 0;
     std::uint64_t videoLastPresentedGeneration = 0;
     VideoPresenterMode configuredPresenterMode = VideoPresenterMode::Auto;
+    VideoPresenterPolicy configuredPresenterPolicy = VideoPresenterPolicy::HardwarePreferredWithFallback;
     VideoPresenterMode activePresenterMode = VideoPresenterMode::Auto;
     bool videoPresenterUsedSoftwareFallback = false;
     std::size_t videoPresenterSoftwareFallbackCount = 0;
+    VideoPresenterFallbackReason videoPresenterLastFallbackReason = VideoPresenterFallbackReason::None;
     std::size_t videoPresenterTextureRecreateCount = 0;
     std::size_t videoPresenterTextureUploadCount = 0;
     std::size_t videoPresenterRenderCount = 0;

@@ -173,13 +173,40 @@ bool SdlVideoPresenter::present(const VideoFramePacket& frame) noexcept
     }
 
     if (SDL_UpdateTexture(texture_, nullptr, frame.pixels.data(), frame.width * static_cast<int>(sizeof(uint32_t))) != 0) {
-        lastError_ = SDL_GetError();
-        return false;
+        const auto updateError = std::string(SDL_GetError());
+        if (!fallbackToSoftwareRenderer(frame.width, frame.height, VideoPresenterFallbackReason::RuntimePresentFailure)) {
+            lastError_ = updateError;
+            return false;
+        }
+        if (SDL_UpdateTexture(texture_, nullptr, frame.pixels.data(), frame.width * static_cast<int>(sizeof(uint32_t))) != 0) {
+            lastError_ = SDL_GetError();
+            return false;
+        }
     }
     ++diagnostics_.textureUploadCount;
 
-    SDL_RenderClear(renderer_);
-    SDL_RenderCopy(renderer_, texture_, nullptr, nullptr);
+    if (SDL_RenderClear(renderer_) != 0) {
+        const auto clearError = std::string(SDL_GetError());
+        if (!fallbackToSoftwareRenderer(frame.width, frame.height, VideoPresenterFallbackReason::RuntimePresentFailure)) {
+            lastError_ = clearError;
+            return false;
+        }
+        if (SDL_RenderClear(renderer_) != 0) {
+            lastError_ = SDL_GetError();
+            return false;
+        }
+    }
+    if (SDL_RenderCopy(renderer_, texture_, nullptr, nullptr) != 0) {
+        const auto copyError = std::string(SDL_GetError());
+        if (!fallbackToSoftwareRenderer(frame.width, frame.height, VideoPresenterFallbackReason::RuntimePresentFailure)) {
+            lastError_ = copyError;
+            return false;
+        }
+        if (SDL_RenderCopy(renderer_, texture_, nullptr, nullptr) != 0) {
+            lastError_ = SDL_GetError();
+            return false;
+        }
+    }
     SDL_RenderPresent(renderer_);
     ++diagnostics_.presentCount;
     lastError_.clear();
@@ -259,21 +286,65 @@ bool SdlVideoPresenter::ensureRenderer(int frameWidth, int frameHeight) noexcept
         return true;
     }
 
-    const std::string acceleratedError = SDL_GetError();
-    if (config_.mode == VideoPresenterMode::Hardware) {
-        lastError_ = "accelerated renderer required but unavailable: " + acceleratedError;
-        return false;
-    }
-
     if (!createSoftwareRenderer()) {
         return false;
     }
     diagnostics_.usedSoftwareFallback = true;
     ++diagnostics_.softwareFallbackCount;
+    diagnostics_.lastFallbackReason = VideoPresenterFallbackReason::HardwareRendererUnavailable;
     return true;
 #else
     (void)frameWidth;
     (void)frameHeight;
+    return false;
+#endif
+}
+
+bool SdlVideoPresenter::fallbackToSoftwareRenderer(int frameWidth,
+                                                   int frameHeight,
+                                                   VideoPresenterFallbackReason reason) noexcept
+{
+#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
+    if (window_ == nullptr) {
+        return false;
+    }
+    if (renderer_ != nullptr && diagnostics_.activeMode == VideoPresenterMode::Software) {
+        return false;
+    }
+    if (texture_ != nullptr) {
+        SDL_DestroyTexture(texture_);
+        texture_ = nullptr;
+    }
+    textureWidth_ = 0;
+    textureHeight_ = 0;
+    if (renderer_ != nullptr) {
+        SDL_DestroyRenderer(renderer_);
+        renderer_ = nullptr;
+    }
+
+    renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_SOFTWARE);
+    if (renderer_ == nullptr) {
+        lastError_ = SDL_GetError();
+        return false;
+    }
+    diagnostics_.activeMode = VideoPresenterMode::Software;
+    diagnostics_.usedSoftwareFallback = true;
+    ++diagnostics_.softwareFallbackCount;
+    diagnostics_.lastFallbackReason = reason;
+    SDL_RenderSetLogicalSize(renderer_, frameWidth, frameHeight);
+
+    SDL_RendererInfo rendererInfo{};
+    if (SDL_GetRendererInfo(renderer_, &rendererInfo) == 0 && rendererInfo.name != nullptr) {
+        rendererNameStorage_ = rendererInfo.name;
+    } else {
+        rendererNameStorage_.clear();
+    }
+    diagnostics_.rendererName = rendererNameStorage_;
+    return ensureTexture(frameWidth, frameHeight);
+#else
+    (void)frameWidth;
+    (void)frameHeight;
+    (void)reason;
     return false;
 #endif
 }

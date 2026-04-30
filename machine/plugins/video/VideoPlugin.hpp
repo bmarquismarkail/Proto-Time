@@ -9,11 +9,18 @@
 
 namespace BMMQ {
 
+enum class VideoPresenterFallbackReason : uint8_t {
+    None = 0,
+    HardwareRendererUnavailable,
+    RuntimePresentFailure,
+};
+
 struct VideoPresenterDiagnostics {
     VideoPresenterMode configuredMode = VideoPresenterMode::Auto;
     VideoPresenterMode activeMode = VideoPresenterMode::Auto;
     bool usedSoftwareFallback = false;
     std::size_t softwareFallbackCount = 0;
+    VideoPresenterFallbackReason lastFallbackReason = VideoPresenterFallbackReason::None;
     std::size_t textureRecreateCount = 0;
     std::size_t textureUploadCount = 0;
     std::size_t presentCount = 0;

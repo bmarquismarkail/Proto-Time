@@ -69,6 +69,17 @@ namespace {
 
 constexpr std::size_t kApuFrameSamples = 256u;
 
+[[nodiscard]] BMMQ::VideoPresenterMode presenterModeForPolicy(BMMQ::VideoPresenterPolicy policy) noexcept
+{
+    switch (policy) {
+    case BMMQ::VideoPresenterPolicy::SoftwareOnly:
+        return BMMQ::VideoPresenterMode::Software;
+    case BMMQ::VideoPresenterPolicy::HardwarePreferredWithFallback:
+        return BMMQ::VideoPresenterMode::Hardware;
+    }
+    return BMMQ::VideoPresenterMode::Hardware;
+}
+
 class SdlFrontendPluginImpl final : public BMMQ::ISdlFrontendPlugin,
                                     public BMMQ::LoggingPluginSupport {
 public:
@@ -1165,6 +1176,7 @@ private:
             .frameHeight = std::max(config_.frameHeight, 1),
             .mailboxDepthFrames = 2,
         });
+        videoService_->setPresenterPolicy(config_.videoPresenterPolicy);
         (void)videoService_->configurePresenter({
             .windowTitle = config_.windowTitle,
             .scale = static_cast<int>(std::min<std::uint32_t>(
@@ -1172,7 +1184,7 @@ private:
                 static_cast<std::uint32_t>(std::numeric_limits<int>::max()))),
             .frameWidth = std::max(config_.frameWidth, 1),
             .frameHeight = std::max(config_.frameHeight, 1),
-            .mode = config_.videoPresenterMode,
+            .mode = presenterModeForPolicy(config_.videoPresenterPolicy),
             .createHiddenWindowOnOpen = config_.createHiddenWindowOnInitialize,
             .showWindowOnPresent = config_.showWindowOnPresent,
         });
@@ -1225,9 +1237,11 @@ private:
         stats_.videoLastPublishedGeneration = diagnostics.lastPublishedGeneration;
         stats_.videoLastPresentedGeneration = diagnostics.lastPresentedGeneration;
         stats_.configuredPresenterMode = diagnostics.configuredPresenterMode;
+        stats_.configuredPresenterPolicy = diagnostics.configuredPresenterPolicy;
         stats_.activePresenterMode = diagnostics.activePresenterMode;
         stats_.videoPresenterUsedSoftwareFallback = diagnostics.presenterUsedSoftwareFallback;
         stats_.videoPresenterSoftwareFallbackCount = diagnostics.presenterSoftwareFallbackCount;
+        stats_.videoPresenterLastFallbackReason = diagnostics.presenterLastFallbackReason;
         stats_.videoPresenterTextureRecreateCount = diagnostics.presenterTextureRecreateCount;
         stats_.videoPresenterTextureUploadCount = diagnostics.presenterTextureUploadCount;
         stats_.videoPresenterRenderCount = diagnostics.presenterRenderCount;

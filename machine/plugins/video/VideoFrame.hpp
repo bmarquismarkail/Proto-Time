@@ -26,6 +26,11 @@ enum class VideoPresenterMode : uint8_t {
     Software = 2,
 };
 
+enum class VideoPresenterPolicy : uint8_t {
+    SoftwareOnly = 0,
+    HardwarePreferredWithFallback = 1,
+};
+
 struct VideoFramePacket {
     int width = 160;
     int height = 144;

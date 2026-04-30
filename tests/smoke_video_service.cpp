@@ -168,6 +168,7 @@ int main()
         .createHiddenWindowOnOpen = true,
         .showWindowOnPresent = false,
     }));
+    assert(service.diagnostics().configuredPresenterPolicy == BMMQ::VideoPresenterPolicy::HardwarePreferredWithFallback);
     assert(service.diagnostics().lifecycleEpoch == lifecycleEpochBeforePresenterConfig + 1u);
     assert(service.presentOneFrame());
     assert(service.diagnostics().presentFallbackCount >= 1u);

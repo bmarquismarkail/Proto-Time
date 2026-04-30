@@ -37,6 +37,8 @@ public:
 private:
     bool ensureRenderer(int frameWidth, int frameHeight) noexcept;
     bool ensureTexture(int frameWidth, int frameHeight) noexcept;
+    bool fallbackToSoftwareRenderer(int frameWidth, int frameHeight,
+                                    VideoPresenterFallbackReason reason) noexcept;
 
     VideoPresenterConfig config_{};
     std::string lastError_{};
