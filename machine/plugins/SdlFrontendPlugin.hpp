@@ -69,7 +69,11 @@ struct SdlFrontendStats {
     std::size_t videoMailboxDepth = 0;
     std::size_t videoMailboxHighWaterFrames = 0;
     std::size_t videoMailboxStaleDropCount = 0;
+    std::size_t videoMailboxStaleDebugDropCount = 0;
+    std::size_t videoMailboxStaleRealtimeDropCount = 0;
     std::size_t videoMailboxOverwriteCount = 0;
+    std::size_t videoMailboxOverwriteDebugCount = 0;
+    std::size_t videoMailboxOverwriteRealtimeCount = 0;
     std::uint64_t videoLastPublishedGeneration = 0;
     std::uint64_t videoLastPresentedGeneration = 0;
     VideoPresenterMode configuredPresenterMode = VideoPresenterMode::Auto;
@@ -82,8 +86,14 @@ struct SdlFrontendStats {
     std::string videoPresenterRendererName;
     std::size_t videoPublishedDebugFrameCount = 0;
     std::size_t videoPublishedRealtimeFrameCount = 0;
+    std::size_t videoPublishedDebugPixelBytes = 0;
+    std::size_t videoPublishedRealtimePixelBytes = 0;
     std::size_t videoPublishedPixelBytes = 0;
     std::size_t videoPresentFreshFrameCount = 0;
+    std::size_t videoPresentFromDebugFrameCount = 0;
+    std::size_t videoPresentFromRealtimeFrameCount = 0;
+    std::size_t videoPresentFallbackBlankCount = 0;
+    std::size_t videoPresentFallbackLastValidCount = 0;
     std::size_t videoPresentGenerationGap0 = 0;
     std::size_t videoPresentGenerationGap1 = 0;
     std::size_t videoPresentGenerationGap2To3 = 0;

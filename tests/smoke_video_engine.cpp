@@ -161,8 +161,14 @@ int main()
     assert(submitC.accepted);
     assert(submitC.overwroteOldFrame);
     assert(engine.stats().overwriteCount == 1u);
+    assert(engine.stats().overwriteDebugFrameCount == 1u);
+    assert(engine.stats().overwriteRealtimeFrameCount == 0u);
     assert(engine.stats().mailboxHighWaterMark == 2u);
     assert(engine.stats().publishedFrameCount == 3u);
+    assert(engine.stats().publishedDebugFrameCount == 3u);
+    assert(engine.stats().publishedRealtimeFrameCount == 0u);
+    assert(engine.stats().publishedPixelBytes ==
+           engine.stats().publishedDebugPixelBytes + engine.stats().publishedRealtimePixelBytes);
     assert(engine.stats().lastPublishedGeneration == 9u);
 
     auto consumed = engine.tryConsumeLatestFrame();
@@ -170,6 +176,8 @@ int main()
     assert(consumed->generation == 9u);
     assert(engine.stats().consumedFrameCount == 1u);
     assert(engine.stats().staleFrameDropCount == 1u);
+    assert(engine.stats().staleDebugFrameDropCount == 1u);
+    assert(engine.stats().staleRealtimeFrameDropCount == 0u);
     assert(engine.stats().lastConsumedGeneration == 9u);
     assert(!engine.tryConsumeLatestFrame().has_value());
     assert(engine.mailboxFrameCount() == 0u);

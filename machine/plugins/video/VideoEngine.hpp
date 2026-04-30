@@ -29,9 +29,15 @@ struct VideoEngineStats {
     std::size_t publishedFrameCount = 0;
     std::size_t publishedDebugFrameCount = 0;
     std::size_t publishedRealtimeFrameCount = 0;
+    std::size_t publishedDebugPixelBytes = 0;
+    std::size_t publishedRealtimePixelBytes = 0;
     std::size_t consumedFrameCount = 0;
     std::size_t staleFrameDropCount = 0;
+    std::size_t staleDebugFrameDropCount = 0;
+    std::size_t staleRealtimeFrameDropCount = 0;
     std::size_t overwriteCount = 0;
+    std::size_t overwriteDebugFrameCount = 0;
+    std::size_t overwriteRealtimeFrameCount = 0;
     std::size_t mailboxHighWaterMark = 0;
     std::size_t mailboxDepth = 0;
     std::size_t publishedPixelBytes = 0;
@@ -140,6 +146,12 @@ public:
         lastValidFrame_ = frame;
         if (mailboxFrames_.size() >= config_.mailboxDepthFrames) {
             ++stats_.overwriteCount;
+            const auto dropped = mailboxFrames_.front();
+            if (dropped.source == VideoFrameSource::RealtimeSnapshot) {
+                ++stats_.overwriteRealtimeFrameCount;
+            } else {
+                ++stats_.overwriteDebugFrameCount;
+            }
             mailboxFrames_.pop_front();
             overwroteOldFrame = true;
         }
@@ -147,8 +159,10 @@ public:
         ++stats_.publishedFrameCount;
         if (frame.source == VideoFrameSource::RealtimeSnapshot) {
             ++stats_.publishedRealtimeFrameCount;
+            stats_.publishedRealtimePixelBytes += frame.pixelCount() * sizeof(std::uint32_t);
         } else {
             ++stats_.publishedDebugFrameCount;
+            stats_.publishedDebugPixelBytes += frame.pixelCount() * sizeof(std::uint32_t);
         }
         stats_.publishedPixelBytes += frame.pixelCount() * sizeof(std::uint32_t);
         stats_.mailboxDepth = mailboxFrames_.size();
@@ -164,6 +178,12 @@ public:
         }
 
         while (mailboxFrames_.size() > 1u) {
+            const auto dropped = mailboxFrames_.front();
+            if (dropped.source == VideoFrameSource::RealtimeSnapshot) {
+                ++stats_.staleRealtimeFrameDropCount;
+            } else {
+                ++stats_.staleDebugFrameDropCount;
+            }
             mailboxFrames_.pop_front();
             ++stats_.staleFrameDropCount;
         }

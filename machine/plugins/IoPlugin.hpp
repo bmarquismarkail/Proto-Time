@@ -2,6 +2,7 @@
 #define BMMQ_IO_PLUGIN_HPP
 
 #include <cstdint>
+#include <cstddef>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -77,6 +78,8 @@ enum class MachineEventType : uint8_t {
 };
 
 struct RealtimeVideoPacket {
+    static constexpr std::uint16_t kContractVersion = 1u;
+    std::uint16_t contractVersion = kContractVersion;
     MachineEventType eventType = MachineEventType::VBlank;
     int width = 0;
     int height = 0;
@@ -100,6 +103,8 @@ struct RealtimeVideoPacket {
 };
 
 struct RealtimeAudioPacket {
+    static constexpr std::uint16_t kContractVersion = 1u;
+    std::uint16_t contractVersion = kContractVersion;
     std::uint32_t sampleRate = 48000u;
     std::uint8_t channelCount = 1u;
     std::uint64_t frameCounter = 0;
@@ -110,6 +115,11 @@ struct RealtimeAudioPacket {
         return pcmSamples.empty();
     }
 };
+
+static_assert(offsetof(RealtimeVideoPacket, contractVersion) == 0u,
+              "RealtimeVideoPacket contract header must be first");
+static_assert(offsetof(RealtimeAudioPacket, contractVersion) == 0u,
+              "RealtimeAudioPacket contract header must be first");
 
 struct IoRegionDescriptor {
     PluginCategory category = PluginCategory::System;

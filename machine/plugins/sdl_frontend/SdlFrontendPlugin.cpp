@@ -632,7 +632,8 @@ public:
             return;
         }
         ++stats_.audioEvents;
-        if (const auto packet = view.realtimeAudioPacket(); packet.has_value()) {
+        if (const auto packet = view.realtimeAudioPacket();
+            packet.has_value() && packet->contractVersion == BMMQ::RealtimeAudioPacket::kContractVersion) {
             ++stats_.audioRealtimePacketsAccepted;
             lastAudioPreview_ = buildAudioPreview(*packet);
             ++stats_.audioPreviewsBuilt;
@@ -641,6 +642,9 @@ public:
                 audioService_->appendRecentPcm(packet->pcmSamples, packet->frameCounter);
             }
             lastAudioState_.reset();
+        } else if (packet.has_value()) {
+            ++stats_.audioRealtimePacketsSkipped;
+            lastAudioPreview_.reset();
         } else if (const auto audioState = snapshotAudioState(view); audioState.has_value()) {
             lastAudioState_ = audioState;
             lastAudioPreview_ = buildAudioPreview(*lastAudioState_);
@@ -1082,6 +1086,10 @@ private:
             ++stats_.videoRealtimePacketsSkipped;
             return false;
         }
+        if (packet->contractVersion != BMMQ::RealtimeVideoPacket::kContractVersion) {
+            ++stats_.videoRealtimePacketsSkipped;
+            return false;
+        }
 
         packet->eventType = event.type;
         packet->generation = videoService_->engine().currentGeneration();
@@ -1209,7 +1217,11 @@ private:
         stats_.videoMailboxDepth = diagnostics.mailboxDepth;
         stats_.videoMailboxHighWaterFrames = diagnostics.mailboxHighWaterMark;
         stats_.videoMailboxStaleDropCount = diagnostics.staleFrameDropCount;
+        stats_.videoMailboxStaleDebugDropCount = diagnostics.staleDebugFrameDropCount;
+        stats_.videoMailboxStaleRealtimeDropCount = diagnostics.staleRealtimeFrameDropCount;
         stats_.videoMailboxOverwriteCount = diagnostics.overwriteCount;
+        stats_.videoMailboxOverwriteDebugCount = diagnostics.overwriteDebugFrameCount;
+        stats_.videoMailboxOverwriteRealtimeCount = diagnostics.overwriteRealtimeFrameCount;
         stats_.videoLastPublishedGeneration = diagnostics.lastPublishedGeneration;
         stats_.videoLastPresentedGeneration = diagnostics.lastPresentedGeneration;
         stats_.configuredPresenterMode = diagnostics.configuredPresenterMode;
@@ -1222,8 +1234,14 @@ private:
         stats_.videoPresenterRendererName = diagnostics.presenterRendererName;
         stats_.videoPublishedDebugFrameCount = diagnostics.publishedDebugFrameCount;
         stats_.videoPublishedRealtimeFrameCount = diagnostics.publishedRealtimeFrameCount;
+        stats_.videoPublishedDebugPixelBytes = diagnostics.publishedDebugPixelBytes;
+        stats_.videoPublishedRealtimePixelBytes = diagnostics.publishedRealtimePixelBytes;
         stats_.videoPublishedPixelBytes = diagnostics.publishedPixelBytes;
         stats_.videoPresentFreshFrameCount = diagnostics.presentFromFreshFrameCount;
+        stats_.videoPresentFromDebugFrameCount = diagnostics.presentFromDebugFrameCount;
+        stats_.videoPresentFromRealtimeFrameCount = diagnostics.presentFromRealtimeFrameCount;
+        stats_.videoPresentFallbackBlankCount = diagnostics.presentFallbackBlankCount;
+        stats_.videoPresentFallbackLastValidCount = diagnostics.presentFallbackLastValidCount;
         stats_.videoPresentGenerationGap0 = diagnostics.presentGenerationGap0;
         stats_.videoPresentGenerationGap1 = diagnostics.presentGenerationGap1;
         stats_.videoPresentGenerationGap2To3 = diagnostics.presentGenerationGap2To3;

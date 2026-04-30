@@ -35,7 +35,11 @@ struct VideoServiceDiagnostics {
     std::size_t presentCount = 0;
     std::size_t presentFromFreshFrameCount = 0;
     std::size_t staleFrameDropCount = 0;
+    std::size_t staleDebugFrameDropCount = 0;
+    std::size_t staleRealtimeFrameDropCount = 0;
     std::size_t overwriteCount = 0;
+    std::size_t overwriteDebugFrameCount = 0;
+    std::size_t overwriteRealtimeFrameCount = 0;
     bool headlessModeActive = true;
     std::string lastBackendError;
     std::size_t mailboxDepth = 0;
@@ -50,7 +54,13 @@ struct VideoServiceDiagnostics {
     std::string presenterRendererName;
     std::size_t publishedDebugFrameCount = 0;
     std::size_t publishedRealtimeFrameCount = 0;
+    std::size_t publishedDebugPixelBytes = 0;
+    std::size_t publishedRealtimePixelBytes = 0;
     std::size_t publishedPixelBytes = 0;
+    std::size_t presentFromDebugFrameCount = 0;
+    std::size_t presentFromRealtimeFrameCount = 0;
+    std::size_t presentFallbackBlankCount = 0;
+    std::size_t presentFallbackLastValidCount = 0;
     std::size_t presentGenerationGap0 = 0;
     std::size_t presentGenerationGap1 = 0;
     std::size_t presentGenerationGap2To3 = 0;
@@ -406,9 +416,19 @@ public:
             frame = engine_.fallbackFrame();
             frame->lifecycleEpoch = lifecycleEpoch_;
             ++diagnostics_.presentFallbackCount;
+            if (frame->source == VideoFrameSource::BlankFallback) {
+                ++diagnostics_.presentFallbackBlankCount;
+            } else {
+                ++diagnostics_.presentFallbackLastValidCount;
+            }
             usedFallback = true;
         } else {
             ++diagnostics_.presentFromFreshFrameCount;
+            if (frame->source == VideoFrameSource::RealtimeSnapshot) {
+                ++diagnostics_.presentFromRealtimeFrameCount;
+            } else {
+                ++diagnostics_.presentFromDebugFrameCount;
+            }
         }
 
         VideoFramePacket processed = makeFramePacket(std::move(*frame));
@@ -538,11 +558,17 @@ private:
         const auto engineStats = engine_.stats();
         diagnostics_.publishedFrameCount = engineStats.publishedFrameCount;
         diagnostics_.staleFrameDropCount = engineStats.staleFrameDropCount;
+        diagnostics_.staleDebugFrameDropCount = engineStats.staleDebugFrameDropCount;
+        diagnostics_.staleRealtimeFrameDropCount = engineStats.staleRealtimeFrameDropCount;
         diagnostics_.overwriteCount = engineStats.overwriteCount;
+        diagnostics_.overwriteDebugFrameCount = engineStats.overwriteDebugFrameCount;
+        diagnostics_.overwriteRealtimeFrameCount = engineStats.overwriteRealtimeFrameCount;
         diagnostics_.mailboxDepth = engineStats.mailboxDepth;
         diagnostics_.mailboxHighWaterMark = engineStats.mailboxHighWaterMark;
         diagnostics_.publishedDebugFrameCount = engineStats.publishedDebugFrameCount;
         diagnostics_.publishedRealtimeFrameCount = engineStats.publishedRealtimeFrameCount;
+        diagnostics_.publishedDebugPixelBytes = engineStats.publishedDebugPixelBytes;
+        diagnostics_.publishedRealtimePixelBytes = engineStats.publishedRealtimePixelBytes;
         diagnostics_.publishedPixelBytes = engineStats.publishedPixelBytes;
         diagnostics_.lastPublishedGeneration = engineStats.lastPublishedGeneration;
         diagnostics_.lifecycleEpoch = lifecycleEpoch_;
