@@ -388,4 +388,17 @@ void TimingService::noteHostSleep(std::chrono::nanoseconds requested, std::chron
     stats_.sleepOvershootHighWater = std::max(stats_.sleepOvershootHighWater, overshoot);
 }
 
+void TimingService::noteFrontendServiceTick(std::uint32_t scheduledTicks,
+                                            std::uint32_t executedTicks,
+                                            std::chrono::nanoseconds delay) noexcept
+{
+    std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
+    const auto sanitizedExecuted = std::min(executedTicks, scheduledTicks);
+    stats_.frontendTicksScheduled += scheduledTicks;
+    stats_.frontendTicksExecuted += sanitizedExecuted;
+    stats_.frontendTicksMerged += (scheduledTicks - sanitizedExecuted);
+    stats_.frontendTickDelayLast = std::max(delay, std::chrono::nanoseconds::zero());
+    stats_.frontendTickDelayHighWater = std::max(stats_.frontendTickDelayHighWater, stats_.frontendTickDelayLast);
+}
+
 } // namespace BMMQ

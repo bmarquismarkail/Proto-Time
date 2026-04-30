@@ -124,6 +124,7 @@ int main()
     subQuantumSvc.noteWakeBurstSliceLimitHit();
     subQuantumSvc.noteWakeBurstCycleLimitHit();
     subQuantumSvc.noteHostSleep(std::chrono::microseconds(50), std::chrono::microseconds(75));
+    subQuantumSvc.noteFrontendServiceTick(5u, 2u, std::chrono::microseconds(1200));
     {
         const auto s6 = subQuantumSvc.stats();
         CHECK_TRUE(s6.wakeBurstSamples >= 1u);
@@ -134,6 +135,10 @@ int main()
         CHECK_TRUE(s6.sleepCalls >= 1u);
         CHECK_TRUE(s6.sleepOvershootCount >= 1u);
         CHECK_TRUE(s6.sleepOvershootHighWater >= std::chrono::microseconds(25));
+        CHECK_TRUE(s6.frontendTicksScheduled >= 5u);
+        CHECK_TRUE(s6.frontendTicksExecuted >= 2u);
+        CHECK_TRUE(s6.frontendTicksMerged >= 3u);
+        CHECK_TRUE(s6.frontendTickDelayLast >= std::chrono::microseconds(1200));
     }
 
     return 0;

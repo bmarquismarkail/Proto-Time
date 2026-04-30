@@ -270,6 +270,11 @@ int main(int argc, char** argv)
     assert(stats.buttonTransitions >= 3);
     assert(stats.eventPumpCalls >= 2);
     assert(stats.serviceCalls >= 1);
+    assert(stats.timingFrontendTicksScheduled >= stats.timingFrontendTicksExecuted);
+    assert(stats.timingFrontendTicksScheduled ==
+           stats.timingFrontendTicksExecuted + stats.timingFrontendTicksMerged);
+    assert(stats.timingFrontendTickDelayHighWaterNanos >= stats.timingFrontendTickDelayLastNanos);
+    assert(stats.timingFrontendTickDelayHighWaterNanos >= 0);
     if (initResult) {
         assert(stats.renderServiceState != BMMQ::SdlRenderServiceState::Stopped);
     } else {

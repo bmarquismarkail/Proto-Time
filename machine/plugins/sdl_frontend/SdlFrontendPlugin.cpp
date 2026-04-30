@@ -1134,6 +1134,11 @@ private:
         stats_.timingSleepOvershootCount = timingStats.sleepOvershootCount;
         stats_.timingSleepOvershootHighWaterNanos = timingStats.sleepOvershootHighWater.count();
         stats_.timingSleepOvershootLastNanos = timingStats.sleepOvershootLast.count();
+        stats_.timingFrontendTicksScheduled = timingStats.frontendTicksScheduled;
+        stats_.timingFrontendTicksExecuted = timingStats.frontendTicksExecuted;
+        stats_.timingFrontendTicksMerged = timingStats.frontendTicksMerged;
+        stats_.timingFrontendTickDelayLastNanos = timingStats.frontendTickDelayLast.count();
+        stats_.timingFrontendTickDelayHighWaterNanos = timingStats.frontendTickDelayHighWater.count();
     }
 
     [[nodiscard]] bool shouldDeferVideoFrameForAudioLowWater() const noexcept

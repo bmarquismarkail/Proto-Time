@@ -172,6 +172,11 @@ struct SdlFrontendStats {
     std::uint64_t timingSleepOvershootCount = 0;
     std::int64_t timingSleepOvershootHighWaterNanos = 0;
     std::int64_t timingSleepOvershootLastNanos = 0;
+    std::uint64_t timingFrontendTicksScheduled = 0;
+    std::uint64_t timingFrontendTicksExecuted = 0;
+    std::uint64_t timingFrontendTicksMerged = 0;
+    std::int64_t timingFrontendTickDelayLastNanos = 0;
+    std::int64_t timingFrontendTickDelayHighWaterNanos = 0;
     std::size_t renderServiceLoopCount = 0;
     std::size_t renderServicePresentAttempts = 0;
     std::size_t renderServicePresentSuccessCount = 0;

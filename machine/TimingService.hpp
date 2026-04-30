@@ -53,6 +53,11 @@ struct TimingStats {
     std::uint32_t wakeBurstSlicesHighWater = 0;
     double wakeBurstCyclesLast = 0.0;
     double wakeBurstCyclesHighWater = 0.0;
+    std::uint64_t frontendTicksScheduled = 0;
+    std::uint64_t frontendTicksExecuted = 0;
+    std::uint64_t frontendTicksMerged = 0;
+    std::chrono::nanoseconds frontendTickDelayLast = std::chrono::nanoseconds::zero();
+    std::chrono::nanoseconds frontendTickDelayHighWater = std::chrono::nanoseconds::zero();
 };
 
 struct TimingControlState {
@@ -130,6 +135,9 @@ public:
     void noteWakeBurstSliceLimitHit() noexcept;
     void noteWakeBurstCycleLimitHit() noexcept;
     void noteHostSleep(std::chrono::nanoseconds requested, std::chrono::nanoseconds actual) noexcept;
+    void noteFrontendServiceTick(std::uint32_t scheduledTicks,
+                                 std::uint32_t executedTicks,
+                                 std::chrono::nanoseconds delay) noexcept;
 
 private:
     // Protects access to the service-level configuration and the

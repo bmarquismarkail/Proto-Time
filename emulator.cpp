@@ -156,6 +156,7 @@ int main(int argc, char** argv)
         constexpr auto kFrontendServicePeriod = std::chrono::milliseconds(1);
         constexpr auto kMaxCatchUpWindow = std::chrono::milliseconds(8);
         constexpr auto kMinSleepQuantum = std::chrono::milliseconds(1);
+        constexpr std::uint32_t kMaxFrontendServiceTicksPerWake = 2u;
         const double kMinInstructionCycles = 4.0;
         const double kExecutionSliceSeconds = 0.001;
         const double kFrontendServiceSliceSeconds = 0.001;
@@ -209,16 +210,34 @@ int main(int argc, char** argv)
             if (frontend == nullptr || now < nextFrontendService) {
                 return false;
             }
-            if (now - nextFrontendService > kMaxCatchUpWindow) {
-                nextFrontendService = now;
+
+            const auto lateness = now - nextFrontendService;
+            std::uint32_t scheduledTicks = 1u;
+            if (lateness > kFrontendServicePeriod) {
+                const auto behindPeriods =
+                    static_cast<std::uint32_t>(lateness / kFrontendServicePeriod);
+                scheduledTicks += behindPeriods;
             }
-            do {
+            std::uint32_t executedTicks = 0u;
+            const auto ticksToRun = std::min<std::uint32_t>(scheduledTicks, kMaxFrontendServiceTicksPerWake);
+            const auto mergedTicks = scheduledTicks - ticksToRun;
+
+            for (std::uint32_t tick = 0u; tick < ticksToRun; ++tick) {
                 servicedFrontend = true;
+                ++executedTicks;
                 if (serviceFrontend()) {
+                    timingService.noteFrontendServiceTick(scheduledTicks, executedTicks, lateness);
                     return true;
                 }
                 nextFrontendService += kFrontendServicePeriod;
-            } while (nextFrontendService <= now);
+            }
+            if (mergedTicks != 0u) {
+                nextFrontendService += kFrontendServicePeriod * mergedTicks;
+            }
+            if (now - nextFrontendService > kMaxCatchUpWindow) {
+                nextFrontendService = now + kFrontendServicePeriod;
+            }
+            timingService.noteFrontendServiceTick(scheduledTicks, executedTicks, lateness);
             if (servicedFrontend) {
                 timingEngine.applyControl(timingService.takeControlSnapshot());
                 machine.serviceInput();
