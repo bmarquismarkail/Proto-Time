@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "../InputTypes.hpp"
+#include "../MachineLifecycleCoordinator.hpp"
 #include "input/InputPlugin.hpp"
 #include "IoPlugin.hpp"
 #include "video/VideoFrame.hpp"
@@ -151,6 +152,11 @@ struct SdlFrontendStats {
     std::size_t renderServiceSleepCount = 0;
     std::size_t renderServiceSleepOvershootCount = 0;
     SdlRenderServiceState renderServiceState = SdlRenderServiceState::Stopped;
+    MachineTransitionOutcome lifecycleLastOutcome = MachineTransitionOutcome::Succeeded;
+    MachineTransitionFailureStage lifecycleLastFailureStage = MachineTransitionFailureStage::None;
+    std::size_t lifecycleLastRetryCountUsed = 0;
+    bool lifecycleDegradedHeadlessVideoActive = false;
+    bool lifecycleDegradedAudioDisabledActive = false;
 };
 
 enum class SdlFrontendHostEventType : uint8_t {

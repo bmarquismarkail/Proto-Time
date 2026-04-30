@@ -26,6 +26,7 @@ enum class MachineTransitionReason : uint8_t {
 struct MachineLifecycleCoordinatorStats {
     std::size_t transitionCount = 0;
     std::size_t successCount = 0;
+    std::size_t degradedCount = 0;
     std::size_t failureCount = 0;
     std::array<std::size_t, 5> reasonCounts{};
     std::uint64_t transitionDurationP50Ns = 0;
@@ -33,9 +34,45 @@ struct MachineLifecycleCoordinatorStats {
     std::uint64_t transitionDurationMaxNs = 0;
 };
 
+enum class MachineTransitionOutcome : uint8_t {
+    Succeeded = 0,
+    Degraded,
+    Failed,
+};
+
+enum class MachineTransitionFailureStage : uint8_t {
+    None = 0,
+    Pause,
+    Mutation,
+    EpochBump,
+    Resume,
+};
+
+struct MachineTransitionPolicy {
+    std::size_t maxRetries = 0;
+    bool allowHeadlessVideoFallback = false;
+    bool allowAudioBackendDisable = false;
+    bool failHard = true;
+};
+
+struct MachineTransitionMutationResult {
+    bool success = true;
+    bool videoReady = true;
+    bool audioReady = true;
+};
+
+struct MachineTransitionResult {
+    MachineTransitionReason reason = MachineTransitionReason::ConfigReconfigure;
+    MachineTransitionOutcome outcome = MachineTransitionOutcome::Succeeded;
+    MachineTransitionFailureStage failureStage = MachineTransitionFailureStage::None;
+    std::size_t retryCountUsed = 0;
+    bool degradedHeadlessVideo = false;
+    bool degradedAudioDisabled = false;
+};
+
 class MachineLifecycleCoordinator {
 public:
-    using TransitionMutation = std::function<bool()>;
+    using TransitionMutation = std::function<MachineTransitionMutationResult()>;
 
     void bindServices(AudioService* audio, VideoService* video) noexcept
     {
@@ -44,26 +81,7 @@ public:
         videoService_ = video;
     }
 
-    [[nodiscard]] bool runTransition(MachineTransitionReason reason, const TransitionMutation& mutation)
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        const auto start = std::chrono::steady_clock::now();
-        ++stats_.transitionCount;
-        ++stats_.reasonCounts[static_cast<std::size_t>(reason)];
-
-        const bool wasVideoActive = pauseLanesLocked();
-        const bool mutationOk = mutation ? mutation() : true;
-        bumpEpochsLocked();
-        const bool resumeOk = resumeLanesLocked(wasVideoActive);
-        const bool ok = mutationOk && resumeOk;
-        if (ok) {
-            ++stats_.successCount;
-        } else {
-            ++stats_.failureCount;
-        }
-        noteDurationLocked(std::chrono::steady_clock::now() - start);
-        return ok;
-    }
+    [[nodiscard]] bool runTransition(MachineTransitionReason reason, const TransitionMutation& mutation);
 
     [[nodiscard]] MachineLifecycleCoordinatorStats stats() const noexcept
     {
@@ -71,10 +89,40 @@ public:
         return stats_;
     }
 
+    [[nodiscard]] MachineTransitionResult lastTransitionResult() const noexcept
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return lastResult_;
+    }
+
+    [[nodiscard]] bool degradedHeadlessVideoActive() const noexcept
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return degradedHeadlessVideoActive_;
+    }
+
+    [[nodiscard]] bool degradedAudioDisabledActive() const noexcept
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return degradedAudioDisabledActive_;
+    }
+
+    [[nodiscard]] MachineTransitionPolicy policyFor(MachineTransitionReason reason) const noexcept
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return policies_[static_cast<std::size_t>(reason)];
+    }
+
+    void setPolicyFor(MachineTransitionReason reason, const MachineTransitionPolicy& policy) noexcept
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        policies_[static_cast<std::size_t>(reason)] = policy;
+    }
+
 private:
-    [[nodiscard]] bool pauseLanesLocked() noexcept;
+    [[nodiscard]] bool pauseLanesLocked(bool& wasVideoActive) noexcept;
     [[nodiscard]] bool resumeLanesLocked(bool resumeVideo) noexcept;
-    void bumpEpochsLocked() noexcept;
+    [[nodiscard]] bool bumpEpochsLocked() noexcept;
 
     template <typename DurationT>
     void noteDurationLocked(DurationT duration) noexcept
@@ -102,7 +150,17 @@ private:
     AudioService* audioService_ = nullptr;
     VideoService* videoService_ = nullptr;
     std::vector<std::uint64_t> durationHistoryNs_{};
+    std::array<MachineTransitionPolicy, 5> policies_{{
+        MachineTransitionPolicy{.maxRetries = 0, .allowHeadlessVideoFallback = false, .allowAudioBackendDisable = false, .failHard = true},  // RomLoad
+        MachineTransitionPolicy{.maxRetries = 0, .allowHeadlessVideoFallback = false, .allowAudioBackendDisable = false, .failHard = true},  // HardReset
+        MachineTransitionPolicy{.maxRetries = 1, .allowHeadlessVideoFallback = false, .allowAudioBackendDisable = true, .failHard = false},  // AudioBackendRestart
+        MachineTransitionPolicy{.maxRetries = 1, .allowHeadlessVideoFallback = true, .allowAudioBackendDisable = false, .failHard = false},  // VideoBackendRestart
+        MachineTransitionPolicy{.maxRetries = 1, .allowHeadlessVideoFallback = true, .allowAudioBackendDisable = true, .failHard = false},   // ConfigReconfigure
+    }};
     MachineLifecycleCoordinatorStats stats_{};
+    MachineTransitionResult lastResult_{};
+    bool degradedHeadlessVideoActive_ = false;
+    bool degradedAudioDisabledActive_ = false;
 };
 
 } // namespace BMMQ

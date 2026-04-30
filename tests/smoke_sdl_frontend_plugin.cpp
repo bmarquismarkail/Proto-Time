@@ -265,7 +265,10 @@ int main(int argc, char** argv)
     if (initResult) {
         assert(stats.renderServiceLoopCount >= 1u);
         assert(stats.renderServiceSleepCount >= 1u);
+        assert(stats.lifecycleLastOutcome != BMMQ::MachineTransitionOutcome::Failed);
     }
+    assert(stats.lifecycleLastFailureStage != BMMQ::MachineTransitionFailureStage::Pause ||
+           stats.lifecycleLastOutcome == BMMQ::MachineTransitionOutcome::Failed);
     assert(!frontend->diagnostics().empty());
     assert(frontend->lastVideoDebugModel().has_value());
     assert(frontend->lastVideoDebugModel()->displayEnabled);

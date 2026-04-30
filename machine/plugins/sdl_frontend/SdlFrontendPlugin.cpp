@@ -92,6 +92,14 @@ public:
     {
         std::scoped_lock<std::mutex> lock(sharedStateMutex_);
         stats_.renderServiceState = renderServiceState_.load(std::memory_order_acquire);
+        if (lifecycleCoordinator_ != nullptr) {
+            const auto transition = lifecycleCoordinator_->lastTransitionResult();
+            stats_.lifecycleLastOutcome = transition.outcome;
+            stats_.lifecycleLastFailureStage = transition.failureStage;
+            stats_.lifecycleLastRetryCountUsed = transition.retryCountUsed;
+            stats_.lifecycleDegradedHeadlessVideoActive = lifecycleCoordinator_->degradedHeadlessVideoActive();
+            stats_.lifecycleDegradedAudioDisabledActive = lifecycleCoordinator_->degradedAudioDisabledActive();
+        }
         syncAudioTransportStats();
         return stats_;
     }
@@ -428,7 +436,8 @@ public:
             return true;
         }
 
-        const auto initAction = [this]() {
+        const auto initAction = [this]() -> BMMQ::MachineTransitionMutationResult {
+            BMMQ::MachineTransitionMutationResult result;
             uint32_t initFlags = SDL_INIT_EVENTS;
             if (config_.enableAudio) {
                 initFlags |= SDL_INIT_AUDIO;
@@ -439,22 +448,30 @@ public:
                 appendLog("sdl: backend init failed: " + lastBackendError_);
                 backendReady_ = false;
                 initializedBackendFlags_ = 0;
-                return false;
+                result.success = false;
+                result.videoReady = false;
+                result.audioReady = false;
+                return result;
             }
 
             initializedBackendFlags_ = initFlags;
-            if (config_.enableVideo && !ensureVideoPresenter()) {
+            const bool videoReady = !config_.enableVideo || ensureVideoPresenter();
+            if (!videoReady) {
                 appendLog("sdl: continuing without live video output");
             }
 
-            if (config_.enableAudio && !ensureAudioDevice()) {
+            const bool audioReady = !config_.enableAudio || ensureAudioDevice();
+            if (!audioReady) {
                 appendLog("sdl: continuing without live audio output");
             }
 
             backendReady_ = true;
             startRenderServiceIfNeeded();
             appendLog("sdl: backend initialized");
-            return true;
+            result.success = videoReady && audioReady;
+            result.videoReady = videoReady;
+            result.audioReady = audioReady;
+            return result;
         };
 
         if (lifecycleCoordinator_ != nullptr) {
@@ -462,7 +479,7 @@ public:
                 BMMQ::MachineTransitionReason::ConfigReconfigure,
                 initAction);
         }
-        return initAction();
+        return initAction().success;
 #else
         appendLog("sdl: SDL2 backend unavailable; running in skeleton mode");
         backendReady_ = false;
@@ -1287,7 +1304,8 @@ private:
     {
         stopRenderService();
         std::scoped_lock<std::mutex> lock(sharedStateMutex_);
-        const auto shutdownAction = [this]() {
+        const auto shutdownAction = [this]() -> BMMQ::MachineTransitionMutationResult {
+            BMMQ::MachineTransitionMutationResult result;
             if (audioService_ != nullptr) {
                 audioService_->setBackendPausedOrClosed(true);
             }
@@ -1311,7 +1329,7 @@ private:
             }
             backendReady_ = false;
             stats_.renderServiceState = renderServiceState_.load(std::memory_order_acquire);
-            return true;
+            return result;
         };
         if (lifecycleCoordinator_ != nullptr) {
             (void)lifecycleCoordinator_->runTransition(

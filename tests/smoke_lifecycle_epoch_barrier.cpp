@@ -26,7 +26,7 @@ int main()
     const auto videoEpochBefore = video.diagnostics().lifecycleEpoch;
 
     assert(lifecycle.runTransition(BMMQ::MachineTransitionReason::ConfigReconfigure, [&]() {
-        return audio.startOutputTransport() && video.configurePresenter({
+        const bool ok = audio.startOutputTransport() && video.configurePresenter({
             .windowTitle = "epoch-barrier",
             .scale = 1,
             .frameWidth = 8,
@@ -35,6 +35,11 @@ int main()
             .createHiddenWindowOnOpen = true,
             .showWindowOnPresent = false,
         });
+        return BMMQ::MachineTransitionMutationResult{
+            .success = ok,
+            .videoReady = ok,
+            .audioReady = ok,
+        };
     }));
     assert(audio.transportStats().lifecycleEpoch > audioEpochBefore);
     assert(video.diagnostics().lifecycleEpoch > videoEpochBefore);

@@ -25,22 +25,58 @@ int main()
                                     .callbackChunkSamples = 8,
                                     .readyQueueChunks = 2,
                                 });
-        return configured;
+        return BMMQ::MachineTransitionMutationResult{
+            .success = configured,
+            .videoReady = true,
+            .audioReady = configured,
+        };
     }));
 
     assert(lifecycle.runTransition(BMMQ::MachineTransitionReason::VideoBackendRestart, [&]() {
-        return video.configure({
+        const auto ok = video.configure({
             .frameWidth = 16,
             .frameHeight = 16,
             .mailboxDepthFrames = 2,
         });
+        return BMMQ::MachineTransitionMutationResult{
+            .success = ok,
+            .videoReady = ok,
+            .audioReady = true,
+        };
     }));
 
+    assert(lifecycle.runTransition(BMMQ::MachineTransitionReason::ConfigReconfigure, [&]() {
+        return BMMQ::MachineTransitionMutationResult{
+            .success = false,
+            .videoReady = false,
+            .audioReady = true,
+        };
+    }));
+    const auto degradedResult = lifecycle.lastTransitionResult();
+    assert(degradedResult.outcome == BMMQ::MachineTransitionOutcome::Degraded);
+    assert(degradedResult.failureStage == BMMQ::MachineTransitionFailureStage::Mutation);
+    assert(lifecycle.degradedHeadlessVideoActive());
+
+    assert(!lifecycle.runTransition(BMMQ::MachineTransitionReason::HardReset, [&]() {
+        return BMMQ::MachineTransitionMutationResult{
+            .success = false,
+            .videoReady = false,
+            .audioReady = false,
+        };
+    }));
+    const auto failedResult = lifecycle.lastTransitionResult();
+    assert(failedResult.outcome == BMMQ::MachineTransitionOutcome::Failed);
+    assert(failedResult.failureStage == BMMQ::MachineTransitionFailureStage::Mutation);
+
     const auto after = lifecycle.stats();
-    assert(after.transitionCount >= before.transitionCount + 2u);
+    assert(after.transitionCount >= before.transitionCount + 4u);
     assert(after.successCount >= before.successCount + 2u);
+    assert(after.degradedCount >= 1u);
+    assert(after.failureCount >= before.failureCount + 1u);
     assert(after.reasonCounts[static_cast<std::size_t>(BMMQ::MachineTransitionReason::AudioBackendRestart)] >= 1u);
     assert(after.reasonCounts[static_cast<std::size_t>(BMMQ::MachineTransitionReason::VideoBackendRestart)] >= 1u);
+    assert(after.reasonCounts[static_cast<std::size_t>(BMMQ::MachineTransitionReason::ConfigReconfigure)] >= 1u);
+    assert(after.reasonCounts[static_cast<std::size_t>(BMMQ::MachineTransitionReason::HardReset)] >= 1u);
     assert(after.transitionDurationP95Ns >= after.transitionDurationP50Ns);
     return 0;
 }
