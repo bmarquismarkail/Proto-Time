@@ -30,6 +30,7 @@ if (BMMQ_ENABLE_TSAN)
     endif()
 endif()
 add_library(time-machine-runtime-common STATIC
+    machine/MachineLifecycleCoordinator.cpp
     machine/TimingService.cpp
     machine/VisualCaptureWriter.cpp
     machine/VisualOverrideService.cpp
@@ -345,6 +346,9 @@ add_test(NAME smoke_audio_service COMMAND time-smoke-audio-service)
 add_executable(time-smoke-lifecycle-epoch-barrier tests/smoke_lifecycle_epoch_barrier.cpp)
 target_link_libraries(time-smoke-lifecycle-epoch-barrier time-gameboy-interpreter-core)
 add_test(NAME smoke_lifecycle_epoch_barrier COMMAND time-smoke-lifecycle-epoch-barrier)
+add_executable(time-smoke-lifecycle-coordinator tests/smoke_lifecycle_coordinator.cpp)
+target_link_libraries(time-smoke-lifecycle-coordinator time-gameboy-interpreter-core)
+add_test(NAME smoke_lifecycle_coordinator COMMAND time-smoke-lifecycle-coordinator)
 add_executable(time-smoke-audio-pipeline tests/smoke_audio_pipeline.cpp)
 target_link_libraries(time-smoke-audio-pipeline time-gameboy-interpreter-core)
 add_test(NAME smoke_audio_pipeline COMMAND time-smoke-audio-pipeline)

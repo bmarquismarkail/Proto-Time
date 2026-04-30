@@ -445,6 +445,12 @@ public:
         return scanlineFrame_.has_value() && scanlineCaptureCount_ != 0u;
     }
 
+    void bumpLifecycleEpochBarrier() noexcept
+    {
+        std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
+        bumpLifecycleEpochLocked();
+    }
+
 private:
     [[nodiscard]] bool configurationAllowed() const noexcept
     {

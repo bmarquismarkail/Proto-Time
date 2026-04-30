@@ -11,6 +11,7 @@
 
 #include "AudioService.hpp"
 #include "InputService.hpp"
+#include "MachineLifecycleCoordinator.hpp"
 #include "RegisterId.hpp"
 #include "RuntimeContext.hpp"
 #include "VideoService.hpp"
@@ -51,6 +52,7 @@ public:
     {
         videoService_->setVisualOverrideService(visualOverrideService_.get());
         bindVisualOverrideEvents();
+        lifecycleCoordinator_.bindServices(audioService_.get(), videoService_.get());
     }
     Machine(const Machine&) = delete;
     Machine& operator=(const Machine&) = delete;
@@ -93,6 +95,7 @@ public:
             return false;
         }
         audioService_ = std::move(service);
+        lifecycleCoordinator_.bindServices(audioService_.get(), videoService_.get());
         return true;
     }
     [[nodiscard]] bool setVideoService(std::unique_ptr<VideoService> service) {
@@ -105,6 +108,7 @@ public:
         videoService_ = std::move(service);
         videoService_->setVisualOverrideService(visualOverrideService_.get());
         videoService_->setVisualDebugAdapter(visualDebugAdapter());
+        lifecycleCoordinator_.bindServices(audioService_.get(), videoService_.get());
         return true;
     }
     [[nodiscard]] bool setVisualOverrideService(std::unique_ptr<VisualOverrideService> service) {
@@ -131,6 +135,14 @@ public:
     }
     [[nodiscard]] TimingService& timingService() {
         return *timingService_;
+    }
+
+    [[nodiscard]] MachineLifecycleCoordinator& lifecycleCoordinator() noexcept {
+        return lifecycleCoordinator_;
+    }
+
+    [[nodiscard]] const MachineLifecycleCoordinator& lifecycleCoordinator() const noexcept {
+        return lifecycleCoordinator_;
     }
 
     [[nodiscard]] const TimingService& timingService() const {
@@ -248,6 +260,7 @@ private:
     std::unique_ptr<VideoService> videoService_;
     std::unique_ptr<VisualOverrideService> visualOverrideService_;
     std::unique_ptr<TimingService> timingService_;
+    MachineLifecycleCoordinator lifecycleCoordinator_{};
 };
 
 inline std::optional<uint32_t> queryDigitalInputMask(const Machine& machine) {

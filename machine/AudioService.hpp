@@ -200,6 +200,12 @@ public:
         return transportEpoch_.load(std::memory_order_acquire);
     }
 
+    void bumpLifecycleEpochBarrier() noexcept
+    {
+        std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
+        bumpTransportEpochLocked();
+    }
+
     // Marks whether the backend callback/output thread is paused/closed.
     // Reset/configure is only safe when this is true and the output transport worker is stopped.
     void setBackendPausedOrClosed(bool pausedOrClosed) noexcept

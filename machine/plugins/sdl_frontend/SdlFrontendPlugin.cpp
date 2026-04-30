@@ -50,6 +50,7 @@
 #include <vector>
 
 #include "../../Machine.hpp"
+#include "../../MachineLifecycleCoordinator.hpp"
 #include "../LoggingPlugins.hpp"
 
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
@@ -427,32 +428,41 @@ public:
             return true;
         }
 
-        uint32_t initFlags = SDL_INIT_EVENTS;
-        if (config_.enableAudio) {
-            initFlags |= SDL_INIT_AUDIO;
-        }
+        const auto initAction = [this]() {
+            uint32_t initFlags = SDL_INIT_EVENTS;
+            if (config_.enableAudio) {
+                initFlags |= SDL_INIT_AUDIO;
+            }
 
-        if (SDL_InitSubSystem(initFlags) != 0) {
-            lastBackendError_ = SDL_GetError();
-            appendLog("sdl: backend init failed: " + lastBackendError_);
-            backendReady_ = false;
-            initializedBackendFlags_ = 0;
-            return false;
-        }
+            if (SDL_InitSubSystem(initFlags) != 0) {
+                lastBackendError_ = SDL_GetError();
+                appendLog("sdl: backend init failed: " + lastBackendError_);
+                backendReady_ = false;
+                initializedBackendFlags_ = 0;
+                return false;
+            }
 
-        initializedBackendFlags_ = initFlags;
-        if (config_.enableVideo && !ensureVideoPresenter()) {
-            appendLog("sdl: continuing without live video output");
-        }
+            initializedBackendFlags_ = initFlags;
+            if (config_.enableVideo && !ensureVideoPresenter()) {
+                appendLog("sdl: continuing without live video output");
+            }
 
-        if (config_.enableAudio && !ensureAudioDevice()) {
-            appendLog("sdl: continuing without live audio output");
-        }
+            if (config_.enableAudio && !ensureAudioDevice()) {
+                appendLog("sdl: continuing without live audio output");
+            }
 
-        backendReady_ = true;
-        startRenderServiceIfNeeded();
-        appendLog("sdl: backend initialized");
-        return true;
+            backendReady_ = true;
+            startRenderServiceIfNeeded();
+            appendLog("sdl: backend initialized");
+            return true;
+        };
+
+        if (lifecycleCoordinator_ != nullptr) {
+            return lifecycleCoordinator_->runTransition(
+                BMMQ::MachineTransitionReason::ConfigReconfigure,
+                initAction);
+        }
+        return initAction();
 #else
         appendLog("sdl: SDL2 backend unavailable; running in skeleton mode");
         backendReady_ = false;
@@ -488,6 +498,7 @@ public:
     void onAttach(BMMQ::MutableMachineView& view) override
     {
         ++stats_.attachCount;
+        lifecycleCoordinator_ = &view.mutableMachine.lifecycleCoordinator();
         audioService_ = &view.audioService();
         audioService_->setBackendPausedOrClosed(true);
         inputService_ = &view.inputService();
@@ -516,6 +527,7 @@ public:
         inputService_ = nullptr;
         videoService_ = nullptr;
         timingService_ = nullptr;
+        lifecycleCoordinator_ = nullptr;
         videoPresenter_ = nullptr;
         windowVisible_ = false;
         appendLog("sdl: detached");
@@ -1275,29 +1287,39 @@ private:
     {
         stopRenderService();
         std::scoped_lock<std::mutex> lock(sharedStateMutex_);
-        if (audioService_ != nullptr) {
-            audioService_->setBackendPausedOrClosed(true);
-        }
-        if (videoService_ != nullptr) {
-            (void)videoService_->pause();
-            (void)videoService_->detachPresenter();
-            videoPresenter_ = nullptr;
-        }
+        const auto shutdownAction = [this]() {
+            if (audioService_ != nullptr) {
+                audioService_->setBackendPausedOrClosed(true);
+            }
+            if (videoService_ != nullptr) {
+                (void)videoService_->pause();
+                (void)videoService_->detachPresenter();
+                videoPresenter_ = nullptr;
+            }
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
-        if (audioOutput_ != nullptr) {
-            audioOutput_->close();
-        }
-        if (initializedBackendFlags_ != 0u) {
-            SDL_QuitSubSystem(initializedBackendFlags_);
-            initializedBackendFlags_ = 0u;
-        }
+            if (audioOutput_ != nullptr) {
+                audioOutput_->close();
+            }
+            if (initializedBackendFlags_ != 0u) {
+                SDL_QuitSubSystem(initializedBackendFlags_);
+                initializedBackendFlags_ = 0u;
+            }
 #endif
-        if (audioService_ != nullptr) {
-            (void)audioService_->resetStats();
-            (void)audioService_->resetStream();
+            if (audioService_ != nullptr && audioService_->canPerformReset()) {
+                (void)audioService_->resetStats();
+                (void)audioService_->resetStream();
+            }
+            backendReady_ = false;
+            stats_.renderServiceState = renderServiceState_.load(std::memory_order_acquire);
+            return true;
+        };
+        if (lifecycleCoordinator_ != nullptr) {
+            (void)lifecycleCoordinator_->runTransition(
+                BMMQ::MachineTransitionReason::ConfigReconfigure,
+                shutdownAction);
+        } else {
+            (void)shutdownAction();
         }
-        backendReady_ = false;
-        stats_.renderServiceState = renderServiceState_.load(std::memory_order_acquire);
     }
 
     [[nodiscard]] bool hasAudibleChannelOneState(const BMMQ::AudioStateView& state) const noexcept
@@ -1540,6 +1562,7 @@ private:
     BMMQ::InputService* inputService_ = nullptr;
     BMMQ::VideoService* videoService_ = nullptr;
     BMMQ::TimingService* timingService_ = nullptr;
+    BMMQ::MachineLifecycleCoordinator* lifecycleCoordinator_ = nullptr;
     BMMQ::SdlVideoPresenter* videoPresenter_ = nullptr;
     std::unique_ptr<BMMQ::IAudioOutputBackend> audioOutput_ = std::make_unique<BMMQ::SdlAudioOutputBackend>();
     std::string selectedAudioBackend_ = "sdl";

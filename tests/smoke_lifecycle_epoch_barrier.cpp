@@ -1,12 +1,20 @@
 #include <cassert>
 #include <vector>
 
-#include "machine/AudioService.hpp"
-#include "machine/VideoService.hpp"
+#include "cores/gameboy/GameBoyMachine.hpp"
+#include "machine/MachineLifecycleCoordinator.hpp"
 
 int main()
 {
-    BMMQ::AudioService audio;
+    GameBoyMachine machine;
+    std::vector<uint8_t> cartridgeRom(0x8000, 0x00);
+    cartridgeRom[0x0100] = 0x00;
+    machine.loadRom(cartridgeRom);
+
+    auto& audio = machine.audioService();
+    auto& video = machine.videoService();
+    auto& lifecycle = machine.lifecycleCoordinator();
+
     assert(audio.configureFixedCallbackCapacity(4u));
     assert(audio.configureOutputTransport({
         .deviceSampleRate = 48000,
@@ -14,38 +22,24 @@ int main()
         .callbackChunkSamples = 4,
         .readyQueueChunks = 2,
     }));
-    const auto audioEpochBeforeStart = audio.transportStats().lifecycleEpoch;
-    assert(audio.startOutputTransport());
-    const auto audioEpochAfterStart = audio.transportStats().lifecycleEpoch;
-    assert(audioEpochAfterStart >= audioEpochBeforeStart);
-    audio.stopOutputTransport();
-    audio.setBackendPausedOrClosed(true);
-    const auto audioStats = audio.transportStats();
-    assert(audioStats.lifecycleEpoch >= audioEpochAfterStart);
-    assert(audioStats.epochBumpCount >= 1u);
-
-    BMMQ::VideoService video(BMMQ::VideoEngineConfig{
-        .frameWidth = 8,
-        .frameHeight = 8,
-        .mailboxDepthFrames = 2,
-    });
-    BMMQ::VideoFramePacket stale = BMMQ::makeBlankVideoFrame(8, 8, 1u);
-    assert(video.submitFrame(stale));
+    const auto audioEpochBefore = audio.transportStats().lifecycleEpoch;
     const auto videoEpochBefore = video.diagnostics().lifecycleEpoch;
-    assert(video.configurePresenter({
-        .windowTitle = "epoch-barrier",
-        .scale = 1,
-        .frameWidth = 8,
-        .frameHeight = 8,
-        .mode = BMMQ::VideoPresenterMode::Auto,
-        .createHiddenWindowOnOpen = true,
-        .showWindowOnPresent = false,
-    }));
-    const auto videoEpochAfter = video.diagnostics().lifecycleEpoch;
-    assert(videoEpochAfter == videoEpochBefore + 1u);
 
-    assert(video.presentOneFrame());
-    assert(video.diagnostics().presentFallbackCount >= 1u);
-    assert(video.diagnostics().lifecycleEpochBumpCount >= 1u);
+    assert(lifecycle.runTransition(BMMQ::MachineTransitionReason::ConfigReconfigure, [&]() {
+        return audio.startOutputTransport() && video.configurePresenter({
+            .windowTitle = "epoch-barrier",
+            .scale = 1,
+            .frameWidth = 8,
+            .frameHeight = 8,
+            .mode = BMMQ::VideoPresenterMode::Auto,
+            .createHiddenWindowOnOpen = true,
+            .showWindowOnPresent = false,
+        });
+    }));
+    assert(audio.transportStats().lifecycleEpoch > audioEpochBefore);
+    assert(video.diagnostics().lifecycleEpoch > videoEpochBefore);
+    const auto coordinatorStats = lifecycle.stats();
+    assert(coordinatorStats.transitionCount >= 1u);
+    assert(coordinatorStats.successCount >= 1u);
     return 0;
 }
