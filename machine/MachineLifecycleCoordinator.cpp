@@ -75,15 +75,29 @@ bool MachineLifecycleCoordinator::bumpEpochsLocked() noexcept
 
 bool MachineLifecycleCoordinator::runTransition(MachineTransitionReason reason, const TransitionMutation& mutation)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    LifecycleMutationScope mutationScope(audioService_, videoService_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     const auto start = std::chrono::steady_clock::now();
     ++stats_.transitionCount;
     ++stats_.reasonCounts[static_cast<std::size_t>(reason)];
 
-    const auto policy = policies_[static_cast<std::size_t>(reason)];
     MachineTransitionResult result;
     result.reason = reason;
+    if (transitionDepth_ != 0u) {
+        ++stats_.transitionReentryAttemptCount;
+        ++stats_.nestedTransitionRejectCount;
+        ++stats_.failureCount;
+        result.outcome = MachineTransitionOutcome::Failed;
+        result.failureStage = MachineTransitionFailureStage::Mutation;
+        result.rejectedForReentry = true;
+        lastResult_ = result;
+        noteDurationLocked(std::chrono::steady_clock::now() - start);
+        return false;
+    }
+
+    ++transitionDepth_;
+    activeTransitionReason_ = reason;
+    LifecycleMutationScope mutationScope(audioService_, videoService_);
+    const auto policy = policies_[static_cast<std::size_t>(reason)];
 
     MachineTransitionMutationResult mutationResult{};
     bool pauseOk = false;
@@ -109,6 +123,7 @@ bool MachineLifecycleCoordinator::runTransition(MachineTransitionReason reason, 
         ++stats_.failureCount;
         lastResult_ = result;
         noteDurationLocked(std::chrono::steady_clock::now() - start);
+        --transitionDepth_;
         return false;
     }
 
@@ -119,6 +134,7 @@ bool MachineLifecycleCoordinator::runTransition(MachineTransitionReason reason, 
         ++stats_.failureCount;
         lastResult_ = result;
         noteDurationLocked(std::chrono::steady_clock::now() - start);
+        --transitionDepth_;
         return false;
     }
 
@@ -129,6 +145,7 @@ bool MachineLifecycleCoordinator::runTransition(MachineTransitionReason reason, 
         ++stats_.failureCount;
         lastResult_ = result;
         noteDurationLocked(std::chrono::steady_clock::now() - start);
+        --transitionDepth_;
         return false;
     }
 
@@ -153,12 +170,14 @@ bool MachineLifecycleCoordinator::runTransition(MachineTransitionReason reason, 
             ++stats_.failureCount;
             lastResult_ = result;
             noteDurationLocked(std::chrono::steady_clock::now() - start);
+            --transitionDepth_;
             return false;
         }
     }
 
     lastResult_ = result;
     noteDurationLocked(std::chrono::steady_clock::now() - start);
+    --transitionDepth_;
     return true;
 }
 

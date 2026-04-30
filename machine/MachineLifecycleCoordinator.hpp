@@ -28,6 +28,8 @@ struct MachineLifecycleCoordinatorStats {
     std::size_t successCount = 0;
     std::size_t degradedCount = 0;
     std::size_t failureCount = 0;
+    std::size_t transitionReentryAttemptCount = 0;
+    std::size_t nestedTransitionRejectCount = 0;
     std::array<std::size_t, 5> reasonCounts{};
     std::uint64_t transitionDurationP50Ns = 0;
     std::uint64_t transitionDurationP95Ns = 0;
@@ -66,6 +68,7 @@ struct MachineTransitionResult {
     MachineTransitionOutcome outcome = MachineTransitionOutcome::Succeeded;
     MachineTransitionFailureStage failureStage = MachineTransitionFailureStage::None;
     std::size_t retryCountUsed = 0;
+    bool rejectedForReentry = false;
     bool degradedHeadlessVideo = false;
     bool degradedAudioDisabled = false;
 };
@@ -76,7 +79,7 @@ public:
 
     void bindServices(AudioService* audio, VideoService* video) noexcept
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
         audioService_ = audio;
         videoService_ = video;
     }
@@ -99,37 +102,37 @@ public:
 
     [[nodiscard]] MachineLifecycleCoordinatorStats stats() const noexcept
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
         return stats_;
     }
 
     [[nodiscard]] MachineTransitionResult lastTransitionResult() const noexcept
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
         return lastResult_;
     }
 
     [[nodiscard]] bool degradedHeadlessVideoActive() const noexcept
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
         return degradedHeadlessVideoActive_;
     }
 
     [[nodiscard]] bool degradedAudioDisabledActive() const noexcept
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
         return degradedAudioDisabledActive_;
     }
 
     [[nodiscard]] MachineTransitionPolicy policyFor(MachineTransitionReason reason) const noexcept
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
         return policies_[static_cast<std::size_t>(reason)];
     }
 
     void setPolicyFor(MachineTransitionReason reason, const MachineTransitionPolicy& policy) noexcept
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
         policies_[static_cast<std::size_t>(reason)] = policy;
     }
 
@@ -160,7 +163,7 @@ private:
     }
 
     static constexpr std::size_t kDurationHistoryLimit = 128u;
-    mutable std::mutex mutex_{};
+    mutable std::recursive_mutex mutex_{};
     AudioService* audioService_ = nullptr;
     VideoService* videoService_ = nullptr;
     std::vector<std::uint64_t> durationHistoryNs_{};
@@ -173,6 +176,8 @@ private:
     }};
     MachineLifecycleCoordinatorStats stats_{};
     MachineTransitionResult lastResult_{};
+    MachineTransitionReason activeTransitionReason_ = MachineTransitionReason::ConfigReconfigure;
+    std::size_t transitionDepth_ = 0;
     bool degradedHeadlessVideoActive_ = false;
     bool degradedAudioDisabledActive_ = false;
 };

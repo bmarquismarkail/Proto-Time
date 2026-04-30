@@ -68,11 +68,31 @@ int main()
     assert(failedResult.outcome == BMMQ::MachineTransitionOutcome::Failed);
     assert(failedResult.failureStage == BMMQ::MachineTransitionFailureStage::Mutation);
 
+    const auto reentryBefore = lifecycle.stats();
+    bool nestedRejected = false;
+    assert(lifecycle.runTransition(BMMQ::MachineTransitionReason::ConfigReconfigure, [&]() {
+        nestedRejected = !lifecycle.runTransition(BMMQ::MachineTransitionReason::VideoBackendRestart, [&]() {
+            return BMMQ::MachineTransitionMutationResult{
+                .success = true,
+                .videoReady = true,
+                .audioReady = true,
+            };
+        });
+        return BMMQ::MachineTransitionMutationResult{
+            .success = true,
+            .videoReady = true,
+            .audioReady = true,
+        };
+    }));
+    assert(nestedRejected);
+
     const auto after = lifecycle.stats();
     assert(after.transitionCount >= before.transitionCount + 4u);
     assert(after.successCount >= before.successCount + 2u);
     assert(after.degradedCount >= 1u);
     assert(after.failureCount >= before.failureCount + 1u);
+    assert(after.transitionReentryAttemptCount >= reentryBefore.transitionReentryAttemptCount + 1u);
+    assert(after.nestedTransitionRejectCount >= reentryBefore.nestedTransitionRejectCount + 1u);
     assert(after.reasonCounts[static_cast<std::size_t>(BMMQ::MachineTransitionReason::AudioBackendRestart)] >= 1u);
     assert(after.reasonCounts[static_cast<std::size_t>(BMMQ::MachineTransitionReason::VideoBackendRestart)] >= 1u);
     assert(after.reasonCounts[static_cast<std::size_t>(BMMQ::MachineTransitionReason::ConfigReconfigure)] >= 1u);

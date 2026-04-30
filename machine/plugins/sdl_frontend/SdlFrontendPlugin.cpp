@@ -108,6 +108,7 @@ public:
             stats_.lifecycleLastOutcome = transition.outcome;
             stats_.lifecycleLastFailureStage = transition.failureStage;
             stats_.lifecycleLastRetryCountUsed = transition.retryCountUsed;
+            stats_.lifecycleLastRejectedForReentry = transition.rejectedForReentry;
             stats_.lifecycleDegradedHeadlessVideoActive = lifecycleCoordinator_->degradedHeadlessVideoActive();
             stats_.lifecycleDegradedAudioDisabledActive = lifecycleCoordinator_->degradedAudioDisabledActive();
         }
@@ -174,6 +175,7 @@ public:
         std::scoped_lock<std::mutex> lock(sharedStateMutex_);
         ++stats_.serviceCalls;
         stats_.renderServiceState = renderServiceState_.load(std::memory_order_acquire);
+        applyLifecycleRecoveryPolicy();
         if (renderServiceActive()) {
             syncVideoTransportStats();
             syncAudioTransportStats();
@@ -471,7 +473,7 @@ public:
                 appendLog("sdl: continuing without live video output");
             }
 
-            const bool audioReady = !config_.enableAudio || ensureAudioDevice();
+            const bool audioReady = !config_.enableAudio || ensureAudioDevice(false);
             if (!audioReady) {
                 appendLog("sdl: continuing without live audio output");
             }
@@ -835,6 +837,66 @@ private:
             lastWake = wakeTime;
             (void)lastWake;
         }
+    }
+
+    void applyLifecycleRecoveryPolicy()
+    {
+        if (lifecycleCoordinator_ == nullptr) {
+            return;
+        }
+        const auto transition = lifecycleCoordinator_->lastTransitionResult();
+        if (!shouldAttemptLifecycleRecovery(transition)) {
+            return;
+        }
+        if (stats_.serviceCalls - lastLifecycleRecoveryAttemptServiceCall_ < kLifecycleRecoveryCooldownCalls) {
+            ++stats_.lifecycleRecoveryCooldownSuppressCount;
+            return;
+        }
+        lastLifecycleRecoveryAttemptServiceCall_ = stats_.serviceCalls;
+
+        const bool attemptVideo =
+            transition.outcome == BMMQ::MachineTransitionOutcome::Degraded
+                ? transition.degradedHeadlessVideo
+                : (transition.failureStage == BMMQ::MachineTransitionFailureStage::Resume ||
+                   transition.failureStage == BMMQ::MachineTransitionFailureStage::Mutation);
+        if (attemptVideo) {
+            ++stats_.lifecycleRecoveryVideoAttemptCount;
+            if (ensureVideoPresenter(false)) {
+                ++stats_.lifecycleRecoveryVideoSuccessCount;
+            } else {
+                ++stats_.lifecycleRecoveryVideoFailureCount;
+            }
+        }
+
+        const bool attemptAudio =
+            transition.outcome == BMMQ::MachineTransitionOutcome::Degraded
+                ? transition.degradedAudioDisabled
+                : (transition.failureStage == BMMQ::MachineTransitionFailureStage::Resume ||
+                   transition.failureStage == BMMQ::MachineTransitionFailureStage::Mutation);
+        if (attemptAudio) {
+            ++stats_.lifecycleRecoveryAudioAttemptCount;
+            const bool reopened = ensureAudioDevice();
+            if (reopened) {
+                ++stats_.lifecycleRecoveryAudioSuccessCount;
+            } else {
+                ++stats_.lifecycleRecoveryAudioFailureCount;
+            }
+        }
+    }
+
+    [[nodiscard]] static bool shouldAttemptLifecycleRecovery(const BMMQ::MachineTransitionResult& transition) noexcept
+    {
+        if (transition.rejectedForReentry) {
+            return false;
+        }
+        if (transition.outcome == BMMQ::MachineTransitionOutcome::Degraded) {
+            return transition.degradedHeadlessVideo || transition.degradedAudioDisabled;
+        }
+        if (transition.outcome != BMMQ::MachineTransitionOutcome::Failed) {
+            return false;
+        }
+        return transition.failureStage == BMMQ::MachineTransitionFailureStage::Mutation ||
+               transition.failureStage == BMMQ::MachineTransitionFailureStage::Resume;
     }
 
     [[nodiscard]] std::size_t computeAudioSafetyMarginSamples() const noexcept
@@ -1433,7 +1495,7 @@ private:
         return ((state.nr12 >> 4) & 0x0Fu) != 0u;
     }
 
-    bool ensureAudioDevice()
+    bool ensureAudioDevice(bool coordinatorOwned = true)
     {
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
         if (!config_.enableAudio || audioOutputReady()) {
@@ -1446,61 +1508,81 @@ private:
             appendLog("sdl: audio service unavailable");
             return false;
         }
-        const auto sourceChannelCount = std::max<uint8_t>(audioService_->engine().config().channelCount, 1u);
-        const auto sourceChannelMultiplier = static_cast<std::size_t>(sourceChannelCount);
-        audioService_->setBackendPausedOrClosed(true);
-        if (!audioService_->configureEngine({
-            .sourceSampleRate = kSourceAudioSampleRate,
-            .deviceSampleRate = kSourceAudioSampleRate,
-            .channelCount = sourceChannelCount,
-            .ringBufferCapacitySamples = config_.audioRingBufferCapacitySamples * sourceChannelMultiplier,
-            .frameChunkSamples = kApuFrameSamples * sourceChannelMultiplier,
-        })) {
-            lastBackendError_ = "Audio engine configure rejected while backend active";
-            appendLog("sdl: " + lastBackendError_);
-            return false;
-        }
-
-        const auto normalizedBackend = normalizeAudioBackend(config_.audioBackend);
-        if (audioOutput_ == nullptr || selectedAudioBackend_ != normalizedBackend) {
-            if (audioOutput_ != nullptr) {
-                audioOutput_->close();
-            }
-            auto replacement = makeAudioOutputBackend(normalizedBackend);
-            audioOutput_ = std::move(replacement);
-            if (audioOutput_ != nullptr) {
-                selectedAudioBackend_ = normalizedBackend;
-            }
-        }
-        if (audioOutput_ == nullptr) {
-            lastBackendError_ = "Unsupported audio backend '" + config_.audioBackend + "'";
-            appendLog("sdl: " + lastBackendError_);
-            return false;
-        }
-
-        if (!audioOutput_->open(audioService_->engine(), {
-                .backend = selectedAudioBackend_,
-                .requestedSampleRate = kSourceAudioSampleRate,
-                .callbackChunkSamples = static_cast<std::size_t>(std::max(config_.audioCallbackChunkSamples, 1)) *
-                                        sourceChannelMultiplier,
-                .channels = sourceChannelCount,
-                .testForcedDeviceSampleRate = config_.enableAudioResamplingDiagnostics
-                                                ? config_.testForcedAudioDeviceSampleRate
-                                                : 0,
-                .filePath = config_.audioOutputFilePath,
-                .appendToFile = config_.audioFileAppend,
-                .audioService = audioService_,
+        const auto openAction = [this, kSourceAudioSampleRate]() -> BMMQ::MachineTransitionMutationResult {
+            const auto sourceChannelCount = std::max<uint8_t>(audioService_->engine().config().channelCount, 1u);
+            const auto sourceChannelMultiplier = static_cast<std::size_t>(sourceChannelCount);
+            audioService_->setBackendPausedOrClosed(true);
+            if (!audioService_->configureEngine({
+                .sourceSampleRate = kSourceAudioSampleRate,
+                .deviceSampleRate = kSourceAudioSampleRate,
+                .channelCount = sourceChannelCount,
+                .ringBufferCapacitySamples = config_.audioRingBufferCapacitySamples * sourceChannelMultiplier,
+                .frameChunkSamples = kApuFrameSamples * sourceChannelMultiplier,
             })) {
-            lastBackendError_ = std::string(audioOutput_->lastError());
-            appendLog("sdl: audio device open failed: " + lastBackendError_);
-            return false;
-        }
+                lastBackendError_ = "Audio engine configure rejected while backend active";
+                appendLog("sdl: " + lastBackendError_);
+                return BMMQ::MachineTransitionMutationResult{
+                    .success = false,
+                    .videoReady = true,
+                    .audioReady = false,
+                };
+            }
 
-        audioService_->setBackendPausedOrClosed(false);
+            const auto normalizedBackend = normalizeAudioBackend(config_.audioBackend);
+            if (audioOutput_ == nullptr || selectedAudioBackend_ != normalizedBackend) {
+                if (audioOutput_ != nullptr) {
+                    audioOutput_->close();
+                }
+                auto replacement = makeAudioOutputBackend(normalizedBackend);
+                audioOutput_ = std::move(replacement);
+                if (audioOutput_ != nullptr) {
+                    selectedAudioBackend_ = normalizedBackend;
+                }
+            }
+            if (audioOutput_ == nullptr) {
+                lastBackendError_ = "Unsupported audio backend '" + config_.audioBackend + "'";
+                appendLog("sdl: " + lastBackendError_);
+                return BMMQ::MachineTransitionMutationResult{
+                    .success = false,
+                    .videoReady = true,
+                    .audioReady = false,
+                };
+            }
 
-        syncAudioTransportStats();
-        appendLog("sdl: audio device opened at " + std::to_string(audioService_->engine().config().deviceSampleRate) + " Hz");
-        return true;
+            if (!audioOutput_->open(audioService_->engine(), {
+                    .backend = selectedAudioBackend_,
+                    .requestedSampleRate = kSourceAudioSampleRate,
+                    .callbackChunkSamples = static_cast<std::size_t>(std::max(config_.audioCallbackChunkSamples, 1)) *
+                                            sourceChannelMultiplier,
+                    .channels = sourceChannelCount,
+                    .testForcedDeviceSampleRate = config_.enableAudioResamplingDiagnostics
+                                                    ? config_.testForcedAudioDeviceSampleRate
+                                                    : 0,
+                    .filePath = config_.audioOutputFilePath,
+                    .appendToFile = config_.audioFileAppend,
+                    .audioService = audioService_,
+                })) {
+                lastBackendError_ = std::string(audioOutput_->lastError());
+                appendLog("sdl: audio device open failed: " + lastBackendError_);
+                return BMMQ::MachineTransitionMutationResult{
+                    .success = false,
+                    .videoReady = true,
+                    .audioReady = false,
+                };
+            }
+
+            audioService_->setBackendPausedOrClosed(false);
+            syncAudioTransportStats();
+            appendLog("sdl: audio device opened at " + std::to_string(audioService_->engine().config().deviceSampleRate) + " Hz");
+            return BMMQ::MachineTransitionMutationResult{
+                .success = true,
+                .videoReady = true,
+                .audioReady = true,
+            };
+        };
+        return coordinatorOwned && lifecycleCoordinator_ != nullptr
+                   ? lifecycleCoordinator_->transitionAudioBackendRestart(openAction)
+                   : openAction().success;
 #else
         return false;
 #endif
@@ -1648,6 +1730,8 @@ private:
     std::thread renderServiceThread_{};
     std::mutex renderServiceWaitMutex_{};
     std::condition_variable renderServiceWakeCv_{};
+    std::size_t lastLifecycleRecoveryAttemptServiceCall_ = 0;
+    static constexpr std::size_t kLifecycleRecoveryCooldownCalls = 64u;
 };
 
 BMMQ::ISdlFrontendPlugin* createSdlFrontendPlugin(const BMMQ::SdlFrontendConfig* config)

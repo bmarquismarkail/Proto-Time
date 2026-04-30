@@ -169,8 +169,16 @@ struct SdlFrontendStats {
     MachineTransitionOutcome lifecycleLastOutcome = MachineTransitionOutcome::Succeeded;
     MachineTransitionFailureStage lifecycleLastFailureStage = MachineTransitionFailureStage::None;
     std::size_t lifecycleLastRetryCountUsed = 0;
+    bool lifecycleLastRejectedForReentry = false;
     bool lifecycleDegradedHeadlessVideoActive = false;
     bool lifecycleDegradedAudioDisabledActive = false;
+    std::size_t lifecycleRecoveryVideoAttemptCount = 0;
+    std::size_t lifecycleRecoveryVideoSuccessCount = 0;
+    std::size_t lifecycleRecoveryVideoFailureCount = 0;
+    std::size_t lifecycleRecoveryAudioAttemptCount = 0;
+    std::size_t lifecycleRecoveryAudioSuccessCount = 0;
+    std::size_t lifecycleRecoveryAudioFailureCount = 0;
+    std::size_t lifecycleRecoveryCooldownSuppressCount = 0;
 };
 
 enum class SdlFrontendHostEventType : uint8_t {

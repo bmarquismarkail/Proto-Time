@@ -280,6 +280,11 @@ int main(int argc, char** argv)
         assert(stats.renderServiceSleepCount >= 1u);
         assert(stats.lifecycleLastOutcome != BMMQ::MachineTransitionOutcome::Failed);
     }
+    assert(!stats.lifecycleLastRejectedForReentry);
+    assert(stats.lifecycleRecoveryVideoAttemptCount ==
+           stats.lifecycleRecoveryVideoSuccessCount + stats.lifecycleRecoveryVideoFailureCount);
+    assert(stats.lifecycleRecoveryAudioAttemptCount ==
+           stats.lifecycleRecoveryAudioSuccessCount + stats.lifecycleRecoveryAudioFailureCount);
     assert(stats.lifecycleLastFailureStage != BMMQ::MachineTransitionFailureStage::Pause ||
            stats.lifecycleLastOutcome == BMMQ::MachineTransitionOutcome::Failed);
     assert(!frontend->diagnostics().empty());
