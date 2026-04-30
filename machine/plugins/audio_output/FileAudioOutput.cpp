@@ -75,22 +75,41 @@ public:
             output_.close();
             return false;
         }
+        if (!service_->configureOutputTransport({
+                .deviceSampleRate = deviceInfo_.sampleRate,
+                .channelCount = static_cast<uint8_t>(deviceInfo_.channels),
+                .callbackChunkSamples = deviceInfo_.callbackChunkSamples,
+                .readyQueueChunks = 3u,
+            })) {
+            setError(AudioOutputErrorCode::InvalidConfig, "Failed to configure output transport");
+            engine_ = nullptr;
+            service_ = nullptr;
+            output_.close();
+            return false;
+        }
+        if (!service_->startOutputTransport()) {
+            setError(AudioOutputErrorCode::RuntimeError, "Failed to start output transport");
+            engine_ = nullptr;
+            service_ = nullptr;
+            output_.close();
+            return false;
+        }
 
         running_.store(true, std::memory_order_release);
         worker_ = std::thread([this]() { run(); });
         ready_.store(true, std::memory_order_release);
-        service_->setBackendPausedOrClosed(false);
         return true;
     }
 
     void close() noexcept
     {
-        if (service_ != nullptr) {
-            service_->setBackendPausedOrClosed(true);
-        }
         running_.store(false, std::memory_order_release);
         if (worker_.joinable()) {
             worker_.join();
+        }
+        if (service_ != nullptr) {
+            service_->stopOutputTransport();
+            service_->setBackendPausedOrClosed(true);
         }
         ready_.store(false, std::memory_order_release);
         if (output_.is_open()) {
@@ -154,7 +173,7 @@ private:
         }
         while (running_.load(std::memory_order_acquire)) {
             try {
-                service_->renderForOutput(buffer);
+                service_->drainReadyOutput(buffer);
                 errno = 0;
                 output_.write(reinterpret_cast<const char*>(buffer.data()),
                               static_cast<std::streamsize>(buffer.size() * sizeof(int16_t)));

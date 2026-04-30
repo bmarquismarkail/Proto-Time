@@ -57,23 +57,40 @@ public:
             service_ = nullptr;
             return false;
         }
+        if (!service_->configureOutputTransport({
+                .deviceSampleRate = deviceInfo.sampleRate,
+                .channelCount = static_cast<uint8_t>(deviceInfo.channels),
+                .callbackChunkSamples = deviceInfo.callbackChunkSamples,
+                .readyQueueChunks = 3u,
+            })) {
+            setError(AudioOutputErrorCode::InvalidConfig, "Failed to configure output transport");
+            engine_ = nullptr;
+            service_ = nullptr;
+            return false;
+        }
+        if (!service_->startOutputTransport()) {
+            setError(AudioOutputErrorCode::RuntimeError, "Failed to start output transport");
+            engine_ = nullptr;
+            service_ = nullptr;
+            return false;
+        }
 
         running_.store(true, std::memory_order_release);
         worker_ = std::thread([this]() { run(); });
         ready_.store(true, std::memory_order_release);
-        service_->setBackendPausedOrClosed(false);
         return true;
     }
 
     void close() noexcept
     {
         ready_.store(false, std::memory_order_release);
-        if (service_ != nullptr) {
-            service_->setBackendPausedOrClosed(true);
-        }
         running_.store(false, std::memory_order_release);
         if (worker_.joinable()) {
             worker_.join();
+        }
+        if (service_ != nullptr) {
+            service_->stopOutputTransport();
+            service_->setBackendPausedOrClosed(true);
         }
         engine_ = nullptr;
         service_ = nullptr;
@@ -134,7 +151,7 @@ private:
         }
         while (running_.load(std::memory_order_acquire)) {
             try {
-                service_->renderForOutput(buffer);
+                service_->drainReadyOutput(buffer);
                 std::this_thread::sleep_for(sleepDuration);
             } catch (const std::exception& ex) {
                 setError(AudioOutputErrorCode::RuntimeError, ex.what());

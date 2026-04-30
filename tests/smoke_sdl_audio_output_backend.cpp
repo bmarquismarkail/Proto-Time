@@ -43,11 +43,13 @@ int main()
     for (std::size_t i = 0; i < recent.size(); ++i) {
         recent[i] = static_cast<int16_t>(i);
     }
-    engine.appendRecentPcm(recent, 1u);
+    service.appendRecentPcm(recent, 1u);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(40));
     assert(engine.stats().callbackCount >= 1u);
     assert(engine.stats().outputSamplesProduced >= 1u);
+    assert(service.transportStats().drainCallbackCount >= 1u);
+    assert(service.transportStats().workerProducedBlocks >= 1u);
 
     output.close();
     assert(!output.ready());
@@ -103,9 +105,10 @@ int main()
         stereoRecent[i] = 1000;
         stereoRecent[i + 1u] = -1000;
     }
-    stereoEngine.appendRecentPcm(stereoRecent, 1u);
+    stereoService.appendRecentPcm(stereoRecent, 1u);
     std::this_thread::sleep_for(std::chrono::milliseconds(40));
     assert(stereoEngine.stats().outputSamplesProduced >= 2u);
+    assert(stereoService.transportStats().drainCallbackCount >= 1u);
     output.close();
 
     return 0;

@@ -52,6 +52,7 @@ public:
             return false;
         }
         service_ = config.audioService;
+        service_->setBackendPausedOrClosed(true);
         engine_ = &engine;
 
         SDL_AudioSpec desired{};
@@ -76,6 +77,7 @@ public:
             lastError_ = SDL_GetError();
             lastErrorCode_ = AudioOutputErrorCode::DeviceOpenFailed;
             engine_ = nullptr;
+            service_ = nullptr;
             return false;
         }
 
@@ -102,6 +104,23 @@ public:
             close();
             return false;
         }
+        if (!service_->configureOutputTransport({
+                .deviceSampleRate = deviceInfo_.sampleRate,
+                .channelCount = static_cast<uint8_t>(deviceInfo_.channels),
+                .callbackChunkSamples = deviceInfo_.callbackChunkSamples,
+                .readyQueueChunks = 3u,
+            })) {
+            lastError_ = "Audio output transport configuration failed";
+            lastErrorCode_ = AudioOutputErrorCode::InvalidConfig;
+            close();
+            return false;
+        }
+        if (!service_->startOutputTransport()) {
+            lastError_ = "Audio output transport start failed";
+            lastErrorCode_ = AudioOutputErrorCode::RuntimeError;
+            close();
+            return false;
+        }
         SDL_PauseAudioDevice(audioDevice_, 0);
         return true;
 #else
@@ -121,6 +140,10 @@ public:
             audioDevice_ = 0;
         }
 #endif
+        if (service_ != nullptr) {
+            service_->stopOutputTransport();
+            service_->setBackendPausedOrClosed(true);
+        }
         engine_ = nullptr;
         service_ = nullptr;
         deviceInfo_ = {};
@@ -170,7 +193,7 @@ private:
 
         auto* out = reinterpret_cast<int16_t*>(stream);
         const auto requestedSamples = static_cast<std::size_t>(len / static_cast<int>(sizeof(int16_t)));
-        service_->renderForOutput(std::span<int16_t>(out, requestedSamples));
+        service_->drainReadyOutput(std::span<int16_t>(out, requestedSamples));
     }
 
     SDL_AudioDeviceID audioDevice_ = 0;

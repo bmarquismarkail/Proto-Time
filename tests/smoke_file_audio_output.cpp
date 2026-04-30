@@ -58,13 +58,15 @@ int main()
     for (std::size_t i = 0; i < samples.size(); ++i) {
         samples[i] = static_cast<int16_t>(i);
     }
-    engine.appendRecentPcm(samples, 1u);
+    service.appendRecentPcm(samples, 1u);
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    assert(service.transportStats().drainCallbackCount != 0u);
+    assert(service.transportStats().workerProducedBlocks != 0u);
 
     backend.close();
     assert(!backend.ready());
 
-    engine.appendRecentPcm(samples, 2u);
+    service.appendRecentPcm(samples, 2u);
     std::vector<int16_t> output(256, 123);
     service.renderForOutput(std::span<int16_t>(output.data(), output.size()));
     for ([[maybe_unused]] auto sample : output) {

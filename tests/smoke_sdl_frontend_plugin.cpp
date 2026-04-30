@@ -1,7 +1,9 @@
 #include <cassert>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <span>
+#include <thread>
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
@@ -247,8 +249,10 @@ int main(int argc, char** argv)
         assert(stats.audioOverrunDropCount == 0u);
         assert(stats.audioQueueRecoveryClears == 0u);
 
-        std::vector<int16_t> drain(stats.audioRingBufferCapacitySamples + stats.audioCallbackChunkSamples, 0);
-        machine.audioService().renderForOutput(drain);
+        for (std::size_t attempt = 0; attempt < 50u && frontend->bufferedAudioSamples() != 0u; ++attempt) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            (void)frontend->stats();
+        }
         assert(frontend->bufferedAudioSamples() == 0u);
         assert(!frontend->audioQueueBackpressureActive());
 
@@ -307,7 +311,7 @@ int main(int argc, char** argv)
         const auto highWaterStartFrame = machine.audioFrameCounter() + 1u;
         std::vector<int16_t> highWaterChunk(256u, 700);
         for (uint64_t frame = highWaterStartFrame; frame < highWaterStartFrame + 32u; ++frame) {
-            machine.audioService().engine().appendRecentPcm(highWaterChunk, frame);
+            machine.audioService().appendRecentPcm(highWaterChunk, frame);
         }
         assert(frontend->audioQueueBackpressureActive());
     }

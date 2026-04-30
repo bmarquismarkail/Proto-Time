@@ -560,7 +560,7 @@ public:
             ++stats_.audioPreviewsBuilt;
             ++audioPreviewGeneration_;
             if (audioService_ != nullptr) {
-                audioService_->engine().appendRecentPcm(lastAudioState_->pcmSamples, lastAudioState_->frameCounter);
+                audioService_->appendRecentPcm(lastAudioState_->pcmSamples, lastAudioState_->frameCounter);
             }
         } else {
             lastAudioPreview_.reset();
@@ -823,6 +823,7 @@ private:
             return;
         }
         const auto engineStats = audioService_->engine().stats();
+        const auto transportStats = audioService_->transportStats();
         const auto outputDeviceInfo = audioOutput_ != nullptr ? audioOutput_->deviceInfo() : BMMQ::AudioOutputDeviceInfo{};
         stats_.audioSourceSampleRate = audioService_->engine().config().sourceSampleRate;
         stats_.audioDeviceSampleRate = audioService_->engine().config().deviceSampleRate;
@@ -844,6 +845,14 @@ private:
         stats_.audioResampleSourceSamplesConsumed = engineStats.sourceSamplesConsumed;
         stats_.audioResampleOutputSamplesProduced = engineStats.outputSamplesProduced;
         stats_.audioPipelineCapacitySkipCount = engineStats.pipelineCapacitySkipCount;
+        stats_.audioReadyQueueDepth = transportStats.readyQueueDepth;
+        stats_.audioReadyQueueHighWaterChunks = transportStats.readyQueueHighWaterChunks;
+        stats_.audioTransportDrainCallbackCount = transportStats.drainCallbackCount;
+        stats_.audioTransportUnderrunCount = transportStats.underrunCount;
+        stats_.audioTransportSilenceSamplesFilled = transportStats.silenceSamplesFilled;
+        stats_.audioTransportWorkerProducedBlocks = transportStats.workerProducedBlocks;
+        stats_.audioTransportDroppedReadyBlocks = transportStats.droppedReadyBlocks;
+        stats_.audioTransportWorkerWakeCount = transportStats.workerWakeCount;
         stats_.lastQueuedAudioBytes = queuedAudioBytes();
         stats_.peakQueuedAudioBytes = std::max<std::uint32_t>(
             stats_.peakQueuedAudioBytes,

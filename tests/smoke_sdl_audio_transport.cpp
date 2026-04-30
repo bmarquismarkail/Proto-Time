@@ -96,8 +96,8 @@ int main(int argc, char** argv)
         assert(frontend->stats().audioResampleSourceSamplesConsumed >= 1u);
 
         std::this_thread::sleep_for(std::chrono::milliseconds(80));
-        assert(frontend->stats().audioUnderrunCount >= 1u);
-        assert(frontend->stats().audioSilenceSamplesFilled >= 1u);
+        assert(frontend->stats().audioTransportUnderrunCount >= 1u);
+        assert(frontend->stats().audioTransportSilenceSamplesFilled >= 1u);
 
         if (!stepUntilAudioFrames(machine, 20u)) {
             std::cerr << "smoke_sdl_audio_transport: audio frame counter did not reach 20" << '\n';
