@@ -293,6 +293,8 @@ int main(int argc, char** argv)
     assert(stats.inputSamplesProvided >= 1);
     assert(stats.framesPrepared >= 1);
     assert(stats.videoRealtimePacketsAccepted >= stats.framesPrepared);
+    // Phase 25: realtime packets are built outside sharedStateMutex_ in onVideoEvent(); counter must track this
+    assert(stats.videoRealtimePacketsBuiltOutsideLock >= stats.videoRealtimePacketsAccepted);
     assert(stats.videoDebugSnapshotsBuilt == stats.videoStateSnapshots);
     // Snapshot cost invariants: high-water must be >= last if any snapshots were taken
     if (stats.videoDebugSnapshotsBuilt > 0u) {
@@ -448,6 +450,7 @@ int main(int argc, char** argv)
         const auto framesPreparedBefore = frontend->stats().framesPrepared;
         const auto framesPublishedBefore = frontend->stats().videoFramesPublished;
         const auto videoRealtimePacketsBefore = frontend->stats().videoRealtimePacketsAccepted;
+        const auto videoRealtimeBuiltOutsideLockBefore = frontend->stats().videoRealtimePacketsBuiltOutsideLock;
         const auto videoDebugSnapshotsBefore = frontend->stats().videoDebugSnapshotsBuilt;
         const auto renderAttemptsBefore = frontend->stats().renderAttempts;
         const auto audioEventsBeforeLowWater = frontend->stats().audioEvents;
@@ -464,6 +467,7 @@ int main(int argc, char** argv)
         assert(frontend->stats().framesPrepared == framesPreparedBefore + 1u);
         assert(frontend->stats().videoFramesPublished == framesPublishedBefore + 1u);
         assert(frontend->stats().videoRealtimePacketsAccepted == videoRealtimePacketsBefore + 1u);
+        assert(frontend->stats().videoRealtimePacketsBuiltOutsideLock == videoRealtimeBuiltOutsideLockBefore + 1u);
         assert(frontend->stats().videoDebugSnapshotsBuilt == videoDebugSnapshotsBefore);
         assert(frontend->stats().renderAttempts == renderAttemptsBefore);
 

@@ -125,6 +125,7 @@ struct SdlFrontendStats {
     std::size_t videoFrameAgeOver10msCount = 0;
     std::size_t videoRealtimePacketsAccepted = 0;
     std::size_t videoRealtimePacketsSkipped = 0;
+    std::size_t videoRealtimePacketsBuiltOutsideLock = 0;
     std::size_t videoDebugSnapshotsBuilt = 0;
     std::size_t videoStateSnapshots = 0;
     std::uint64_t videoDebugSnapshotDurationLastNs = 0;

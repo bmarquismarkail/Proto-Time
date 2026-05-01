@@ -588,6 +588,24 @@ public:
 
     void onVideoEvent(const BMMQ::MachineEvent& event, const BMMQ::MachineView& view) override
     {
+        // Pre-build video packet OUTSIDE the lock.
+        // Machine state is owned by the emulation thread, which is the caller here,
+        // so reading view.realtimeVideoPacket() / videoDebugFrameModel() before
+        // acquiring sharedStateMutex_ is safe.
+        const bool carriesVideoStateEarly =
+            event.type == BMMQ::MachineEventType::MemoryWriteObserved ||
+            event.type == BMMQ::MachineEventType::VBlank ||
+            event.type == BMMQ::MachineEventType::VideoScanlineReady;
+
+        std::optional<BMMQ::RealtimeVideoPacket> prebuiltRealtime;
+        if (carriesVideoStateEarly &&
+            event.type != BMMQ::MachineEventType::VideoScanlineReady) {
+            prebuiltRealtime = view.realtimeVideoPacket({
+                .frameWidth = std::max(config_.frameWidth, 1),
+                .frameHeight = std::max(config_.frameHeight, 1),
+            });
+        }
+
         std::scoped_lock<std::mutex> lock(sharedStateMutex_);
         if (!config_.enableVideo) {
             return;
@@ -607,7 +625,16 @@ public:
         if (shouldSampleVideoState) {
             const bool deferPresentForAudioLowWater =
                 event.type == BMMQ::MachineEventType::VBlank && shouldDeferVideoFrameForAudioLowWater();
-            if (trySubmitRealtimeVideoPacket(event, view)) {
+
+            bool realtimeSubmitted = false;
+            if (prebuiltRealtime.has_value()) {
+                ++stats_.videoRealtimePacketsBuiltOutsideLock;
+                realtimeSubmitted = trySubmitPrebuiltRealtimeVideoPacket(event, std::move(*prebuiltRealtime));
+            } else {
+                realtimeSubmitted = trySubmitRealtimeVideoPacket(event, view);
+            }
+
+            if (realtimeSubmitted) {
                 submittedVideoFrame = true;
                 syncVideoTransportStats();
                 ++stats_.framesPrepared;
@@ -1305,6 +1332,35 @@ private:
         model.argbPixels = packet.argbPixels;
         model.semantics.resize(model.argbPixels.size());
         return model;
+    }
+
+    // trySubmitPrebuiltRealtimeVideoPacket: called while sharedStateMutex_ is held.
+    // The packet was built OUTSIDE the lock; this function only deposits it and updates bookkeeping.
+    [[nodiscard]] bool trySubmitPrebuiltRealtimeVideoPacket(const BMMQ::MachineEvent& event,
+                                                            BMMQ::RealtimeVideoPacket packet)
+    {
+        if (videoService_ == nullptr || event.type == BMMQ::MachineEventType::VideoScanlineReady) {
+            ++stats_.videoRealtimePacketsSkipped;
+            return false;
+        }
+        if (packet.contractVersion != BMMQ::RealtimeVideoPacket::kContractVersion) {
+            ++stats_.videoRealtimePacketsSkipped;
+            return false;
+        }
+
+        packet.eventType = event.type;
+        packet.generation = videoService_->engine().currentGeneration();
+        if (!videoService_->submitRealtimeVideoPacket(event, packet)) {
+            ++stats_.videoRealtimePacketsSkipped;
+            return false;
+        }
+
+        ++stats_.videoRealtimePacketsAccepted;
+        if (event.type == BMMQ::MachineEventType::VBlank) {
+            lastVideoDebugModel_ = debugModelFromRealtimePacket(packet);
+            scanlineVideoDebugModel_.reset();
+        }
+        return true;
     }
 
     BMMQ::VideoDebugFrameModel* modelForVideoEvent(const BMMQ::MachineEvent& event,
