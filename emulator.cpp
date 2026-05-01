@@ -144,6 +144,9 @@ int main(int argc, char** argv)
         if (frontend != nullptr) {
             std::cout << "Frontend: " << frontend->backendStatusSummary() << '\n';
         }
+        if (options.timingProfile.has_value()) {
+            std::cout << "Timing profile: " << *options.timingProfile << '\n';
+        }
         if (options.stepLimit.has_value()) {
             std::cout << "Running for " << *options.stepLimit << " instruction steps\n";
         } else {
@@ -164,17 +167,19 @@ int main(int argc, char** argv)
         BMMQ::TimingService timingService;
         BMMQ::TimingConfig timingConfig;
         timingConfig.baseClockHz = static_cast<double>(cpuClockHz);
+        const auto timingProfile = options.timingProfile.has_value()
+            ? BMMQ::parseTimingPolicyProfile(*options.timingProfile)
+            : BMMQ::TimingPolicyProfile::Balanced;
+        BMMQ::applyTimingPolicyProfileDefaults(timingProfile, timingConfig);
         timingConfig.speedMultiplier = options.speedMultiplier;
         timingConfig.minInstructionCycles = kMinInstructionCycles;
         timingConfig.executionSliceSeconds = kExecutionSliceSeconds;
         timingConfig.frontendServiceSliceSeconds = kFrontendServiceSliceSeconds;
         timingConfig.maxCatchUp = kMaxCatchUpWindow;
-        timingConfig.minSleepQuantum = kMinSleepQuantum;
-        timingConfig.maxExecutionSlicesPerWake = 4u;
+        if (!options.timingProfile.has_value()) {
+            timingConfig.minSleepQuantum = kMinSleepQuantum;
+        }
         timingConfig.maxCyclesPerWake = static_cast<double>(cpuClockHz) * 0.004;
-        timingConfig.adaptiveSleepEnabled = true;
-        timingConfig.sleepSpinWindow = std::chrono::microseconds(200);
-        timingConfig.sleepSpinCap = std::chrono::microseconds(250);
         timingConfig.throttled = !options.unthrottled;
         timingService.configure(timingConfig);
         BMMQ::TimingEngine timingEngine(timingConfig);

@@ -185,6 +185,7 @@ struct SdlFrontendStats {
     std::uint64_t timingFrontendTicksMerged = 0;
     std::int64_t timingFrontendTickDelayLastNanos = 0;
     std::int64_t timingFrontendTickDelayHighWaterNanos = 0;
+    std::string timingProfileName = "balanced";
     std::size_t renderServiceLoopCount = 0;
     std::size_t renderServicePresentAttempts = 0;
     std::size_t renderServicePresentSuccessCount = 0;

@@ -26,6 +26,14 @@ int main()
     cfg.minSleepQuantum = std::chrono::microseconds(1);
     cfg.throttled = true;
     svc.configure(cfg);
+    {
+        BMMQ::TimingConfig profileCfg;
+        BMMQ::applyTimingPolicyProfileDefaults(BMMQ::TimingPolicyProfile::LowLatency, profileCfg);
+        CHECK_TRUE(profileCfg.profile == BMMQ::TimingPolicyProfile::LowLatency);
+        CHECK_TRUE(profileCfg.adaptiveSleepEnabled);
+        CHECK_TRUE(std::string(BMMQ::timingPolicyProfileName(profileCfg.profile)) == "low_latency");
+        CHECK_TRUE(BMMQ::parseTimingPolicyProfile("power_saver") == BMMQ::TimingPolicyProfile::PowerSaver);
+    }
 
     const auto t0 = SteadyClock::now();
     svc.start(t0);

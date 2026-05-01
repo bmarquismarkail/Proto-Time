@@ -104,6 +104,7 @@ int main()
         "unthrottled = on\n"
         "speed = 2.5\n"
         "pause = 1\n"
+        "profile = low_latency\n"
         "\n"
         "[audio]\n"
         "enabled = false\n"
@@ -127,6 +128,8 @@ int main()
     CHECK_TRUE(fileConfig.unthrottled);
     CHECK_TRUE(std::abs(fileConfig.speedMultiplier - 2.5) < 0.000001);
     CHECK_TRUE(fileConfig.startPaused);
+    CHECK_TRUE(fileConfig.timingProfile.has_value());
+    CHECK_TRUE(*fileConfig.timingProfile == "low_latency");
     CHECK_TRUE(!fileConfig.audioEnabled);
     CHECK_TRUE(fileConfig.audioBackend == "file");
     CHECK_TRUE(fileConfig.visualPackPaths.size() == 2u);
@@ -146,6 +149,7 @@ int main()
     overrides.unthrottled = false;
     overrides.speedMultiplier = 0.5;
     overrides.startPaused = false;
+    overrides.timingProfile = std::string("power_saver");
     overrides.audioEnabled = true;
     overrides.audioBackend = "dummy";
     overrides.visualPackPaths = std::vector<std::filesystem::path>{
@@ -166,6 +170,8 @@ int main()
     CHECK_TRUE(!fileConfig.unthrottled);
     CHECK_TRUE(std::abs(fileConfig.speedMultiplier - 0.5) < 0.000001);
     CHECK_TRUE(!fileConfig.startPaused);
+    CHECK_TRUE(fileConfig.timingProfile.has_value());
+    CHECK_TRUE(*fileConfig.timingProfile == "power_saver");
     CHECK_TRUE(fileConfig.audioEnabled);
     CHECK_TRUE(fileConfig.audioBackend == "dummy");
     CHECK_TRUE(fileConfig.visualPackPaths.size() == 2u);
@@ -237,6 +243,10 @@ int main()
         const auto path = tempDir / "bad-speed.ini";
         writeTextFile(path, "[timing]\nspeed=fast\n");
         (void)BMMQ::loadEmulatorConfig(path);
+    }));
+
+    CHECK_TRUE(throwsInvalidArgumentContaining("--timing-profile requires a value", [] {
+        (void)parseArgs({"timeEmulator", "--timing-profile"});
     }));
 
     const auto help = parseArgs({"timeEmulator", "--help", "--unknown-after-help"});

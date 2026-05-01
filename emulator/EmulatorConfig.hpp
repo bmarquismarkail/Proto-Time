@@ -20,6 +20,7 @@ struct EmulatorConfig {
     bool unthrottled = false;
     double speedMultiplier = 1.0;
     bool startPaused = false;
+    std::optional<std::string> timingProfile;
     bool audioEnabled = true;
     std::string audioBackend = "sdl";
     std::vector<std::filesystem::path> visualPackPaths;
@@ -38,6 +39,7 @@ struct CommandLineConfigOverrides {
     std::optional<bool> unthrottled;
     std::optional<double> speedMultiplier;
     std::optional<bool> startPaused;
+    std::optional<std::string> timingProfile;
     std::optional<bool> audioEnabled;
     std::optional<std::string> audioBackend;
     std::optional<std::vector<std::filesystem::path>> visualPackPaths;

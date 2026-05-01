@@ -4,8 +4,16 @@
 #include <chrono>
 #include <cstdint>
 #include <mutex>
+#include <string_view>
 
 namespace BMMQ {
+
+enum class TimingPolicyProfile : std::uint8_t {
+    Balanced = 0,
+    LowLatency,
+    PowerSaver,
+    DeterministicTest,
+};
 
 struct TimingConfig {
     double baseClockHz = 0.0;
@@ -23,6 +31,7 @@ struct TimingConfig {
     std::chrono::nanoseconds sleepSpinWindow = std::chrono::microseconds(200);
     std::chrono::nanoseconds sleepSpinCap = std::chrono::microseconds(250);
     bool throttled = true;
+    TimingPolicyProfile profile = TimingPolicyProfile::Balanced;
 };
 
 struct TimingStats {
@@ -69,6 +78,7 @@ struct TimingStats {
     std::uint64_t frontendTicksMerged = 0;
     std::chrono::nanoseconds frontendTickDelayLast = std::chrono::nanoseconds::zero();
     std::chrono::nanoseconds frontendTickDelayHighWater = std::chrono::nanoseconds::zero();
+    TimingPolicyProfile activeProfile = TimingPolicyProfile::Balanced;
 };
 
 struct TimingControlState {
@@ -168,6 +178,10 @@ private:
     TimingControlState control_{};
     TimingStats stats_{};
 };
+
+[[nodiscard]] const char* timingPolicyProfileName(TimingPolicyProfile profile) noexcept;
+[[nodiscard]] TimingPolicyProfile parseTimingPolicyProfile(std::string_view value);
+void applyTimingPolicyProfileDefaults(TimingPolicyProfile profile, TimingConfig& config) noexcept;
 
 } // namespace BMMQ
 

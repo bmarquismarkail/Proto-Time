@@ -1,6 +1,9 @@
 #include "machine/TimingService.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <stdexcept>
+#include <string>
 
 namespace BMMQ {
 namespace {
@@ -37,6 +40,77 @@ void sanitizeTimingConfig(TimingConfig& config) noexcept
 }
 } // namespace
 
+const char* timingPolicyProfileName(TimingPolicyProfile profile) noexcept
+{
+    switch (profile) {
+    case TimingPolicyProfile::Balanced:
+        return "balanced";
+    case TimingPolicyProfile::LowLatency:
+        return "low_latency";
+    case TimingPolicyProfile::PowerSaver:
+        return "power_saver";
+    case TimingPolicyProfile::DeterministicTest:
+        return "deterministic_test";
+    }
+    return "balanced";
+}
+
+TimingPolicyProfile parseTimingPolicyProfile(std::string_view value)
+{
+    std::string lower(value);
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    if (lower == "balanced") {
+        return TimingPolicyProfile::Balanced;
+    }
+    if (lower == "low_latency" || lower == "low-latency") {
+        return TimingPolicyProfile::LowLatency;
+    }
+    if (lower == "power_saver" || lower == "power-saver") {
+        return TimingPolicyProfile::PowerSaver;
+    }
+    if (lower == "deterministic_test" || lower == "deterministic-test") {
+        return TimingPolicyProfile::DeterministicTest;
+    }
+    throw std::invalid_argument("Unknown timing profile: " + std::string(value));
+}
+
+void applyTimingPolicyProfileDefaults(TimingPolicyProfile profile, TimingConfig& config) noexcept
+{
+    config.profile = profile;
+    switch (profile) {
+    case TimingPolicyProfile::Balanced:
+        config.minSleepQuantum = std::chrono::milliseconds(1);
+        config.maxExecutionSlicesPerWake = 4u;
+        config.adaptiveSleepEnabled = true;
+        config.sleepSpinWindow = std::chrono::microseconds(200);
+        config.sleepSpinCap = std::chrono::microseconds(250);
+        break;
+    case TimingPolicyProfile::LowLatency:
+        config.minSleepQuantum = std::chrono::microseconds(250);
+        config.maxExecutionSlicesPerWake = 3u;
+        config.adaptiveSleepEnabled = true;
+        config.sleepSpinWindow = std::chrono::microseconds(300);
+        config.sleepSpinCap = std::chrono::microseconds(350);
+        break;
+    case TimingPolicyProfile::PowerSaver:
+        config.minSleepQuantum = std::chrono::milliseconds(2);
+        config.maxExecutionSlicesPerWake = 6u;
+        config.adaptiveSleepEnabled = false;
+        config.sleepSpinWindow = std::chrono::nanoseconds::zero();
+        config.sleepSpinCap = std::chrono::nanoseconds::zero();
+        break;
+    case TimingPolicyProfile::DeterministicTest:
+        config.minSleepQuantum = std::chrono::microseconds(1);
+        config.maxExecutionSlicesPerWake = 2u;
+        config.adaptiveSleepEnabled = false;
+        config.sleepSpinWindow = std::chrono::nanoseconds::zero();
+        config.sleepSpinCap = std::chrono::nanoseconds::zero();
+        break;
+    }
+}
+
 TimingEngine::TimingEngine(const TimingConfig& config) noexcept
 {
     configure(config);
@@ -51,6 +125,7 @@ void TimingEngine::configure(const TimingConfig& config) noexcept
     stats_.throttled = control_.throttled;
     stats_.speedMultiplier = control_.speedMultiplier;
     stats_.effectiveClockHz = config_.baseClockHz * control_.speedMultiplier;
+    stats_.activeProfile = config_.profile;
     updateCycleDebt(stats_);
 }
 
@@ -66,6 +141,7 @@ void TimingEngine::applyControl(const TimingControlState& control) noexcept
     stats_.throttled = control_.throttled;
     stats_.speedMultiplier = control_.speedMultiplier;
     stats_.effectiveClockHz = config_.baseClockHz * control_.speedMultiplier;
+    stats_.activeProfile = config_.profile;
     updateCycleDebt(stats_);
 }
 

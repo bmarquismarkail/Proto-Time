@@ -275,6 +275,7 @@ int main(int argc, char** argv)
            stats.timingFrontendTicksExecuted + stats.timingFrontendTicksMerged);
     assert(stats.timingFrontendTickDelayHighWaterNanos >= stats.timingFrontendTickDelayLastNanos);
     assert(stats.timingFrontendTickDelayHighWaterNanos >= 0);
+    assert(!stats.timingProfileName.empty());
     assert(stats.timingSleepWakeLateStreakHighWater >= stats.timingSleepWakeLateStreakCurrent);
     assert(stats.timingSleepWakeEarlyCount + stats.timingSleepWakeLateCount <= stats.timingSleepCalls);
     assert(stats.timingSleepWakeJitterUnder100usCount +

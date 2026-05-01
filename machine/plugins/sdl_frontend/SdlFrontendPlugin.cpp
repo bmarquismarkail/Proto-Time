@@ -291,6 +291,10 @@ public:
                 summary += " queued-audio=" + std::to_string(queuedBytes) + "B";
             }
         }
+        if (timingService_ != nullptr) {
+            summary += " timing-profile=";
+            summary += BMMQ::timingPolicyProfileName(timingService_->stats().activeProfile);
+        }
         if (!lastBackendError_.empty()) {
             summary += " error=" + lastBackendError_;
         }
@@ -1147,6 +1151,7 @@ private:
         stats_.timingFrontendTicksMerged = timingStats.frontendTicksMerged;
         stats_.timingFrontendTickDelayLastNanos = timingStats.frontendTickDelayLast.count();
         stats_.timingFrontendTickDelayHighWaterNanos = timingStats.frontendTickDelayHighWater.count();
+        stats_.timingProfileName = BMMQ::timingPolicyProfileName(timingStats.activeProfile);
     }
 
     [[nodiscard]] bool shouldDeferVideoFrameForAudioLowWater() const noexcept

@@ -141,6 +141,8 @@ void applyConfigValue(EmulatorConfig& config,
             config.speedMultiplier = parseDouble(text, label);
         } else if (key == "pause") {
             config.startPaused = parseBool(text, label);
+        } else if (key == "profile") {
+            config.timingProfile = lowerAscii(text);
         } else {
             throw std::invalid_argument("Unknown config key: " + label);
         }
@@ -261,6 +263,9 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     if (overrides.startPaused.has_value()) {
         config.startPaused = *overrides.startPaused;
     }
+    if (overrides.timingProfile.has_value()) {
+        config.timingProfile = lowerAscii(*overrides.timingProfile);
+    }
     if (overrides.audioEnabled.has_value()) {
         config.audioEnabled = *overrides.audioEnabled;
     }
@@ -365,6 +370,11 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
             arguments.overrides.speedMultiplier = parseDouble(argv[++i], "--speed");
         } else if (arg == "--pause") {
             arguments.overrides.startPaused = true;
+        } else if (arg == "--timing-profile") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--timing-profile requires a value");
+            }
+            arguments.overrides.timingProfile = lowerAscii(argv[++i]);
         } else if (arg == "--no-audio") {
             arguments.overrides.audioEnabled = false;
         } else if (arg == "--audio-backend") {
