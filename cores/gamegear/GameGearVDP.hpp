@@ -4,7 +4,9 @@
 
 #include <array>
 #include <cstdint>
+#include <vector>
 #include "machine/VideoDebugModel.hpp"
+#include "machine/plugins/IoPlugin.hpp"
 
 class GameGearVDP {
 public:
@@ -46,6 +48,8 @@ public:
     void latchHCounter() noexcept;
     [[nodiscard]] BMMQ::VideoDebugFrameModel buildFrameModel(
         const BMMQ::VideoDebugRenderRequest& request) const;
+    [[nodiscard]] BMMQ::RealtimeVideoPacket buildRealtimeFrame(
+        const BMMQ::VideoDebugRenderRequest& request) const;
 
 private:
     static constexpr uint32_t kCyclesPerScanline = 228u;
@@ -54,6 +58,16 @@ private:
     static constexpr std::size_t kSpriteCount = 40u;
     static constexpr std::size_t kVramSize = 0x4000u;
 
+    struct PixelRenderOutput {
+        int width = 0;
+        int height = 0;
+        bool displayEnabled = false;
+        bool inVBlank = false;
+        uint8_t scanlineIndex = 0u;
+        std::vector<uint32_t> argbPixels;
+    };
+    [[nodiscard]] PixelRenderOutput renderFramePixels(
+        const BMMQ::VideoDebugRenderRequest& request) const;
     [[nodiscard]] static uint32_t paletteColor(uint8_t shade) noexcept;
     [[nodiscard]] static uint32_t colorFromCramWord(uint16_t cramWord) noexcept;
     [[nodiscard]] std::size_t nameTableBase() const noexcept;

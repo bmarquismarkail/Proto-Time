@@ -656,5 +656,66 @@ int main()
         }
     }
 
+    // --- buildRealtimeFrame: slim packet path ---
+    {
+        GameGearVDP rtVdp;
+        rtVdp.reset();
+
+        // Display off by default: pixel buffer still allocated, displayEnabled=false
+        {
+            const auto pkt = rtVdp.buildRealtimeFrame({160, 144});
+            if (pkt.width != 160 || pkt.height != 144) {
+                return fail("buildRealtimeFrame: wrong dimensions");
+            }
+            if (pkt.argbPixels.size() != 160u * 144u) {
+                return fail("buildRealtimeFrame: argbPixels size mismatch when display off");
+            }
+            if (pkt.contractVersion != BMMQ::RealtimeVideoPacket::kContractVersion) {
+                return fail("buildRealtimeFrame: wrong contractVersion");
+            }
+        }
+
+        // Enable display (register 1 bit 6) and verify pixel buffer populated
+        rtVdp.writeControlPort(0x01u); // command low byte
+        rtVdp.writeControlPort(0x81u); // register write: reg 1 = 0x01 | 0x40 ... set bit6
+        // simpler: write via low-level port sequence for reg 1
+        rtVdp.reset();
+        // Write 0x40 to VDP register 1 to enable display
+        rtVdp.writeControlPort(0x40u);
+        rtVdp.writeControlPort(0x81u); // cmd = 0x80 | reg_index(1) => register write reg 1 = 0x40
+        {
+            const auto pkt = rtVdp.buildRealtimeFrame({160, 144});
+            if (!pkt.displayEnabled) {
+                return fail("buildRealtimeFrame: displayEnabled should be true after enabling display");
+            }
+            if (pkt.argbPixels.size() != 160u * 144u) {
+                return fail("buildRealtimeFrame: argbPixels size mismatch when display on");
+            }
+        }
+
+        // Verify inVBlank matches scanline state (default scanline=0, not in vblank)
+        {
+            const auto pkt = rtVdp.buildRealtimeFrame({160, 144});
+            if (pkt.inVBlank) {
+                return fail("buildRealtimeFrame: inVBlank should be false at scanline 0");
+            }
+        }
+
+        // Verify pixel output matches buildFrameModel for the same VDP state
+        {
+            const auto modelPkt = rtVdp.buildFrameModel({160, 144});
+            const auto realtimePkt = rtVdp.buildRealtimeFrame({160, 144});
+            if (modelPkt.argbPixels != realtimePkt.argbPixels) {
+                return fail("buildRealtimeFrame: pixel output differs from buildFrameModel");
+            }
+            if (modelPkt.displayEnabled != realtimePkt.displayEnabled) {
+                return fail("buildRealtimeFrame: displayEnabled differs from buildFrameModel");
+            }
+            if (modelPkt.inVBlank != realtimePkt.inVBlank) {
+                return fail("buildRealtimeFrame: inVBlank differs from buildFrameModel");
+            }
+        }
+    }
+
     return 0;
 }

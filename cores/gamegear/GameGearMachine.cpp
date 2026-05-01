@@ -449,6 +449,12 @@ std::optional<VideoDebugFrameModel> GameGearMachine::videoDebugFrameModel(
     return impl->vdp.buildFrameModel(request);
 }
 
+std::optional<RealtimeVideoPacket> GameGearMachine::realtimeVideoPacket(
+    const VideoDebugRenderRequest& request) const
+{
+    return impl->vdp.buildRealtimeFrame(request);
+}
+
 uint32_t GameGearMachine::clockHz() const {
     return impl->context.clockHz();
 }

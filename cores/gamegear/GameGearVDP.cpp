@@ -419,13 +419,13 @@ void GameGearVDP::evaluateScanlineStatus(uint8_t scanline) noexcept {
     }
 }
 
-BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
+GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
     const BMMQ::VideoDebugRenderRequest& request) const
 {
-    BMMQ::VideoDebugFrameModel model;
-    model.width = std::max(request.frameWidth, 1);
-    model.height = std::max(request.frameHeight, 1);
-    model.displayEnabled = displayEnabled();
+    PixelRenderOutput out;
+    out.width = std::max(request.frameWidth, 1);
+    out.height = std::max(request.frameHeight, 1);
+    out.displayEnabled = displayEnabled();
     const auto activeLines = activeDisplayLines();
     const bool mode4 = mode4Enabled();
     const auto nameBasePre = nameTableBase();
@@ -436,13 +436,13 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
         spritePalette[color] = decodedCram_[16u + color];
     }
     const auto backdrop = spritePalette[static_cast<std::size_t>(registers_[7u] & 0x0Fu)];
-    model.inVBlank = scanline_ >= activeLines + 1u;
-    model.scanlineIndex = static_cast<uint8_t>(scanline_ & 0x00FFu);
-    const auto pixelCount = static_cast<std::size_t>(model.width) * static_cast<std::size_t>(model.height);
-    model.argbPixels.resize(pixelCount);
-    std::fill_n(model.argbPixels.data(), pixelCount, backdrop);
-    if (!model.displayEnabled) {
-        return model;
+    out.inVBlank = scanline_ >= activeLines + 1u;
+    out.scanlineIndex = static_cast<uint8_t>(scanline_ & 0x00FFu);
+    const auto pixelCount = static_cast<std::size_t>(out.width) * static_cast<std::size_t>(out.height);
+    out.argbPixels.resize(pixelCount);
+    std::fill_n(out.argbPixels.data(), pixelCount, backdrop);
+    if (!out.displayEnabled) {
+        return out;
     }
 
     if (!mode4 && (registers_[0u] & 0x02u) != 0u) {
@@ -450,14 +450,14 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
         const auto nameBase = static_cast<std::size_t>((registers_[2u] & 0x0Eu) << 10u);
         const auto patternBase = static_cast<std::size_t>((registers_[4u] & 0x04u) << 11u);
         const auto colorBase = static_cast<std::size_t>((registers_[3u] & 0x80u) << 6u);
-        const int viewportY = gameGearViewportYOffset(model.height);
-        for (int y = 0; y < model.height; ++y) {
+        const int viewportY = gameGearViewportYOffset(out.height);
+        for (int y = 0; y < out.height; ++y) {
             const auto vdpY = static_cast<std::size_t>(y + viewportY);
             const auto tileY = (vdpY / 8u) % 24u;
             const auto pixelY = vdpY % 8u;
             const auto bankOffset = graphicsII ? ((tileY / 8u) * 0x0800u) : 0u;
-            for (int x = 0; x < model.width; ++x) {
-                const auto vdpX = static_cast<std::size_t>(gameGearTmsViewportX(model.width, x));
+            for (int x = 0; x < out.width; ++x) {
+                const auto vdpX = static_cast<std::size_t>(gameGearTmsViewportX(out.width, x));
                 const auto tileX = (vdpX / 8u) % 32u;
                 const auto pixelX = vdpX % 8u;
                 const auto nameIndex = (nameBase + tileY * 32u + tileX) % vram_.size();
@@ -468,17 +468,17 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
                 const auto color = vram_[colorAddress];
                 const bool foreground = ((pattern >> (7u - pixelX)) & 0x01u) != 0u;
                 const auto colorCode = static_cast<uint8_t>(foreground ? (color >> 4u) : (color & 0x0Fu));
-                const auto pixelIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(model.width)
+                const auto pixelIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(out.width)
                                       + static_cast<std::size_t>(x);
-                model.argbPixels[pixelIndex] = colorCode == 0u ? backdrop : spritePalette[colorCode & 0x0Fu];
+                out.argbPixels[pixelIndex] = colorCode == 0u ? backdrop : spritePalette[colorCode & 0x0Fu];
             }
         }
-        return model;
+        return out;
     }
     const auto scrollX = readCompatRegister(8u);
     const auto scrollY = verticalScrollLatch_;
-    const int viewportX = gameGearViewportXOffset(model.width);
-    const int viewportY = gameGearViewportYOffset(model.height);
+    const int viewportX = gameGearViewportXOffset(out.width);
+    const int viewportY = gameGearViewportYOffset(out.height);
     const auto satBase = spriteAttributeTableBase();
     const auto spriteBase = spriteGeneratorBase();
     const int zoom = spriteZoomMode() ? 2 : 1;
@@ -499,7 +499,7 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
             continue;
         }
         const int spriteY = static_cast<int>(rawY) + 1;
-        if (spriteY + spriteHeight > viewportY && spriteY < viewportY + model.height) {
+        if (spriteY + spriteHeight > viewportY && spriteY < viewportY + out.height) {
             hasVisibleSprites = true;
             break;
         }
@@ -512,7 +512,7 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
     constexpr uint8_t kSpriteMaskOccupied = 0x02u;
     std::vector<uint8_t> spriteMask;
     if (hasVisibleSprites) {
-        spriteMask.assign(model.argbPixels.size(), 0u);
+        spriteMask.assign(out.argbPixels.size(), 0u);
     }
     const bool useSimpleBackgroundPath =
         !smsMode_ &&
@@ -522,17 +522,17 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
     std::vector<std::size_t> simpleTileXs;
     std::vector<std::size_t> simplePixelXs;
     if (useSimpleBackgroundPath) {
-        simpleTileXs.resize(static_cast<std::size_t>(model.width));
-        simplePixelXs.resize(static_cast<std::size_t>(model.width));
+        simpleTileXs.resize(static_cast<std::size_t>(out.width));
+        simplePixelXs.resize(static_cast<std::size_t>(out.width));
         const auto startingColumn = static_cast<std::size_t>((32u - (scrollX >> 3u)) & 0x1Fu);
-        for (int x = 0; x < model.width; ++x) {
+        for (int x = 0; x < out.width; ++x) {
             const auto scrolledX = static_cast<std::size_t>(x + viewportX) & 0xFFu;
             const auto index = static_cast<std::size_t>(x);
             simpleTileXs[index] = (startingColumn + (scrolledX / 8u)) % 32u;
             simplePixelXs[index] = scrolledX % 8u;
         }
     }
-    for (int y = 0; y < model.height; ++y) {
+    for (int y = 0; y < out.height; ++y) {
         const int vdpY = y + viewportY;
 
         // Small per-row cache for decoded background tile entries. Decoding the
@@ -562,7 +562,7 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
             const auto pixelY = scrolledY % 8u;
             const auto wrappedTileY = tileY % 32u;
             const auto rowNameBase = nameBasePre + wrappedTileY * kTilesPerRow * 2u;
-            for (int x = 0; x < model.width; ++x) {
+            for (int x = 0; x < out.width; ++x) {
                 const auto index = static_cast<std::size_t>(x);
                 const auto tileX = simpleTileXs[index];
                 const auto pixelX = simplePixelXs[index];
@@ -601,9 +601,9 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
                     decodedPatternRowY[tileX] = static_cast<int>(sampleY);
                 }
                 const auto colorCode = decodedPatternRows[tileX][static_cast<std::size_t>(sampleX)];
-                const auto pixelIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(model.width)
+                const auto pixelIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(out.width)
                                       + static_cast<std::size_t>(x);
-                model.argbPixels[pixelIndex] = decoded.palette1
+                out.argbPixels[pixelIndex] = decoded.palette1
                     ? spritePalette[colorCode & 0x0Fu]
                     : backgroundPalette[colorCode & 0x0Fu];
                 if (hasVisibleSprites) {
@@ -615,7 +615,7 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
             continue;
         }
 
-        for (int x = 0; x < model.width; ++x) {
+        for (int x = 0; x < out.width; ++x) {
             const int vdpX = x + viewportX;
             const bool fixedTopRows = smsMode_ && (registers_[0u] & 0x40u) != 0u && vdpY < 16;
             const bool fixedRightColumns = (registers_[0u] & 0x80u) != 0u && vdpX >= 192;
@@ -678,9 +678,9 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
                 decodedPatternRowY[tileX] = static_cast<int>(sampleY);
             }
             const auto colorCode = decodedPatternRows[tileX][static_cast<std::size_t>(sampleX)];
-            const auto pixelIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(model.width)
+            const auto pixelIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(out.width)
                                   + static_cast<std::size_t>(x);
-            model.argbPixels[pixelIndex] = decoded.palette1
+            out.argbPixels[pixelIndex] = decoded.palette1
                 ? spritePalette[colorCode & 0x0Fu]
                 : backgroundPalette[colorCode & 0x0Fu];
             if (hasVisibleSprites) {
@@ -692,7 +692,7 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
     }
 
     if (!hasVisibleSprites) {
-        return model;
+        return out;
     }
 
     std::array<std::uint8_t, 240u> spritesOnLine{};
@@ -718,12 +718,12 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
         const int spriteY = static_cast<int>(rawY) + 1;
         const int spriteScreenX = spriteX - viewportX;
         const int spriteDrawWidth = 8 * zoom;
-        if (spriteScreenX + spriteDrawWidth <= 0 || spriteScreenX >= model.width) {
+        if (spriteScreenX + spriteDrawWidth <= 0 || spriteScreenX >= out.width) {
             continue;
         }
         for (int py = 0; py < spriteHeight; ++py) {
             const int screenY = spriteY + py - viewportY;
-            if (screenY < 0 || screenY >= model.height) {
+            if (screenY < 0 || screenY >= out.height) {
                 continue;
             }
             if (screenY >= 0 && screenY < static_cast<int>(spritesOnLine.size()) &&
@@ -755,16 +755,16 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
                 const int baseScreenX = spriteScreenX + sampleX * zoom;
                 for (int repeat = 0; repeat < zoom; ++repeat) {
                     const int screenX = baseScreenX + repeat;
-                    if (screenX < 0 || screenX >= model.width) {
+                    if (screenX < 0 || screenX >= out.width) {
                         continue;
                     }
-                    const auto pixelIndex = static_cast<std::size_t>(screenY) * static_cast<std::size_t>(model.width)
+                    const auto pixelIndex = static_cast<std::size_t>(screenY) * static_cast<std::size_t>(out.width)
                                           + static_cast<std::size_t>(screenX);
                     if ((spriteMask[pixelIndex] &
                          (kSpriteMaskBackgroundPriority | kSpriteMaskOccupied)) != 0u) {
                         continue;
                     }
-                    model.argbPixels[pixelIndex] = spritePalette[colorCode & 0x0Fu];
+                    out.argbPixels[pixelIndex] = spritePalette[colorCode & 0x0Fu];
                     spriteMask[pixelIndex] |= kSpriteMaskOccupied;
                 }
             }
@@ -779,7 +779,35 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
         }
     }
 
+    return out;
+}
+
+BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
+    const BMMQ::VideoDebugRenderRequest& request) const
+{
+    auto out = renderFramePixels(request);
+    BMMQ::VideoDebugFrameModel model;
+    model.width = out.width;
+    model.height = out.height;
+    model.displayEnabled = out.displayEnabled;
+    model.inVBlank = out.inVBlank;
+    model.scanlineIndex = out.scanlineIndex;
+    model.argbPixels = std::move(out.argbPixels);
     return model;
+}
+
+BMMQ::RealtimeVideoPacket GameGearVDP::buildRealtimeFrame(
+    const BMMQ::VideoDebugRenderRequest& request) const
+{
+    auto out = renderFramePixels(request);
+    BMMQ::RealtimeVideoPacket packet;
+    packet.width = out.width;
+    packet.height = out.height;
+    packet.displayEnabled = out.displayEnabled;
+    packet.inVBlank = out.inVBlank;
+    packet.scanlineIndex = out.scanlineIndex;
+    packet.argbPixels = std::move(out.argbPixels);
+    return packet;
 }
 
 uint32_t GameGearVDP::paletteColor(uint8_t shade) noexcept {

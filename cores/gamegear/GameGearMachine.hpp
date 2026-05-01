@@ -41,6 +41,8 @@ public:
     uint64_t audioFrameCounter() const override;
     std::optional<VideoDebugFrameModel> videoDebugFrameModel(
         const VideoDebugRenderRequest& request) const override;
+    std::optional<RealtimeVideoPacket> realtimeVideoPacket(
+        const VideoDebugRenderRequest& request) const override;
     uint32_t clockHz() const override;
     std::string stopSummary() const override;
     [[nodiscard]] bool flushCartridgeSave();
