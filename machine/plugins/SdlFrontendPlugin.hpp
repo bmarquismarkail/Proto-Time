@@ -163,6 +163,9 @@ struct SdlFrontendStats {
     std::size_t audioTransportWorkerProducedBlocks = 0;
     std::size_t audioTransportDroppedReadyBlocks = 0;
     std::size_t audioTransportWorkerWakeCount = 0;
+    std::size_t audioTransportWorkerCallbackWakeCount = 0;
+    std::size_t audioTransportWorkerEmulationWakeCount = 0;
+    std::size_t audioTransportWorkerTimeoutWakeCount = 0;
     std::size_t audioTransportStaleEpochDropCount = 0;
     std::size_t audioTransportEpochBumpCount = 0;
     std::size_t audioTransportPrimedTransitionCount = 0;

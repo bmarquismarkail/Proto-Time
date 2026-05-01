@@ -303,6 +303,13 @@ int main(int argc, char** argv)
     assert(stats.renderServiceFrameWakeCount + stats.renderServiceTimeoutWakeCount + 1 >= stats.renderServiceLoopCount);
     // Phase 28: deferred fast-sleep count must not exceed total sleeps
     assert(stats.renderServiceDeferredPresentFastSleepCount <= stats.renderServiceSleepCount);
+    // Phase 29: audio worker wake-reason counters must cover all tracked wakes
+    assert(stats.audioTransportWorkerCallbackWakeCount +
+               stats.audioTransportWorkerEmulationWakeCount +
+               stats.audioTransportWorkerTimeoutWakeCount >=
+           stats.audioTransportWorkerWakeCount);
+    // Phase 29: callback can't wake the worker more times than the callback itself ran
+    assert(stats.audioTransportWorkerCallbackWakeCount <= stats.audioTransportDrainCallbackCount);
     assert(stats.videoDebugSnapshotsBuilt == stats.videoStateSnapshots);
     // Snapshot cost invariants: high-water must be >= last if any snapshots were taken
     if (stats.videoDebugSnapshotsBuilt > 0u) {

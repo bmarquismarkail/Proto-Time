@@ -37,6 +37,9 @@ struct AudioOutputTransportStats {
     std::size_t workerProducedBlocks = 0;
     std::size_t droppedReadyBlocks = 0;
     std::size_t workerWakeCount = 0;
+    std::size_t workerCallbackWakeCount = 0;
+    std::size_t workerEmulationWakeCount = 0;
+    std::size_t workerTimeoutWakeCount = 0;
     std::size_t staleEpochDropCount = 0;
     std::size_t epochBumpCount = 0;
     std::size_t primedTransitionCount = 0;
@@ -389,7 +392,7 @@ public:
                 std::fill(output.begin(), output.end(), 0);
                 transportUnderrunCount_.fetch_add(1u, std::memory_order_relaxed);
                 transportSilenceSamplesFilled_.fetch_add(output.size(), std::memory_order_relaxed);
-                outputTransportCv_.notify_one();
+                audioCallbackWakeRequest_.store(true, std::memory_order_release);
                 return;
             }
 
@@ -410,7 +413,7 @@ public:
             }
 
             readyReadIndex_.store(nextReadyIndex(readIndex), std::memory_order_release);
-            outputTransportCv_.notify_one();
+            audioCallbackWakeRequest_.store(true, std::memory_order_release);
             return;
         }
     }
@@ -426,6 +429,9 @@ public:
         stats.workerProducedBlocks = transportWorkerProducedBlocks_.load(std::memory_order_relaxed);
         stats.droppedReadyBlocks = transportDroppedReadyBlocks_.load(std::memory_order_relaxed);
         stats.workerWakeCount = transportWorkerWakeCount_.load(std::memory_order_relaxed);
+        stats.workerCallbackWakeCount = transportWorkerCallbackWakeCount_.load(std::memory_order_relaxed);
+        stats.workerEmulationWakeCount = transportWorkerEmulationWakeCount_.load(std::memory_order_relaxed);
+        stats.workerTimeoutWakeCount = transportWorkerTimeoutWakeCount_.load(std::memory_order_relaxed);
         stats.staleEpochDropCount = transportStaleEpochDropCount_.load(std::memory_order_relaxed);
         stats.epochBumpCount = transportEpochBumpCount_.load(std::memory_order_relaxed);
         stats.lifecycleEpoch = transportEpoch_.load(std::memory_order_acquire);
@@ -631,10 +637,14 @@ private:
     {
         while (!outputTransportStopRequested_.load(std::memory_order_acquire)) {
             std::unique_lock<std::mutex> lock(outputTransportWaitMutex_);
-            outputTransportCv_.wait_for(lock, outputTransportWakePeriod(), [this]() noexcept {
-                return outputTransportStopRequested_.load(std::memory_order_acquire) ||
-                       (readyQueueHasSpace() && engine_.bufferedSamples() != 0u);
-            });
+            const bool predicateMet = outputTransportCv_.wait_for(
+                lock, outputTransportWakePeriod(), [this]() noexcept {
+                    return outputTransportStopRequested_.load(std::memory_order_acquire) ||
+                           audioCallbackWakeRequest_.load(std::memory_order_acquire) ||
+                           (readyQueueHasSpace() && engine_.bufferedSamples() != 0u);
+                });
+            const bool callbackWoke =
+                audioCallbackWakeRequest_.exchange(false, std::memory_order_acq_rel);
             lock.unlock();
 
             if (outputTransportStopRequested_.load(std::memory_order_acquire)) {
@@ -642,6 +652,13 @@ private:
             }
 
             transportWorkerWakeCount_.fetch_add(1u, std::memory_order_relaxed);
+            if (!predicateMet) {
+                transportWorkerTimeoutWakeCount_.fetch_add(1u, std::memory_order_relaxed);
+            } else if (callbackWoke) {
+                transportWorkerCallbackWakeCount_.fetch_add(1u, std::memory_order_relaxed);
+            } else {
+                transportWorkerEmulationWakeCount_.fetch_add(1u, std::memory_order_relaxed);
+            }
             while (!outputTransportStopRequested_.load(std::memory_order_acquire) &&
                    produceReadyOutputBlock()) {
             }
@@ -657,6 +674,9 @@ private:
         transportWorkerProducedBlocks_.store(0u, std::memory_order_relaxed);
         transportDroppedReadyBlocks_.store(0u, std::memory_order_relaxed);
         transportWorkerWakeCount_.store(0u, std::memory_order_relaxed);
+        transportWorkerCallbackWakeCount_.store(0u, std::memory_order_relaxed);
+        transportWorkerEmulationWakeCount_.store(0u, std::memory_order_relaxed);
+        transportWorkerTimeoutWakeCount_.store(0u, std::memory_order_relaxed);
         transportStaleEpochDropCount_.store(0u, std::memory_order_relaxed);
         transportPrimedTransitionCount_.store(0u, std::memory_order_relaxed);
         transportDrainDurationSampleCount_.store(0u, std::memory_order_relaxed);
@@ -742,10 +762,11 @@ private:
     std::vector<ReadyBlock> readyBlocks_{};
     std::vector<int16_t> producerScratch_{};
     std::vector<int16_t> transportPipelineScratch_{};
-    std::atomic<std::size_t> readyReadIndex_{0};
-    std::atomic<std::size_t> readyWriteIndex_{0};
+    alignas(64) std::atomic<std::size_t> readyReadIndex_{0};   // written by SDL callback, read by worker
+    alignas(64) std::atomic<std::size_t> readyWriteIndex_{0};   // written by worker, read by SDL callback
     std::atomic<bool> outputTransportRunning_{false};
     std::atomic<bool> outputTransportStopRequested_{false};
+    std::atomic<bool> audioCallbackWakeRequest_{false};
     std::thread outputTransportWorker_{};
     std::condition_variable outputTransportCv_{};
     std::mutex outputTransportWaitMutex_{};
@@ -756,6 +777,9 @@ private:
     std::atomic<std::size_t> transportWorkerProducedBlocks_{0};
     std::atomic<std::size_t> transportDroppedReadyBlocks_{0};
     std::atomic<std::size_t> transportWorkerWakeCount_{0};
+    std::atomic<std::size_t> transportWorkerCallbackWakeCount_{0};
+    std::atomic<std::size_t> transportWorkerEmulationWakeCount_{0};
+    std::atomic<std::size_t> transportWorkerTimeoutWakeCount_{0};
     std::atomic<std::size_t> transportStaleEpochDropCount_{0};
     std::atomic<std::size_t> transportEpochBumpCount_{0};
     std::atomic<std::uint64_t> transportEpoch_{1};

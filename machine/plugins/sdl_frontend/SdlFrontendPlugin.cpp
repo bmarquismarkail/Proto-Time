@@ -1249,6 +1249,9 @@ private:
         stats_.audioTransportWorkerProducedBlocks = transportStats.workerProducedBlocks;
         stats_.audioTransportDroppedReadyBlocks = transportStats.droppedReadyBlocks;
         stats_.audioTransportWorkerWakeCount = transportStats.workerWakeCount;
+        stats_.audioTransportWorkerCallbackWakeCount = transportStats.workerCallbackWakeCount;
+        stats_.audioTransportWorkerEmulationWakeCount = transportStats.workerEmulationWakeCount;
+        stats_.audioTransportWorkerTimeoutWakeCount = transportStats.workerTimeoutWakeCount;
         stats_.audioTransportStaleEpochDropCount = transportStats.staleEpochDropCount;
         stats_.audioTransportEpochBumpCount = transportStats.epochBumpCount;
         stats_.audioTransportPrimedTransitionCount = transportStats.primedTransitionCount;
