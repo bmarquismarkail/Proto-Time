@@ -299,6 +299,10 @@ int main(int argc, char** argv)
     assert(stats.renderServicePresentCallsOutsideLock >= stats.renderServicePresentSuccessCount);
     // Phase 27: render loop uses lightweight sync per iteration; full sync only on present
     assert(stats.renderServiceLightweightSyncCount + stats.renderServicePresentSuccessCount >= stats.renderServiceLoopCount);
+    // Phase 28: wake-reason counters must account for every sleep entered (fencepost: first iteration has no prior sleep)
+    assert(stats.renderServiceFrameWakeCount + stats.renderServiceTimeoutWakeCount + 1 >= stats.renderServiceLoopCount);
+    // Phase 28: deferred fast-sleep count must not exceed total sleeps
+    assert(stats.renderServiceDeferredPresentFastSleepCount <= stats.renderServiceSleepCount);
     assert(stats.videoDebugSnapshotsBuilt == stats.videoStateSnapshots);
     // Snapshot cost invariants: high-water must be >= last if any snapshots were taken
     if (stats.videoDebugSnapshotsBuilt > 0u) {

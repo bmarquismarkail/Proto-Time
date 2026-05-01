@@ -639,6 +639,7 @@ public:
                 syncVideoTransportStats();
                 ++stats_.framesPrepared;
                 frameDirty_ = true;
+                renderServiceFramePending_.store(true, std::memory_order_release);
                 renderServiceWakeCv_.notify_all();
                 if (deferPresentForAudioLowWater) {
                     ++stats_.audioQueueLowWaterHits;
@@ -655,6 +656,7 @@ public:
                     syncVideoTransportStats();
                     ++stats_.framesPrepared;
                     frameDirty_ = true;
+                    renderServiceFramePending_.store(true, std::memory_order_release);
                     renderServiceWakeCv_.notify_all();
                     if (deferPresentForAudioLowWater) {
                         ++stats_.audioQueueLowWaterHits;
@@ -858,6 +860,7 @@ private:
             {
                 std::unique_lock<std::mutex> lock(sharedStateMutex_);
                 ++stats_.renderServiceLoopCount;
+                renderServiceFramePending_.store(false, std::memory_order_relaxed);
                 const auto handled = pumpBackendEvents();
                 if (handled != 0u) {
                     ++stats_.renderServiceEventPumpCount;
@@ -930,16 +933,31 @@ private:
             }
 
             ++stats_.renderServiceSleepCount;
-            std::unique_lock<std::mutex> waitLock(renderServiceWaitMutex_);
-            const auto beforeWait = std::chrono::steady_clock::now();
-            renderServiceWakeCv_.wait_for(waitLock, sleepInterval, [this] {
-                return renderServiceStopRequested_.load(std::memory_order_acquire);
-            });
-            const auto wakeTime = std::chrono::steady_clock::now();
-            if (wakeTime - beforeWait > sleepInterval + std::chrono::milliseconds(2)) {
-                ++stats_.renderServiceSleepOvershootCount;
+            {
+                std::unique_lock<std::mutex> waitLock(renderServiceWaitMutex_);
+                const auto beforeWait = std::chrono::steady_clock::now();
+                const bool useShortSleep = videoPresentDeferredForAudioLowWater_;
+                if (useShortSleep) {
+                    ++stats_.renderServiceDeferredPresentFastSleepCount;
+                }
+                const auto effectiveInterval = useShortSleep
+                    ? std::chrono::microseconds(500)
+                    : sleepInterval;
+                const bool predicateMet = renderServiceWakeCv_.wait_for(waitLock, effectiveInterval, [this] {
+                    return renderServiceStopRequested_.load(std::memory_order_acquire)
+                        || renderServiceFramePending_.load(std::memory_order_acquire);
+                });
+                const auto wakeTime = std::chrono::steady_clock::now();
+                if (predicateMet) {
+                    ++stats_.renderServiceFrameWakeCount;
+                } else {
+                    ++stats_.renderServiceTimeoutWakeCount;
+                }
+                if (wakeTime - beforeWait > sleepInterval + std::chrono::milliseconds(2)) {
+                    ++stats_.renderServiceSleepOvershootCount;
+                }
+                lastWake = wakeTime;
             }
-            lastWake = wakeTime;
             (void)lastWake;
         }
     }
@@ -1983,6 +2001,7 @@ private:
     mutable std::mutex sharedStateMutex_;
     std::atomic<BMMQ::SdlRenderServiceState> renderServiceState_{BMMQ::SdlRenderServiceState::Stopped};
     std::atomic<bool> renderServiceStopRequested_{false};
+    std::atomic<bool> renderServiceFramePending_{false};
     std::thread renderServiceThread_{};
     std::mutex renderServiceWaitMutex_{};
     std::condition_variable renderServiceWakeCv_{};

@@ -234,6 +234,9 @@ struct SdlFrontendStats {
     std::size_t renderServiceEventPumpCount = 0;
     std::size_t renderServiceSleepCount = 0;
     std::size_t renderServiceSleepOvershootCount = 0;
+    std::size_t renderServiceFrameWakeCount = 0;
+    std::size_t renderServiceTimeoutWakeCount = 0;
+    std::size_t renderServiceDeferredPresentFastSleepCount = 0;
     SdlRenderServiceState renderServiceState = SdlRenderServiceState::Stopped;
     MachineTransitionOutcome lifecycleLastOutcome = MachineTransitionOutcome::Succeeded;
     MachineTransitionFailureStage lifecycleLastFailureStage = MachineTransitionFailureStage::None;
