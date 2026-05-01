@@ -118,6 +118,28 @@ int main(int argc, char** argv)
         assert(frontend->stats().audioTransportUnderrunCount >= 1u);
         assert(frontend->stats().audioTransportSilenceSamplesFilled >= 1u);
 
+         const auto durationSampleCount = frontend->stats().audioTransportDrainDurationSampleCount;
+         assert(durationSampleCount >= frontend->stats().audioTransportDrainCallbackCount);
+         assert(frontend->stats().audioTransportDrainDurationHighWaterNanos >=
+             frontend->stats().audioTransportDrainDurationLastNanos);
+         assert(frontend->stats().audioTransportDrainDurationP95Nanos >=
+             frontend->stats().audioTransportDrainDurationP50Nanos);
+         assert(frontend->stats().audioTransportDrainDurationP99Nanos >=
+             frontend->stats().audioTransportDrainDurationP95Nanos);
+         assert(frontend->stats().audioTransportDrainDurationP999Nanos >=
+             frontend->stats().audioTransportDrainDurationP99Nanos);
+         const auto durationBucketTotal =
+             frontend->stats().audioTransportDrainDurationUnder50usCount +
+             frontend->stats().audioTransportDrainDuration50To100usCount +
+             frontend->stats().audioTransportDrainDuration100To250usCount +
+             frontend->stats().audioTransportDrainDuration250To500usCount +
+             frontend->stats().audioTransportDrainDuration500usTo1msCount +
+             frontend->stats().audioTransportDrainDuration1To2msCount +
+             frontend->stats().audioTransportDrainDuration2To5msCount +
+             frontend->stats().audioTransportDrainDuration5To10msCount +
+             frontend->stats().audioTransportDrainDurationOver10msCount;
+         assert(durationBucketTotal == durationSampleCount);
+
         if (!stepUntilAudioFrames(machine, 20u)) {
             std::cerr << "smoke_sdl_audio_transport: audio frame counter did not reach 20" << '\n';
             machine.pluginManager().shutdown(machine.mutableView());
@@ -179,6 +201,8 @@ int main(int argc, char** argv)
             assert(resampleStressFrontend->stats().audioDeviceSampleRate == 44100);
             assert(resampleStressFrontend->stats().audioResamplingActive);
             assert(resampleStressFrontend->stats().audioPipelineCapacitySkipCount == 0u);
+                 assert(resampleStressFrontend->stats().audioTransportDrainDurationSampleCount >=
+                     resampleStressFrontend->stats().audioTransportDrainCallbackCount);
 
             const auto startFrameCounter = resampleStressMachine.audioFrameCounter();
             if (!stepUntilAudioFrames(resampleStressMachine, startFrameCounter + 1u)) {

@@ -294,6 +294,13 @@ int main(int argc, char** argv)
     assert(stats.framesPrepared >= 1);
     assert(stats.videoRealtimePacketsAccepted >= stats.framesPrepared);
     assert(stats.videoDebugSnapshotsBuilt == stats.videoStateSnapshots);
+    // Snapshot cost invariants: high-water must be >= last if any snapshots were taken
+    if (stats.videoDebugSnapshotsBuilt > 0u) {
+        assert(stats.videoDebugSnapshotDurationHighWaterNs >= stats.videoDebugSnapshotDurationLastNs);
+    }
+    if (stats.audioStateSnapshotsBuilt > 0u) {
+        assert(stats.audioStateSnapshotDurationHighWaterNs >= stats.audioStateSnapshotDurationLastNs);
+    }
     assert(stats.videoFramesPublished >= stats.framesPrepared);
     assert(stats.videoPublishedPixelBytes >= stats.videoFramesPublished * 4u);
     assert(stats.videoPublishedPixelBytes ==
@@ -400,6 +407,35 @@ int main(int argc, char** argv)
         assert(frontend->bufferedAudioSamples() <= stats.audioRingBufferCapacitySamples);
         assert(stats.audioOverrunDropCount == 0u);
         assert(stats.audioQueueRecoveryClears == 0u);
+        assert(stats.audioTransportDrainDurationSampleCount >= stats.audioTransportDrainCallbackCount);
+        assert(stats.audioTransportDrainDurationHighWaterNanos >= stats.audioTransportDrainDurationLastNanos);
+        assert(stats.audioTransportDrainDurationP95Nanos >= stats.audioTransportDrainDurationP50Nanos);
+        assert(stats.audioTransportDrainDurationP99Nanos >= stats.audioTransportDrainDurationP95Nanos);
+        assert(stats.audioTransportDrainDurationP999Nanos >= stats.audioTransportDrainDurationP99Nanos);
+        const auto durationBucketTotal =
+            stats.audioTransportDrainDurationUnder50usCount +
+            stats.audioTransportDrainDuration50To100usCount +
+            stats.audioTransportDrainDuration100To250usCount +
+            stats.audioTransportDrainDuration250To500usCount +
+            stats.audioTransportDrainDuration500usTo1msCount +
+            stats.audioTransportDrainDuration1To2msCount +
+            stats.audioTransportDrainDuration2To5msCount +
+            stats.audioTransportDrainDuration5To10msCount +
+            stats.audioTransportDrainDurationOver10msCount;
+        assert(durationBucketTotal == stats.audioTransportDrainDurationSampleCount);
+
+        // Video frame publish-to-present age invariants
+        if (stats.videoPresentFreshFrameCount > 0u) {
+            assert(stats.videoFrameAgeLastNs > 0u);
+            assert(stats.videoFrameAgeHighWaterNs >= stats.videoFrameAgeLastNs);
+            const std::size_t videoAgeBucketSum =
+                stats.videoFrameAgeUnder50usCount + stats.videoFrameAge50To100usCount +
+                stats.videoFrameAge100To250usCount + stats.videoFrameAge250To500usCount +
+                stats.videoFrameAge500usTo1msCount + stats.videoFrameAge1To2msCount +
+                stats.videoFrameAge2To5msCount + stats.videoFrameAge5To10msCount +
+                stats.videoFrameAgeOver10msCount;
+            assert(videoAgeBucketSum == stats.videoPresentFreshFrameCount);
+        }
 
         for (std::size_t attempt = 0; attempt < 50u && frontend->bufferedAudioSamples() != 0u; ++attempt) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));

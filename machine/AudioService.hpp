@@ -2,9 +2,11 @@
 #define BMMQ_AUDIO_SERVICE_HPP
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cassert>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
@@ -40,6 +42,22 @@ struct AudioOutputTransportStats {
     std::size_t primedTransitionCount = 0;
     std::uint64_t lifecycleEpoch = 1;
     bool primedForDrain = false;
+    std::size_t drainCallbackDurationSampleCount = 0;
+    std::int64_t drainCallbackDurationLastNanos = 0;
+    std::int64_t drainCallbackDurationHighWaterNanos = 0;
+    std::int64_t drainCallbackDurationP50Nanos = 0;
+    std::int64_t drainCallbackDurationP95Nanos = 0;
+    std::int64_t drainCallbackDurationP99Nanos = 0;
+    std::int64_t drainCallbackDurationP999Nanos = 0;
+    std::size_t drainCallbackDurationUnder50usCount = 0;
+    std::size_t drainCallbackDuration50To100usCount = 0;
+    std::size_t drainCallbackDuration100To250usCount = 0;
+    std::size_t drainCallbackDuration250To500usCount = 0;
+    std::size_t drainCallbackDuration500usTo1msCount = 0;
+    std::size_t drainCallbackDuration1To2msCount = 0;
+    std::size_t drainCallbackDuration2To5msCount = 0;
+    std::size_t drainCallbackDuration5To10msCount = 0;
+    std::size_t drainCallbackDurationOver10msCount = 0;
 };
 
 class AudioService {
@@ -413,7 +431,56 @@ public:
         stats.lifecycleEpoch = transportEpoch_.load(std::memory_order_acquire);
         stats.primedTransitionCount = transportPrimedTransitionCount_.load(std::memory_order_relaxed);
         stats.primedForDrain = transportPrimedEpoch_.load(std::memory_order_acquire) == stats.lifecycleEpoch;
+        stats.drainCallbackDurationSampleCount =
+            transportDrainDurationSampleCount_.load(std::memory_order_relaxed);
+        stats.drainCallbackDurationLastNanos =
+            transportDrainDurationLastNanos_.load(std::memory_order_relaxed);
+        stats.drainCallbackDurationHighWaterNanos =
+            transportDrainDurationHighWaterNanos_.load(std::memory_order_relaxed);
+        stats.drainCallbackDurationUnder50usCount =
+            transportDrainDurationBuckets_[0].load(std::memory_order_relaxed);
+        stats.drainCallbackDuration50To100usCount =
+            transportDrainDurationBuckets_[1].load(std::memory_order_relaxed);
+        stats.drainCallbackDuration100To250usCount =
+            transportDrainDurationBuckets_[2].load(std::memory_order_relaxed);
+        stats.drainCallbackDuration250To500usCount =
+            transportDrainDurationBuckets_[3].load(std::memory_order_relaxed);
+        stats.drainCallbackDuration500usTo1msCount =
+            transportDrainDurationBuckets_[4].load(std::memory_order_relaxed);
+        stats.drainCallbackDuration1To2msCount =
+            transportDrainDurationBuckets_[5].load(std::memory_order_relaxed);
+        stats.drainCallbackDuration2To5msCount =
+            transportDrainDurationBuckets_[6].load(std::memory_order_relaxed);
+        stats.drainCallbackDuration5To10msCount =
+            transportDrainDurationBuckets_[7].load(std::memory_order_relaxed);
+        stats.drainCallbackDurationOver10msCount =
+            transportDrainDurationBuckets_[8].load(std::memory_order_relaxed);
+        stats.drainCallbackDurationP50Nanos =
+            static_cast<std::int64_t>(estimateDrainDurationPercentileBound(0.50));
+        stats.drainCallbackDurationP95Nanos =
+            static_cast<std::int64_t>(estimateDrainDurationPercentileBound(0.95));
+        stats.drainCallbackDurationP99Nanos =
+            static_cast<std::int64_t>(estimateDrainDurationPercentileBound(0.99));
+        stats.drainCallbackDurationP999Nanos =
+            static_cast<std::int64_t>(estimateDrainDurationPercentileBound(0.999));
         return stats;
+    }
+
+    void noteDrainCallbackDuration(std::chrono::nanoseconds duration) noexcept
+    {
+        const auto nanos = std::max<std::int64_t>(duration.count(), 0);
+        transportDrainDurationLastNanos_.store(nanos, std::memory_order_relaxed);
+        auto previous = transportDrainDurationHighWaterNanos_.load(std::memory_order_relaxed);
+        while (nanos > previous &&
+               !transportDrainDurationHighWaterNanos_.compare_exchange_weak(
+                   previous,
+                   nanos,
+                   std::memory_order_relaxed,
+                   std::memory_order_relaxed)) {
+        }
+        transportDrainDurationSampleCount_.fetch_add(1u, std::memory_order_relaxed);
+        transportDrainDurationBuckets_[drainDurationBucketIndex(static_cast<std::uint64_t>(nanos))]
+            .fetch_add(1u, std::memory_order_relaxed);
     }
 
     [[nodiscard]] bool isOutputTransportPrimed() const noexcept
@@ -592,6 +659,70 @@ private:
         transportWorkerWakeCount_.store(0u, std::memory_order_relaxed);
         transportStaleEpochDropCount_.store(0u, std::memory_order_relaxed);
         transportPrimedTransitionCount_.store(0u, std::memory_order_relaxed);
+        transportDrainDurationSampleCount_.store(0u, std::memory_order_relaxed);
+        transportDrainDurationLastNanos_.store(0, std::memory_order_relaxed);
+        transportDrainDurationHighWaterNanos_.store(0, std::memory_order_relaxed);
+        for (auto& bucket : transportDrainDurationBuckets_) {
+            bucket.store(0u, std::memory_order_relaxed);
+        }
+    }
+
+    [[nodiscard]] static std::size_t drainDurationBucketIndex(std::uint64_t nanos) noexcept
+    {
+        if (nanos < 50'000ull) {
+            return 0u;
+        }
+        if (nanos < 100'000ull) {
+            return 1u;
+        }
+        if (nanos < 250'000ull) {
+            return 2u;
+        }
+        if (nanos < 500'000ull) {
+            return 3u;
+        }
+        if (nanos < 1'000'000ull) {
+            return 4u;
+        }
+        if (nanos < 2'000'000ull) {
+            return 5u;
+        }
+        if (nanos < 5'000'000ull) {
+            return 6u;
+        }
+        if (nanos < 10'000'000ull) {
+            return 7u;
+        }
+        return 8u;
+    }
+
+    [[nodiscard]] std::uint64_t estimateDrainDurationPercentileBound(double percentile) const noexcept
+    {
+        const auto sampleCount = transportDrainDurationSampleCount_.load(std::memory_order_relaxed);
+        if (sampleCount == 0u) {
+            return 0u;
+        }
+        const auto target = static_cast<std::size_t>(
+            std::max<double>(1.0, std::ceil(percentile * static_cast<double>(sampleCount))));
+        static constexpr std::array<std::uint64_t, 9> kBucketUpperBoundNanos = {
+            50'000ull,
+            100'000ull,
+            250'000ull,
+            500'000ull,
+            1'000'000ull,
+            2'000'000ull,
+            5'000'000ull,
+            10'000'000ull,
+            20'000'000ull,
+        };
+        std::size_t seen = 0u;
+        for (std::size_t i = 0; i < transportDrainDurationBuckets_.size(); ++i) {
+            seen += transportDrainDurationBuckets_[i].load(std::memory_order_relaxed);
+            if (seen >= target) {
+                return kBucketUpperBoundNanos[i];
+            }
+        }
+        return kBucketUpperBoundNanos.back();
     }
 
     AudioEngine engine_{};
@@ -630,6 +761,10 @@ private:
     std::atomic<std::uint64_t> transportEpoch_{1};
     std::atomic<std::uint64_t> transportPrimedEpoch_{0};
     std::atomic<std::size_t> transportPrimedTransitionCount_{0};
+    std::atomic<std::size_t> transportDrainDurationSampleCount_{0};
+    std::atomic<std::int64_t> transportDrainDurationLastNanos_{0};
+    std::atomic<std::int64_t> transportDrainDurationHighWaterNanos_{0};
+    std::array<std::atomic<std::size_t>, 9> transportDrainDurationBuckets_{};
     std::atomic<bool> enforceLifecycleContract_{false};
     std::atomic<std::size_t> lifecycleMutationScopeDepth_{0};
     mutable std::atomic<std::size_t> lifecycleContractDeniedCalls_{0};

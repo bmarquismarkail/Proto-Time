@@ -3,6 +3,7 @@
 #include "../../AudioService.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <limits>
 #include <memory>
@@ -191,9 +192,12 @@ private:
             return;
         }
 
+        const auto start = std::chrono::steady_clock::now();
         auto* out = reinterpret_cast<int16_t*>(stream);
         const auto requestedSamples = static_cast<std::size_t>(len / static_cast<int>(sizeof(int16_t)));
         service_->drainReadyOutput(std::span<int16_t>(out, requestedSamples));
+        service_->noteDrainCallbackDuration(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start));
     }
 
     SDL_AudioDeviceID audioDevice_ = 0;

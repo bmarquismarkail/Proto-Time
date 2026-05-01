@@ -74,6 +74,17 @@ struct VideoServiceDiagnostics {
     uint64_t lastPresentedGeneration = 0;
     std::string activeBackendName;
     VideoLifecycleState state = VideoLifecycleState::Headless;
+    std::uint64_t frameAgeLastNs = 0;
+    std::uint64_t frameAgeHighWaterNs = 0;
+    std::size_t frameAgeUnder50usCount = 0;
+    std::size_t frameAge50To100usCount = 0;
+    std::size_t frameAge100To250usCount = 0;
+    std::size_t frameAge250To500usCount = 0;
+    std::size_t frameAge500usTo1msCount = 0;
+    std::size_t frameAge1To2msCount = 0;
+    std::size_t frameAge2To5msCount = 0;
+    std::size_t frameAge5To10msCount = 0;
+    std::size_t frameAgeOver10msCount = 0;
 };
 
 class VideoService {
@@ -602,6 +613,17 @@ private:
         }
         diagnostics_.state = state_;
         diagnostics_.headlessModeActive = state_ == VideoLifecycleState::Headless || presenter_ == nullptr;
+        diagnostics_.frameAgeLastNs = engineStats.frameAgeLastNs;
+        diagnostics_.frameAgeHighWaterNs = engineStats.frameAgeHighWaterNs;
+        diagnostics_.frameAgeUnder50usCount = engineStats.frameAgeUnder50usCount;
+        diagnostics_.frameAge50To100usCount = engineStats.frameAge50To100usCount;
+        diagnostics_.frameAge100To250usCount = engineStats.frameAge100To250usCount;
+        diagnostics_.frameAge250To500usCount = engineStats.frameAge250To500usCount;
+        diagnostics_.frameAge500usTo1msCount = engineStats.frameAge500usTo1msCount;
+        diagnostics_.frameAge1To2msCount = engineStats.frameAge1To2msCount;
+        diagnostics_.frameAge2To5msCount = engineStats.frameAge2To5msCount;
+        diagnostics_.frameAge5To10msCount = engineStats.frameAge5To10msCount;
+        diagnostics_.frameAgeOver10msCount = engineStats.frameAgeOver10msCount;
     }
 
     void resetScanlineCapture()

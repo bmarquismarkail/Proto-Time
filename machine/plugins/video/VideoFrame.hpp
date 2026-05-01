@@ -58,6 +58,7 @@ struct VideoPresentPacket {
     VideoFrameSource source = VideoFrameSource::MachineSnapshot;
     uint64_t generation = 0;
     uint64_t lifecycleEpoch = 1;
+    uint64_t publishedAtNs = 0;
     std::vector<uint32_t> pixels;
 
     [[nodiscard]] bool empty() const noexcept

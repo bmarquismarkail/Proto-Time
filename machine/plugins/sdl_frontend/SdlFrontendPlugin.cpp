@@ -1156,6 +1156,22 @@ private:
         stats_.audioTransportPrimedTransitionCount = transportStats.primedTransitionCount;
         stats_.audioTransportLifecycleEpoch = transportStats.lifecycleEpoch;
         stats_.audioTransportPrimedForDrain = transportStats.primedForDrain;
+        stats_.audioTransportDrainDurationSampleCount = transportStats.drainCallbackDurationSampleCount;
+        stats_.audioTransportDrainDurationLastNanos = transportStats.drainCallbackDurationLastNanos;
+        stats_.audioTransportDrainDurationHighWaterNanos = transportStats.drainCallbackDurationHighWaterNanos;
+        stats_.audioTransportDrainDurationP50Nanos = transportStats.drainCallbackDurationP50Nanos;
+        stats_.audioTransportDrainDurationP95Nanos = transportStats.drainCallbackDurationP95Nanos;
+        stats_.audioTransportDrainDurationP99Nanos = transportStats.drainCallbackDurationP99Nanos;
+        stats_.audioTransportDrainDurationP999Nanos = transportStats.drainCallbackDurationP999Nanos;
+        stats_.audioTransportDrainDurationUnder50usCount = transportStats.drainCallbackDurationUnder50usCount;
+        stats_.audioTransportDrainDuration50To100usCount = transportStats.drainCallbackDuration50To100usCount;
+        stats_.audioTransportDrainDuration100To250usCount = transportStats.drainCallbackDuration100To250usCount;
+        stats_.audioTransportDrainDuration250To500usCount = transportStats.drainCallbackDuration250To500usCount;
+        stats_.audioTransportDrainDuration500usTo1msCount = transportStats.drainCallbackDuration500usTo1msCount;
+        stats_.audioTransportDrainDuration1To2msCount = transportStats.drainCallbackDuration1To2msCount;
+        stats_.audioTransportDrainDuration2To5msCount = transportStats.drainCallbackDuration2To5msCount;
+        stats_.audioTransportDrainDuration5To10msCount = transportStats.drainCallbackDuration5To10msCount;
+        stats_.audioTransportDrainDurationOver10msCount = transportStats.drainCallbackDurationOver10msCount;
         stats_.lastQueuedAudioBytes = queuedAudioBytes();
         stats_.peakQueuedAudioBytes = std::max<std::uint32_t>(
             stats_.peakQueuedAudioBytes,
@@ -1214,16 +1230,32 @@ private:
     {
         ++stats_.videoDebugSnapshotsBuilt;
         ++stats_.videoStateSnapshots;
-        return view.videoDebugFrameModel({
+        const auto t0 = std::chrono::steady_clock::now();
+        auto result = view.videoDebugFrameModel({
             .frameWidth = std::max(config_.frameWidth, 1),
             .frameHeight = std::max(config_.frameHeight, 1),
         });
+        const auto elapsedNs = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - t0).count());
+        stats_.videoDebugSnapshotDurationLastNs = elapsedNs;
+        stats_.videoDebugSnapshotDurationHighWaterNs =
+            std::max(stats_.videoDebugSnapshotDurationHighWaterNs, elapsedNs);
+        return result;
     }
 
     std::optional<BMMQ::AudioStateView> snapshotAudioState(const BMMQ::MachineView& view)
     {
         ++stats_.audioStateSnapshotsBuilt;
-        return view.audioState();
+        const auto t0 = std::chrono::steady_clock::now();
+        auto result = view.audioState();
+        const auto elapsedNs = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - t0).count());
+        stats_.audioStateSnapshotDurationLastNs = elapsedNs;
+        stats_.audioStateSnapshotDurationHighWaterNs =
+            std::max(stats_.audioStateSnapshotDurationHighWaterNs, elapsedNs);
+        return result;
     }
 
     [[nodiscard]] bool trySubmitRealtimeVideoPacket(const BMMQ::MachineEvent& event,
@@ -1443,6 +1475,17 @@ private:
         stats_.videoStaleEpochDropCount = diagnostics.staleEpochDropCount;
         stats_.videoLifecycleEpochBumpCount = diagnostics.lifecycleEpochBumpCount;
         stats_.videoLifecycleEpoch = diagnostics.lifecycleEpoch;
+        stats_.videoFrameAgeLastNs = diagnostics.frameAgeLastNs;
+        stats_.videoFrameAgeHighWaterNs = diagnostics.frameAgeHighWaterNs;
+        stats_.videoFrameAgeUnder50usCount = diagnostics.frameAgeUnder50usCount;
+        stats_.videoFrameAge50To100usCount = diagnostics.frameAge50To100usCount;
+        stats_.videoFrameAge100To250usCount = diagnostics.frameAge100To250usCount;
+        stats_.videoFrameAge250To500usCount = diagnostics.frameAge250To500usCount;
+        stats_.videoFrameAge500usTo1msCount = diagnostics.frameAge500usTo1msCount;
+        stats_.videoFrameAge1To2msCount = diagnostics.frameAge1To2msCount;
+        stats_.videoFrameAge2To5msCount = diagnostics.frameAge2To5msCount;
+        stats_.videoFrameAge5To10msCount = diagnostics.frameAge5To10msCount;
+        stats_.videoFrameAgeOver10msCount = diagnostics.frameAgeOver10msCount;
         if (const auto& frame = videoService_->engine().lastValidFrame(); frame.has_value()) {
             const auto publishedFrames = videoService_->engine().stats().publishedFrameCount;
             const bool frameChanged = !lastFrame_.has_value() ||

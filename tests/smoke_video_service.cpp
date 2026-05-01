@@ -156,6 +156,17 @@ int main()
     assert(service.diagnostics().publishedDebugFrameCount >= 1u);
     assert(service.diagnostics().publishedRealtimeFrameCount == 0u);
     assert(service.diagnostics().publishedPixelBytes >= frame.pixelCount() * sizeof(std::uint32_t));
+    // Age telemetry: after a fresh-frame present, age stats should be populated
+    assert(service.diagnostics().frameAgeLastNs > 0u);
+    assert(service.diagnostics().frameAgeHighWaterNs >= service.diagnostics().frameAgeLastNs);
+    {
+        const auto& d = service.diagnostics();
+        const std::size_t ageBucketSum =
+            d.frameAgeUnder50usCount + d.frameAge50To100usCount + d.frameAge100To250usCount +
+            d.frameAge250To500usCount + d.frameAge500usTo1msCount + d.frameAge1To2msCount +
+            d.frameAge2To5msCount + d.frameAge5To10msCount + d.frameAgeOver10msCount;
+        assert(ageBucketSum == 1u); // one fresh-frame consume
+    }
     BMMQ::VideoFramePacket staleFrame = BMMQ::makeBlankVideoFrame(32, 24, 4u);
     assert(service.submitFrame(staleFrame));
     const auto lifecycleEpochBeforePresenterConfig = service.diagnostics().lifecycleEpoch;

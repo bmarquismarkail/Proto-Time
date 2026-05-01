@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -43,6 +44,17 @@ struct VideoEngineStats {
     std::size_t publishedPixelBytes = 0;
     std::uint64_t lastPublishedGeneration = 0;
     std::uint64_t lastConsumedGeneration = 0;
+    std::uint64_t frameAgeLastNs = 0;
+    std::uint64_t frameAgeHighWaterNs = 0;
+    std::size_t frameAgeUnder50usCount = 0;
+    std::size_t frameAge50To100usCount = 0;
+    std::size_t frameAge100To250usCount = 0;
+    std::size_t frameAge250To500usCount = 0;
+    std::size_t frameAge500usTo1msCount = 0;
+    std::size_t frameAge1To2msCount = 0;
+    std::size_t frameAge2To5msCount = 0;
+    std::size_t frameAge5To10msCount = 0;
+    std::size_t frameAgeOver10msCount = 0;
 };
 
 struct VideoSubmitResult {
@@ -143,7 +155,9 @@ public:
         }
 
         bool overwroteOldFrame = false;
-        lastValidFrame_ = frame;
+        auto stamped = frame;
+        stamped.publishedAtNs = steadyClockNs();
+        lastValidFrame_ = stamped;
         if (mailboxFrames_.size() >= config_.mailboxDepthFrames) {
             ++stats_.overwriteCount;
             const auto dropped = mailboxFrames_.front();
@@ -155,7 +169,7 @@ public:
             mailboxFrames_.pop_front();
             overwroteOldFrame = true;
         }
-        mailboxFrames_.push_back(frame);
+        mailboxFrames_.push_back(stamped);
         ++stats_.publishedFrameCount;
         if (frame.source == VideoFrameSource::RealtimeSnapshot) {
             ++stats_.publishedRealtimeFrameCount;
@@ -167,7 +181,7 @@ public:
         stats_.publishedPixelBytes += frame.pixelCount() * sizeof(std::uint32_t);
         stats_.mailboxDepth = mailboxFrames_.size();
         stats_.mailboxHighWaterMark = std::max(stats_.mailboxHighWaterMark, mailboxFrames_.size());
-        stats_.lastPublishedGeneration = frame.generation;
+        stats_.lastPublishedGeneration = stamped.generation;
         return VideoSubmitResult{.accepted = true, .overwroteOldFrame = overwroteOldFrame};
     }
 
@@ -193,6 +207,13 @@ public:
         ++stats_.consumedFrameCount;
         stats_.mailboxDepth = mailboxFrames_.size();
         stats_.lastConsumedGeneration = frame.generation;
+        if (frame.publishedAtNs != 0u) {
+            const auto nowNs = steadyClockNs();
+            const auto ageNs = nowNs >= frame.publishedAtNs ? nowNs - frame.publishedAtNs : 0u;
+            stats_.frameAgeLastNs = ageNs;
+            stats_.frameAgeHighWaterNs = std::max(stats_.frameAgeHighWaterNs, ageNs);
+            recordFrameAgeBucket(ageNs);
+        }
         return frame;
     }
 
@@ -234,6 +255,35 @@ private:
         bool observed = false;
         bool resolveAttempted = false;
     };
+
+    [[nodiscard]] static std::uint64_t steadyClockNs() noexcept
+    {
+        return static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+    }
+
+    void recordFrameAgeBucket(std::uint64_t ageNs) noexcept
+    {
+        constexpr std::uint64_t k50us  =    50'000u;
+        constexpr std::uint64_t k100us =   100'000u;
+        constexpr std::uint64_t k250us =   250'000u;
+        constexpr std::uint64_t k500us =   500'000u;
+        constexpr std::uint64_t k1ms   = 1'000'000u;
+        constexpr std::uint64_t k2ms   = 2'000'000u;
+        constexpr std::uint64_t k5ms   = 5'000'000u;
+        constexpr std::uint64_t k10ms  = 10'000'000u;
+        if (ageNs < k50us)       { ++stats_.frameAgeUnder50usCount; }
+        else if (ageNs < k100us) { ++stats_.frameAge50To100usCount; }
+        else if (ageNs < k250us) { ++stats_.frameAge100To250usCount; }
+        else if (ageNs < k500us) { ++stats_.frameAge250To500usCount; }
+        else if (ageNs < k1ms)   { ++stats_.frameAge500usTo1msCount; }
+        else if (ageNs < k2ms)   { ++stats_.frameAge1To2msCount; }
+        else if (ageNs < k5ms)   { ++stats_.frameAge2To5msCount; }
+        else if (ageNs < k10ms)  { ++stats_.frameAge5To10msCount; }
+        else                     { ++stats_.frameAgeOver10msCount; }
+    }
 
     [[nodiscard]] static VideoEngineConfig normalizedConfig(VideoEngineConfig config) noexcept
     {
