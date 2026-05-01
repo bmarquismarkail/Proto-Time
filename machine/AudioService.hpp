@@ -61,6 +61,17 @@ struct AudioOutputTransportStats {
     std::size_t drainCallbackDuration2To5msCount = 0;
     std::size_t drainCallbackDuration5To10msCount = 0;
     std::size_t drainCallbackDurationOver10msCount = 0;
+    std::size_t workerEmulationWakeLatencySampleCount = 0;
+    std::int64_t workerEmulationWakeLatencyLastNs = 0;
+    std::int64_t workerEmulationWakeLatencyHighWaterNs = 0;
+    std::size_t workerEmulationWakeLatencyUnder100usCount = 0;
+    std::size_t workerEmulationWakeLatency100To500usCount = 0;
+    std::size_t workerEmulationWakeLatency500usTo1msCount = 0;
+    std::size_t workerEmulationWakeLatency1To2msCount = 0;
+    std::size_t workerEmulationWakeLatency2To5msCount = 0;
+    std::size_t workerEmulationWakeLatency5To10msCount = 0;
+    std::size_t workerEmulationWakeLatency10To20msCount = 0;
+    std::size_t workerEmulationWakeLatencyOver20msCount = 0;
 };
 
 class AudioService {
@@ -338,6 +349,9 @@ public:
     void appendRecentPcm(std::span<const int16_t> pcm, uint64_t frameCounter)
     {
         engine_.appendRecentPcm(pcm, frameCounter);
+        appendNotifyTimeNs_.store(
+            std::chrono::steady_clock::now().time_since_epoch().count(),
+            std::memory_order_relaxed);
         outputTransportCv_.notify_one();
     }
 
@@ -469,6 +483,28 @@ public:
             static_cast<std::int64_t>(estimateDrainDurationPercentileBound(0.99));
         stats.drainCallbackDurationP999Nanos =
             static_cast<std::int64_t>(estimateDrainDurationPercentileBound(0.999));
+        stats.workerEmulationWakeLatencySampleCount =
+            transportWorkerEmulationWakeLatencySampleCount_.load(std::memory_order_relaxed);
+        stats.workerEmulationWakeLatencyLastNs =
+            transportWorkerEmulationWakeLatencyLastNs_.load(std::memory_order_relaxed);
+        stats.workerEmulationWakeLatencyHighWaterNs =
+            transportWorkerEmulationWakeLatencyHighWaterNs_.load(std::memory_order_relaxed);
+        stats.workerEmulationWakeLatencyUnder100usCount =
+            transportWorkerEmulationWakeLatencyBuckets_[0].load(std::memory_order_relaxed);
+        stats.workerEmulationWakeLatency100To500usCount =
+            transportWorkerEmulationWakeLatencyBuckets_[1].load(std::memory_order_relaxed);
+        stats.workerEmulationWakeLatency500usTo1msCount =
+            transportWorkerEmulationWakeLatencyBuckets_[2].load(std::memory_order_relaxed);
+        stats.workerEmulationWakeLatency1To2msCount =
+            transportWorkerEmulationWakeLatencyBuckets_[3].load(std::memory_order_relaxed);
+        stats.workerEmulationWakeLatency2To5msCount =
+            transportWorkerEmulationWakeLatencyBuckets_[4].load(std::memory_order_relaxed);
+        stats.workerEmulationWakeLatency5To10msCount =
+            transportWorkerEmulationWakeLatencyBuckets_[5].load(std::memory_order_relaxed);
+        stats.workerEmulationWakeLatency10To20msCount =
+            transportWorkerEmulationWakeLatencyBuckets_[6].load(std::memory_order_relaxed);
+        stats.workerEmulationWakeLatencyOver20msCount =
+            transportWorkerEmulationWakeLatencyBuckets_[7].load(std::memory_order_relaxed);
         return stats;
     }
 
@@ -658,6 +694,7 @@ private:
                 transportWorkerCallbackWakeCount_.fetch_add(1u, std::memory_order_relaxed);
             } else {
                 transportWorkerEmulationWakeCount_.fetch_add(1u, std::memory_order_relaxed);
+                noteWorkerEmulationWakeLatency();
             }
             while (!outputTransportStopRequested_.load(std::memory_order_acquire) &&
                    produceReadyOutputBlock()) {
@@ -685,6 +722,46 @@ private:
         for (auto& bucket : transportDrainDurationBuckets_) {
             bucket.store(0u, std::memory_order_relaxed);
         }
+        transportWorkerEmulationWakeLatencySampleCount_.store(0u, std::memory_order_relaxed);
+        transportWorkerEmulationWakeLatencyLastNs_.store(0, std::memory_order_relaxed);
+        transportWorkerEmulationWakeLatencyHighWaterNs_.store(0, std::memory_order_relaxed);
+        for (auto& bucket : transportWorkerEmulationWakeLatencyBuckets_) {
+            bucket.store(0u, std::memory_order_relaxed);
+        }
+    }
+
+    void noteWorkerEmulationWakeLatency() noexcept
+    {
+        const auto stored = appendNotifyTimeNs_.load(std::memory_order_relaxed);
+        if (stored == 0) {
+            return;
+        }
+        const auto now =
+            std::chrono::steady_clock::now().time_since_epoch().count();
+        const auto latency = std::max<std::int64_t>(now - stored, 0);
+        transportWorkerEmulationWakeLatencyLastNs_.store(latency, std::memory_order_relaxed);
+        auto previous = transportWorkerEmulationWakeLatencyHighWaterNs_.load(std::memory_order_relaxed);
+        while (latency > previous &&
+               !transportWorkerEmulationWakeLatencyHighWaterNs_.compare_exchange_weak(
+                   previous, latency, std::memory_order_relaxed, std::memory_order_relaxed)) {
+        }
+        transportWorkerEmulationWakeLatencySampleCount_.fetch_add(1u, std::memory_order_relaxed);
+        transportWorkerEmulationWakeLatencyBuckets_
+            [workerEmulationWakeLatencyBucketIndex(static_cast<std::uint64_t>(latency))]
+            .fetch_add(1u, std::memory_order_relaxed);
+    }
+
+    [[nodiscard]] static std::size_t workerEmulationWakeLatencyBucketIndex(
+        std::uint64_t nanos) noexcept
+    {
+        if (nanos < 100'000ull) return 0u;
+        if (nanos < 500'000ull) return 1u;
+        if (nanos < 1'000'000ull) return 2u;
+        if (nanos < 2'000'000ull) return 3u;
+        if (nanos < 5'000'000ull) return 4u;
+        if (nanos < 10'000'000ull) return 5u;
+        if (nanos < 20'000'000ull) return 6u;
+        return 7u;
     }
 
     [[nodiscard]] static std::size_t drainDurationBucketIndex(std::uint64_t nanos) noexcept
@@ -789,6 +866,11 @@ private:
     std::atomic<std::int64_t> transportDrainDurationLastNanos_{0};
     std::atomic<std::int64_t> transportDrainDurationHighWaterNanos_{0};
     std::array<std::atomic<std::size_t>, 9> transportDrainDurationBuckets_{};
+    std::atomic<std::int64_t> appendNotifyTimeNs_{0};
+    std::atomic<std::size_t> transportWorkerEmulationWakeLatencySampleCount_{0};
+    std::atomic<std::int64_t> transportWorkerEmulationWakeLatencyLastNs_{0};
+    std::atomic<std::int64_t> transportWorkerEmulationWakeLatencyHighWaterNs_{0};
+    std::array<std::atomic<std::size_t>, 8> transportWorkerEmulationWakeLatencyBuckets_{};
     std::atomic<bool> enforceLifecycleContract_{false};
     std::atomic<std::size_t> lifecycleMutationScopeDepth_{0};
     mutable std::atomic<std::size_t> lifecycleContractDeniedCalls_{0};

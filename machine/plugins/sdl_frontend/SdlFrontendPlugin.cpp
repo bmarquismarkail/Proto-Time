@@ -1273,6 +1273,28 @@ private:
         stats_.audioTransportDrainDuration2To5msCount = transportStats.drainCallbackDuration2To5msCount;
         stats_.audioTransportDrainDuration5To10msCount = transportStats.drainCallbackDuration5To10msCount;
         stats_.audioTransportDrainDurationOver10msCount = transportStats.drainCallbackDurationOver10msCount;
+        stats_.audioTransportWorkerEmulationWakeLatencySampleCount =
+            transportStats.workerEmulationWakeLatencySampleCount;
+        stats_.audioTransportWorkerEmulationWakeLatencyLastNs =
+            transportStats.workerEmulationWakeLatencyLastNs;
+        stats_.audioTransportWorkerEmulationWakeLatencyHighWaterNs =
+            transportStats.workerEmulationWakeLatencyHighWaterNs;
+        stats_.audioTransportWorkerEmulationWakeLatencyUnder100usCount =
+            transportStats.workerEmulationWakeLatencyUnder100usCount;
+        stats_.audioTransportWorkerEmulationWakeLatency100To500usCount =
+            transportStats.workerEmulationWakeLatency100To500usCount;
+        stats_.audioTransportWorkerEmulationWakeLatency500usTo1msCount =
+            transportStats.workerEmulationWakeLatency500usTo1msCount;
+        stats_.audioTransportWorkerEmulationWakeLatency1To2msCount =
+            transportStats.workerEmulationWakeLatency1To2msCount;
+        stats_.audioTransportWorkerEmulationWakeLatency2To5msCount =
+            transportStats.workerEmulationWakeLatency2To5msCount;
+        stats_.audioTransportWorkerEmulationWakeLatency5To10msCount =
+            transportStats.workerEmulationWakeLatency5To10msCount;
+        stats_.audioTransportWorkerEmulationWakeLatency10To20msCount =
+            transportStats.workerEmulationWakeLatency10To20msCount;
+        stats_.audioTransportWorkerEmulationWakeLatencyOver20msCount =
+            transportStats.workerEmulationWakeLatencyOver20msCount;
         stats_.lastQueuedAudioBytes = queuedAudioBytes();
         stats_.peakQueuedAudioBytes = std::max<std::uint32_t>(
             stats_.peakQueuedAudioBytes,

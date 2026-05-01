@@ -187,6 +187,17 @@ struct SdlFrontendStats {
     std::size_t audioTransportDrainDuration2To5msCount = 0;
     std::size_t audioTransportDrainDuration5To10msCount = 0;
     std::size_t audioTransportDrainDurationOver10msCount = 0;
+    std::size_t audioTransportWorkerEmulationWakeLatencySampleCount = 0;
+    std::int64_t audioTransportWorkerEmulationWakeLatencyLastNs = 0;
+    std::int64_t audioTransportWorkerEmulationWakeLatencyHighWaterNs = 0;
+    std::size_t audioTransportWorkerEmulationWakeLatencyUnder100usCount = 0;
+    std::size_t audioTransportWorkerEmulationWakeLatency100To500usCount = 0;
+    std::size_t audioTransportWorkerEmulationWakeLatency500usTo1msCount = 0;
+    std::size_t audioTransportWorkerEmulationWakeLatency1To2msCount = 0;
+    std::size_t audioTransportWorkerEmulationWakeLatency2To5msCount = 0;
+    std::size_t audioTransportWorkerEmulationWakeLatency5To10msCount = 0;
+    std::size_t audioTransportWorkerEmulationWakeLatency10To20msCount = 0;
+    std::size_t audioTransportWorkerEmulationWakeLatencyOver20msCount = 0;
     std::size_t audioQueueWrites = 0;
     std::size_t audioSamplesQueued = 0;
     std::size_t audioQueueLowWaterHits = 0;

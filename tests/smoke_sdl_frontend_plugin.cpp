@@ -310,6 +310,13 @@ int main(int argc, char** argv)
            stats.audioTransportWorkerWakeCount);
     // Phase 29: callback can't wake the worker more times than the callback itself ran
     assert(stats.audioTransportWorkerCallbackWakeCount <= stats.audioTransportDrainCallbackCount);
+    // Phase 30: emulation wake latency histogram consistency
+    assert(stats.audioTransportWorkerEmulationWakeLatencySampleCount <=
+           stats.audioTransportWorkerEmulationWakeCount);
+    if (stats.audioTransportWorkerEmulationWakeLatencySampleCount > 0u) {
+        assert(stats.audioTransportWorkerEmulationWakeLatencyHighWaterNs >=
+               stats.audioTransportWorkerEmulationWakeLatencyLastNs);
+    }
     assert(stats.videoDebugSnapshotsBuilt == stats.videoStateSnapshots);
     // Snapshot cost invariants: high-water must be >= last if any snapshots were taken
     if (stats.videoDebugSnapshotsBuilt > 0u) {
