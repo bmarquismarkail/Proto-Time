@@ -426,6 +426,28 @@ std::string VisualOverrideService::authorDiagnosticsReport(std::size_t maxObserv
     return out.str();
 }
 
+std::vector<std::filesystem::path> VisualOverrideService::watchedReloadPaths() const
+{
+    std::vector<std::filesystem::path> watched;
+    watched.reserve(packs_.size());
+
+    std::set<std::string> seen;
+    for (const auto& loadedPack : packs_) {
+        const auto manifest = loadedPack.manifestPath.lexically_normal();
+        if (seen.insert(manifest.string()).second) {
+            watched.push_back(manifest);
+        }
+        for (const auto& stamp : loadedPack.assetStamps) {
+            const auto asset = stamp.path.lexically_normal();
+            if (seen.insert(asset.string()).second) {
+                watched.push_back(asset);
+            }
+        }
+    }
+
+    return watched;
+}
+
 std::string VisualOverrideService::lastError() const
 {
     return lastError_;

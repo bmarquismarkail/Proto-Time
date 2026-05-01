@@ -76,6 +76,7 @@ public:
     [[nodiscard]] const VisualCaptureStats& captureStats() const noexcept;
     [[nodiscard]] const VisualOverrideDiagnostics& diagnostics() const noexcept;
     [[nodiscard]] std::string authorDiagnosticsReport(std::size_t maxObservedResources = 5u) const;
+    [[nodiscard]] std::vector<std::filesystem::path> watchedReloadPaths() const;
     [[nodiscard]] std::string lastError() const;
     [[nodiscard]] uint64_t generation() const noexcept;
 

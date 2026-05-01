@@ -11,13 +11,16 @@
 /////////////////////////////////////////////////////////////////////////////
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -70,6 +73,25 @@ void printUsage(std::string_view program)
               << "  Arrow keys = directions, Z = Button1, X = Button2,\n"
               << "  Backspace = Meta1, Enter = Meta2\n";
 }
+
+std::filesystem::file_time_type fileWriteTime(const std::filesystem::path& path) noexcept
+{
+    std::error_code ec;
+    const auto writeTime = std::filesystem::last_write_time(path, ec);
+    if (ec) {
+        return std::filesystem::file_time_type::min();
+    }
+    return writeTime;
+}
+
+struct VisualReloadPollState {
+    std::mutex mutex{};
+    std::vector<std::filesystem::path> watchedPaths{};
+    std::map<std::string, std::filesystem::file_time_type> lastWriteTimes{};
+    std::atomic<bool> pollInFlight{false};
+    std::atomic<bool> reloadRequested{false};
+    std::chrono::steady_clock::time_point nextPollDue{};
+};
 
 } // namespace
 
@@ -201,11 +223,82 @@ int main(int argc, char** argv)
             timingService.setPaused(true);
         }
 
+        VisualReloadPollState visualReloadPollState;
+        constexpr auto kVisualReloadPollInterval = std::chrono::milliseconds(125);
+
+        auto refreshVisualReloadWatchList = [&]() {
+            if (!options.visualPackReload) {
+                return;
+            }
+            auto watchedPaths = machine.visualOverrideService().watchedReloadPaths();
+            if (watchedPaths.empty()) {
+                watchedPaths = options.visualPackPaths;
+            }
+
+            std::lock_guard<std::mutex> lock(visualReloadPollState.mutex);
+            visualReloadPollState.watchedPaths = std::move(watchedPaths);
+
+            std::map<std::string, std::filesystem::file_time_type> refreshed;
+            for (const auto& watchedPath : visualReloadPollState.watchedPaths) {
+                const auto key = watchedPath.lexically_normal().string();
+                refreshed[key] = fileWriteTime(watchedPath);
+            }
+            visualReloadPollState.lastWriteTimes = std::move(refreshed);
+        };
+
+        auto scheduleVisualReloadProbe = [&](SteadyClock::time_point now) {
+            if (!options.visualPackReload || now < visualReloadPollState.nextPollDue) {
+                return;
+            }
+            visualReloadPollState.nextPollDue = now + kVisualReloadPollInterval;
+
+            if (visualReloadPollState.pollInFlight.exchange(true, std::memory_order_acq_rel)) {
+                return;
+            }
+
+            const bool queued = backgroundTaskService.submit([&visualReloadPollState]() {
+                bool changed = false;
+                {
+                    std::lock_guard<std::mutex> lock(visualReloadPollState.mutex);
+                    for (const auto& watchedPath : visualReloadPollState.watchedPaths) {
+                        const auto key = watchedPath.lexically_normal().string();
+                        const auto currentWriteTime = fileWriteTime(watchedPath);
+                        const auto it = visualReloadPollState.lastWriteTimes.find(key);
+                        if (it == visualReloadPollState.lastWriteTimes.end()) {
+                            visualReloadPollState.lastWriteTimes.emplace(key, currentWriteTime);
+                            continue;
+                        }
+                        if (it->second != currentWriteTime) {
+                            it->second = currentWriteTime;
+                            changed = true;
+                        }
+                    }
+                }
+
+                if (changed) {
+                    visualReloadPollState.reloadRequested.store(true, std::memory_order_release);
+                }
+                visualReloadPollState.pollInFlight.store(false, std::memory_order_release);
+            });
+
+            if (!queued) {
+                visualReloadPollState.pollInFlight.store(false, std::memory_order_release);
+            }
+        };
+
+        refreshVisualReloadWatchList();
+
         auto pollVisualPackReload = [&]() {
             if (!options.visualPackReload) {
                 return;
             }
+            scheduleVisualReloadProbe(SteadyClock::now());
+            if (!visualReloadPollState.reloadRequested.exchange(false, std::memory_order_acq_rel)) {
+                return;
+            }
+
             const bool reloaded = machine.visualOverrideService().reloadChangedPacks();
+            refreshVisualReloadWatchList();
             if (!reloaded) {
                 if (const auto warning = machine.visualOverrideService().takeReloadWarning(); warning.has_value()) {
                     std::cerr << "warning: " << *warning << '\n';
