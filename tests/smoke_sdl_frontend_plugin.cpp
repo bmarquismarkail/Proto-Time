@@ -295,6 +295,8 @@ int main(int argc, char** argv)
     assert(stats.videoRealtimePacketsAccepted >= stats.framesPrepared);
     // Phase 25: realtime packets are built outside sharedStateMutex_ in onVideoEvent(); counter must track this
     assert(stats.videoRealtimePacketsBuiltOutsideLock >= stats.videoRealtimePacketsAccepted);
+    // Phase 26: SDL present is called outside sharedStateMutex_ in renderServiceLoop(); counter must track this
+    assert(stats.renderServicePresentCallsOutsideLock >= stats.renderServicePresentSuccessCount);
     assert(stats.videoDebugSnapshotsBuilt == stats.videoStateSnapshots);
     // Snapshot cost invariants: high-water must be >= last if any snapshots were taken
     if (stats.videoDebugSnapshotsBuilt > 0u) {

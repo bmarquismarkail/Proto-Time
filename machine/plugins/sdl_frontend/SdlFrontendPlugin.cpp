@@ -853,8 +853,10 @@ private:
         const auto sleepInterval = std::chrono::milliseconds(2);
 
         while (!renderServiceStopRequested_.load(std::memory_order_acquire)) {
+            // ── First lock block: pump, sync, consume frame from engine ──────────
+            std::optional<BMMQ::VideoFramePacket> processedFrame;
             {
-                std::scoped_lock<std::mutex> lock(sharedStateMutex_);
+                std::unique_lock<std::mutex> lock(sharedStateMutex_);
                 ++stats_.renderServiceLoopCount;
                 const auto handled = pumpBackendEvents();
                 if (handled != 0u) {
@@ -867,13 +869,62 @@ private:
                     ++stats_.renderServicePresentAttempts;
                     if (frameDirty_ && shouldDeferVideoFrameForAudioLowWater()) {
                         videoPresentDeferredForAudioLowWater_ = true;
-                    } else if (presentLatestFrame()) {
-                        ++stats_.renderServicePresentSuccessCount;
+                    } else if (videoService_ != nullptr &&
+                               backendReady_ &&
+                               videoService_->state() == BMMQ::VideoLifecycleState::Active) {
+                        if (config_.showWindowOnPresent) {
+                            requestWindowVisibility(true);
+                        }
+                        processedFrame = videoService_->consumeAndProcessFrame();
+                        if (processedFrame.has_value()) {
+                            ++stats_.renderServicePresentCallsOutsideLock;
+                        } else {
+                            // headless: consumeAndProcessFrame set state internally; treat as success
+                            ++stats_.renderServicePresentSuccessCount;
+                            frameDirty_ = false;
+                            videoPresentDeferredForAudioLowWater_ = false;
+                            lastRenderSummary_ = "Presented (headless)";
+                        }
                     } else {
                         ++stats_.renderServicePresentFailureCount;
+                        lastRenderSummary_ = "Frame prepared but backend not ready";
                     }
                 }
                 applyWindowVisibilityRequest();
+            }
+            // ── Outside lock: SDL texture upload + SDL_RenderPresent ─────────────
+            bool presentOk = false;
+            std::string presentError;
+            if (processedFrame.has_value()) {
+                if (videoPresenter_ != nullptr && videoPresenter_->ready()) {
+                    presentOk = videoPresenter_->present(*processedFrame);
+                    if (!presentOk) {
+                        presentError = std::string(videoPresenter_->lastError());
+                    }
+                } else {
+                    presentError = "presenter not ready";
+                }
+            }
+            // ── Second lock block: post-present state update ─────────────────────
+            if (processedFrame.has_value()) {
+                std::unique_lock<std::mutex> lock(sharedStateMutex_);
+                if (videoService_ != nullptr) {
+                    videoService_->recordPresentOutcome(presentOk, presentError);
+                }
+                if (presentOk) {
+                    ++stats_.renderServicePresentSuccessCount;
+                    ++stats_.framesPresented;
+                    frameDirty_ = false;
+                    videoPresentDeferredForAudioLowWater_ = false;
+                    lastRenderSummary_ = "Presented frame " +
+                        std::to_string(processedFrame->width) + "x" +
+                        std::to_string(processedFrame->height);
+                } else {
+                    ++stats_.renderServicePresentFailureCount;
+                    lastBackendError_ = presentError;
+                    lastRenderSummary_ = lastBackendError_.empty() ? "Video presentation failed" : lastBackendError_;
+                    appendLog("sdl: video presentation failed: " + lastRenderSummary_);
+                }
             }
 
             ++stats_.renderServiceSleepCount;

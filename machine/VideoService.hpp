@@ -423,7 +423,14 @@ public:
         return submitResult.accepted;
     }
 
-    [[nodiscard]] bool presentOneFrame()
+    // consumeAndProcessFrame: consume the next frame from the engine, run the
+    // processor pipeline, and return the processed packet ready for presentation.
+    // Returns std::nullopt when in Headless mode (no presenter — caller should
+    // treat this as a successful headless present and skip the SDL call).
+    // The sentinel VideoFramePacket with width==0 is used to signal Headless.
+    // Caller must hold sharedStateMutex_ (or equivalent serialisation) for all
+    // VideoService/VideoEngine state while this runs.
+    [[nodiscard]] std::optional<VideoFramePacket> consumeAndProcessFrame()
     {
         std::optional<VideoPresentPacket> frame{};
         while (true) {
@@ -497,21 +504,40 @@ public:
         syncEngineDiagnostics();
         if (presenter_ == nullptr) {
             setState(VideoLifecycleState::Headless);
+            return std::nullopt;  // headless — no SDL call needed, caller treats as success
+        }
+        return processed;
+    }
+
+    // recordPresentOutcome: update diagnostics and lifecycle state after an
+    // outside-lock present call. Must be called under sharedStateMutex_.
+    void recordPresentOutcome(bool ok, std::string_view error)
+    {
+        if (ok) {
+            diagnostics_.lastBackendError.clear();
+        } else {
+            diagnostics_.lastBackendError = std::string(error);
+            ++diagnostics_.presentFailureCount;
+            setState(VideoLifecycleState::Faulted);
+        }
+    }
+
+    [[nodiscard]] bool presentOneFrame()
+    {
+        auto processed = consumeAndProcessFrame();
+        if (!processed.has_value()) {
+            // Headless: consumeAndProcessFrame already set state; treat as success.
             return true;
         }
         if (!presenter_->ready()) {
-            diagnostics_.lastBackendError = "presenter not ready";
-            ++diagnostics_.presentFailureCount;
-            setState(VideoLifecycleState::Faulted);
+            recordPresentOutcome(false, "presenter not ready");
             return false;
         }
-        if (!presenter_->present(processed)) {
-            diagnostics_.lastBackendError = std::string(presenter_->lastError());
-            ++diagnostics_.presentFailureCount;
-            setState(VideoLifecycleState::Faulted);
+        if (!presenter_->present(*processed)) {
+            recordPresentOutcome(false, presenter_->lastError());
             return false;
         }
-        diagnostics_.lastBackendError.clear();
+        recordPresentOutcome(true, {});
         return true;
     }
 
