@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "../InputTypes.hpp"
+#include "../DebugSnapshotTypes.hpp"
 #include "../MachineLifecycleCoordinator.hpp"
 #include "input/InputPlugin.hpp"
 #include "IoPlugin.hpp"
@@ -19,6 +20,8 @@
 #include "video/VideoPlugin.hpp"
 
 namespace BMMQ {
+
+class DebugSnapshotService;
 
 struct SdlFrontendConfig {
     std::string windowTitle = "T.I.M.E. SDL Frontend";
@@ -407,6 +410,13 @@ public:
     [[nodiscard]] virtual uint32_t queuedAudioBytes() const noexcept = 0;
     [[nodiscard]] virtual bool tryInitializeBackend() = 0;
     [[nodiscard]] virtual std::size_t pumpBackendEvents() = 0;
+
+    /// Inject an optional DebugSnapshotService.  When set, the plugin routes
+    /// video debug model and audio state captures through the service queue so
+    /// the render thread can drain them lock-free in serviceFrontend().
+    /// Pass nullptr to disable (falls back to the inline sharedStateMutex_ path).
+    virtual void setDebugSnapshotService(DebugSnapshotService* service) noexcept = 0;
+    [[nodiscard]] virtual DebugSnapshotService* debugSnapshotService() const noexcept = 0;
 };
 
 struct SdlFrontendPluginApiV1 {

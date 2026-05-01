@@ -36,6 +36,7 @@ add_library(time-machine-runtime-common STATIC
     machine/VisualOverrideService.cpp
     machine/VisualPackManifest.cpp
     machine/ImageDecoder.cpp
+    machine/DebugSnapshotService.cpp
 )
 set_target_properties(time-machine-runtime-common PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(time-machine-runtime-common PUBLIC ZLIB::ZLIB)
@@ -388,6 +389,12 @@ add_test(NAME smoke_image_decode_pipeline COMMAND time-smoke-image-decode-pipeli
 add_executable(time-smoke-visual-override-decode-integration tests/smoke_visual_override_decode_integration.cpp)
 target_link_libraries(time-smoke-visual-override-decode-integration time-gameboy-interpreter-core)
 add_test(NAME smoke_visual_override_decode_integration COMMAND time-smoke-visual-override-decode-integration)
+add_executable(time-smoke-debug-snapshot-service tests/smoke_debug_snapshot_service.cpp)
+target_link_libraries(time-smoke-debug-snapshot-service time-machine-runtime-common)
+add_test(NAME smoke_debug_snapshot_service COMMAND time-smoke-debug-snapshot-service)
+add_executable(time-smoke-debug-snapshot-sdl-plugin tests/smoke_debug_snapshot_sdl_plugin.cpp)
+target_link_libraries(time-smoke-debug-snapshot-sdl-plugin time-gamegear-core time-sdl-frontend-loader)
+add_test(NAME smoke_debug_snapshot_sdl_plugin COMMAND time-smoke-debug-snapshot-sdl-plugin)
 add_executable(time-smoke-memory-map tests/smoke_memory_map.cpp)
 target_link_libraries(time-smoke-memory-map time-gameboy-interpreter-core)
 add_test(NAME smoke_memory_map COMMAND time-smoke-memory-map)

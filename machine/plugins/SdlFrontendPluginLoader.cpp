@@ -285,6 +285,16 @@ public:
         return implementation_->pumpBackendEvents();
     }
 
+    void setDebugSnapshotService(BMMQ::DebugSnapshotService* service) noexcept override
+    {
+        implementation_->setDebugSnapshotService(service);
+    }
+
+    [[nodiscard]] BMMQ::DebugSnapshotService* debugSnapshotService() const noexcept override
+    {
+        return implementation_->debugSnapshotService();
+    }
+
 private:
     std::unique_ptr<DynamicLibrary> library_;
     const BMMQ::SdlFrontendPluginApiV1* api_ = nullptr;

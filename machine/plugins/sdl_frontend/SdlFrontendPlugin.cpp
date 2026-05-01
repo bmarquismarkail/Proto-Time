@@ -1,5 +1,6 @@
 #include "../SdlFrontendPlugin.hpp"
 #include "../../AudioService.hpp"
+#include "../../DebugSnapshotService.hpp"
 #include "../../VideoService.hpp"
 #include "../audio_output/DummyAudioOutput.hpp"
 #include "../audio_output/FileAudioOutput.hpp"
@@ -215,6 +216,16 @@ public:
         }
 
         syncVideoTransportStats();
+        // Drain any debug snapshots queued by the emulation thread.
+        if (debugSnapshotService_ != nullptr) {
+            // Keep only the latest video and audio captures from the queue.
+            while (auto vid = debugSnapshotService_->tryConsumeVideo()) {
+                lastVideoDebugModel_ = std::move(*vid);
+            }
+            while (auto aud = debugSnapshotService_->tryConsumeAudio()) {
+                lastAudioState_ = std::move(*aud);
+            }
+        }
         const bool hadFrame = config_.enableVideo && lastFrame_.has_value();
         const bool hasAudioState = config_.enableAudio && lastAudioState_.has_value();
         const bool hadAudioPreview = config_.enableAudio && lastAudioPreview_.has_value();
@@ -548,6 +559,16 @@ public:
 #endif
     }
 
+    void setDebugSnapshotService(BMMQ::DebugSnapshotService* service) noexcept override
+    {
+        debugSnapshotService_ = service;
+    }
+
+    [[nodiscard]] BMMQ::DebugSnapshotService* debugSnapshotService() const noexcept override
+    {
+        return debugSnapshotService_;
+    }
+
     void onAttach(BMMQ::MutableMachineView& view) override
     {
         ++stats_.attachCount;
@@ -606,6 +627,17 @@ public:
             });
         }
 
+        // Pre-build video debug model OUTSIDE the lock for VBlank/scanline events.
+        // This is the expensive VDP traversal; moving it before the lock reduces
+        // sharedStateMutex_ hold time and allows the render thread to run sooner.
+        std::optional<BMMQ::VideoDebugFrameModel> prebuiltDebugModel;
+        if (carriesVideoStateEarly) {
+            prebuiltDebugModel = view.videoDebugFrameModel({
+                .frameWidth = std::max(config_.frameWidth, 1),
+                .frameHeight = std::max(config_.frameHeight, 1),
+            });
+        }
+
         std::scoped_lock<std::mutex> lock(sharedStateMutex_);
         if (!config_.enableVideo) {
             return;
@@ -636,6 +668,11 @@ public:
 
             if (realtimeSubmitted) {
                 submittedVideoFrame = true;
+                // When the realtime packet path succeeds, forward the pre-built debug
+                // model to DebugSnapshotService so the render thread can consume it.
+                if (debugSnapshotService_ != nullptr && prebuiltDebugModel.has_value()) {
+                    (void)debugSnapshotService_->submitVideoModel(std::move(prebuiltDebugModel));
+                }
                 syncVideoTransportStats();
                 ++stats_.framesPrepared;
                 frameDirty_ = true;
@@ -646,7 +683,7 @@ public:
                     videoPresentDeferredForAudioLowWater_ = true;
                     appendLog("sdl: deferred video presentation while audio buffer was low");
                 }
-            } else if (BMMQ::VideoDebugFrameModel* videoModel = modelForVideoEvent(event, view); videoModel != nullptr) {
+            } else if (BMMQ::VideoDebugFrameModel* videoModel = modelForVideoEvent(event, view, std::move(prebuiltDebugModel)); videoModel != nullptr) {
                 if (videoService_ != nullptr && videoService_->submitVideoDebugModel(event, *videoModel)) {
                     submittedVideoFrame = true;
                     if (event.type == BMMQ::MachineEventType::VBlank) {
@@ -692,6 +729,17 @@ public:
 
     void onAudioEvent(const BMMQ::MachineEvent& event, const BMMQ::MachineView& view) override
     {
+        // Pre-build audio state OUTSIDE the lock.
+        // view.audioState() reads live machine APU/PSG state; as the emulation
+        // thread is the caller here, this is safe to do before acquiring
+        // sharedStateMutex_.  The realtime packet check is cheap and happens
+        // inside the lock where view is still accessible.
+        const auto audioT0 = std::chrono::steady_clock::now();
+        const auto prebuiltAudioState = view.audioState();
+        const auto audioElapsedNs = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - audioT0).count());
+
         std::scoped_lock<std::mutex> lock(sharedStateMutex_);
         if (!config_.enableAudio) {
             return;
@@ -710,13 +758,21 @@ public:
         } else if (packet.has_value()) {
             ++stats_.audioRealtimePacketsSkipped;
             lastAudioPreview_.reset();
-        } else if (const auto audioState = snapshotAudioState(view); audioState.has_value()) {
-            lastAudioState_ = audioState;
+        } else if (prebuiltAudioState.has_value()) {
+            // Use the pre-built audio state (built outside the lock).
+            ++stats_.audioStateSnapshotsBuilt;
+            stats_.audioStateSnapshotDurationLastNs = audioElapsedNs;
+            stats_.audioStateSnapshotDurationHighWaterNs =
+                std::max(stats_.audioStateSnapshotDurationHighWaterNs, audioElapsedNs);
+            lastAudioState_ = prebuiltAudioState;
             lastAudioPreview_ = buildAudioPreview(*lastAudioState_);
             ++stats_.audioPreviewsBuilt;
             ++audioPreviewGeneration_;
             if (audioService_ != nullptr) {
                 audioService_->appendRecentPcm(lastAudioState_->pcmSamples, lastAudioState_->frameCounter);
+            }
+            if (debugSnapshotService_ != nullptr) {
+                (void)debugSnapshotService_->submitAudioState(lastAudioState_);
             }
         } else {
             ++stats_.audioRealtimePacketsSkipped;
@@ -1367,6 +1423,21 @@ private:
         return result;
     }
 
+    // Variant that accepts a model pre-built outside sharedStateMutex_ to
+    // avoid paying the VDP traversal cost while the lock is held.
+    std::optional<BMMQ::VideoDebugFrameModel> snapshotVideoDebugModel(
+        std::optional<BMMQ::VideoDebugFrameModel> prebuilt, const BMMQ::MachineView& view)
+    {
+        if (prebuilt.has_value()) {
+            ++stats_.videoDebugSnapshotsBuilt;
+            ++stats_.videoStateSnapshots;
+            // Duration was paid outside the lock; leave timing stats at zero for
+            // this path to distinguish from fully-synchronous builds.
+            return prebuilt;
+        }
+        return snapshotVideoDebugModel(view);
+    }
+
     std::optional<BMMQ::AudioStateView> snapshotAudioState(const BMMQ::MachineView& view)
     {
         ++stats_.audioStateSnapshotsBuilt;
@@ -1462,36 +1533,47 @@ private:
     }
 
     BMMQ::VideoDebugFrameModel* modelForVideoEvent(const BMMQ::MachineEvent& event,
-                                                   const BMMQ::MachineView& view)
+                                                   const BMMQ::MachineView& view,
+                                                   std::optional<BMMQ::VideoDebugFrameModel> prebuilt = {})
     {
         if (event.type == BMMQ::MachineEventType::VideoScanlineReady) {
-            return modelForScanlineEvent(view);
+            return modelForScanlineEvent(view, std::move(prebuilt));
         }
 
         if (event.type == BMMQ::MachineEventType::VBlank &&
             videoService_ != nullptr &&
             (videoService_->hasCompleteScanlineFrame() || videoService_->hasPartialScanlineFrame()) &&
             scanlineVideoDebugModel_.has_value()) {
-            scanlineVideoDebugModel_ = snapshotVideoDebugModel(view);
+            scanlineVideoDebugModel_ = snapshotVideoDebugModel(std::move(prebuilt), view);
             if (!scanlineVideoDebugModel_.has_value()) {
                 return nullptr;
+            }
+            if (debugSnapshotService_ != nullptr) {
+                (void)debugSnapshotService_->submitVideoModel(scanlineVideoDebugModel_);
             }
             return &*scanlineVideoDebugModel_;
         }
 
         scanlineVideoDebugModel_.reset();
-        lastVideoDebugModel_ = snapshotVideoDebugModel(view);
+        lastVideoDebugModel_ = snapshotVideoDebugModel(std::move(prebuilt), view);
         if (!lastVideoDebugModel_.has_value()) {
             return nullptr;
+        }
+        if (debugSnapshotService_ != nullptr) {
+            (void)debugSnapshotService_->submitVideoModel(lastVideoDebugModel_);
         }
         return &*lastVideoDebugModel_;
     }
 
-    BMMQ::VideoDebugFrameModel* modelForScanlineEvent(const BMMQ::MachineView& view)
+    BMMQ::VideoDebugFrameModel* modelForScanlineEvent(const BMMQ::MachineView& view,
+                                                      std::optional<BMMQ::VideoDebugFrameModel> prebuilt = {})
     {
-        scanlineVideoDebugModel_ = snapshotVideoDebugModel(view);
+        scanlineVideoDebugModel_ = snapshotVideoDebugModel(std::move(prebuilt), view);
         if (!scanlineVideoDebugModel_.has_value()) {
             return nullptr;
+        }
+        if (debugSnapshotService_ != nullptr) {
+            (void)debugSnapshotService_->submitVideoModel(scanlineVideoDebugModel_);
         }
         return &*scanlineVideoDebugModel_;
     }
@@ -2021,6 +2103,7 @@ private:
     BMMQ::TimingService* timingService_ = nullptr;
     BMMQ::MachineLifecycleCoordinator* lifecycleCoordinator_ = nullptr;
     BMMQ::SdlVideoPresenter* videoPresenter_ = nullptr;
+    BMMQ::DebugSnapshotService* debugSnapshotService_ = nullptr;
     std::unique_ptr<BMMQ::IAudioOutputBackend> audioOutput_ = std::make_unique<BMMQ::SdlAudioOutputBackend>();
     std::string selectedAudioBackend_ = "sdl";
     mutable std::mutex sharedStateMutex_;
