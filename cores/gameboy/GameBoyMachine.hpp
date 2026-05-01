@@ -19,6 +19,7 @@
 #include "../../machine/RegisterId.hpp"
 #include "../../machine/RomImage.hpp"
 #include "../../machine/RuntimeContext.hpp"
+#include "../../machine/BackgroundTaskService.hpp"
 #include "../../machine/plugins/PluginManager.hpp"
 #include "register_id.hpp"
 #include "hardware_registers.hpp"
@@ -298,6 +299,10 @@ public:
         return saveManager_.flush(cartridge_);
     }
 
+    void setBackgroundTaskService(BMMQ::BackgroundTaskService* service) noexcept {
+        backgroundTaskService_ = service;
+    }
+
     [[nodiscard]] const GB::GameBoyCartridge& cartridge() const noexcept {
         return cartridge_;
     }
@@ -405,7 +410,7 @@ public:
         lastLy_ = ly;
         lastPpuMode_ = ppuMode;
         if ((stepCounter_ % kSaveFlushStepInterval) == 0u) {
-            (void)flushCartridgeSave();
+            flushCartridgeSaveOnSchedule();
         }
     }
 
@@ -523,6 +528,29 @@ private:
             nullptr,
             "ROM loaded"
         });
+    }
+
+    void flushCartridgeSaveOnSchedule() {
+        if (backgroundTaskService_ == nullptr) {
+            (void)flushCartridgeSave();
+            return;
+        }
+
+        auto extracted = saveManager_.extractDirtySaveSnapshot(cartridge_);
+        if (!extracted.has_value()) {
+            return;
+        }
+
+        auto snapshot = std::move(*extracted);
+        auto fallbackSnapshot = snapshot;
+
+        const bool queued = backgroundTaskService_->submit([
+            snapshot = std::move(snapshot)]() mutable {
+                GB::CartridgeSaveManager::flushSnapshot(snapshot);
+            });
+        if (!queued) {
+            GB::CartridgeSaveManager::flushSnapshot(fallbackSnapshot);
+        }
     }
 
     void pollInputPlugins() {
@@ -886,6 +914,7 @@ private:
     std::optional<std::filesystem::path> pendingRomSourcePath_{};
     GB::GameBoyCartridge cartridge_;
     GB::CartridgeSaveManager saveManager_;
+    BMMQ::BackgroundTaskService* backgroundTaskService_ = nullptr;
     uint64_t stepCounter_ = 0;
     uint64_t inputGeneration_ = 1;
     uint8_t lastLy_ = 0;

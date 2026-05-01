@@ -26,8 +26,10 @@
 
 #include "emulator/EmulatorConfig.hpp"
 #include "emulator/EmulatorHost.hpp"
+#include "machine/BackgroundTaskService.hpp"
 #include "machine/plugins/SdlFrontendPluginLoader.hpp"
 #include "machine/TimingService.hpp"
+#include "cores/gameboy/GameBoyMachine.hpp"
 
 namespace {
 
@@ -86,10 +88,17 @@ int main(int argc, char** argv)
         std::signal(SIGTERM, handleSignal);
 #endif
 
+        BMMQ::BackgroundTaskService backgroundTaskService;
+        backgroundTaskService.start();
+
         auto bootstrapped = BMMQ::bootstrapMachine(options);
         auto& machine = *bootstrapped.machine;
         const auto& descriptor = bootstrapped.descriptor;
         const auto romSize = bootstrapped.romSize;
+        if (auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get());
+            gameBoyMachine != nullptr) {
+            gameBoyMachine->setBackgroundTaskService(&backgroundTaskService);
+        }
 
         BMMQ::ISdlFrontendPlugin* frontend = nullptr;
         std::unique_ptr<BMMQ::ISdlFrontendPlugin> frontendPlugin;
@@ -371,6 +380,7 @@ int main(int argc, char** argv)
         } else {
             std::cout << '\n';
         }
+        backgroundTaskService.shutdown();
         return EXIT_SUCCESS;
     } catch (const std::invalid_argument& ex) {
         std::cerr << "error: " << ex.what() << '\n';
