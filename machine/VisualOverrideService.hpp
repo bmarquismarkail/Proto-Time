@@ -38,6 +38,10 @@ struct VisualOverrideDiagnostics {
     std::size_t packReloadsFailed = 0;
     std::size_t suppressedReloadWarnings = 0;
     std::size_t replacementCacheEvictions = 0;
+    // Async visual probe telemetry (Phase 31)
+    std::size_t asyncProbeSubmissions = 0;
+    std::size_t asyncProbeChangesDetected = 0;
+    std::size_t asyncProbeReloadApplies = 0;
 };
 
 struct VisualObservedResourceStat {
@@ -79,6 +83,11 @@ public:
     [[nodiscard]] std::vector<std::filesystem::path> watchedReloadPaths() const;
     [[nodiscard]] std::string lastError() const;
     [[nodiscard]] uint64_t generation() const noexcept;
+
+    // Async probe telemetry recording (Phase 31)
+    void recordAsyncProbeSubmission() noexcept;
+    void recordAsyncProbeChangeDetected() noexcept;
+    void recordAsyncProbeReloadApplied() noexcept;
 
 private:
     struct ResolvedPath {

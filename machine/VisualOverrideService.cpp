@@ -933,4 +933,19 @@ void VisualOverrideService::recordObservation(const VisualResourceDescriptor& de
     });
 }
 
+void VisualOverrideService::recordAsyncProbeSubmission() noexcept
+{
+    ++diagnostics_.asyncProbeSubmissions;
+}
+
+void VisualOverrideService::recordAsyncProbeChangeDetected() noexcept
+{
+    ++diagnostics_.asyncProbeChangesDetected;
+}
+
+void VisualOverrideService::recordAsyncProbeReloadApplied() noexcept
+{
+    ++diagnostics_.asyncProbeReloadApplies;
+}
+
 } // namespace BMMQ

@@ -256,7 +256,8 @@ int main(int argc, char** argv)
                 return;
             }
 
-            const bool queued = backgroundTaskService.submit([&visualReloadPollState]() {
+            machine.visualOverrideService().recordAsyncProbeSubmission();
+            const bool queued = backgroundTaskService.submit([&visualReloadPollState, &machine]() {
                 bool changed = false;
                 {
                     std::lock_guard<std::mutex> lock(visualReloadPollState.mutex);
@@ -276,6 +277,7 @@ int main(int argc, char** argv)
                 }
 
                 if (changed) {
+                    machine.visualOverrideService().recordAsyncProbeChangeDetected();
                     visualReloadPollState.reloadRequested.store(true, std::memory_order_release);
                 }
                 visualReloadPollState.pollInFlight.store(false, std::memory_order_release);
@@ -298,6 +300,9 @@ int main(int argc, char** argv)
             }
 
             const bool reloaded = machine.visualOverrideService().reloadChangedPacks();
+            if (reloaded) {
+                machine.visualOverrideService().recordAsyncProbeReloadApplied();
+            }
             refreshVisualReloadWatchList();
             if (!reloaded) {
                 if (const auto warning = machine.visualOverrideService().takeReloadWarning(); warning.has_value()) {
