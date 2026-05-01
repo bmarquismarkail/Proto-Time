@@ -460,6 +460,12 @@ public:
         return &GB::gameBoyVisualDebugAdapter();
     }
 
+    std::optional<BMMQ::RealtimeVideoPacket> realtimeVideoPacket(
+        const BMMQ::VideoDebugRenderRequest& request) const override
+    {
+        return GB::gameBoyVisualDebugAdapterTyped().buildRealtimeFrame(*this, request);
+    }
+
     uint32_t clockHz() const override {
         return cpu_.cpu().clockHz();
     }

@@ -265,6 +265,9 @@ private:
             return std::nullopt;
         }
 
+        if (context.model.semantics.empty()) {
+            return std::nullopt;
+        }
         const auto resourceIndex = static_cast<std::uint32_t>(context.model.resources.size());
         context.model.resources.push_back(std::move(*resource));
         context.resourceCache.emplace(key, resourceIndex);
@@ -282,6 +285,9 @@ private:
             return;
         }
         context.model.argbPixels[pixelIndex] = argb;
+        if (context.model.semantics.empty()) {
+            return;
+        }
         if (!resourceIndex.has_value()) {
             context.model.semantics[pixelIndex] = {};
             return;
@@ -436,9 +442,55 @@ private:
             }
         }
     }
+
+public:
+    [[nodiscard]] BMMQ::RealtimeVideoPacket buildRealtimeFrame(
+        const BMMQ::Machine& machine,
+        const BMMQ::VideoDebugRenderRequest& request) const
+    {
+        auto state = snapshotState(machine);
+
+        BMMQ::VideoDebugFrameModel model;
+        model.width = std::max(request.frameWidth, 1);
+        model.height = std::max(request.frameHeight, 1);
+        model.displayEnabled = state.lcdEnabled();
+        model.inVBlank = state.inVBlank();
+        model.scanlineIndex = state.ly;
+        const auto pixelCount = static_cast<std::size_t>(model.width) * static_cast<std::size_t>(model.height);
+        model.argbPixels.assign(pixelCount, paletteColor(0));
+        // semantics intentionally NOT resized — guards in setPixel/ensureResource skip semantic writes
+
+        if (!state.vram.empty()) {
+            RenderContext context{
+                .state = state,
+                .model = model,
+                .resourceCache = {},
+            };
+            std::vector<std::uint8_t> backgroundColorIndices(static_cast<std::size_t>(model.width), 0u);
+            for (int y = 0; y < model.height; ++y) {
+                renderScanline(context, y, backgroundColorIndices);
+            }
+        }
+
+        BMMQ::RealtimeVideoPacket packet;
+        packet.contractVersion = BMMQ::RealtimeVideoPacket::kContractVersion;
+        packet.width = model.width;
+        packet.height = model.height;
+        packet.displayEnabled = model.displayEnabled;
+        packet.inVBlank = model.inVBlank;
+        packet.scanlineIndex = model.scanlineIndex;
+        packet.argbPixels = std::move(model.argbPixels);
+        return packet;
+    }
 };
 
 [[nodiscard]] inline const BMMQ::IVisualDebugAdapter& gameBoyVisualDebugAdapter()
+{
+    static const GameBoyVisualDebugAdapter adapter;
+    return adapter;
+}
+
+[[nodiscard]] inline const GameBoyVisualDebugAdapter& gameBoyVisualDebugAdapterTyped() noexcept
 {
     static const GameBoyVisualDebugAdapter adapter;
     return adapter;
