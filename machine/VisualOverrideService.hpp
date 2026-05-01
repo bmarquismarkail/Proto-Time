@@ -19,6 +19,10 @@
 
 namespace BMMQ {
 
+// Forward declarations
+class BackgroundTaskService;
+class ImageDecoder;
+
 struct VisualCaptureStats {
     std::size_t uniqueResourcesDumped = 0;
     std::size_t duplicateResourcesSkipped = 0;
@@ -42,6 +46,10 @@ struct VisualOverrideDiagnostics {
     std::size_t asyncProbeSubmissions = 0;
     std::size_t asyncProbeChangesDetected = 0;
     std::size_t asyncProbeReloadApplies = 0;
+    // Async image decode telemetry (Phase 32)
+    std::size_t asyncDecodeSubmissions = 0;
+    std::size_t asyncDecodePollsReady = 0;
+    std::size_t asyncDecodePollsNotReady = 0;
 };
 
 struct VisualObservedResourceStat {
@@ -76,6 +84,9 @@ public:
 
     void setEventSink(EventSink sink);
     void clearEventSink() noexcept;
+
+    // Set optional image decoder service for async PNG decode (Phase 32)
+    void setImageDecoder(ImageDecoder* decoder) noexcept;
 
     [[nodiscard]] const VisualCaptureStats& captureStats() const noexcept;
     [[nodiscard]] const VisualOverrideDiagnostics& diagnostics() const noexcept;
@@ -160,6 +171,7 @@ private:
     std::string lastReloadWarning_;
     mutable std::string lastError_;
     EventSink eventSink_;
+    ImageDecoder* imageDecoder_ = nullptr;  // Phase 32 async decode
 };
 
 } // namespace BMMQ

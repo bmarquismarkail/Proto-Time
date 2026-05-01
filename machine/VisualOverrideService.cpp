@@ -16,6 +16,7 @@
 
 #include <zlib.h>
 
+#include "ImageDecoder.hpp"
 #include "VisualPackLimits.hpp"
 
 namespace BMMQ {
@@ -352,6 +353,11 @@ void VisualOverrideService::setEventSink(EventSink sink)
 void VisualOverrideService::clearEventSink() noexcept
 {
     eventSink_ = nullptr;
+}
+
+void VisualOverrideService::setImageDecoder(ImageDecoder* decoder) noexcept
+{
+    imageDecoder_ = decoder;
 }
 
 const VisualCaptureStats& VisualOverrideService::captureStats() const noexcept
@@ -724,6 +730,47 @@ std::optional<VisualReplacementImage> VisualOverrideService::loadPng(const std::
         return std::nullopt;
     }
     std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+
+    // Phase 32: Try async decode if available
+    if (imageDecoder_ != nullptr && !bytes.empty()) {
+        DecodeSnapshot snapshot{
+            .decodeId = key,
+            .pngData = std::span<const uint8_t>(bytes),
+        };
+        ++diagnostics_.asyncDecodeSubmissions;
+        auto future = imageDecoder_->decodeAsync(snapshot);
+
+        // Wait with tight timeout for MVP
+        if (ImageDecoder::waitDecodeResult(future, std::chrono::milliseconds(10))) {
+            ++diagnostics_.asyncDecodePollsReady;
+            auto result = future.get();
+            if (result.success) {
+                // Convert to VisualReplacementImage
+                VisualReplacementImage replacement{
+                    .width = result.image.width,
+                    .height = result.image.height,
+                    .argbPixels = std::move(result.image.argbPixels),
+                };
+
+                // Cache and return
+                const auto bytesUsed = replacement.argbPixels.size() * sizeof(uint32_t);
+                if (evictImageCacheFor(bytesUsed)) {
+                    imageCacheBytes_ += bytesUsed;
+                    imageCache_.emplace(key, CachedReplacementImage{
+                        .image = replacement,
+                        .bytes = bytesUsed,
+                        .lastUseSerial = ++imageCacheUseSerial_,
+                    });
+                    return replacement;
+                }
+            }
+        } else {
+            ++diagnostics_.asyncDecodePollsNotReady;
+            // Timeout; fallback to sync (below)
+        }
+    }
+
+    // Fallback: synchronous PNG decode (original code)
     constexpr std::array<uint8_t, 8> kPngSignature{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
     if (bytes.size() < kPngSignature.size() ||
         !std::equal(kPngSignature.begin(), kPngSignature.end(), bytes.begin())) {

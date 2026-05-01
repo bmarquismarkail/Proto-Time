@@ -35,6 +35,7 @@ add_library(time-machine-runtime-common STATIC
     machine/VisualCaptureWriter.cpp
     machine/VisualOverrideService.cpp
     machine/VisualPackManifest.cpp
+    machine/ImageDecoder.cpp
 )
 set_target_properties(time-machine-runtime-common PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(time-machine-runtime-common PUBLIC ZLIB::ZLIB)
@@ -381,6 +382,12 @@ target_link_libraries(time-smoke-gameboy-cartridge-save time-gameboy-interpreter
 add_test(NAME smoke_gameboy_cartridge_save COMMAND time-smoke-gameboy-cartridge-save)
 add_executable(time-smoke-background-task-service tests/smoke_background_task_service.cpp)
 add_test(NAME smoke_background_task_service COMMAND time-smoke-background-task-service)
+add_executable(time-smoke-image-decode-pipeline tests/smoke_image_decode_pipeline.cpp)
+target_link_libraries(time-smoke-image-decode-pipeline time-gameboy-interpreter-core)
+add_test(NAME smoke_image_decode_pipeline COMMAND time-smoke-image-decode-pipeline)
+add_executable(time-smoke-visual-override-decode-integration tests/smoke_visual_override_decode_integration.cpp)
+target_link_libraries(time-smoke-visual-override-decode-integration time-gameboy-interpreter-core)
+add_test(NAME smoke_visual_override_decode_integration COMMAND time-smoke-visual-override-decode-integration)
 add_executable(time-smoke-memory-map tests/smoke_memory_map.cpp)
 target_link_libraries(time-smoke-memory-map time-gameboy-interpreter-core)
 add_test(NAME smoke_memory_map COMMAND time-smoke-memory-map)
