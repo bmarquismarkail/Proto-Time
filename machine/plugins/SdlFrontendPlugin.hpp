@@ -230,6 +230,7 @@ struct SdlFrontendStats {
     std::size_t renderServicePresentSuccessCount = 0;
     std::size_t renderServicePresentFailureCount = 0;
     std::size_t renderServicePresentCallsOutsideLock = 0;
+    std::size_t renderServiceLightweightSyncCount = 0;
     std::size_t renderServiceEventPumpCount = 0;
     std::size_t renderServiceSleepCount = 0;
     std::size_t renderServiceSleepOvershootCount = 0;

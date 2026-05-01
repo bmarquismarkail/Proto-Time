@@ -297,6 +297,8 @@ int main(int argc, char** argv)
     assert(stats.videoRealtimePacketsBuiltOutsideLock >= stats.videoRealtimePacketsAccepted);
     // Phase 26: SDL present is called outside sharedStateMutex_ in renderServiceLoop(); counter must track this
     assert(stats.renderServicePresentCallsOutsideLock >= stats.renderServicePresentSuccessCount);
+    // Phase 27: render loop uses lightweight sync per iteration; full sync only on present
+    assert(stats.renderServiceLightweightSyncCount + stats.renderServicePresentSuccessCount >= stats.renderServiceLoopCount);
     assert(stats.videoDebugSnapshotsBuilt == stats.videoStateSnapshots);
     // Snapshot cost invariants: high-water must be >= last if any snapshots were taken
     if (stats.videoDebugSnapshotsBuilt > 0u) {

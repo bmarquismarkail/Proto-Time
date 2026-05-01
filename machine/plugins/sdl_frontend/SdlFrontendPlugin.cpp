@@ -862,7 +862,8 @@ private:
                 if (handled != 0u) {
                     ++stats_.renderServiceEventPumpCount;
                 }
-                syncVideoTransportStats();
+                ++stats_.renderServiceLightweightSyncCount;
+                syncPresentDecisionState();
                 const bool hadFrame = config_.enableVideo && lastFrame_.has_value();
                 const bool visibilityChanged = windowVisible_ != windowVisibilityRequested_;
                 if (hadFrame && (frameDirty_ || visibilityChanged)) {
@@ -911,6 +912,7 @@ private:
                 if (videoService_ != nullptr) {
                     videoService_->recordPresentOutcome(presentOk, presentError);
                 }
+                syncVideoTransportStats();
                 if (presentOk) {
                     ++stats_.renderServicePresentSuccessCount;
                     ++stats_.framesPresented;
@@ -1365,6 +1367,7 @@ private:
         }
 
         ++stats_.videoRealtimePacketsAccepted;
+        updateLastFrameFromPacket(*packet);
         if (event.type == BMMQ::MachineEventType::VBlank) {
             lastVideoDebugModel_ = debugModelFromRealtimePacket(*packet);
             scanlineVideoDebugModel_.reset();
@@ -1407,6 +1410,7 @@ private:
         }
 
         ++stats_.videoRealtimePacketsAccepted;
+        updateLastFrameFromPacket(packet);
         if (event.type == BMMQ::MachineEventType::VBlank) {
             lastVideoDebugModel_ = debugModelFromRealtimePacket(packet);
             scanlineVideoDebugModel_.reset();
@@ -1593,27 +1597,39 @@ private:
         stats_.videoFrameAge2To5msCount = diagnostics.frameAge2To5msCount;
         stats_.videoFrameAge5To10msCount = diagnostics.frameAge5To10msCount;
         stats_.videoFrameAgeOver10msCount = diagnostics.frameAgeOver10msCount;
-        if (const auto& frame = videoService_->engine().lastValidFrame(); frame.has_value()) {
-            const auto publishedFrames = videoService_->engine().stats().publishedFrameCount;
-            const bool frameChanged = !lastFrame_.has_value() ||
-                                      lastSyncedVideoFramePublication_ != publishedFrames ||
-                                      lastFrame_->width != frame->width ||
-                                      lastFrame_->height != frame->height ||
-                                      lastFrame_->pixelCount() != frame->pixelCount();
-            if (frameChanged) {
-                BMMQ::SdlFrameBuffer compatFrame;
-                compatFrame.width = frame->width;
-                compatFrame.height = frame->height;
-                compatFrame.generation = frame->generation;
-                compatFrame.pixels = frame->pixels;
-                lastFrame_ = std::move(compatFrame);
-                lastSyncedVideoFramePublication_ = publishedFrames;
-            }
-        }
         if (videoPresenter_ != nullptr) {
             windowVisible_ = videoPresenter_->windowVisible();
             windowVisibilityRequested_ = videoPresenter_->windowVisibilityRequested();
         }
+    }
+
+    // Lightweight sync: only reads the two presenter-window fields used by the present decision.
+    // Called every render-service loop iteration instead of the full syncVideoTransportStats().
+    // Caller must hold sharedStateMutex_.
+    void syncPresentDecisionState() noexcept
+    {
+        if (videoPresenter_ != nullptr) {
+            windowVisible_ = videoPresenter_->windowVisible();
+            windowVisibilityRequested_ = videoPresenter_->windowVisibilityRequested();
+        }
+    }
+
+    // Update lastFrame_ shadow copy from a successfully submitted RealtimeVideoPacket.
+    // Called from trySubmitRealtimeVideoPacket / trySubmitPrebuiltRealtimeVideoPacket
+    // while sharedStateMutex_ is held, so the per-iteration engine poll in
+    // syncVideoTransportStats() is no longer needed.
+    void updateLastFrameFromPacket(const BMMQ::RealtimeVideoPacket& packet) noexcept
+    {
+        if (videoService_ == nullptr) {
+            return;
+        }
+        BMMQ::SdlFrameBuffer compatFrame;
+        compatFrame.width = packet.width;
+        compatFrame.height = packet.height;
+        compatFrame.generation = packet.generation;
+        compatFrame.pixels = packet.argbPixels;
+        lastFrame_ = std::move(compatFrame);
+        lastSyncedVideoFramePublication_ = videoService_->engine().stats().publishedFrameCount;
     }
 
     bool presentLatestFrame()
