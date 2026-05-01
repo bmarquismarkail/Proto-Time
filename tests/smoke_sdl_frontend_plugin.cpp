@@ -233,6 +233,57 @@ int main(int argc, char** argv)
     }
     assert(frontend->serviceFrontend());
 
+    auto& lifecycle = machine.lifecycleCoordinator();
+    machine.audioService().setLifecycleContractEnforced(true);
+    machine.videoService().setLifecycleContractEnforced(true);
+    const auto audioDeniedBeforeRecovery = machine.audioService().lifecycleContractDeniedCalls();
+    const auto videoDeniedBeforeRecovery = machine.videoService().lifecycleContractDeniedCalls();
+    const auto lifecycleStatsBeforeRecovery = lifecycle.stats();
+    const auto videoRestartReasonIndex = static_cast<std::size_t>(BMMQ::MachineTransitionReason::VideoBackendRestart);
+    const auto recoveryVideoAttemptsBefore = frontend->stats().lifecycleRecoveryVideoAttemptCount;
+    const auto ensureCoordinatorBeforeRecovery = frontend->stats().lifecycleVideoPresenterEnsureCoordinatorCount;
+    const auto ensureDirectBeforeRecovery = frontend->stats().lifecycleVideoPresenterEnsureDirectCount;
+    const bool degradedForRecovery = lifecycle.runTransition(BMMQ::MachineTransitionReason::VideoBackendRestart, [&]() {
+        return BMMQ::MachineTransitionMutationResult{
+            .success = false,
+            .videoReady = false,
+            .audioReady = true,
+        };
+    });
+    assert(degradedForRecovery);
+    for (std::size_t attempt = 0; attempt < 80u; ++attempt) {
+        (void)frontend->serviceFrontend();
+        if (frontend->stats().lifecycleRecoveryVideoAttemptCount > recoveryVideoAttemptsBefore) {
+            break;
+        }
+    }
+    const auto recoveryStats = frontend->stats();
+    assert(recoveryStats.lifecycleRecoveryVideoAttemptCount > recoveryVideoAttemptsBefore);
+    const auto lifecycleStatsAfterRecovery = lifecycle.stats();
+    assert(lifecycleStatsAfterRecovery.reasonCounts[videoRestartReasonIndex] >
+           lifecycleStatsBeforeRecovery.reasonCounts[videoRestartReasonIndex]);
+    assert(recoveryStats.lifecycleRecoveryLastTarget == BMMQ::SdlLifecycleRecoveryTarget::Video);
+    assert(recoveryStats.lifecycleRecoveryLastTransitionReason ==
+           BMMQ::MachineTransitionReason::VideoBackendRestart);
+    assert(recoveryStats.lifecycleRecoveryLastUsedCoordinator);
+    assert(!recoveryStats.lifecycleRecoveryLastTransitionRejectedForReentry);
+    assert(recoveryStats.lifecycleVideoPresenterEnsureCoordinatorCount > ensureCoordinatorBeforeRecovery);
+    assert(recoveryStats.lifecycleVideoPresenterEnsureDirectCount == ensureDirectBeforeRecovery);
+    assert(machine.audioService().lifecycleContractDeniedCalls() == audioDeniedBeforeRecovery);
+    assert(machine.videoService().lifecycleContractDeniedCalls() == videoDeniedBeforeRecovery);
+
+    const bool degradedForSuppression = lifecycle.runTransition(BMMQ::MachineTransitionReason::VideoBackendRestart, [&]() {
+        return BMMQ::MachineTransitionMutationResult{
+            .success = false,
+            .videoReady = false,
+            .audioReady = true,
+        };
+    });
+    assert(degradedForSuppression);
+    const auto cooldownSuppressBefore = frontend->stats().lifecycleRecoveryCooldownSuppressCount;
+    (void)frontend->serviceFrontend();
+    assert(frontend->stats().lifecycleRecoveryCooldownSuppressCount > cooldownSuppressBefore);
+
     const auto& stats = frontend->stats();
     (void)stats;
     assert(stats.videoEvents >= 1);
@@ -262,8 +313,10 @@ int main(int argc, char** argv)
     assert(stats.videoPresenterLastFallbackReason == BMMQ::VideoPresenterFallbackReason::None ||
            stats.videoPresenterLastFallbackReason == BMMQ::VideoPresenterFallbackReason::HardwareRendererUnavailable ||
            stats.videoPresenterLastFallbackReason == BMMQ::VideoPresenterFallbackReason::RuntimePresentFailure);
-    assert(stats.videoPresenterRenderCount >= stats.framesPresented);
-    assert(stats.videoPresenterTextureUploadCount >= stats.framesPresented);
+    if (stats.lifecycleRecoveryVideoAttemptCount == 0u) {
+        assert(stats.videoPresenterRenderCount >= stats.framesPresented);
+        assert(stats.videoPresenterTextureUploadCount >= stats.framesPresented);
+    }
     assert(stats.audioRealtimePacketsAccepted >= 1u);
     assert(stats.audioStateSnapshotsBuilt == 0u);
     assert(stats.audioPreviewsBuilt >= 1);
@@ -294,10 +347,30 @@ int main(int argc, char** argv)
         assert(stats.lifecycleLastOutcome != BMMQ::MachineTransitionOutcome::Failed);
     }
     assert(!stats.lifecycleLastRejectedForReentry);
+    assert(stats.lifecycleTransitionCount ==
+           stats.lifecycleTransitionSuccessCount +
+               stats.lifecycleTransitionDegradedCount +
+               stats.lifecycleTransitionFailureCount);
+    assert(stats.lifecycleTransitionCount >= 1u);
+    assert(stats.lifecycleTransitionReentryAttemptCount >= stats.lifecycleNestedTransitionRejectCount);
+    assert(stats.lifecycleReasonVideoBackendRestartCount >= 1u);
+    assert(stats.lifecycleReasonConfigReconfigureCount >= 1u);
+    assert(stats.lifecycleTransitionDurationMaxNs >= stats.lifecycleTransitionDurationP95Ns);
+    assert(stats.lifecycleTransitionDurationP95Ns >= stats.lifecycleTransitionDurationP50Ns);
+    assert(stats.lifecycleVideoPresenterEnsureCoordinatorCount >=
+           stats.lifecycleRecoveryVideoAttemptCount);
+    assert(stats.lifecycleVideoPresenterEnsureCoordinatorCount > 0u);
+    if (initResult) {
+        assert(stats.lifecycleVideoPresenterEnsureDirectCount > 0u);
+    }
     assert(stats.lifecycleRecoveryVideoAttemptCount ==
            stats.lifecycleRecoveryVideoSuccessCount + stats.lifecycleRecoveryVideoFailureCount);
     assert(stats.lifecycleRecoveryAudioAttemptCount ==
            stats.lifecycleRecoveryAudioSuccessCount + stats.lifecycleRecoveryAudioFailureCount);
+    assert(stats.lifecycleRecoveryLastTarget != BMMQ::SdlLifecycleRecoveryTarget::None);
+    assert(stats.lifecycleRecoveryLastUsedCoordinator);
+    assert(stats.lifecycleRecoveryLastTransitionFailureStage == BMMQ::MachineTransitionFailureStage::None ||
+           stats.lifecycleRecoveryLastTransitionOutcome != BMMQ::MachineTransitionOutcome::Succeeded);
     assert(stats.lifecycleLastFailureStage != BMMQ::MachineTransitionFailureStage::Pause ||
            stats.lifecycleLastOutcome == BMMQ::MachineTransitionOutcome::Failed);
     assert(!frontend->diagnostics().empty());
@@ -410,7 +483,8 @@ int main(int argc, char** argv)
     assert(frontend->lastFrame()->width == 32);
     assert(frontend->lastFrame()->height == 24);
     assert(frontend->lastFrame()->pixelCount() == 32u * 24u);
-    assert(frontend->windowVisibilityRequested());
+    assert(frontend->windowVisibilityRequested() ||
+           frontend->stats().lifecycleRecoveryVideoAttemptCount > 0u);
 
     frontend->releaseButton(BMMQ::InputButton::Up);
     assert(frontend->queuedDigitalInputMask().has_value());

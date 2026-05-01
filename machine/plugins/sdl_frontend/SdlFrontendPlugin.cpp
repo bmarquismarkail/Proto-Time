@@ -105,12 +105,32 @@ public:
         stats_.renderServiceState = renderServiceState_.load(std::memory_order_acquire);
         if (lifecycleCoordinator_ != nullptr) {
             const auto transition = lifecycleCoordinator_->lastTransitionResult();
+            const auto coordinatorStats = lifecycleCoordinator_->stats();
             stats_.lifecycleLastOutcome = transition.outcome;
             stats_.lifecycleLastFailureStage = transition.failureStage;
             stats_.lifecycleLastRetryCountUsed = transition.retryCountUsed;
             stats_.lifecycleLastRejectedForReentry = transition.rejectedForReentry;
             stats_.lifecycleDegradedHeadlessVideoActive = lifecycleCoordinator_->degradedHeadlessVideoActive();
             stats_.lifecycleDegradedAudioDisabledActive = lifecycleCoordinator_->degradedAudioDisabledActive();
+            stats_.lifecycleTransitionCount = coordinatorStats.transitionCount;
+            stats_.lifecycleTransitionSuccessCount = coordinatorStats.successCount;
+            stats_.lifecycleTransitionDegradedCount = coordinatorStats.degradedCount;
+            stats_.lifecycleTransitionFailureCount = coordinatorStats.failureCount;
+            stats_.lifecycleTransitionReentryAttemptCount = coordinatorStats.transitionReentryAttemptCount;
+            stats_.lifecycleNestedTransitionRejectCount = coordinatorStats.nestedTransitionRejectCount;
+            stats_.lifecycleReasonRomLoadCount =
+                coordinatorStats.reasonCounts[static_cast<std::size_t>(BMMQ::MachineTransitionReason::RomLoad)];
+            stats_.lifecycleReasonHardResetCount =
+                coordinatorStats.reasonCounts[static_cast<std::size_t>(BMMQ::MachineTransitionReason::HardReset)];
+            stats_.lifecycleReasonAudioBackendRestartCount =
+                coordinatorStats.reasonCounts[static_cast<std::size_t>(BMMQ::MachineTransitionReason::AudioBackendRestart)];
+            stats_.lifecycleReasonVideoBackendRestartCount =
+                coordinatorStats.reasonCounts[static_cast<std::size_t>(BMMQ::MachineTransitionReason::VideoBackendRestart)];
+            stats_.lifecycleReasonConfigReconfigureCount =
+                coordinatorStats.reasonCounts[static_cast<std::size_t>(BMMQ::MachineTransitionReason::ConfigReconfigure)];
+            stats_.lifecycleTransitionDurationP50Ns = coordinatorStats.transitionDurationP50Ns;
+            stats_.lifecycleTransitionDurationP95Ns = coordinatorStats.transitionDurationP95Ns;
+            stats_.lifecycleTransitionDurationMaxNs = coordinatorStats.transitionDurationMaxNs;
         }
         syncAudioTransportStats();
         return stats_;
@@ -859,14 +879,18 @@ private:
         }
         lastLifecycleRecoveryAttemptServiceCall_ = stats_.serviceCalls;
 
+        bool attemptedVideo = false;
+        bool attemptedAudio = false;
+
         const bool attemptVideo =
             transition.outcome == BMMQ::MachineTransitionOutcome::Degraded
                 ? transition.degradedHeadlessVideo
                 : (transition.failureStage == BMMQ::MachineTransitionFailureStage::Resume ||
                    transition.failureStage == BMMQ::MachineTransitionFailureStage::Mutation);
         if (attemptVideo) {
+            attemptedVideo = true;
             ++stats_.lifecycleRecoveryVideoAttemptCount;
-            if (ensureVideoPresenter(false)) {
+            if (ensureVideoPresenter()) {
                 ++stats_.lifecycleRecoveryVideoSuccessCount;
             } else {
                 ++stats_.lifecycleRecoveryVideoFailureCount;
@@ -879,6 +903,7 @@ private:
                 : (transition.failureStage == BMMQ::MachineTransitionFailureStage::Resume ||
                    transition.failureStage == BMMQ::MachineTransitionFailureStage::Mutation);
         if (attemptAudio) {
+            attemptedAudio = true;
             ++stats_.lifecycleRecoveryAudioAttemptCount;
             const bool reopened = ensureAudioDevice();
             syncAudioTransportStats();
@@ -888,6 +913,23 @@ private:
             } else {
                 ++stats_.lifecycleRecoveryAudioFailureCount;
             }
+        }
+
+        if (attemptedVideo && attemptedAudio) {
+            stats_.lifecycleRecoveryLastTarget = BMMQ::SdlLifecycleRecoveryTarget::VideoAndAudio;
+        } else if (attemptedVideo) {
+            stats_.lifecycleRecoveryLastTarget = BMMQ::SdlLifecycleRecoveryTarget::Video;
+        } else if (attemptedAudio) {
+            stats_.lifecycleRecoveryLastTarget = BMMQ::SdlLifecycleRecoveryTarget::Audio;
+        }
+
+        if (attemptedVideo || attemptedAudio) {
+            const auto recoveryResult = lifecycleCoordinator_->lastTransitionResult();
+            stats_.lifecycleRecoveryLastTransitionReason = recoveryResult.reason;
+            stats_.lifecycleRecoveryLastTransitionOutcome = recoveryResult.outcome;
+            stats_.lifecycleRecoveryLastTransitionFailureStage = recoveryResult.failureStage;
+            stats_.lifecycleRecoveryLastTransitionRejectedForReentry = recoveryResult.rejectedForReentry;
+            stats_.lifecycleRecoveryLastUsedCoordinator = true;
         }
     }
 
@@ -1318,6 +1360,11 @@ private:
     {
         if (!config_.enableVideo) {
             return true;
+        }
+        if (coordinatorOwned && lifecycleCoordinator_ != nullptr) {
+            ++stats_.lifecycleVideoPresenterEnsureCoordinatorCount;
+        } else {
+            ++stats_.lifecycleVideoPresenterEnsureDirectCount;
         }
         if (videoService_ == nullptr) {
             lastBackendError_ = "Video service unavailable";

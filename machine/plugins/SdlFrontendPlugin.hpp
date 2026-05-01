@@ -54,6 +54,13 @@ enum class SdlRenderServiceState : uint8_t {
     Faulted,
 };
 
+enum class SdlLifecycleRecoveryTarget : uint8_t {
+    None = 0,
+    Video,
+    Audio,
+    VideoAndAudio,
+};
+
 struct SdlFrontendStats {
     std::size_t attachCount = 0;
     std::size_t detachCount = 0;
@@ -200,6 +207,22 @@ struct SdlFrontendStats {
     bool lifecycleLastRejectedForReentry = false;
     bool lifecycleDegradedHeadlessVideoActive = false;
     bool lifecycleDegradedAudioDisabledActive = false;
+    std::size_t lifecycleTransitionCount = 0;
+    std::size_t lifecycleTransitionSuccessCount = 0;
+    std::size_t lifecycleTransitionDegradedCount = 0;
+    std::size_t lifecycleTransitionFailureCount = 0;
+    std::size_t lifecycleTransitionReentryAttemptCount = 0;
+    std::size_t lifecycleNestedTransitionRejectCount = 0;
+    std::size_t lifecycleReasonRomLoadCount = 0;
+    std::size_t lifecycleReasonHardResetCount = 0;
+    std::size_t lifecycleReasonAudioBackendRestartCount = 0;
+    std::size_t lifecycleReasonVideoBackendRestartCount = 0;
+    std::size_t lifecycleReasonConfigReconfigureCount = 0;
+    std::uint64_t lifecycleTransitionDurationP50Ns = 0;
+    std::uint64_t lifecycleTransitionDurationP95Ns = 0;
+    std::uint64_t lifecycleTransitionDurationMaxNs = 0;
+    std::size_t lifecycleVideoPresenterEnsureCoordinatorCount = 0;
+    std::size_t lifecycleVideoPresenterEnsureDirectCount = 0;
     std::size_t lifecycleRecoveryVideoAttemptCount = 0;
     std::size_t lifecycleRecoveryVideoSuccessCount = 0;
     std::size_t lifecycleRecoveryVideoFailureCount = 0;
@@ -207,6 +230,12 @@ struct SdlFrontendStats {
     std::size_t lifecycleRecoveryAudioSuccessCount = 0;
     std::size_t lifecycleRecoveryAudioFailureCount = 0;
     std::size_t lifecycleRecoveryCooldownSuppressCount = 0;
+    SdlLifecycleRecoveryTarget lifecycleRecoveryLastTarget = SdlLifecycleRecoveryTarget::None;
+    MachineTransitionReason lifecycleRecoveryLastTransitionReason = MachineTransitionReason::ConfigReconfigure;
+    MachineTransitionOutcome lifecycleRecoveryLastTransitionOutcome = MachineTransitionOutcome::Succeeded;
+    MachineTransitionFailureStage lifecycleRecoveryLastTransitionFailureStage = MachineTransitionFailureStage::None;
+    bool lifecycleRecoveryLastTransitionRejectedForReentry = false;
+    bool lifecycleRecoveryLastUsedCoordinator = false;
 };
 
 enum class SdlFrontendHostEventType : uint8_t {
