@@ -133,6 +133,9 @@ public:
             stats_.lifecycleTransitionDurationP95Ns = coordinatorStats.transitionDurationP95Ns;
             stats_.lifecycleTransitionDurationMaxNs = coordinatorStats.transitionDurationMaxNs;
         }
+        // Sync input stats from atomic counters (updated on the lockless fast path).
+        stats_.inputPolls = inputPollsAtomic_.load(std::memory_order_relaxed);
+        stats_.inputSamplesProvided = inputSamplesProvidedAtomic_.load(std::memory_order_relaxed);
         syncAudioTransportStats();
         return stats_;
     }
@@ -253,24 +256,29 @@ public:
 
     void setQueuedDigitalInputMask(uint32_t pressedMask) override
     {
-        queuedDigitalInputMask_ = pressedMask & 0x00FFu;
+        queuedDigitalInputMask_.store(static_cast<int32_t>(pressedMask & 0x00FFu),
+                                      std::memory_order_release);
         publishQueuedInputToService();
-        appendLog("sdl: queued input mask=" + BMMQ::detail::hexByte(static_cast<uint8_t>(*queuedDigitalInputMask_)));
+        appendLog("sdl: queued input mask=" + BMMQ::detail::hexByte(static_cast<uint8_t>(pressedMask & 0x00FFu)));
     }
 
     void clearQueuedDigitalInputMask() override
     {
-        // Publish an explicit neutral snapshot before clearing the optional so the
+        // Publish an explicit neutral snapshot before clearing the mask so the
         // InputService observes "no buttons pressed" rather than only local state loss.
-        queuedDigitalInputMask_ = 0u;
+        queuedDigitalInputMask_.store(0, std::memory_order_release);
         publishQueuedInputToService();
-        queuedDigitalInputMask_.reset();
+        queuedDigitalInputMask_.store(-1, std::memory_order_release);
         appendLog("sdl: published neutral input and cleared queued input mask");
     }
 
     [[nodiscard]] std::optional<uint32_t> queuedDigitalInputMask() const noexcept override
     {
-        return queuedDigitalInputMask_;
+        const auto v = queuedDigitalInputMask_.load(std::memory_order_acquire);
+        if (v < 0) {
+            return std::nullopt;
+        }
+        return static_cast<uint32_t>(v);
     }
 
     void pressButton(BMMQ::InputButton button) override
@@ -285,10 +293,11 @@ public:
 
     [[nodiscard]] bool isButtonPressed(BMMQ::InputButton button) const noexcept override
     {
-        if (!queuedDigitalInputMask_.has_value()) {
+        const auto v = queuedDigitalInputMask_.load(std::memory_order_acquire);
+        if (v < 0) {
             return false;
         }
-        return ((*queuedDigitalInputMask_) & buttonMask(button)) != 0;
+        return (static_cast<uint32_t>(v) & buttonMask(button)) != 0;
     }
 
     void clearQuitRequest() noexcept override
@@ -729,33 +738,47 @@ public:
 
     void onAudioEvent(const BMMQ::MachineEvent& event, const BMMQ::MachineView& view) override
     {
-        // Pre-build audio state OUTSIDE the lock.
-        // view.audioState() reads live machine APU/PSG state; as the emulation
-        // thread is the caller here, this is safe to do before acquiring
-        // sharedStateMutex_.  The realtime packet check is cheap and happens
-        // inside the lock where view is still accessible.
+        // Pre-build BOTH audio sources OUTSIDE the lock.
+        // Machine state is owned by the emulation thread (the caller), so reading
+        // view.realtimeAudioPacket() / view.audioState() before acquiring
+        // sharedStateMutex_ is safe — same guarantee as the video event path.
         const auto audioT0 = std::chrono::steady_clock::now();
+        const auto prebuiltRealtimePacket = view.realtimeAudioPacket();
         const auto prebuiltAudioState = view.audioState();
         const auto audioElapsedNs = static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now() - audioT0).count());
+
+        // Call appendRecentPcm BEFORE acquiring sharedStateMutex_.
+        // appendRecentPcm() is internally thread-safe (SPSC ring buffer + atomic
+        // notify to the audio worker); no outer lock is required.
+        // audioService_ is set in onAttach and cleared in onDetach, both called
+        // from the emulation thread — serial with onAudioEvent, no race.
+        if (audioService_ != nullptr) {
+            if (prebuiltRealtimePacket.has_value() &&
+                prebuiltRealtimePacket->contractVersion == BMMQ::RealtimeAudioPacket::kContractVersion) {
+                audioService_->appendRecentPcm(prebuiltRealtimePacket->pcmSamples,
+                                               prebuiltRealtimePacket->frameCounter);
+            } else if (prebuiltAudioState.has_value()) {
+                audioService_->appendRecentPcm(prebuiltAudioState->pcmSamples,
+                                               prebuiltAudioState->frameCounter);
+            }
+        }
 
         std::scoped_lock<std::mutex> lock(sharedStateMutex_);
         if (!config_.enableAudio) {
             return;
         }
         ++stats_.audioEvents;
-        if (const auto packet = view.realtimeAudioPacket();
-            packet.has_value() && packet->contractVersion == BMMQ::RealtimeAudioPacket::kContractVersion) {
+        if (prebuiltRealtimePacket.has_value() &&
+            prebuiltRealtimePacket->contractVersion == BMMQ::RealtimeAudioPacket::kContractVersion) {
             ++stats_.audioRealtimePacketsAccepted;
-            lastAudioPreview_ = buildAudioPreview(*packet);
+            lastAudioPreview_ = buildAudioPreview(*prebuiltRealtimePacket);
             ++stats_.audioPreviewsBuilt;
             ++audioPreviewGeneration_;
-            if (audioService_ != nullptr) {
-                audioService_->appendRecentPcm(packet->pcmSamples, packet->frameCounter);
-            }
+            // appendRecentPcm already dispatched above, outside the lock.
             lastAudioState_.reset();
-        } else if (packet.has_value()) {
+        } else if (prebuiltRealtimePacket.has_value()) {
             ++stats_.audioRealtimePacketsSkipped;
             lastAudioPreview_.reset();
         } else if (prebuiltAudioState.has_value()) {
@@ -768,9 +791,7 @@ public:
             lastAudioPreview_ = buildAudioPreview(*lastAudioState_);
             ++stats_.audioPreviewsBuilt;
             ++audioPreviewGeneration_;
-            if (audioService_ != nullptr) {
-                audioService_->appendRecentPcm(lastAudioState_->pcmSamples, lastAudioState_->frameCounter);
-            }
+            // appendRecentPcm already dispatched above, outside the lock.
             if (debugSnapshotService_ != nullptr) {
                 (void)debugSnapshotService_->submitAudioState(lastAudioState_);
             }
@@ -796,17 +817,20 @@ public:
 
     std::optional<BMMQ::InputButtonMask> sampleDigitalInput() override
     {
-        std::scoped_lock<std::mutex> lock(sharedStateMutex_);
         if (!config_.enableInput) {
             return std::nullopt;
         }
-        ++stats_.inputPolls;
+        inputPollsAtomic_.fetch_add(1u, std::memory_order_relaxed);
         if (config_.pumpBackendEventsOnInputSample && !renderServiceActive()) {
+            // Slow path: pumpBackendEvents() is not thread-safe; serialise with
+            // the render service loop via the shared state mutex.
+            std::scoped_lock<std::mutex> lock(sharedStateMutex_);
             pumpBackendEvents();
         }
-        if (queuedDigitalInputMask_.has_value()) {
-            ++stats_.inputSamplesProvided;
-            return static_cast<BMMQ::InputButtonMask>(*queuedDigitalInputMask_ & 0x00FFu);
+        const auto v = queuedDigitalInputMask_.load(std::memory_order_acquire);
+        if (v >= 0) {
+            inputSamplesProvidedAtomic_.fetch_add(1u, std::memory_order_relaxed);
+            return static_cast<BMMQ::InputButtonMask>(static_cast<uint32_t>(v) & 0x00FFu);
         }
         return std::nullopt;
     }
@@ -1229,7 +1253,8 @@ private:
 
     void setButtonState(BMMQ::InputButton button, bool pressed)
     {
-        auto mask = static_cast<uint8_t>(queuedDigitalInputMask_.value_or(0u) & 0x00FFu);
+        const auto current = queuedDigitalInputMask_.load(std::memory_order_acquire);
+        auto mask = static_cast<uint8_t>((current >= 0 ? static_cast<uint32_t>(current) : 0u) & 0x00FFu);
         const auto bit = buttonMask(button);
         const auto oldMask = mask;
         if (pressed) {
@@ -1237,7 +1262,7 @@ private:
         } else {
             mask = static_cast<uint8_t>(mask & static_cast<uint8_t>(~bit));
         }
-        queuedDigitalInputMask_ = mask;
+        queuedDigitalInputMask_.store(static_cast<int32_t>(mask), std::memory_order_release);
         if (mask != oldMask) {
             publishQueuedInputToService();
             ++stats_.buttonTransitions;
@@ -1252,9 +1277,10 @@ private:
         }
 
         const auto generation = std::max<uint64_t>(inputService_->currentGeneration(), 1u);
-        if (queuedDigitalInputMask_.has_value()) {
+        const auto v = queuedDigitalInputMask_.load(std::memory_order_acquire);
+        if (v >= 0) {
             inputService_->publishDigitalSnapshot(
-                static_cast<BMMQ::InputButtonMask>(*queuedDigitalInputMask_ & 0x00FFu),
+                static_cast<BMMQ::InputButtonMask>(static_cast<uint32_t>(v) & 0x00FFu),
                 generation);
             return;
         }
@@ -2087,7 +2113,12 @@ private:
     std::size_t lastSyncedVideoFramePublication_ = 0;
     bool frameDirty_ = false;
     bool videoPresentDeferredForAudioLowWater_ = false;
-    std::optional<uint32_t> queuedDigitalInputMask_;
+    // Atomic: -1 = no active mask (nullopt); 0-255 = active 8-bit button mask.
+    // Written by render/SDL thread; read locklessly by emulation thread in
+    // sampleDigitalInput(). The sentinel value -1 encodes std::nullopt semantics.
+    std::atomic<int32_t> queuedDigitalInputMask_{-1};
+    std::atomic<uint64_t> inputPollsAtomic_{0};
+    std::atomic<uint64_t> inputSamplesProvidedAtomic_{0};
     bool quitRequested_ = false;
     bool windowVisible_ = false;
     bool windowVisibilityRequested_ = false;
