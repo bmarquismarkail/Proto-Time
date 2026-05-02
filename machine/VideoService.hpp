@@ -322,6 +322,7 @@ public:
 
     [[nodiscard]] bool submitVideoDebugModel(const MachineEvent& event, const VideoDebugFrameModel& model)
     {
+        std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
         if (event.type == MachineEventType::RomLoaded) {
             engine_.advanceGeneration();
             bumpLifecycleEpochLocked();
@@ -346,12 +347,12 @@ public:
         }
 
         const auto generation = engine_.currentGeneration();
-        if (event.type == MachineEventType::VBlank && hasCompleteScanlineFrame()) {
+        if (event.type == MachineEventType::VBlank && hasCompleteScanlineFrameLocked()) {
             auto frame = *scanlineFrame_;
             resetScanlineCapture();
             return submitFrame(frame);
         }
-        if (event.type == MachineEventType::VBlank && hasPartialScanlineFrame()) {
+        if (event.type == MachineEventType::VBlank && hasPartialScanlineFrameLocked()) {
             auto frame = engine_.buildDebugFrame(model, generation);
             overlayCapturedScanlines(frame);
             resetScanlineCapture();
@@ -364,6 +365,7 @@ public:
 
     [[nodiscard]] bool submitRealtimeVideoPacket(const MachineEvent& event, const RealtimeVideoPacket& packet)
     {
+        std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
         if (event.type == MachineEventType::RomLoaded) {
             engine_.advanceGeneration();
             bumpLifecycleEpochLocked();
@@ -391,12 +393,12 @@ public:
             return false;
         }
 
-        if (event.type == MachineEventType::VBlank && hasCompleteScanlineFrame()) {
+        if (event.type == MachineEventType::VBlank && hasCompleteScanlineFrameLocked()) {
             auto frame = *scanlineFrame_;
             resetScanlineCapture();
             return submitFrame(frame);
         }
-        if (event.type == MachineEventType::VBlank && hasPartialScanlineFrame()) {
+        if (event.type == MachineEventType::VBlank && hasPartialScanlineFrameLocked()) {
             syncEngineDiagnostics();
             return false;
         }
@@ -552,13 +554,14 @@ public:
 
     [[nodiscard]] bool hasCompleteScanlineFrame() const noexcept
     {
-        return scanlineFrame_.has_value() &&
-               scanlineCaptureCount_ >= static_cast<std::size_t>(engine_.config().frameHeight);
+        std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
+        return hasCompleteScanlineFrameLocked();
     }
 
     [[nodiscard]] bool hasPartialScanlineFrame() const noexcept
     {
-        return scanlineFrame_.has_value() && scanlineCaptureCount_ != 0u;
+        std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
+        return hasPartialScanlineFrameLocked();
     }
 
     void bumpLifecycleEpochBarrier() noexcept
@@ -650,6 +653,17 @@ private:
         diagnostics_.frameAge2To5msCount = engineStats.frameAge2To5msCount;
         diagnostics_.frameAge5To10msCount = engineStats.frameAge5To10msCount;
         diagnostics_.frameAgeOver10msCount = engineStats.frameAgeOver10msCount;
+    }
+
+    [[nodiscard]] bool hasCompleteScanlineFrameLocked() const noexcept
+    {
+        return scanlineFrame_.has_value() &&
+               scanlineCaptureCount_ >= static_cast<std::size_t>(engine_.config().frameHeight);
+    }
+
+    [[nodiscard]] bool hasPartialScanlineFrameLocked() const noexcept
+    {
+        return scanlineFrame_.has_value() && scanlineCaptureCount_ != 0u;
     }
 
     void resetScanlineCapture()

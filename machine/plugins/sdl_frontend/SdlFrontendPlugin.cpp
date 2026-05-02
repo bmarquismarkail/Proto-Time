@@ -100,7 +100,7 @@ public:
         return config_;
     }
 
-    [[nodiscard]] const BMMQ::SdlFrontendStats& stats() const noexcept override
+    [[nodiscard]] BMMQ::SdlFrontendStats stats() const noexcept override
     {
         std::scoped_lock<std::mutex> lock(sharedStateMutex_);
         stats_.renderServiceState = renderServiceState_.load(std::memory_order_acquire);
@@ -142,6 +142,22 @@ public:
         stats_.eventPumpCalls = eventPumpCallsAtomic_.load(std::memory_order_relaxed);
         stats_.backendEventsTranslated = backendEventsTranslatedAtomic_.load(std::memory_order_relaxed);
         stats_.renderServiceEventPumpCount = renderServiceEventPumpCountAtomic_.load(std::memory_order_relaxed);
+        // Sync Phase 36A stat: frame notifications sent outside the lock.
+        stats_.onVideoEventFrameNotifyOutsideLockCount =
+            onVideoEventFrameNotifyOutsideLockCountAtomic_.load(std::memory_order_relaxed);
+        // Sync Phase 36B render-service wait-block shadow atomics.
+        // Written under renderServiceWaitMutex_ (or no lock), so must be
+        // folded in here rather than written directly to stats_.
+        stats_.renderServiceSleepCount =
+            renderServiceSleepCountAtomic_.load(std::memory_order_relaxed);
+        stats_.renderServiceDeferredPresentFastSleepCount =
+            renderServiceDeferredPresentFastSleepCountAtomic_.load(std::memory_order_relaxed);
+        stats_.renderServiceFrameWakeCount =
+            renderServiceFrameWakeCountAtomic_.load(std::memory_order_relaxed);
+        stats_.renderServiceTimeoutWakeCount =
+            renderServiceTimeoutWakeCountAtomic_.load(std::memory_order_relaxed);
+        stats_.renderServiceSleepOvershootCount =
+            renderServiceSleepOvershootCountAtomic_.load(std::memory_order_relaxed);
         syncAudioTransportStats();
         return stats_;
     }
@@ -657,92 +673,107 @@ public:
             });
         }
 
-        std::scoped_lock<std::mutex> lock(sharedStateMutex_);
-        if (!config_.enableVideo) {
-            return;
-        }
-        ++stats_.videoEvents;
-        const bool carriesVideoState =
-            event.type == BMMQ::MachineEventType::MemoryWriteObserved ||
-            event.type == BMMQ::MachineEventType::VBlank ||
-            event.type == BMMQ::MachineEventType::VideoScanlineReady;
-        const bool shouldSampleVideoState =
-            carriesVideoState &&
-            (event.type == BMMQ::MachineEventType::VBlank ||
-             event.type == BMMQ::MachineEventType::VideoScanlineReady ||
-             !lastFrame_.has_value());
-
+        // submittedVideoFrame is hoisted before the lock so it is visible to the
+        // post-lock notification block (Phase 36A).
         bool submittedVideoFrame = false;
-        if (shouldSampleVideoState) {
-            const bool deferPresentForAudioLowWater =
-                event.type == BMMQ::MachineEventType::VBlank && shouldDeferVideoFrameForAudioLowWater();
-
-            bool realtimeSubmitted = false;
-            if (prebuiltRealtime.has_value()) {
-                ++stats_.videoRealtimePacketsBuiltOutsideLock;
-                realtimeSubmitted = trySubmitPrebuiltRealtimeVideoPacket(event, std::move(*prebuiltRealtime));
-            } else {
-                realtimeSubmitted = trySubmitRealtimeVideoPacket(event, view);
+        {
+            std::unique_lock<std::mutex> lock(sharedStateMutex_);
+            if (!config_.enableVideo) {
+                return;
             }
+            ++stats_.videoEvents;
+            const bool carriesVideoState =
+                event.type == BMMQ::MachineEventType::MemoryWriteObserved ||
+                event.type == BMMQ::MachineEventType::VBlank ||
+                event.type == BMMQ::MachineEventType::VideoScanlineReady;
+            const bool shouldSampleVideoState =
+                carriesVideoState &&
+                (event.type == BMMQ::MachineEventType::VBlank ||
+                 event.type == BMMQ::MachineEventType::VideoScanlineReady ||
+                 !lastFrame_.has_value());
 
-            if (realtimeSubmitted) {
-                submittedVideoFrame = true;
-                // When the realtime packet path succeeds, forward the pre-built debug
-                // model to DebugSnapshotService so the render thread can consume it.
-                if (debugSnapshotService_ != nullptr && prebuiltDebugModel.has_value()) {
-                    (void)debugSnapshotService_->submitVideoModel(std::move(prebuiltDebugModel));
+            if (shouldSampleVideoState) {
+                const bool deferPresentForAudioLowWater =
+                    event.type == BMMQ::MachineEventType::VBlank && shouldDeferVideoFrameForAudioLowWater();
+
+                bool realtimeSubmitted = false;
+                if (prebuiltRealtime.has_value()) {
+                    ++stats_.videoRealtimePacketsBuiltOutsideLock;
+                    realtimeSubmitted = trySubmitPrebuiltRealtimeVideoPacket(event, std::move(*prebuiltRealtime));
+                } else {
+                    realtimeSubmitted = trySubmitRealtimeVideoPacket(event, view);
                 }
-                syncVideoTransportStats();
-                ++stats_.framesPrepared;
-                frameDirty_ = true;
-                renderServiceFramePending_.store(true, std::memory_order_release);
-                renderServiceWakeCv_.notify_all();
-                if (deferPresentForAudioLowWater) {
-                    ++stats_.audioQueueLowWaterHits;
-                    videoPresentDeferredForAudioLowWater_ = true;
-                    appendLog("sdl: deferred video presentation while audio buffer was low");
-                }
-            } else if (BMMQ::VideoDebugFrameModel* videoModel = modelForVideoEvent(event, view, std::move(prebuiltDebugModel)); videoModel != nullptr) {
-                if (videoService_ != nullptr && videoService_->submitVideoDebugModel(event, *videoModel)) {
+
+                if (realtimeSubmitted) {
                     submittedVideoFrame = true;
-                    if (event.type == BMMQ::MachineEventType::VBlank) {
-                        lastVideoDebugModel_ = *videoModel;
-                        scanlineVideoDebugModel_.reset();
+                    // When the realtime packet path succeeds, forward the pre-built debug
+                    // model to DebugSnapshotService so the render thread can consume it.
+                    if (debugSnapshotService_ != nullptr && prebuiltDebugModel.has_value()) {
+                        (void)debugSnapshotService_->submitVideoModel(std::move(prebuiltDebugModel));
                     }
                     syncVideoTransportStats();
                     ++stats_.framesPrepared;
                     frameDirty_ = true;
-                    renderServiceFramePending_.store(true, std::memory_order_release);
-                    renderServiceWakeCv_.notify_all();
+                    // renderServiceFramePending_ and renderServiceWakeCv_.notify_all()
+                    // are deferred to after the lock releases (Phase 36A).
                     if (deferPresentForAudioLowWater) {
                         ++stats_.audioQueueLowWaterHits;
                         videoPresentDeferredForAudioLowWater_ = true;
                         appendLog("sdl: deferred video presentation while audio buffer was low");
                     }
+                } else if (BMMQ::VideoDebugFrameModel* videoModel = modelForVideoEvent(event, view, std::move(prebuiltDebugModel)); videoModel != nullptr) {
+                    if (videoService_ != nullptr && videoService_->submitVideoDebugModel(event, *videoModel)) {
+                        submittedVideoFrame = true;
+                        if (event.type == BMMQ::MachineEventType::VBlank) {
+                            lastVideoDebugModel_ = *videoModel;
+                            scanlineVideoDebugModel_.reset();
+                        }
+                        syncVideoTransportStats();
+                        ++stats_.framesPrepared;
+                        frameDirty_ = true;
+                        // renderServiceFramePending_ and renderServiceWakeCv_.notify_all()
+                        // are deferred to after the lock releases (Phase 36A).
+                        if (deferPresentForAudioLowWater) {
+                            ++stats_.audioQueueLowWaterHits;
+                            videoPresentDeferredForAudioLowWater_ = true;
+                            appendLog("sdl: deferred video presentation while audio buffer was low");
+                        }
+                    }
+                } else {
+                    lastFrame_.reset();
+                    frameDirty_ = false;
+                    scanlineVideoDebugModel_.reset();
                 }
-            } else {
-                lastFrame_.reset();
-                frameDirty_ = false;
-                scanlineVideoDebugModel_.reset();
             }
-        }
 
-        if (event.type != BMMQ::MachineEventType::MemoryWriteObserved &&
-            event.type != BMMQ::MachineEventType::VideoScanlineReady &&
-            event.type != BMMQ::MachineEventType::VBlank) {
-            std::string message = std::string("sdl: video event=") + BMMQ::detail::machineEventTypeName(event.type);
-            if (lastVideoDebugModel_.has_value()) {
-                message += lastVideoDebugModel_->displayEnabled ? " display=on" : " display=off";
-                if (lastVideoDebugModel_->scanlineIndex.has_value()) {
-                    message += " scanline=" + std::to_string(*lastVideoDebugModel_->scanlineIndex);
+            if (event.type != BMMQ::MachineEventType::MemoryWriteObserved &&
+                event.type != BMMQ::MachineEventType::VideoScanlineReady &&
+                event.type != BMMQ::MachineEventType::VBlank) {
+                std::string message = std::string("sdl: video event=") + BMMQ::detail::machineEventTypeName(event.type);
+                if (lastVideoDebugModel_.has_value()) {
+                    message += lastVideoDebugModel_->displayEnabled ? " display=on" : " display=off";
+                    if (lastVideoDebugModel_->scanlineIndex.has_value()) {
+                        message += " scanline=" + std::to_string(*lastVideoDebugModel_->scanlineIndex);
+                    }
                 }
+                if (lastFrame_.has_value()) {
+                    message += " frame=" + std::to_string(lastFrame_->width) + "x" + std::to_string(lastFrame_->height);
+                }
+                appendLog(std::move(message));
+            } else if (submittedVideoFrame) {
+                appendLog("sdl: scanline frame prepared");
             }
-            if (lastFrame_.has_value()) {
-                message += " frame=" + std::to_string(lastFrame_->width) + "x" + std::to_string(lastFrame_->height);
-            }
-            appendLog(std::move(message));
-        } else if (submittedVideoFrame) {
-            appendLog("sdl: scanline frame prepared");
+        } // sharedStateMutex_ released here
+
+        // Phase 36A: notify the render service AFTER the lock has been released.
+        // renderServiceFramePending_ is an atomic; renderServiceWakeCv_ is paired
+        // with renderServiceWaitMutex_ (not sharedStateMutex_), so both are safe
+        // to signal here. The render thread may already have consumed the frame
+        // via a timeout wake — the resulting spurious wake is harmless.
+        if (submittedVideoFrame) {
+            renderServiceFramePending_.store(true, std::memory_order_release);
+            renderServiceWakeCv_.notify_all();
+            onVideoEventFrameNotifyOutsideLockCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
         }
     }
 
@@ -905,8 +936,12 @@ private:
 
     void setRenderServiceState(BMMQ::SdlRenderServiceState state) noexcept
     {
+        // stats_.renderServiceState is NOT written here to avoid a data race:
+        // this function runs on the render thread without sharedStateMutex_, while
+        // stats() reads stats_ under the lock. stats() reads directly from the
+        // renderServiceState_ atomic, so writing stats_.renderServiceState here
+        // is redundant and would introduce a race (TSAN 36B).
         renderServiceState_.store(state, std::memory_order_release);
-        stats_.renderServiceState = state;
     }
 
     void startRenderServiceIfNeeded()
@@ -1079,13 +1114,13 @@ private:
                 }
             }
 
-            ++stats_.renderServiceSleepCount;
+            renderServiceSleepCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
             {
                 std::unique_lock<std::mutex> waitLock(renderServiceWaitMutex_);
                 const auto beforeWait = std::chrono::steady_clock::now();
                 const bool useShortSleep = videoPresentDeferredForAudioLowWater_;
                 if (useShortSleep) {
-                    ++stats_.renderServiceDeferredPresentFastSleepCount;
+                    renderServiceDeferredPresentFastSleepCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
                 }
                 const auto effectiveInterval = useShortSleep
                     ? std::chrono::microseconds(500)
@@ -1096,12 +1131,12 @@ private:
                 });
                 const auto wakeTime = std::chrono::steady_clock::now();
                 if (predicateMet) {
-                    ++stats_.renderServiceFrameWakeCount;
+                    renderServiceFrameWakeCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
                 } else {
-                    ++stats_.renderServiceTimeoutWakeCount;
+                    renderServiceTimeoutWakeCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
                 }
                 if (wakeTime - beforeWait > sleepInterval + std::chrono::milliseconds(2)) {
-                    ++stats_.renderServiceSleepOvershootCount;
+                    renderServiceSleepOvershootCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
                 }
                 lastWake = wakeTime;
             }
@@ -2179,7 +2214,10 @@ private:
     std::optional<BMMQ::SdlFrameBuffer> lastFrame_;
     std::size_t lastSyncedVideoFramePublication_ = 0;
     bool frameDirty_ = false;
-    bool videoPresentDeferredForAudioLowWater_ = false;
+    // std::atomic<bool>: written under sharedStateMutex_ on multiple paths but read
+    // lock-free inside the renderServiceWaitMutex_ condvar block (line ~1104) to
+    // decide the sleep interval. Atomicity prevents the TSAN race caught in Phase 36B.
+    std::atomic<bool> videoPresentDeferredForAudioLowWater_{false};
     // Atomic: -1 = no active mask (nullopt); 0-255 = active 8-bit button mask.
     // Written by render/SDL thread; read locklessly by emulation thread in
     // sampleDigitalInput(). The sentinel value -1 encodes std::nullopt semantics.
@@ -2196,6 +2234,20 @@ private:
     std::atomic<uint64_t> eventPumpCallsAtomic_{0};
     std::atomic<uint64_t> backendEventsTranslatedAtomic_{0};
     std::atomic<uint64_t> renderServiceEventPumpCountAtomic_{0};
+    // Phase 36A: counts VBlank/scanline frames whose render-service notification
+    // (renderServiceFramePending_ store + condvar notify) was sent after
+    // sharedStateMutex_ was released, reducing VBlank lock hold time.
+    std::atomic<uint64_t> onVideoEventFrameNotifyOutsideLockCountAtomic_{0};
+    // Phase 36B render-service wait-block shadow atomics.
+    // These are incremented inside the renderServiceWaitMutex_ condvar block (or
+    // just before it, under no lock), so they cannot be written directly to stats_
+    // without racing against stats() which reads stats_ under sharedStateMutex_.
+    // stats() folds them in just before the return copy.
+    std::atomic<uint64_t> renderServiceSleepCountAtomic_{0};
+    std::atomic<uint64_t> renderServiceDeferredPresentFastSleepCountAtomic_{0};
+    std::atomic<uint64_t> renderServiceFrameWakeCountAtomic_{0};
+    std::atomic<uint64_t> renderServiceTimeoutWakeCountAtomic_{0};
+    std::atomic<uint64_t> renderServiceSleepOvershootCountAtomic_{0};
     bool quitRequested_ = false;
     bool windowVisible_ = false;
     bool windowVisibilityRequested_ = false;

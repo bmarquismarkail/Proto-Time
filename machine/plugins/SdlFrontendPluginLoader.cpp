@@ -125,7 +125,7 @@ public:
         return implementation_->lastError();
     }
 
-    [[nodiscard]] const BMMQ::SdlFrontendStats& stats() const noexcept override
+    [[nodiscard]] BMMQ::SdlFrontendStats stats() const noexcept override
     {
         return implementation_->stats();
     }

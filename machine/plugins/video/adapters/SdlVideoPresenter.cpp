@@ -98,8 +98,8 @@ bool SdlVideoPresenter::open(const VideoPresenterConfig& config)
         close();
         return false;
     }
-    windowVisible_ = !config_.createHiddenWindowOnOpen;
-    windowVisibilityRequested_ = windowVisible_;
+    windowVisible_.store(!config_.createHiddenWindowOnOpen, std::memory_order_relaxed);
+    windowVisibilityRequested_.store(windowVisible_.load(std::memory_order_relaxed), std::memory_order_relaxed);
     ready_ = true;
     return true;
 #else
@@ -132,7 +132,7 @@ void SdlVideoPresenter::close() noexcept
     }
 #endif
     ready_ = false;
-    windowVisible_ = false;
+    windowVisible_.store(false, std::memory_order_release);
 }
 
 bool SdlVideoPresenter::ready() const noexcept
@@ -155,13 +155,13 @@ bool SdlVideoPresenter::present(const VideoFramePacket& frame) noexcept
     if (config_.showWindowOnPresent) {
         requestWindowVisibility(true);
     }
-    if (windowVisibilityRequested_ != windowVisible_) {
-        if (windowVisibilityRequested_) {
+    if (windowVisibilityRequested_.load(std::memory_order_relaxed) != windowVisible_.load(std::memory_order_relaxed)) {
+        if (windowVisibilityRequested_.load(std::memory_order_relaxed)) {
             SDL_ShowWindow(window_);
         } else {
             SDL_HideWindow(window_);
         }
-        windowVisible_ = windowVisibilityRequested_;
+        windowVisible_.store(windowVisibilityRequested_.load(std::memory_order_relaxed), std::memory_order_release);
     }
 
     if (!ensureRenderer(frame.width, frame.height)) {
@@ -230,17 +230,17 @@ VideoPresenterDiagnostics SdlVideoPresenter::diagnostics() const noexcept
 
 bool SdlVideoPresenter::windowVisible() const noexcept
 {
-    return windowVisible_;
+    return windowVisible_.load(std::memory_order_acquire);
 }
 
 void SdlVideoPresenter::requestWindowVisibility(bool visible) noexcept
 {
-    windowVisibilityRequested_ = visible;
+    windowVisibilityRequested_.store(visible, std::memory_order_relaxed);
 }
 
 bool SdlVideoPresenter::windowVisibilityRequested() const noexcept
 {
-    return windowVisibilityRequested_;
+    return windowVisibilityRequested_.load(std::memory_order_relaxed);
 }
 
 bool SdlVideoPresenter::ensureRenderer(int frameWidth, int frameHeight) noexcept

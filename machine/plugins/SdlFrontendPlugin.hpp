@@ -129,6 +129,10 @@ struct SdlFrontendStats {
     std::size_t videoRealtimePacketsAccepted = 0;
     std::size_t videoRealtimePacketsSkipped = 0;
     std::size_t videoRealtimePacketsBuiltOutsideLock = 0;
+    /// Phase 36A: counts VBlank/scanline frames for which the render-service
+    /// notification (renderServiceFramePending_ + condvar) was sent after
+    /// sharedStateMutex_ was released, reducing the VBlank critical section.
+    std::size_t onVideoEventFrameNotifyOutsideLockCount = 0;
     std::size_t videoDebugSnapshotsBuilt = 0;
     std::size_t videoStateSnapshots = 0;
     std::uint64_t videoDebugSnapshotDurationLastNs = 0;
@@ -378,7 +382,7 @@ public:
     }
 
     [[nodiscard]] virtual const SdlFrontendConfig& config() const noexcept = 0;
-    [[nodiscard]] virtual const SdlFrontendStats& stats() const noexcept = 0;
+    [[nodiscard]] virtual SdlFrontendStats stats() const noexcept = 0;
     [[nodiscard]] virtual const std::vector<std::string>& diagnostics() const noexcept = 0;
     [[nodiscard]] virtual const std::optional<VideoDebugFrameModel>& lastVideoDebugModel() const noexcept = 0;
     [[nodiscard]] virtual const std::optional<AudioStateView>& lastAudioState() const noexcept = 0;

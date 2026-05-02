@@ -1,6 +1,7 @@
 #ifndef BMMQ_SDL_VIDEO_PRESENTER_HPP
 #define BMMQ_SDL_VIDEO_PRESENTER_HPP
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -45,8 +46,11 @@ private:
     VideoPresenterDiagnostics diagnostics_{};
     std::string rendererNameStorage_{};
     bool ready_ = false;
-    bool windowVisible_ = false;
-    bool windowVisibilityRequested_ = false;
+    // windowVisible_ and windowVisibilityRequested_ are read by SdlFrontendPlugin::windowVisible()
+    // (render thread) without holding sharedStateMutex_, and written by close() (main thread).
+    // Use atomic to prevent TSAN data races.
+    std::atomic<bool> windowVisible_{false};
+    std::atomic<bool> windowVisibilityRequested_{false};
     uint32_t initializedBackendFlags_ = 0;
     int textureWidth_ = 0;
     int textureHeight_ = 0;

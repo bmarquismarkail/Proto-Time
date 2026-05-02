@@ -159,6 +159,20 @@ public:
         if (!guardResetSafety(false)) {
             return false;
         }
+
+        // Stop the transport worker before modifying readyBlocks_ to prevent
+        // data races between the worker writing block.samples and the reconfigure
+        // resizing the ring buffer (TSAN race fix).
+        const bool wasRunning = outputTransportRunning_.load(std::memory_order_acquire);
+        if (wasRunning) {
+            outputTransportStopRequested_.store(true, std::memory_order_release);
+            outputTransportCv_.notify_all();
+            if (outputTransportWorker_.joinable()) {
+                outputTransportWorker_.join();
+            }
+            outputTransportRunning_.store(false, std::memory_order_release);
+        }
+
         std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
         if (!guardResetSafety(false)) {
             return false;
@@ -181,6 +195,16 @@ public:
         bumpTransportEpochLocked();
         resetTransportStats();
         outputTransportConfigured_ = true;
+
+        if (wasRunning) {
+            bumpTransportEpochLocked();
+            outputTransportStopRequested_.store(false, std::memory_order_release);
+            outputTransportRunning_.store(true, std::memory_order_release);
+            backendPausedOrClosed_.store(false, std::memory_order_release);
+            outputTransportWorker_ = std::thread([this]() { outputTransportWorkerLoop(); });
+            outputTransportCv_.notify_one();
+        }
+
         return true;
     }
 
