@@ -136,6 +136,12 @@ public:
         // Sync input stats from atomic counters (updated on the lockless fast path).
         stats_.inputPolls = inputPollsAtomic_.load(std::memory_order_relaxed);
         stats_.inputSamplesProvided = inputSamplesProvidedAtomic_.load(std::memory_order_relaxed);
+        // Sync event-pump stats from atomic counters (Phase 35B).
+        // Updated by collectBackendEvents/applyCollectedEvents (render thread,
+        // lock-free) and by pumpBackendEvents (headless slow path, under lock).
+        stats_.eventPumpCalls = eventPumpCallsAtomic_.load(std::memory_order_relaxed);
+        stats_.backendEventsTranslated = backendEventsTranslatedAtomic_.load(std::memory_order_relaxed);
+        stats_.renderServiceEventPumpCount = renderServiceEventPumpCountAtomic_.load(std::memory_order_relaxed);
         syncAudioTransportStats();
         return stats_;
     }
@@ -214,7 +220,9 @@ public:
         if (!config_.pumpBackendEventsOnInputSample) {
             handledEvents = pumpBackendEvents();
             if (handledEvents != 0u) {
-                ++stats_.renderServiceEventPumpCount;
+                // Mirror renderServiceEventPumpCount via atomic so stats() fold
+                // sees a unified total from both the render-service and headless paths.
+                renderServiceEventPumpCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
             }
         }
 
@@ -546,7 +554,9 @@ public:
 
     std::size_t pumpBackendEvents() override
     {
-        ++stats_.eventPumpCalls;
+        // Use the same atomic counters as collectBackendEvents() so that
+        // stats() sees a unified total regardless of which poll path ran.
+        eventPumpCallsAtomic_.fetch_add(1u, std::memory_order_relaxed);
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
         if (!backendReady_) {
             return 0;
@@ -561,7 +571,7 @@ public:
                 }
             }
         }
-        stats_.backendEventsTranslated += handled;
+        backendEventsTranslatedAtomic_.fetch_add(handled, std::memory_order_relaxed);
         return handled;
 #else
         return 0;
@@ -928,6 +938,58 @@ private:
         setRenderServiceState(BMMQ::SdlRenderServiceState::Stopped);
     }
 
+    // ──────────────────────────────────────────────────────────────────────────
+    // Render-service event helpers (Phase 35A)
+    // ──────────────────────────────────────────────────────────────────────────
+    // Collect SDL events WITHOUT holding sharedStateMutex_.
+    // Translates raw SDL_Events into typed SdlFrontendHostEvents stored in a
+    // caller-supplied stack buffer. Returns the count of events collected.
+    // Safe on the render thread without a lock: SDL_PollEvent uses SDL's own
+    // internal queue lock; the rendering thread is the sole poller.
+    // backendReady_ is read relaxed — a false-negative costs at most one skipped
+    // poll iteration; backendReady_ is written only under sharedStateMutex_.
+    static constexpr std::size_t kEventBatchCapacity = 64u;
+    using EventBatch = std::array<BMMQ::SdlFrontendHostEvent, kEventBatchCapacity>;
+
+    [[nodiscard]] std::size_t collectBackendEvents(EventBatch& batch) noexcept
+    {
+        eventPumpCallsAtomic_.fetch_add(1u, std::memory_order_relaxed);
+#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
+        if (!backendReady_) {
+            return 0u;
+        }
+        std::size_t count = 0u;
+        SDL_Event sdlEvent;
+        while (count < kEventBatchCapacity && SDL_PollEvent(&sdlEvent) != 0) {
+            if (const auto translated = translateSdlEvent(sdlEvent); translated.has_value()) {
+                batch[count++] = *translated;
+            }
+        }
+        backendEventsTranslatedAtomic_.fetch_add(count, std::memory_order_relaxed);
+        return count;
+#else
+        (void)batch;
+        return 0u;
+#endif
+    }
+
+    // Apply pre-collected host events WHILE holding sharedStateMutex_.
+    // Brief locked counterpart to collectBackendEvents(); mutates plugin state.
+    // Returns the number of events handled (same semantics as pumpBackendEvents).
+    std::size_t applyCollectedEvents(const EventBatch& batch, std::size_t count)
+    {
+        std::size_t handled = 0u;
+        for (std::size_t i = 0u; i < count; ++i) {
+            if (handleHostEvent(batch[i])) {
+                ++handled;
+            }
+        }
+        if (handled != 0u) {
+            renderServiceEventPumpCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
+        }
+        return handled;
+    }
+
     void renderServiceLoop()
     {
         setRenderServiceState(BMMQ::SdlRenderServiceState::Active);
@@ -935,16 +997,21 @@ private:
         const auto sleepInterval = std::chrono::milliseconds(2);
 
         while (!renderServiceStopRequested_.load(std::memory_order_acquire)) {
-            // ── First lock block: pump, sync, consume frame from engine ──────────
+            // ── Pre-lock: collect SDL events lock-free (Phase 35A) ───────────────
+            // SDL_PollEvent runs here WITHOUT sharedStateMutex_ so the emulation
+            // thread's onVideoEvent/onAudioEvent can deposit frames and PCM without
+            // waiting for SDL I/O to complete.
+            EventBatch eventBatch{};
+            const std::size_t eventCount = collectBackendEvents(eventBatch);
+
+            // ── First lock block: apply events, sync, consume frame ──────────────
             std::optional<BMMQ::VideoFramePacket> processedFrame;
             {
                 std::unique_lock<std::mutex> lock(sharedStateMutex_);
                 ++stats_.renderServiceLoopCount;
                 renderServiceFramePending_.store(false, std::memory_order_relaxed);
-                const auto handled = pumpBackendEvents();
-                if (handled != 0u) {
-                    ++stats_.renderServiceEventPumpCount;
-                }
+                // Apply pre-collected events under the lock (state mutation).
+                applyCollectedEvents(eventBatch, eventCount);
                 ++stats_.renderServiceLightweightSyncCount;
                 syncPresentDecisionState();
                 const bool hadFrame = config_.enableVideo && lastFrame_.has_value();
@@ -2117,8 +2184,18 @@ private:
     // Written by render/SDL thread; read locklessly by emulation thread in
     // sampleDigitalInput(). The sentinel value -1 encodes std::nullopt semantics.
     std::atomic<int32_t> queuedDigitalInputMask_{-1};
+    // Input sampling shadow atomics (Phase 34B).
     std::atomic<uint64_t> inputPollsAtomic_{0};
     std::atomic<uint64_t> inputSamplesProvidedAtomic_{0};
+    // Event-pump shadow atomics (Phase 35B).
+    // collectBackendEvents() increments eventPumpCallsAtomic_ and
+    // backendEventsTranslatedAtomic_ lock-free on the render thread.
+    // pumpBackendEvents() (headless/slow path) also increments these
+    // via the stats fold in stats() rather than direct atomic writes,
+    // keeping that slow path unchanged.
+    std::atomic<uint64_t> eventPumpCallsAtomic_{0};
+    std::atomic<uint64_t> backendEventsTranslatedAtomic_{0};
+    std::atomic<uint64_t> renderServiceEventPumpCountAtomic_{0};
     bool quitRequested_ = false;
     bool windowVisible_ = false;
     bool windowVisibilityRequested_ = false;
