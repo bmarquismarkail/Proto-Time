@@ -52,6 +52,24 @@ int main()
     assert(service.diagnostics().activePresenterMode == BMMQ::VideoPresenterMode::Software);
     assert(service.diagnostics().presenterTextureUploadCount >= 1u);
     assert(service.diagnostics().presenterRenderCount >= 1u);
+        assert(service.diagnostics().presenterPresentDurationSampleCount >= 1u);
+        assert(service.diagnostics().presenterPresentDurationP95Nanos >=
+            service.diagnostics().presenterPresentDurationP50Nanos);
+        assert(service.diagnostics().presenterPresentDurationP99Nanos >=
+            service.diagnostics().presenterPresentDurationP95Nanos);
+        assert(service.diagnostics().presenterPresentDurationP999Nanos >=
+            service.diagnostics().presenterPresentDurationP99Nanos);
+        const auto softwareBucketTotal =
+         service.diagnostics().presenterPresentDurationUnder50usCount +
+         service.diagnostics().presenterPresentDuration50To100usCount +
+         service.diagnostics().presenterPresentDuration100To250usCount +
+         service.diagnostics().presenterPresentDuration250To500usCount +
+         service.diagnostics().presenterPresentDuration500usTo1msCount +
+         service.diagnostics().presenterPresentDuration1To2msCount +
+         service.diagnostics().presenterPresentDuration2To5msCount +
+         service.diagnostics().presenterPresentDuration5To10msCount +
+         service.diagnostics().presenterPresentDurationOver10msCount;
+        assert(softwareBucketTotal == service.diagnostics().presenterPresentDurationSampleCount);
     assert(service.pause());
 
     assert(service.configurePresenter({
@@ -67,6 +85,7 @@ int main()
     assert(service.submitFrame(BMMQ::makeBlankVideoFrame(8, 8, 13u)));
     (void)service.presentOneFrame();
     assert(service.diagnostics().configuredPresenterMode == BMMQ::VideoPresenterMode::Auto);
+    assert(service.diagnostics().presenterPresentDurationSampleCount >= 1u);
     assert(service.pause());
 
     assert(service.configurePresenter({
@@ -83,6 +102,7 @@ int main()
         assert(service.submitFrame(BMMQ::makeBlankVideoFrame(8, 8, 14u)));
         (void)service.presentOneFrame();
         assert(service.diagnostics().activePresenterMode == BMMQ::VideoPresenterMode::Hardware);
+        assert(service.diagnostics().presenterPresentDurationSampleCount >= 1u);
         assert(service.pause());
     } else {
         assert(service.state() == BMMQ::VideoLifecycleState::Faulted);

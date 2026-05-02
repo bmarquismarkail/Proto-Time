@@ -214,7 +214,12 @@ bool SdlVideoPresenter::present(const VideoFramePacket& frame) noexcept
             return false;
         }
     }
+    const auto presentStart = std::chrono::high_resolution_clock::now();
     SDL_RenderPresent(renderer_);
+    const auto presentEnd = std::chrono::high_resolution_clock::now();
+    const auto presentDurationNanos =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(presentEnd - presentStart).count();
+    updatePresentDurationMetric(presentDurationNanos);
     ++diagnostics_.presentCount;
     lastError_.clear();
     return true;
@@ -282,15 +287,26 @@ bool SdlVideoPresenter::ensureRenderer(int frameWidth, int frameHeight) noexcept
         return true;
     };
 
+    auto createHardwareRenderer = [&](uint32_t flags) -> bool {
+        renderer_ = SDL_CreateRenderer(window_, -1, static_cast<int>(flags));
+        if (renderer_ == nullptr) {
+            return false;
+        }
+        diagnostics_.activeMode = VideoPresenterMode::Hardware;
+        SDL_RenderSetLogicalSize(renderer_, frameWidth, frameHeight);
+        assignRendererMetadata();
+        return true;
+    };
+
     if (config_.mode == VideoPresenterMode::Software) {
         return createSoftwareRenderer();
     }
 
-    renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-    if (renderer_ != nullptr) {
-        diagnostics_.activeMode = VideoPresenterMode::Hardware;
-        SDL_RenderSetLogicalSize(renderer_, frameWidth, frameHeight);
-        assignRendererMetadata();
+    if (createHardwareRenderer(SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC)) {
+        return true;
+    }
+
+    if (createHardwareRenderer(SDL_RENDERER_ACCELERATED)) {
         return true;
     }
 
@@ -386,6 +402,90 @@ bool SdlVideoPresenter::ensureTexture(int frameWidth, int frameHeight) noexcept
     (void)frameHeight;
     return false;
 #endif
+}
+
+void SdlVideoPresenter::updatePresentDurationMetric(std::int64_t durationNanos) noexcept
+{
+    diagnostics_.presenterPresentDurationLastNanos = durationNanos;
+    diagnostics_.presenterPresentDurationHighWaterNanos =
+        std::max(diagnostics_.presenterPresentDurationHighWaterNanos, durationNanos);
+
+    constexpr std::int64_t us50 = 50'000;
+    constexpr std::int64_t us100 = 100'000;
+    constexpr std::int64_t us250 = 250'000;
+    constexpr std::int64_t us500 = 500'000;
+    constexpr std::int64_t ms1 = 1'000'000;
+    constexpr std::int64_t ms2 = 2'000'000;
+    constexpr std::int64_t ms5 = 5'000'000;
+    constexpr std::int64_t ms10 = 10'000'000;
+
+    if (durationNanos < us50) {
+        ++diagnostics_.presenterPresentDurationUnder50usCount;
+    } else if (durationNanos < us100) {
+        ++diagnostics_.presenterPresentDuration50To100usCount;
+    } else if (durationNanos < us250) {
+        ++diagnostics_.presenterPresentDuration100To250usCount;
+    } else if (durationNanos < us500) {
+        ++diagnostics_.presenterPresentDuration250To500usCount;
+    } else if (durationNanos < ms1) {
+        ++diagnostics_.presenterPresentDuration500usTo1msCount;
+    } else if (durationNanos < ms2) {
+        ++diagnostics_.presenterPresentDuration1To2msCount;
+    } else if (durationNanos < ms5) {
+        ++diagnostics_.presenterPresentDuration2To5msCount;
+    } else if (durationNanos < ms10) {
+        ++diagnostics_.presenterPresentDuration5To10msCount;
+    } else {
+        ++diagnostics_.presenterPresentDurationOver10msCount;
+    }
+
+    const auto sampleCount = ++diagnostics_.presenterPresentDurationSampleCount;
+    const auto targetP50 = (sampleCount + 1u) / 2u;
+    const auto targetP95 = (sampleCount * 95u + 99u) / 100u;
+    const auto targetP99 = (sampleCount * 99u + 99u) / 100u;
+    const auto targetP999 = (sampleCount * 999u + 999u) / 1000u;
+
+    const auto estimateAtRank = [&](std::size_t rank) -> std::int64_t {
+        std::size_t cumulative = 0u;
+        cumulative += diagnostics_.presenterPresentDurationUnder50usCount;
+        if (rank <= cumulative) {
+            return us50;
+        }
+        cumulative += diagnostics_.presenterPresentDuration50To100usCount;
+        if (rank <= cumulative) {
+            return us100;
+        }
+        cumulative += diagnostics_.presenterPresentDuration100To250usCount;
+        if (rank <= cumulative) {
+            return us250;
+        }
+        cumulative += diagnostics_.presenterPresentDuration250To500usCount;
+        if (rank <= cumulative) {
+            return us500;
+        }
+        cumulative += diagnostics_.presenterPresentDuration500usTo1msCount;
+        if (rank <= cumulative) {
+            return ms1;
+        }
+        cumulative += diagnostics_.presenterPresentDuration1To2msCount;
+        if (rank <= cumulative) {
+            return ms2;
+        }
+        cumulative += diagnostics_.presenterPresentDuration2To5msCount;
+        if (rank <= cumulative) {
+            return ms5;
+        }
+        cumulative += diagnostics_.presenterPresentDuration5To10msCount;
+        if (rank <= cumulative) {
+            return ms10;
+        }
+        return std::max(ms10, diagnostics_.presenterPresentDurationHighWaterNanos);
+    };
+
+    diagnostics_.presenterPresentDurationP50Nanos = estimateAtRank(targetP50);
+    diagnostics_.presenterPresentDurationP95Nanos = estimateAtRank(targetP95);
+    diagnostics_.presenterPresentDurationP99Nanos = estimateAtRank(targetP99);
+    diagnostics_.presenterPresentDurationP999Nanos = estimateAtRank(targetP999);
 }
 
 } // namespace BMMQ

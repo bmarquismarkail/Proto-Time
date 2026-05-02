@@ -72,6 +72,9 @@ constexpr std::size_t kApuFrameSamples = 256u;
 
 [[nodiscard]] BMMQ::VideoPresenterMode presenterModeForPolicy(BMMQ::VideoPresenterPolicy policy) noexcept
 {
+    // Policy is the authoritative selector for runtime presenter mode.
+    // SoftwareOnly always forces software; hardware-preferred attempts
+    // hardware and lets the presenter apply fallback policy.
     switch (policy) {
     case BMMQ::VideoPresenterPolicy::SoftwareOnly:
         return BMMQ::VideoPresenterMode::Software;
