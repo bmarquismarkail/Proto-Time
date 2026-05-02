@@ -149,8 +149,11 @@ public:
         return state_;
     }
 
-    [[nodiscard]] const VideoServiceDiagnostics& diagnostics() const noexcept
+    // Thread-safe diagnostics snapshot. Callers do not need to hold
+    // external serialization; this method acquires the service mutex.
+    [[nodiscard]] VideoServiceDiagnostics diagnostics() const
     {
+        std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
         syncEngineDiagnostics();
         return diagnostics_;
     }

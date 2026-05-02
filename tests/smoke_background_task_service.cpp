@@ -1,8 +1,10 @@
 #include <atomic>
 #include <cassert>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <thread>
 
 #include "machine/BackgroundTaskService.hpp"
@@ -48,6 +50,44 @@ int main()
 
     const bool queuedAfterShutdown = service.submit([]() {});
     assert(!queuedAfterShutdown);
+
+    // Bounded queue behavior: reject on full queue and track pending high-water.
+    BMMQ::BackgroundTaskService boundedService(2u);
+    boundedService.start();
+
+    std::mutex gateMutex;
+    std::condition_variable gateCv;
+    bool allowFirstTaskToFinish = false;
+    std::atomic<bool> firstTaskRunning{false};
+
+    const bool firstQueued = boundedService.submit([&]() {
+        firstTaskRunning.store(true, std::memory_order_release);
+        std::unique_lock<std::mutex> lock(gateMutex);
+        gateCv.wait(lock, [&allowFirstTaskToFinish]() {
+            return allowFirstTaskToFinish;
+        });
+    });
+    assert(firstQueued);
+    while (!firstTaskRunning.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+    assert(boundedService.submit([]() {}));
+    assert(boundedService.submit([]() {}));
+    assert(!boundedService.submit([]() {}));
+
+    {
+        std::lock_guard<std::mutex> lock(gateMutex);
+        allowFirstTaskToFinish = true;
+    }
+    gateCv.notify_all();
+
+    boundedService.shutdown();
+    const auto boundedStats = boundedService.stats();
+    assert(boundedStats.tasksSubmitted == 3u);
+    assert(boundedStats.tasksRejected >= 1u);
+    assert(boundedStats.tasksCompleted == boundedStats.tasksSubmitted);
+    assert(boundedStats.tasksPending == 0u);
+    assert(boundedStats.tasksHighWaterPending >= 3u);
 
     return 0;
 }

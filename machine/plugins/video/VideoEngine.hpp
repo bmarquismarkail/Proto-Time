@@ -249,6 +249,8 @@ public:
         return lastValidFrame_;
     }
 
+    // Returns a live diagnostics structure. Callers should externally
+    // serialize access if producer/consumer activity can run concurrently.
     [[nodiscard]] const VideoEngineStats& stats() const noexcept
     {
         return stats_;

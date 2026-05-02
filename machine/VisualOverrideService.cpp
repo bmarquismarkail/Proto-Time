@@ -4,46 +4,20 @@
 #include <array>
 #include <cctype>
 #include <cstdlib>
-#include <cstring>
 #include <fstream>
 #include <iterator>
-#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
 #include <variant>
 
-#include <zlib.h>
-
 #include "ImageDecoder.hpp"
+#include "PngDecode.hpp"
 #include "VisualPackLimits.hpp"
 
 namespace BMMQ {
 namespace {
-
-[[nodiscard]] uint32_t readBigEndian32(std::span<const uint8_t> bytes, std::size_t offset) noexcept
-{
-    return (static_cast<uint32_t>(bytes[offset]) << 24u) |
-           (static_cast<uint32_t>(bytes[offset + 1u]) << 16u) |
-           (static_cast<uint32_t>(bytes[offset + 2u]) << 8u) |
-           static_cast<uint32_t>(bytes[offset + 3u]);
-}
-
-[[nodiscard]] uint8_t paethPredictor(uint8_t left, uint8_t up, uint8_t upLeft) noexcept
-{
-    const int p = static_cast<int>(left) + static_cast<int>(up) - static_cast<int>(upLeft);
-    const int pa = std::abs(p - static_cast<int>(left));
-    const int pb = std::abs(p - static_cast<int>(up));
-    const int pc = std::abs(p - static_cast<int>(upLeft));
-    if (pa <= pb && pa <= pc) {
-        return left;
-    }
-    if (pb <= pc) {
-        return up;
-    }
-    return upLeft;
-}
 
 [[nodiscard]] bool targetsMachine(const VisualPackManifest& pack, const std::string& machineId) noexcept
 {
@@ -733,10 +707,9 @@ std::optional<VisualReplacementImage> VisualOverrideService::loadPng(const std::
 
     // Phase 32: Try async decode if available
     if (imageDecoder_ != nullptr && !bytes.empty()) {
-        DecodeSnapshot snapshot{
-            .decodeId = key,
-            .pngData = std::span<const uint8_t>(bytes),
-        };
+        DecodeSnapshot snapshot{};
+        snapshot.decodeId = key;
+        snapshot.pngData = bytes;
         ++diagnostics_.asyncDecodeSubmissions;
         auto future = imageDecoder_->decodeAsync(snapshot);
 
@@ -770,115 +743,19 @@ std::optional<VisualReplacementImage> VisualOverrideService::loadPng(const std::
         }
     }
 
-    // Fallback: synchronous PNG decode (original code)
-    constexpr std::array<uint8_t, 8> kPngSignature{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
-    if (bytes.size() < kPngSignature.size() ||
-        !std::equal(kPngSignature.begin(), kPngSignature.end(), bytes.begin())) {
-        return std::nullopt;
-    }
-
-    uint32_t width = 0;
-    uint32_t height = 0;
-    uint8_t bitDepth = 0;
-    uint8_t colorType = 0;
-    std::vector<uint8_t> idat;
-    std::size_t offset = kPngSignature.size();
-    while (offset + 12u <= bytes.size()) {
-        const auto length = readBigEndian32(bytes, offset);
-        offset += 4u;
-        if (offset + 4u + length + 4u > bytes.size()) {
-            return std::nullopt;
+    // Fallback: synchronous decode using the same decoder as async path.
+    auto decoded = decodePngToRgba(bytes);
+    if (!decoded.success) {
+        if (!decoded.error.empty()) {
+            lastError_ = decoded.error;
         }
-        const std::string type(reinterpret_cast<const char*>(bytes.data() + offset), 4u);
-        offset += 4u;
-        const auto dataOffset = offset;
-        offset += length;
-        offset += 4u;
-
-        if (type == "IHDR") {
-            if (length != 13u) {
-                return std::nullopt;
-            }
-            width = readBigEndian32(bytes, dataOffset);
-            height = readBigEndian32(bytes, dataOffset + 4u);
-            bitDepth = bytes[dataOffset + 8u];
-            colorType = bytes[dataOffset + 9u];
-            const auto compression = bytes[dataOffset + 10u];
-            const auto filter = bytes[dataOffset + 11u];
-            const auto interlace = bytes[dataOffset + 12u];
-            if (width > VisualPackLimits::kMaxReplacementImageDimension ||
-                height > VisualPackLimits::kMaxReplacementImageDimension) {
-                lastError_ = "replacement PNG dimensions too large: width=" + std::to_string(width) +
-                    " height=" + std::to_string(height) +
-                    " max=" + std::to_string(VisualPackLimits::kMaxReplacementImageDimension);
-                return std::nullopt;
-            }
-            if (width == 0u || height == 0u || bitDepth != 8u ||
-                (colorType != 2u && colorType != 6u) ||
-                compression != 0u || filter != 0u || interlace != 0u) {
-                return std::nullopt;
-            }
-        } else if (type == "IDAT") {
-            idat.insert(idat.end(), bytes.begin() + static_cast<std::ptrdiff_t>(dataOffset),
-                        bytes.begin() + static_cast<std::ptrdiff_t>(dataOffset + length));
-        } else if (type == "IEND") {
-            break;
-        }
-    }
-
-    const std::size_t channels = colorType == 6u ? 4u : 3u;
-    const std::size_t stride = static_cast<std::size_t>(width) * channels;
-    const std::size_t inflatedSize = (stride + 1u) * static_cast<std::size_t>(height);
-    if (inflatedSize > VisualPackLimits::kMaxReplacementInflatedBytes) {
-        lastError_ = "replacement PNG inflated data too large: bytes=" + std::to_string(inflatedSize) +
-            " max=" + std::to_string(VisualPackLimits::kMaxReplacementInflatedBytes);
         return std::nullopt;
-    }
-    std::vector<uint8_t> inflated(inflatedSize);
-    auto destinationSize = static_cast<uLongf>(inflated.size());
-    if (uncompress(inflated.data(), &destinationSize, idat.data(), static_cast<uLong>(idat.size())) != Z_OK ||
-        destinationSize != inflated.size()) {
-        return std::nullopt;
-    }
-
-    std::vector<uint8_t> decoded(stride * static_cast<std::size_t>(height));
-    for (std::size_t y = 0; y < height; ++y) {
-        const auto filter = inflated[y * (stride + 1u)];
-        const auto* source = inflated.data() + y * (stride + 1u) + 1u;
-        auto* output = decoded.data() + y * stride;
-        const auto* previous = y == 0u ? nullptr : decoded.data() + (y - 1u) * stride;
-        for (std::size_t x = 0; x < stride; ++x) {
-            const auto left = x >= channels ? output[x - channels] : 0u;
-            const auto up = previous != nullptr ? previous[x] : 0u;
-            const auto upLeft = previous != nullptr && x >= channels ? previous[x - channels] : 0u;
-            uint8_t predictor = 0;
-            switch (filter) {
-            case 0:
-                predictor = 0;
-                break;
-            case 1:
-                predictor = left;
-                break;
-            case 2:
-                predictor = up;
-                break;
-            case 3:
-                predictor = static_cast<uint8_t>((static_cast<uint16_t>(left) + static_cast<uint16_t>(up)) / 2u);
-                break;
-            case 4:
-                predictor = paethPredictor(left, up, upLeft);
-                break;
-            default:
-                return std::nullopt;
-            }
-            output[x] = static_cast<uint8_t>(source[x] + predictor);
-        }
     }
 
     VisualReplacementImage image;
-    image.width = width;
-    image.height = height;
-    const auto pixelCount = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+    image.width = decoded.image.width;
+    image.height = decoded.image.height;
+    const auto pixelCount = static_cast<std::size_t>(decoded.image.width) * static_cast<std::size_t>(decoded.image.height);
     const auto imageBytes = pixelCount * sizeof(uint32_t);
     if (imageBytes > VisualPackLimits::kMaxReplacementCacheBytes || !evictImageCacheFor(imageBytes)) {
         lastError_ = "replacement image cache budget exceeded: requested=" + std::to_string(imageBytes) +
@@ -886,18 +763,7 @@ std::optional<VisualReplacementImage> VisualOverrideService::loadPng(const std::
             " max=" + std::to_string(VisualPackLimits::kMaxReplacementCacheBytes);
         return std::nullopt;
     }
-    image.argbPixels.reserve(pixelCount);
-    for (std::size_t i = 0; i < pixelCount; ++i) {
-        const auto base = i * channels;
-        const auto r = decoded[base];
-        const auto g = decoded[base + 1u];
-        const auto b = decoded[base + 2u];
-        const auto a = channels == 4u ? decoded[base + 3u] : 0xFFu;
-        image.argbPixels.push_back((static_cast<uint32_t>(a) << 24u) |
-                                   (static_cast<uint32_t>(r) << 16u) |
-                                   (static_cast<uint32_t>(g) << 8u) |
-                                   static_cast<uint32_t>(b));
-    }
+    image.argbPixels = std::move(decoded.image.argbPixels);
     imageCache_.emplace(key, CachedReplacementImage{
         .image = image,
         .bytes = imageBytes,

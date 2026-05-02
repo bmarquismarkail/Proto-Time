@@ -3,20 +3,24 @@
 #endif
 
 #include <cassert>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <variant>
 #include <vector>
 
+#include "cores/gameboy/video/GameBoyVisualExtractor.hpp"
 #include "machine/BackgroundTaskService.hpp"
 #include "machine/ImageDecoder.hpp"
 #include "machine/VisualOverrideService.hpp"
+#include "machine/VisualTypes.hpp"
 #include "tests/visual_test_helpers.hpp"
 
 namespace {
 
 // Create a minimal visual pack with PNG image for testing
-std::string makeTestManifestWithImage(const std::string& imagePath)
+std::string makeTestManifestWithImage(const std::string& imagePath, BMMQ::VisualResourceHash decodedHash)
 {
     return R"({
   "schemaVersion": 1,
@@ -27,7 +31,7 @@ std::string makeTestManifestWithImage(const std::string& imagePath)
     {
       "match": {
         "kind": "Tile",
-        "decodedHash": "0000000000000000",
+        "decodedHash": ")" + BMMQ::toHexVisualHash(decodedHash) + R"(",
         "width": 8,
         "height": 8
       },
@@ -45,6 +49,12 @@ int main()
 {
     namespace Visual = BMMQ::Tests::Visual;
 
+  auto tileState = Visual::makeTileState(0xFFu, 0x00u);
+  auto decodedResource = GB::decodeGameBoyTileResource(tileState, 0u, BMMQ::VisualResourceKind::Tile);
+  assert(decodedResource.has_value());
+  const auto descriptor = decodedResource->descriptor;
+  constexpr std::uint32_t kExpectedArgb = 0xFF3366CCu;
+
     const auto testDir = std::filesystem::temp_directory_path() / "bmmq_visual_decode_integration_smoke";
     std::filesystem::remove_all(testDir);
     std::filesystem::create_directories(testDir);
@@ -56,13 +66,24 @@ int main()
 
         // Create test pack
         const auto imagePath = testDir / "test1.png";
-        Visual::writeBinaryFile(imagePath, Visual::makePng2x2Rgba());
+        Visual::writeBinaryFile(imagePath, Visual::makeSolidPng2x2Rgba(kExpectedArgb));
 
         const auto manifestPath = testDir / "test1_manifest.json";
-        Visual::writeTextFile(manifestPath, makeTestManifestWithImage("test1.png"));
+        Visual::writeTextFile(manifestPath, makeTestManifestWithImage("test1.png", descriptor.contentHash));
 
         const auto loaded = service.loadPackManifest(manifestPath);
         assert(loaded);
+
+        const auto resolved = service.resolve(descriptor);
+        assert(resolved.has_value());
+        assert(std::holds_alternative<BMMQ::VisualReplacementImage>(resolved->payload));
+        const auto& image = std::get<BMMQ::VisualReplacementImage>(resolved->payload);
+        assert(image.width == 2u);
+        assert(image.height == 2u);
+        assert(image.argbPixels.size() == 4u);
+        for (const auto pixel : image.argbPixels) {
+          assert(pixel == kExpectedArgb);
+        }
 
         // Verify diagnostics are at zero (no async work)
         auto diags = service.diagnostics();
@@ -83,19 +104,28 @@ int main()
 
         // Create test pack
         const auto imagePath = testDir / "test2.png";
-        Visual::writeBinaryFile(imagePath, Visual::makePng2x2Rgba());
+        Visual::writeBinaryFile(imagePath, Visual::makeSolidPng2x2Rgba(kExpectedArgb));
 
         const auto manifestPath = testDir / "test2_manifest.json";
-        Visual::writeTextFile(manifestPath, makeTestManifestWithImage("test2.png"));
+        Visual::writeTextFile(manifestPath, makeTestManifestWithImage("test2.png", descriptor.contentHash));
 
         const auto loaded = service.loadPackManifest(manifestPath);
         assert(loaded);
 
-        // Get diagnostics to see if async decode was attempted
+        const auto resolved = service.resolve(descriptor);
+        assert(resolved.has_value());
+        assert(std::holds_alternative<BMMQ::VisualReplacementImage>(resolved->payload));
+        const auto& image = std::get<BMMQ::VisualReplacementImage>(resolved->payload);
+        assert(image.width == 2u);
+        assert(image.height == 2u);
+        assert(image.argbPixels.size() == 4u);
+        for (const auto pixel : image.argbPixels) {
+          assert(pixel == kExpectedArgb);
+        }
+
         auto diags = service.diagnostics();
-        // Note: Since loadPackManifest doesn't actually load images, we won't see async submissions here.
-        // In a full test, we'd trigger image loading through resolve().
-        // For MVP, we just verify the infrastructure is in place.
+        assert(diags.asyncDecodeSubmissions >= 1u);
+        assert(diags.asyncDecodePollsReady + diags.asyncDecodePollsNotReady >= 1u);
 
         bgService.shutdown();
     }
@@ -118,19 +148,21 @@ int main()
 
         // Create test pack with image
         const auto imagePath = testDir / "test3.png";
-        Visual::writeBinaryFile(imagePath, Visual::makePng2x2Rgba());
+        Visual::writeBinaryFile(imagePath, Visual::makeSolidPng2x2Rgba(kExpectedArgb));
 
         const auto manifestPath = testDir / "test3_manifest.json";
-        Visual::writeTextFile(manifestPath, makeTestManifestWithImage("test3.png"));
+        Visual::writeTextFile(manifestPath, makeTestManifestWithImage("test3.png", descriptor.contentHash));
 
-        service.loadPackManifest(manifestPath);
+        assert(service.loadPackManifest(manifestPath));
+        const auto resolved = service.resolve(descriptor);
+        assert(resolved.has_value());
 
         // Final diagnostics
         auto finalDiags = service.diagnostics();
 
-        // We might see some async decode submissions if resolve() was triggered
-        // (In this test, it wasn't, but the infrastructure is ready)
-        assert(finalDiags.asyncDecodeSubmissions >= initialSubmissions);
+        assert(finalDiags.asyncDecodeSubmissions > initialSubmissions);
+        assert(finalDiags.asyncDecodePollsReady >= initialReady);
+        assert(finalDiags.asyncDecodePollsNotReady >= initialNotReady);
 
         bgService.shutdown();
     }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <future>
 #include <memory>
 #include <string>
@@ -41,11 +42,20 @@ public:
         std::size_t decodeSynchronouslyFallbacks = 0;
     };
 
-    [[nodiscard]] const Statistics& stats() const noexcept { return stats_; }
+    [[nodiscard]] Statistics stats() const noexcept;
 
 private:
+    struct AtomicStatistics {
+        std::atomic<std::size_t> decodeSubmissions{0};
+        std::atomic<std::size_t> decodeSuccesses{0};
+        std::atomic<std::size_t> decodeFailures{0};
+        std::atomic<std::size_t> decodeSynchronouslyFallbacks{0};
+    };
+
+    [[nodiscard]] static Statistics snapshotStatistics(const AtomicStatistics& stats) noexcept;
+
     BackgroundTaskService* bgTaskService_;
-    mutable Statistics stats_;
+    AtomicStatistics stats_{};
 };
 
 } // namespace BMMQ

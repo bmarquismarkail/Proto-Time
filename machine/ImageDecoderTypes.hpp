@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <span>
 #include <string>
 #include <vector>
 
@@ -13,8 +12,9 @@ struct DecodeSnapshot {
     // Unique identifier for this decode operation (for logging/diagnostics)
     std::string decodeId;
 
-    // PNG binary data (span does not own; caller retains lifetime)
-    std::span<const std::uint8_t> pngData;
+    // PNG binary data owned by the snapshot so async workers never observe
+    // dangling caller memory.
+    std::vector<std::uint8_t> pngData;
 
     // Target output dimensions (0 = preserve original)
     std::uint32_t targetWidth = 0;

@@ -16,11 +16,18 @@ struct BackgroundTaskStats {
     std::size_t tasksCompleted = 0;
     std::size_t tasksPending = 0;
     std::size_t taskFailures = 0;
+    std::size_t tasksRejected = 0;
+    std::size_t tasksHighWaterPending = 0;
 };
 
 class BackgroundTaskService final {
 public:
-    BackgroundTaskService() = default;
+    static constexpr std::size_t kDefaultMaxQueuedTasks = 1024u;
+
+    explicit BackgroundTaskService(std::size_t maxQueuedTasks = kDefaultMaxQueuedTasks) noexcept
+        : maxQueuedTasks_(maxQueuedTasks == 0u ? 1u : maxQueuedTasks)
+    {
+    }
 
     BackgroundTaskService(const BackgroundTaskService&) = delete;
     BackgroundTaskService& operator=(const BackgroundTaskService&) = delete;
@@ -65,9 +72,21 @@ public:
             if (!running_ || stopRequested_) {
                 return false;
             }
+            if (queue_.size() >= maxQueuedTasks_) {
+                tasksRejected_.fetch_add(1u, std::memory_order_relaxed);
+                return false;
+            }
             queue_.push_back(std::move(task));
             tasksSubmitted_.fetch_add(1u, std::memory_order_relaxed);
-            tasksPending_.fetch_add(1u, std::memory_order_relaxed);
+            const auto pending = tasksPending_.fetch_add(1u, std::memory_order_relaxed) + 1u;
+            auto highWater = tasksHighWaterPending_.load(std::memory_order_relaxed);
+            while (pending > highWater &&
+                   !tasksHighWaterPending_.compare_exchange_weak(
+                       highWater,
+                       pending,
+                       std::memory_order_relaxed,
+                       std::memory_order_relaxed)) {
+            }
         }
         cv_.notify_one();
         return true;
@@ -80,6 +99,8 @@ public:
             tasksCompleted_.load(std::memory_order_relaxed),
             tasksPending_.load(std::memory_order_relaxed),
             taskFailures_.load(std::memory_order_relaxed),
+            tasksRejected_.load(std::memory_order_relaxed),
+            tasksHighWaterPending_.load(std::memory_order_relaxed),
         };
     }
 
@@ -119,11 +140,14 @@ private:
     std::thread worker_{};
     bool running_ = false;
     bool stopRequested_ = false;
+    const std::size_t maxQueuedTasks_;
 
     std::atomic<std::size_t> tasksSubmitted_{0};
     std::atomic<std::size_t> tasksCompleted_{0};
     std::atomic<std::size_t> tasksPending_{0};
     std::atomic<std::size_t> taskFailures_{0};
+    std::atomic<std::size_t> tasksRejected_{0};
+    std::atomic<std::size_t> tasksHighWaterPending_{0};
 };
 
 } // namespace BMMQ

@@ -35,6 +35,7 @@ add_library(time-machine-runtime-common STATIC
     machine/VisualCaptureWriter.cpp
     machine/VisualOverrideService.cpp
     machine/VisualPackManifest.cpp
+    machine/PngDecode.cpp
     machine/ImageDecoder.cpp
     machine/DebugSnapshotService.cpp
 )

@@ -148,6 +148,8 @@ public:
         // Sync Phase 36A stat: frame notifications sent outside the lock.
         stats_.onVideoEventFrameNotifyOutsideLockCount =
             onVideoEventFrameNotifyOutsideLockCountAtomic_.load(std::memory_order_relaxed);
+        stats_.videoDebugModelBuildSkipCount =
+            videoDebugModelBuildSkipCountAtomic_.load(std::memory_order_relaxed);
         // Sync Phase 36B render-service wait-block shadow atomics.
         // Written under renderServiceWaitMutex_ (or no lock), so must be
         // folded in here rather than written directly to stats_.
@@ -750,7 +752,7 @@ public:
                 .frameHeight = std::max(config_.frameHeight, 1),
             });
         } else if (carriesVideoStateEarly) {
-            ++stats_.videoDebugModelBuildSkipCount;
+            videoDebugModelBuildSkipCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
         }
 
         // submittedVideoFrame is hoisted before the lock so it is visible to the
@@ -2303,6 +2305,7 @@ private:
     // (renderServiceFramePending_ store + condvar notify) was sent after
     // sharedStateMutex_ was released, reducing VBlank lock hold time.
     std::atomic<uint64_t> onVideoEventFrameNotifyOutsideLockCountAtomic_{0};
+    std::atomic<uint64_t> videoDebugModelBuildSkipCountAtomic_{0};
     // Phase 36B render-service wait-block shadow atomics.
     // These are incremented inside the renderServiceWaitMutex_ condvar block (or
     // just before it, under no lock), so they cannot be written directly to stats_

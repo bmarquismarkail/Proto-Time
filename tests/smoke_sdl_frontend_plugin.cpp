@@ -206,6 +206,7 @@ int main(int argc, char** argv)
     const auto framesPreparedBeforeManualPublish = frontend->stats().framesPrepared;
     const auto videoRealtimePacketsBeforeManualPublish = frontend->stats().videoRealtimePacketsAccepted;
     const auto videoDebugSnapshotsBeforeManualPublish = frontend->stats().videoDebugSnapshotsBuilt;
+    const auto videoDebugSkipCountBeforeManualPublish = frontend->stats().videoDebugModelBuildSkipCount;
     frontend->onVideoEvent(BMMQ::MachineEvent{
         BMMQ::MachineEventType::VBlank,
         BMMQ::PluginCategory::Video,
@@ -219,6 +220,7 @@ int main(int argc, char** argv)
     assert(frontend->stats().renderAttempts == renderAttemptsBeforeManualPublish);
     assert(frontend->stats().videoRealtimePacketsAccepted == videoRealtimePacketsBeforeManualPublish + 1u);
     assert(frontend->stats().videoDebugSnapshotsBuilt == videoDebugSnapshotsBeforeManualPublish);
+    assert(frontend->stats().videoDebugModelBuildSkipCount == videoDebugSkipCountBeforeManualPublish + 1u);
     if (frontend->backendReady()) {
         assert(frontend->serviceFrontend());
     }
@@ -295,6 +297,7 @@ int main(int argc, char** argv)
     assert(stats.videoRealtimePacketsAccepted >= stats.framesPrepared);
     // Phase 25: realtime packets are built outside sharedStateMutex_ in onVideoEvent(); counter must track this
     assert(stats.videoRealtimePacketsBuiltOutsideLock >= stats.videoRealtimePacketsAccepted);
+    assert(stats.videoDebugModelBuildSkipCount <= stats.videoEvents);
     // Phase 26: SDL present is called outside sharedStateMutex_ in renderServiceLoop(); counter must track this
     assert(stats.renderServicePresentCallsOutsideLock >= stats.renderServicePresentSuccessCount);
     // Phase 27: render loop uses lightweight sync per iteration; full sync only on present

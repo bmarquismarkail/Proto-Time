@@ -420,8 +420,9 @@ public:
     [[nodiscard]] virtual std::size_t pumpBackendEvents() = 0;
 
     /// Inject an optional DebugSnapshotService.  When set, the plugin routes
-    /// video debug model and audio state captures through the service queue so
-    /// the render thread can drain them lock-free in serviceFrontend().
+    /// video debug model and audio state captures through bounded service queues
+    /// (mutex-protected in the current implementation) so the render thread can
+    /// drain them from serviceFrontend() without mutating emulation-lane state.
     /// Pass nullptr to disable (falls back to the inline sharedStateMutex_ path).
     virtual void setDebugSnapshotService(DebugSnapshotService* service) noexcept = 0;
     [[nodiscard]] virtual DebugSnapshotService* debugSnapshotService() const noexcept = 0;
