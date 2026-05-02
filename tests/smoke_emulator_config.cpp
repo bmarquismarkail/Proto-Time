@@ -80,6 +80,8 @@ int main()
         CHECK_TRUE(!defaults.unthrottled);
         CHECK_TRUE(std::abs(defaults.speedMultiplier - 1.0) < 0.000001);
         CHECK_TRUE(!defaults.startPaused);
+        CHECK_TRUE(!defaults.diagnosticsReportPath.has_value());
+        CHECK_TRUE(defaults.diagnosticsIntervalMs == 1000u);
         CHECK_TRUE(defaults.audioEnabled);
         CHECK_TRUE(defaults.audioBackend == "sdl");
         CHECK_TRUE(defaults.visualPackPaths.empty());
@@ -130,6 +132,8 @@ int main()
     CHECK_TRUE(fileConfig.startPaused);
     CHECK_TRUE(fileConfig.timingProfile.has_value());
     CHECK_TRUE(*fileConfig.timingProfile == "low_latency");
+    CHECK_TRUE(!fileConfig.diagnosticsReportPath.has_value());
+    CHECK_TRUE(fileConfig.diagnosticsIntervalMs == 1000u);
     CHECK_TRUE(!fileConfig.audioEnabled);
     CHECK_TRUE(fileConfig.audioBackend == "file");
     CHECK_TRUE(fileConfig.visualPackPaths.size() == 2u);
@@ -150,6 +154,8 @@ int main()
     overrides.speedMultiplier = 0.5;
     overrides.startPaused = false;
     overrides.timingProfile = std::string("power_saver");
+    overrides.diagnosticsReportPath = std::filesystem::path("diag-report.jsonl");
+    overrides.diagnosticsIntervalMs = 250u;
     overrides.audioEnabled = true;
     overrides.audioBackend = "dummy";
     overrides.visualPackPaths = std::vector<std::filesystem::path>{
@@ -172,6 +178,8 @@ int main()
     CHECK_TRUE(!fileConfig.startPaused);
     CHECK_TRUE(fileConfig.timingProfile.has_value());
     CHECK_TRUE(*fileConfig.timingProfile == "power_saver");
+    CHECK_TRUE(fileConfig.diagnosticsReportPath == "diag-report.jsonl");
+    CHECK_TRUE(fileConfig.diagnosticsIntervalMs == 250u);
     CHECK_TRUE(fileConfig.audioEnabled);
     CHECK_TRUE(fileConfig.audioBackend == "dummy");
     CHECK_TRUE(fileConfig.visualPackPaths.size() == 2u);
@@ -249,6 +257,14 @@ int main()
         (void)parseArgs({"timeEmulator", "--timing-profile"});
     }));
 
+    CHECK_TRUE(throwsInvalidArgumentContaining("--diagnostics-report requires a path", [] {
+        (void)parseArgs({"timeEmulator", "--diagnostics-report"});
+    }));
+
+    CHECK_TRUE(throwsInvalidArgumentContaining("--diagnostics-interval-ms requires a positive integer", [] {
+        (void)parseArgs({"timeEmulator", "--diagnostics-interval-ms"});
+    }));
+
     const auto help = parseArgs({"timeEmulator", "--help", "--unknown-after-help"});
     CHECK_TRUE(help.helpRequested);
 
@@ -277,6 +293,8 @@ int main()
                              "--config", resolvedConfigPath.c_str(),
                              "--core", "gameboy",
                              "--rom", "cli.gb",
+                             "--diagnostics-report", "runtime-diag.jsonl",
+                             "--diagnostics-interval-ms", "125",
                              "--audio-backend", "dummy",
                              "--visual-pack", "cli-pack-a.json",
                              "--texture-pack", "cli-pack-b.json",
@@ -287,6 +305,8 @@ int main()
     CHECK_TRUE(*resolved.machineKind == "gameboy");
     CHECK_TRUE(resolved.romPath == "cli.gb");
     CHECK_TRUE(resolved.headless);
+    CHECK_TRUE(resolved.diagnosticsReportPath == "runtime-diag.jsonl");
+    CHECK_TRUE(resolved.diagnosticsIntervalMs == 125u);
     CHECK_TRUE(resolved.audioBackend == "dummy");
     CHECK_TRUE(resolved.visualPackPaths.size() == 2u);
     CHECK_TRUE(resolved.visualPackPaths[0] == "cli-pack-a.json");

@@ -1949,6 +1949,31 @@ private:
         stats_.videoFrameAge2To5msCount = diagnostics.frameAge2To5msCount;
         stats_.videoFrameAge5To10msCount = diagnostics.frameAge5To10msCount;
         stats_.videoFrameAgeOver10msCount = diagnostics.frameAgeOver10msCount;
+        stats_.videoPresenterPresentDurationLastNanos = diagnostics.presenterPresentDurationLastNanos;
+        stats_.videoPresenterPresentDurationHighWaterNanos = diagnostics.presenterPresentDurationHighWaterNanos;
+        stats_.videoPresenterPresentDurationP50Nanos = diagnostics.presenterPresentDurationP50Nanos;
+        stats_.videoPresenterPresentDurationP95Nanos = diagnostics.presenterPresentDurationP95Nanos;
+        stats_.videoPresenterPresentDurationP99Nanos = diagnostics.presenterPresentDurationP99Nanos;
+        stats_.videoPresenterPresentDurationP999Nanos = diagnostics.presenterPresentDurationP999Nanos;
+        stats_.videoPresenterPresentDurationSampleCount = diagnostics.presenterPresentDurationSampleCount;
+        stats_.videoPresenterPresentDurationUnder50usCount =
+            diagnostics.presenterPresentDurationUnder50usCount;
+        stats_.videoPresenterPresentDuration50To100usCount =
+            diagnostics.presenterPresentDuration50To100usCount;
+        stats_.videoPresenterPresentDuration100To250usCount =
+            diagnostics.presenterPresentDuration100To250usCount;
+        stats_.videoPresenterPresentDuration250To500usCount =
+            diagnostics.presenterPresentDuration250To500usCount;
+        stats_.videoPresenterPresentDuration500usTo1msCount =
+            diagnostics.presenterPresentDuration500usTo1msCount;
+        stats_.videoPresenterPresentDuration1To2msCount =
+            diagnostics.presenterPresentDuration1To2msCount;
+        stats_.videoPresenterPresentDuration2To5msCount =
+            diagnostics.presenterPresentDuration2To5msCount;
+        stats_.videoPresenterPresentDuration5To10msCount =
+            diagnostics.presenterPresentDuration5To10msCount;
+        stats_.videoPresenterPresentDurationOver10msCount =
+            diagnostics.presenterPresentDurationOver10msCount;
         if (videoPresenter_ != nullptr) {
             windowVisible_.store(videoPresenter_->windowVisible(), std::memory_order_release);
             windowVisibilityRequested_.store(

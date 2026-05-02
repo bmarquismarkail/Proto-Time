@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -58,6 +59,10 @@ void printUsage(std::string_view program)
               << "  --unthrottled      Run unthrottled (no wall-clock pacing)\n"
               << "  --speed <mult>     Start with speed multiplier (e.g. 2.0)\n"
               << "  --pause            Start paused (use single-step to advance)\n"
+              << "  --diagnostics-report <path>\n"
+              << "                     Write periodic runtime diagnostics samples to <path>\n"
+              << "  --diagnostics-interval-ms <n>\n"
+              << "                     Diagnostics sample interval in milliseconds (default: 1000)\n"
               << "  --no-audio         Disable frontend audio output\n"
               << "  --audio-backend <name>\n"
               << "                     Frontend audio backend: sdl, dummy, or file (default: sdl)\n"
@@ -92,6 +97,132 @@ struct VisualReloadPollState {
     std::atomic<bool> reloadRequested{false};
     std::chrono::steady_clock::time_point nextPollDue{};
 };
+
+std::string jsonEscape(std::string_view text)
+{
+    std::string escaped;
+    escaped.reserve(text.size() + 8u);
+    for (const char ch : text) {
+        switch (ch) {
+        case '\\':
+            escaped += "\\\\";
+            break;
+        case '"':
+            escaped += "\\\"";
+            break;
+        case '\n':
+            escaped += "\\n";
+            break;
+        case '\r':
+            escaped += "\\r";
+            break;
+        case '\t':
+            escaped += "\\t";
+            break;
+        default:
+            escaped += ch;
+            break;
+        }
+    }
+    return escaped;
+}
+
+void writeDiagnosticsSample(std::ostream& output,
+                            std::chrono::steady_clock::time_point startedAt,
+                            std::chrono::steady_clock::time_point now,
+                            std::uint64_t emulatedCycles,
+                            std::uint32_t cpuClockHz,
+                            const BMMQ::SdlFrontendStats* frontendStats,
+                            const BMMQ::TimingStats& timingStats) noexcept
+{
+    using namespace std::chrono;
+    const auto elapsedNs = duration_cast<nanoseconds>(now - startedAt).count();
+    const auto elapsedSeconds = static_cast<double>(elapsedNs) / 1'000'000'000.0;
+    const auto effectiveCyclesPerSecond =
+        (elapsedSeconds > 0.0) ? (static_cast<double>(emulatedCycles) / elapsedSeconds) : 0.0;
+    const auto effectiveSpeed =
+        (cpuClockHz != 0u) ? (effectiveCyclesPerSecond / static_cast<double>(cpuClockHz)) : 0.0;
+
+    const BMMQ::SdlFrontendStats defaults{};
+    const auto& stats = (frontendStats != nullptr) ? *frontendStats : defaults;
+
+    output << "{";
+    output << "\"host_elapsed_ns\":" << elapsedNs;
+    output << ",\"emulated_cycles\":" << emulatedCycles;
+    output << ",\"effective_emulation_speed\":" << effectiveSpeed;
+    output << ",\"effective_cycles_per_second\":" << effectiveCyclesPerSecond;
+    output << ",\"active_timing_profile\":\""
+           << jsonEscape(BMMQ::timingPolicyProfileName(timingStats.activeProfile)) << "\"";
+
+    output << ",\"video\":{";
+    output << "\"frames_submitted\":" << stats.videoFramesPublished;
+    output << ",\"frames_presented\":" << stats.framesPresented;
+    output << ",\"fresh_presents\":" << stats.videoPresentFreshFrameCount;
+    output << ",\"fallback_presents\":" << stats.videoPresentFallbackCount;
+    output << ",\"mailbox_overwrites\":" << stats.videoMailboxOverwriteCount;
+    output << ",\"publish_to_present_age\":{";
+    output << "\"last_ns\":" << stats.videoFrameAgeLastNs;
+    output << ",\"high_water_ns\":" << stats.videoFrameAgeHighWaterNs;
+    output << ",\"under_50us\":" << stats.videoFrameAgeUnder50usCount;
+    output << ",\"_50_to_100us\":" << stats.videoFrameAge50To100usCount;
+    output << ",\"_100_to_250us\":" << stats.videoFrameAge100To250usCount;
+    output << ",\"_250_to_500us\":" << stats.videoFrameAge250To500usCount;
+    output << ",\"_500us_to_1ms\":" << stats.videoFrameAge500usTo1msCount;
+    output << ",\"_1_to_2ms\":" << stats.videoFrameAge1To2msCount;
+    output << ",\"_2_to_5ms\":" << stats.videoFrameAge2To5msCount;
+    output << ",\"_5_to_10ms\":" << stats.videoFrameAge5To10msCount;
+    output << ",\"over_10ms\":" << stats.videoFrameAgeOver10msCount;
+    output << "}";
+    output << ",\"presenter_duration\":{";
+    output << "\"sample_count\":" << stats.videoPresenterPresentDurationSampleCount;
+    output << ",\"last_ns\":" << stats.videoPresenterPresentDurationLastNanos;
+    output << ",\"high_water_ns\":" << stats.videoPresenterPresentDurationHighWaterNanos;
+    output << ",\"p50_ns\":" << stats.videoPresenterPresentDurationP50Nanos;
+    output << ",\"p95_ns\":" << stats.videoPresenterPresentDurationP95Nanos;
+    output << ",\"p99_ns\":" << stats.videoPresenterPresentDurationP99Nanos;
+    output << ",\"p999_ns\":" << stats.videoPresenterPresentDurationP999Nanos;
+    output << ",\"under_50us\":" << stats.videoPresenterPresentDurationUnder50usCount;
+    output << ",\"_50_to_100us\":" << stats.videoPresenterPresentDuration50To100usCount;
+    output << ",\"_100_to_250us\":" << stats.videoPresenterPresentDuration100To250usCount;
+    output << ",\"_250_to_500us\":" << stats.videoPresenterPresentDuration250To500usCount;
+    output << ",\"_500us_to_1ms\":" << stats.videoPresenterPresentDuration500usTo1msCount;
+    output << ",\"_1_to_2ms\":" << stats.videoPresenterPresentDuration1To2msCount;
+    output << ",\"_2_to_5ms\":" << stats.videoPresenterPresentDuration2To5msCount;
+    output << ",\"_5_to_10ms\":" << stats.videoPresenterPresentDuration5To10msCount;
+    output << ",\"over_10ms\":" << stats.videoPresenterPresentDurationOver10msCount;
+    output << "}";
+    output << "}";
+
+    output << ",\"audio\":{";
+    output << "\"primed_for_drain\":" << (stats.audioTransportPrimedForDrain ? "true" : "false");
+    output << ",\"underruns_after_priming\":" << stats.audioTransportUnderrunCount;
+    output << ",\"silence_samples_after_priming\":" << stats.audioTransportSilenceSamplesFilled;
+    output << ",\"worker_wake_latency\":{";
+    output << "\"sample_count\":" << stats.audioTransportWorkerEmulationWakeLatencySampleCount;
+    output << ",\"last_ns\":" << stats.audioTransportWorkerEmulationWakeLatencyLastNs;
+    output << ",\"high_water_ns\":" << stats.audioTransportWorkerEmulationWakeLatencyHighWaterNs;
+    output << ",\"under_100us\":" << stats.audioTransportWorkerEmulationWakeLatencyUnder100usCount;
+    output << ",\"_100_to_500us\":" << stats.audioTransportWorkerEmulationWakeLatency100To500usCount;
+    output << ",\"_500us_to_1ms\":" << stats.audioTransportWorkerEmulationWakeLatency500usTo1msCount;
+    output << ",\"_1_to_2ms\":" << stats.audioTransportWorkerEmulationWakeLatency1To2msCount;
+    output << ",\"_2_to_5ms\":" << stats.audioTransportWorkerEmulationWakeLatency2To5msCount;
+    output << ",\"_5_to_10ms\":" << stats.audioTransportWorkerEmulationWakeLatency5To10msCount;
+    output << ",\"_10_to_20ms\":" << stats.audioTransportWorkerEmulationWakeLatency10To20msCount;
+    output << ",\"over_20ms\":" << stats.audioTransportWorkerEmulationWakeLatencyOver20msCount;
+    output << "}";
+    output << "}";
+
+    output << ",\"timing\":{";
+    output << "\"frontend_ticks_scheduled\":" << stats.timingFrontendTicksScheduled;
+    output << ",\"frontend_ticks_executed\":" << stats.timingFrontendTicksExecuted;
+    output << ",\"frontend_ticks_merged\":" << stats.timingFrontendTicksMerged;
+    output << ",\"wake_jitter_under_100us\":" << stats.timingSleepWakeJitterUnder100usCount;
+    output << ",\"wake_jitter_100_to_500us\":" << stats.timingSleepWakeJitter100To500usCount;
+    output << ",\"wake_jitter_500us_to_2ms\":" << stats.timingSleepWakeJitter500usTo2msCount;
+    output << ",\"wake_jitter_over_2ms\":" << stats.timingSleepWakeJitterOver2msCount;
+    output << "}";
+    output << "}\n";
+}
 
 } // namespace
 
@@ -185,6 +316,7 @@ int main(int argc, char** argv)
         }
 
         std::uint64_t steps = 0;
+        std::uint64_t emulatedCycles = 0;
         const auto cpuClockHz = machine.clockHz();
         using SteadyClock = std::chrono::steady_clock;
         constexpr auto kFrontendServicePeriod = std::chrono::milliseconds(1);
@@ -216,6 +348,7 @@ int main(int argc, char** argv)
         BMMQ::TimingEngine timingEngine(timingConfig);
 
         auto initialNow = SteadyClock::now();
+        const auto runStartedAt = initialNow;
         auto nextFrontendService = initialNow + kFrontendServicePeriod;
         timingService.start(initialNow);
         timingEngine.start(initialNow);
@@ -289,6 +422,53 @@ int main(int argc, char** argv)
         };
 
         refreshVisualReloadWatchList();
+
+        std::ofstream diagnosticsReport;
+        const auto diagnosticsIntervalMs = std::max<std::uint32_t>(1u, options.diagnosticsIntervalMs);
+        const auto diagnosticsInterval = std::chrono::milliseconds(diagnosticsIntervalMs);
+        auto nextDiagnosticsReport = initialNow + diagnosticsInterval;
+        if (options.diagnosticsReportPath.has_value()) {
+            const auto& diagnosticsPath = *options.diagnosticsReportPath;
+            if (diagnosticsPath.has_parent_path()) {
+                std::error_code ec;
+                std::filesystem::create_directories(diagnosticsPath.parent_path(), ec);
+            }
+            diagnosticsReport.open(diagnosticsPath, std::ios::out | std::ios::trunc);
+            if (!diagnosticsReport) {
+                throw std::runtime_error("Unable to open diagnostics report file: " + diagnosticsPath.string());
+            }
+            std::cout << "Diagnostics report: " << diagnosticsPath
+                      << " (interval=" << diagnosticsIntervalMs << "ms)\n";
+        }
+
+        auto emitDiagnostics = [&](SteadyClock::time_point now, bool force) {
+            if (!diagnosticsReport.is_open()) {
+                return;
+            }
+            if (!force && now < nextDiagnosticsReport) {
+                return;
+            }
+            if (!force) {
+                while (nextDiagnosticsReport <= now) {
+                    nextDiagnosticsReport += diagnosticsInterval;
+                }
+            }
+
+            const auto timingStats = timingService.stats();
+            std::optional<BMMQ::SdlFrontendStats> frontendStats;
+            if (frontend != nullptr) {
+                frontendStats = frontend->stats();
+            }
+
+            writeDiagnosticsSample(diagnosticsReport,
+                                   runStartedAt,
+                                   now,
+                                   emulatedCycles,
+                                   cpuClockHz,
+                                   frontendStats.has_value() ? &*frontendStats : nullptr,
+                                   timingStats);
+            diagnosticsReport.flush();
+        };
 
         auto pollVisualPackReload = [&]() {
             if (!options.visualPackReload) {
@@ -399,6 +579,7 @@ int main(int argc, char** argv)
                 machine.step();
                 ++steps;
                 executedInstruction = true;
+                emulatedCycles += machine.runtimeContext().getLastFeedback().retiredCycles;
 
                 const auto retiredCycles = static_cast<double>(machine.runtimeContext().getLastFeedback().retiredCycles);
                 const auto chargedCycles = std::max(kMinInstructionCycles, retiredCycles);
@@ -416,6 +597,7 @@ int main(int argc, char** argv)
             }
             timingService.recordWakeBurst(wakeExecutionCycles, wakeExecutionSlices);
             timingService.publishEngineStats(timingEngine.stats());
+            emitDiagnostics(SteadyClock::now(), false);
 
             if (gStopRequested != 0) {
                 break;
@@ -466,6 +648,7 @@ int main(int argc, char** argv)
         }
 
         serviceFrontend();
+        emitDiagnostics(SteadyClock::now(), true);
         if (!options.visualPackPaths.empty() || options.visualCapturePath.has_value()) {
             (void)machine.visualOverrideService().captureStats();
             std::cout << machine.visualOverrideService().authorDiagnosticsReport();

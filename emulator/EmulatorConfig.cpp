@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cmath>
 #include <fstream>
+#include <limits>
 #include <set>
 #include <stdexcept>
 #include <string_view>
@@ -143,6 +144,12 @@ void applyConfigValue(EmulatorConfig& config,
             config.startPaused = parseBool(text, label);
         } else if (key == "profile") {
             config.timingProfile = lowerAscii(text);
+        } else if (key == "diagnostics_report") {
+            config.diagnosticsReportPath = resolveConfigPath(configDirectory, text);
+        } else if (key == "diagnostics_interval_ms") {
+            const auto parsed = parseUnsigned(text, label);
+            const auto clamped = std::min(parsed, static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max()));
+            config.diagnosticsIntervalMs = static_cast<std::uint32_t>(std::max<std::uint64_t>(1u, clamped));
         } else {
             throw std::invalid_argument("Unknown config key: " + label);
         }
@@ -266,6 +273,12 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     if (overrides.timingProfile.has_value()) {
         config.timingProfile = lowerAscii(*overrides.timingProfile);
     }
+    if (overrides.diagnosticsReportPath.has_value()) {
+        config.diagnosticsReportPath = *overrides.diagnosticsReportPath;
+    }
+    if (overrides.diagnosticsIntervalMs.has_value()) {
+        config.diagnosticsIntervalMs = *overrides.diagnosticsIntervalMs;
+    }
     if (overrides.audioEnabled.has_value()) {
         config.audioEnabled = *overrides.audioEnabled;
     }
@@ -375,6 +388,19 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
                 throw std::invalid_argument("--timing-profile requires a value");
             }
             arguments.overrides.timingProfile = lowerAscii(argv[++i]);
+        } else if (arg == "--diagnostics-report") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--diagnostics-report requires a path");
+            }
+            arguments.overrides.diagnosticsReportPath = std::filesystem::path(argv[++i]);
+        } else if (arg == "--diagnostics-interval-ms") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--diagnostics-interval-ms requires a positive integer");
+            }
+            auto parsed = parseUnsigned(argv[++i], "--diagnostics-interval-ms");
+            parsed = std::min(parsed, static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max()));
+            arguments.overrides.diagnosticsIntervalMs =
+                static_cast<std::uint32_t>(std::max<std::uint64_t>(1u, parsed));
         } else if (arg == "--no-audio") {
             arguments.overrides.audioEnabled = false;
         } else if (arg == "--audio-backend") {
