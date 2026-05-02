@@ -129,6 +129,10 @@ struct SdlFrontendStats {
     std::size_t videoRealtimePacketsAccepted = 0;
     std::size_t videoRealtimePacketsSkipped = 0;
     std::size_t videoRealtimePacketsBuiltOutsideLock = 0;
+    /// Phase 38B: counts VBlank/scanline events where videoDebugFrameModel() was
+    /// skipped because no debug consumer (DebugSnapshotService) was connected.
+    /// In production mode this should equal videoEvents (all skipped).
+    std::size_t videoDebugModelBuildSkipCount = 0;
     /// Phase 36A: counts VBlank/scanline frames for which the render-service
     /// notification (renderServiceFramePending_ + condvar) was sent after
     /// sharedStateMutex_ was released, reducing the VBlank critical section.

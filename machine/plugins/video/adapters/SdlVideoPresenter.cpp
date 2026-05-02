@@ -66,11 +66,14 @@ bool SdlVideoPresenter::open(const VideoPresenterConfig& config)
     config_.frameHeight = std::max(config_.frameHeight, 1);
     config_.scale = std::max(config_.scale, 1);
     lastError_.clear();
-    diagnostics_ = {};
-    diagnostics_.configuredMode = config_.mode;
-    diagnostics_.activeMode = config_.mode;
-    rendererNameStorage_.clear();
-    diagnostics_.rendererName = rendererNameStorage_;
+    {
+        std::lock_guard<std::mutex> lk(diagMutex_);
+        diagnostics_ = {};
+        diagnostics_.configuredMode = config_.mode;
+        diagnostics_.activeMode = config_.mode;
+        rendererNameStorage_.clear();
+        diagnostics_.rendererName = rendererNameStorage_;
+    }
 
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
     if (ready_) {
@@ -143,6 +146,9 @@ bool SdlVideoPresenter::ready() const noexcept
 bool SdlVideoPresenter::present(const VideoFramePacket& frame) noexcept
 {
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
+    // diagMutex_ covers all diagnostics_ mutations in this function and its
+    // callees (ensureRenderer, ensureTexture, fallbackToSoftwareRenderer).
+    std::lock_guard<std::mutex> diagLock(diagMutex_);
     if (!ready_ || window_ == nullptr) {
         lastError_ = "video presenter not ready";
         return false;
@@ -225,6 +231,7 @@ std::string_view SdlVideoPresenter::lastError() const noexcept
 
 VideoPresenterDiagnostics SdlVideoPresenter::diagnostics() const noexcept
 {
+    std::lock_guard<std::mutex> lk(diagMutex_);
     return diagnostics_;
 }
 

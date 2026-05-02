@@ -728,14 +728,20 @@ public:
         }
 
         // Pre-build video debug model OUTSIDE the lock for VBlank/scanline events.
-        // This is the expensive VDP traversal; moving it before the lock reduces
-        // sharedStateMutex_ hold time and allows the render thread to run sooner.
+        // Only build the debug model when a debug consumer is connected — the VDP
+        // traversal is expensive (touches all VRAM/OAM) and the result is thrown
+        // away in production mode (Phase 38B).
+        // debugSnapshotService_ is set in onAttach/onDetach, both serial with
+        // onVideoEvent on the emulation thread, so reading it here is safe.
+        const bool needsDebugModel = debugSnapshotService_ != nullptr;
         std::optional<BMMQ::VideoDebugFrameModel> prebuiltDebugModel;
-        if (carriesVideoStateEarly) {
+        if (carriesVideoStateEarly && needsDebugModel) {
             prebuiltDebugModel = view.videoDebugFrameModel({
                 .frameWidth = std::max(config_.frameWidth, 1),
                 .frameHeight = std::max(config_.frameHeight, 1),
             });
+        } else if (carriesVideoStateEarly) {
+            ++stats_.videoDebugModelBuildSkipCount;
         }
 
         // submittedVideoFrame is hoisted before the lock so it is visible to the
@@ -844,16 +850,31 @@ public:
 
     void onAudioEvent(const BMMQ::MachineEvent& event, const BMMQ::MachineView& view) override
     {
-        // Pre-build BOTH audio sources OUTSIDE the lock.
+        // Pre-build audio sources OUTSIDE the lock.
         // Machine state is owned by the emulation thread (the caller), so reading
         // view.realtimeAudioPacket() / view.audioState() before acquiring
         // sharedStateMutex_ is safe — same guarantee as the video event path.
+        //
+        // Phase 38A: view.audioState() is lazy — only called when the realtime
+        // packet is absent or has a stale contract version, i.e. the fallback path.
+        // This avoids a PCM vector copy on every frame in production mode.
         const auto audioT0 = std::chrono::steady_clock::now();
         const auto prebuiltRealtimePacket = view.realtimeAudioPacket();
-        const auto prebuiltAudioState = view.audioState();
+        const bool realtimePacketValid = prebuiltRealtimePacket.has_value() &&
+            prebuiltRealtimePacket->contractVersion == BMMQ::RealtimeAudioPacket::kContractVersion;
+        const auto prebuiltAudioState = realtimePacketValid ? std::optional<BMMQ::AudioStateView>{} : view.audioState();
         const auto audioElapsedNs = static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now() - audioT0).count());
+
+        // Phase 38A: hoist buildAudioPreview(RealtimeAudioPacket) before the lock.
+        // The const overload reads only from its argument + audioService_/config_
+        // (both written only in onAttach/onDetach, serial with this call) — safe.
+        // The AudioStateView overload mutates audioPhase_ and stays inside the lock.
+        std::optional<BMMQ::SdlAudioPreviewBuffer> prebuiltRealtimePreview;
+        if (realtimePacketValid) {
+            prebuiltRealtimePreview = buildAudioPreview(*prebuiltRealtimePacket);
+        }
 
         // Call appendRecentPcm BEFORE acquiring sharedStateMutex_.
         // appendRecentPcm() is internally thread-safe (SPSC ring buffer + atomic
@@ -861,8 +882,7 @@ public:
         // audioService_ is set in onAttach and cleared in onDetach, both called
         // from the emulation thread — serial with onAudioEvent, no race.
         if (audioService_ != nullptr) {
-            if (prebuiltRealtimePacket.has_value() &&
-                prebuiltRealtimePacket->contractVersion == BMMQ::RealtimeAudioPacket::kContractVersion) {
+            if (realtimePacketValid) {
                 audioService_->appendRecentPcm(prebuiltRealtimePacket->pcmSamples,
                                                prebuiltRealtimePacket->frameCounter);
             } else if (prebuiltAudioState.has_value()) {
@@ -876,10 +896,10 @@ public:
             return;
         }
         ++stats_.audioEvents;
-        if (prebuiltRealtimePacket.has_value() &&
-            prebuiltRealtimePacket->contractVersion == BMMQ::RealtimeAudioPacket::kContractVersion) {
+        if (realtimePacketValid) {
             ++stats_.audioRealtimePacketsAccepted;
-            lastAudioPreview_ = buildAudioPreview(*prebuiltRealtimePacket);
+            // Pre-built outside the lock (Phase 38A); just move into place.
+            lastAudioPreview_ = std::move(prebuiltRealtimePreview);
             ++stats_.audioPreviewsBuilt;
             ++audioPreviewGeneration_;
             // appendRecentPcm already dispatched above, outside the lock.
@@ -1948,42 +1968,6 @@ private:
         compatFrame.pixels = packet.argbPixels;
         lastFrame_ = std::move(compatFrame);
         lastSyncedVideoFramePublication_ = videoService_->engine().stats().publishedFrameCount;
-    }
-
-    bool presentLatestFrame()
-    {
-        ++stats_.renderAttempts;
-        if (!lastFrame_.has_value()) {
-            lastRenderSummary_ = "No frame available";
-            return false;
-        }
-
-        if (videoService_ == nullptr) {
-            lastRenderSummary_ = "Video service unavailable";
-            return false;
-        }
-        if (!backendReady_ || videoService_->state() != BMMQ::VideoLifecycleState::Active) {
-            lastRenderSummary_ = "Frame prepared but backend not ready";
-            return false;
-        }
-
-        if (config_.showWindowOnPresent) {
-            requestWindowVisibility(true);
-        }
-
-        const bool presented = videoService_->presentOneFrame();
-        syncVideoTransportStats();
-        if (!presented) {
-            lastBackendError_ = videoService_->diagnostics().lastBackendError;
-            lastRenderSummary_ = lastBackendError_.empty() ? "Video presentation failed" : lastBackendError_;
-            appendLog("sdl: video presentation failed: " + lastRenderSummary_);
-            return false;
-        }
-        ++stats_.framesPresented;
-        frameDirty_ = false;
-        videoPresentDeferredForAudioLowWater_ = false;
-        lastRenderSummary_ = "Presented frame " + std::to_string(lastFrame_->width) + "x" + std::to_string(lastFrame_->height);
-        return true;
     }
 
     void applyWindowVisibilityRequest() noexcept

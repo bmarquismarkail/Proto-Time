@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <string_view>
 
@@ -43,6 +44,12 @@ private:
 
     VideoPresenterConfig config_{};
     std::string lastError_{};
+    // diagMutex_ serialises writes from the render thread (present/ensureRenderer/
+    // fallbackToSoftwareRenderer) against reads from the emulation thread
+    // (syncEngineDiagnostics -> diagnostics()). All diagnostics_ mutations that
+    // occur inside present() are covered by the lock held for present()'s
+    // entire SDL block; diagnostics() takes the same lock before copying.
+    mutable std::mutex diagMutex_;
     VideoPresenterDiagnostics diagnostics_{};
     std::string rendererNameStorage_{};
     bool ready_ = false;
