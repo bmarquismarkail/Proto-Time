@@ -202,17 +202,21 @@ public:
 
     [[nodiscard]] bool windowVisible() const noexcept override
     {
-        return videoPresenter_ != nullptr ? videoPresenter_->windowVisible() : windowVisible_;
+        return videoPresenter_ != nullptr
+            ? videoPresenter_->windowVisible()
+            : windowVisible_.load(std::memory_order_acquire);
     }
 
     [[nodiscard]] bool windowVisibilityRequested() const noexcept override
     {
-        return videoPresenter_ != nullptr ? videoPresenter_->windowVisibilityRequested() : windowVisibilityRequested_;
+        return videoPresenter_ != nullptr
+            ? videoPresenter_->windowVisibilityRequested()
+            : windowVisibilityRequested_.load(std::memory_order_acquire);
     }
 
     void requestWindowVisibility(bool visible) override
     {
-        windowVisibilityRequested_ = visible;
+        windowVisibilityRequested_.store(visible, std::memory_order_release);
         if (videoPresenter_ != nullptr) {
             videoPresenter_->requestWindowVisibility(visible);
         }
@@ -270,7 +274,9 @@ public:
             hadFrame        = config_.enableVideo && lastFrame_.has_value();
             hasAudioState   = config_.enableAudio && lastAudioState_.has_value();
             hadAudioPreview = config_.enableAudio && lastAudioPreview_.has_value();
-            visibilityChanged = windowVisible_ != windowVisibilityRequested_;
+            visibilityChanged =
+                windowVisible_.load(std::memory_order_acquire) !=
+                windowVisibilityRequested_.load(std::memory_order_acquire);
             audioActive = hasAudioState ||
                 (audioService_ != nullptr && audioService_->engine().bufferedSamples() != 0u);
 
@@ -706,7 +712,7 @@ public:
         timingService_ = nullptr;
         lifecycleCoordinator_ = nullptr;
         videoPresenter_ = nullptr;
-        windowVisible_ = false;
+        windowVisible_.store(false, std::memory_order_release);
         appendLog("sdl: detached");
     }
 
@@ -1138,7 +1144,9 @@ private:
                 ++stats_.renderServiceLightweightSyncCount;
                 syncPresentDecisionState();
                 const bool hadFrame = config_.enableVideo && lastFrame_.has_value();
-                const bool visibilityChanged = windowVisible_ != windowVisibilityRequested_;
+                const bool visibilityChanged =
+                    windowVisible_.load(std::memory_order_acquire) !=
+                    windowVisibilityRequested_.load(std::memory_order_acquire);
                 if (hadFrame && (frameDirty_ || visibilityChanged)) {
                     ++stats_.renderServicePresentAttempts;
                     if (frameDirty_ && shouldDeferVideoFrameForAudioLowWater()) {
@@ -1821,7 +1829,8 @@ private:
             if (config_.enableVideo) {
                 auto presenter = std::make_unique<BMMQ::SdlVideoPresenter>();
                 videoPresenter_ = presenter.get();
-                videoPresenter_->requestWindowVisibility(windowVisibilityRequested_);
+                videoPresenter_->requestWindowVisibility(
+                    windowVisibilityRequested_.load(std::memory_order_acquire));
                 presenterAttached = presenterConfigured && videoService_->attachPresenter(std::move(presenter));
                 if (!presenterAttached) {
                     videoPresenter_ = nullptr;
@@ -1939,8 +1948,9 @@ private:
         stats_.videoFrameAge5To10msCount = diagnostics.frameAge5To10msCount;
         stats_.videoFrameAgeOver10msCount = diagnostics.frameAgeOver10msCount;
         if (videoPresenter_ != nullptr) {
-            windowVisible_ = videoPresenter_->windowVisible();
-            windowVisibilityRequested_ = videoPresenter_->windowVisibilityRequested();
+            windowVisible_.store(videoPresenter_->windowVisible(), std::memory_order_release);
+            windowVisibilityRequested_.store(
+                videoPresenter_->windowVisibilityRequested(), std::memory_order_release);
         }
     }
 
@@ -1950,8 +1960,9 @@ private:
     void syncPresentDecisionState() noexcept
     {
         if (videoPresenter_ != nullptr) {
-            windowVisible_ = videoPresenter_->windowVisible();
-            windowVisibilityRequested_ = videoPresenter_->windowVisibilityRequested();
+            windowVisible_.store(videoPresenter_->windowVisible(), std::memory_order_release);
+            windowVisibilityRequested_.store(
+                videoPresenter_->windowVisibilityRequested(), std::memory_order_release);
         }
     }
 
@@ -1976,11 +1987,13 @@ private:
     void applyWindowVisibilityRequest() noexcept
     {
         if (videoPresenter_ != nullptr) {
-            videoPresenter_->requestWindowVisibility(windowVisibilityRequested_);
-            windowVisible_ = videoPresenter_->windowVisible();
+            const bool requested = windowVisibilityRequested_.load(std::memory_order_acquire);
+            videoPresenter_->requestWindowVisibility(requested);
+            windowVisible_.store(videoPresenter_->windowVisible(), std::memory_order_release);
             return;
         }
-        windowVisible_ = windowVisibilityRequested_;
+        windowVisible_.store(windowVisibilityRequested_.load(std::memory_order_acquire),
+                             std::memory_order_release);
     }
 
     void shutdownBackend() noexcept
@@ -2301,8 +2314,8 @@ private:
     std::atomic<uint64_t> renderServiceTimeoutWakeCountAtomic_{0};
     std::atomic<uint64_t> renderServiceSleepOvershootCountAtomic_{0};
     bool quitRequested_ = false;
-    bool windowVisible_ = false;
-    bool windowVisibilityRequested_ = false;
+    std::atomic<bool> windowVisible_{false};
+    std::atomic<bool> windowVisibilityRequested_{false};
     std::string lastHostEventSummary_;
     std::string lastRenderSummary_;
     std::string lastBackendError_;
