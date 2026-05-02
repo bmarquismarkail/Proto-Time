@@ -41,6 +41,9 @@ private:
     bool ensureTexture(int frameWidth, int frameHeight) noexcept;
     bool fallbackToSoftwareRenderer(int frameWidth, int frameHeight,
                                     VideoPresenterFallbackReason reason) noexcept;
+    // Phase 39A: helper to update presenter timing metrics
+    void updatePresentDurationMetric(std::int64_t durationNanos) noexcept;
+
 
     VideoPresenterConfig config_{};
     std::string lastError_{};

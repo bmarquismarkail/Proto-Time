@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <chrono>
 #include <limits>
 
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL

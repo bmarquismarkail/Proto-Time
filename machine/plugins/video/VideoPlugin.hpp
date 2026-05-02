@@ -2,6 +2,7 @@
 #define BMMQ_VIDEO_PLUGIN_HPP
 
 #include <cstddef>
+#include <cstdint>
 #include <string_view>
 
 #include "VideoCapabilities.hpp"
@@ -25,6 +26,26 @@ struct VideoPresenterDiagnostics {
     std::size_t textureUploadCount = 0;
     std::size_t presentCount = 0;
     std::string_view rendererName{};
+    
+    // Phase 39A: presenter present() latency percentiles (nanoseconds)
+    std::int64_t presenterPresentDurationLastNanos = 0;
+    std::int64_t presenterPresentDurationHighWaterNanos = 0;
+    std::int64_t presenterPresentDurationP50Nanos = 0;
+    std::int64_t presenterPresentDurationP95Nanos = 0;
+    std::int64_t presenterPresentDurationP99Nanos = 0;
+    std::int64_t presenterPresentDurationP999Nanos = 0;
+    std::size_t presenterPresentDurationSampleCount = 0;
+    
+    // Duration histogram buckets
+    std::size_t presenterPresentDurationUnder50usCount = 0;
+    std::size_t presenterPresentDuration50To100usCount = 0;
+    std::size_t presenterPresentDuration100To250usCount = 0;
+    std::size_t presenterPresentDuration250To500usCount = 0;
+    std::size_t presenterPresentDuration500usTo1msCount = 0;
+    std::size_t presenterPresentDuration1To2msCount = 0;
+    std::size_t presenterPresentDuration2To5msCount = 0;
+    std::size_t presenterPresentDuration5To10msCount = 0;
+    std::size_t presenterPresentDurationOver10msCount = 0;
 };
 
 class IVideoPresenterPlugin {

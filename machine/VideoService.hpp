@@ -85,6 +85,26 @@ struct VideoServiceDiagnostics {
     std::size_t frameAge2To5msCount = 0;
     std::size_t frameAge5To10msCount = 0;
     std::size_t frameAgeOver10msCount = 0;
+    
+    // Phase 39A: presenter present() latency percentiles (nanoseconds)
+    std::int64_t presenterPresentDurationLastNanos = 0;
+    std::int64_t presenterPresentDurationHighWaterNanos = 0;
+    std::int64_t presenterPresentDurationP50Nanos = 0;
+    std::int64_t presenterPresentDurationP95Nanos = 0;
+    std::int64_t presenterPresentDurationP99Nanos = 0;
+    std::int64_t presenterPresentDurationP999Nanos = 0;
+    std::size_t presenterPresentDurationSampleCount = 0;
+    
+    // Duration histogram buckets (mirrors audio callback structure)
+    std::size_t presenterPresentDurationUnder50usCount = 0;
+    std::size_t presenterPresentDuration50To100usCount = 0;
+    std::size_t presenterPresentDuration100To250usCount = 0;
+    std::size_t presenterPresentDuration250To500usCount = 0;
+    std::size_t presenterPresentDuration500usTo1msCount = 0;
+    std::size_t presenterPresentDuration1To2msCount = 0;
+    std::size_t presenterPresentDuration2To5msCount = 0;
+    std::size_t presenterPresentDuration5To10msCount = 0;
+    std::size_t presenterPresentDurationOver10msCount = 0;
 };
 
 class VideoService {
@@ -639,6 +659,24 @@ private:
             diagnostics_.presenterTextureUploadCount = presenterDiagnostics.textureUploadCount;
             diagnostics_.presenterRenderCount = presenterDiagnostics.presentCount;
             diagnostics_.presenterRendererName = std::string(presenterDiagnostics.rendererName);
+            
+                    // Phase 39A: copy presenter timing metrics
+                    diagnostics_.presenterPresentDurationLastNanos = presenterDiagnostics.presenterPresentDurationLastNanos;
+                    diagnostics_.presenterPresentDurationHighWaterNanos = presenterDiagnostics.presenterPresentDurationHighWaterNanos;
+                    diagnostics_.presenterPresentDurationP50Nanos = presenterDiagnostics.presenterPresentDurationP50Nanos;
+                    diagnostics_.presenterPresentDurationP95Nanos = presenterDiagnostics.presenterPresentDurationP95Nanos;
+                    diagnostics_.presenterPresentDurationP99Nanos = presenterDiagnostics.presenterPresentDurationP99Nanos;
+                    diagnostics_.presenterPresentDurationP999Nanos = presenterDiagnostics.presenterPresentDurationP999Nanos;
+                    diagnostics_.presenterPresentDurationSampleCount = presenterDiagnostics.presenterPresentDurationSampleCount;
+                    diagnostics_.presenterPresentDurationUnder50usCount = presenterDiagnostics.presenterPresentDurationUnder50usCount;
+                    diagnostics_.presenterPresentDuration50To100usCount = presenterDiagnostics.presenterPresentDuration50To100usCount;
+                    diagnostics_.presenterPresentDuration100To250usCount = presenterDiagnostics.presenterPresentDuration100To250usCount;
+                    diagnostics_.presenterPresentDuration250To500usCount = presenterDiagnostics.presenterPresentDuration250To500usCount;
+                    diagnostics_.presenterPresentDuration500usTo1msCount = presenterDiagnostics.presenterPresentDuration500usTo1msCount;
+                    diagnostics_.presenterPresentDuration1To2msCount = presenterDiagnostics.presenterPresentDuration1To2msCount;
+                    diagnostics_.presenterPresentDuration2To5msCount = presenterDiagnostics.presenterPresentDuration2To5msCount;
+                    diagnostics_.presenterPresentDuration5To10msCount = presenterDiagnostics.presenterPresentDuration5To10msCount;
+                    diagnostics_.presenterPresentDurationOver10msCount = presenterDiagnostics.presenterPresentDurationOver10msCount;
         }
         diagnostics_.state = state_;
         diagnostics_.headlessModeActive = state_ == VideoLifecycleState::Headless || presenter_ == nullptr;
