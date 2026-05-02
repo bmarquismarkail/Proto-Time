@@ -19,7 +19,11 @@ namespace {
 
 [[nodiscard]] long perfTestTimeoutMs() noexcept
 {
+#if defined(BMMQ_TSAN_ENABLED) || defined(__SANITIZE_THREAD__)
+    constexpr long kDefaultPerfTestTimeoutMs = 5000;
+#else
     constexpr long kDefaultPerfTestTimeoutMs = 1000;
+#endif
     if (const char* value = std::getenv("PERF_TEST_TIMEOUT_MS"); value != nullptr) {
         char* end = nullptr;
         const long parsed = std::strtol(value, &end, 10);
