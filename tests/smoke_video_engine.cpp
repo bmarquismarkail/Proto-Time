@@ -156,14 +156,14 @@ int main()
     assert(!submitA.overwroteOldFrame);
     const auto submitB = engine.submitFrame(frameB);
     assert(submitB.accepted);
-    assert(!submitB.overwroteOldFrame);
+    assert(submitB.overwroteOldFrame);   // triple-buffer: A was pending, B overwrites it
     const auto submitC = engine.submitFrame(frameC);
     assert(submitC.accepted);
     assert(submitC.overwroteOldFrame);
-    assert(engine.stats().overwriteCount == 1u);
-    assert(engine.stats().overwriteDebugFrameCount == 1u);
+    assert(engine.stats().overwriteCount == 2u);           // B overwrote A, C overwrote B
+    assert(engine.stats().overwriteDebugFrameCount == 2u);
     assert(engine.stats().overwriteRealtimeFrameCount == 0u);
-    assert(engine.stats().mailboxHighWaterMark == 2u);
+    assert(engine.stats().mailboxHighWaterMark == 1u);     // triple-buffer depth is always 0 or 1
     assert(engine.stats().publishedFrameCount == 3u);
     assert(engine.stats().publishedDebugFrameCount == 3u);
     assert(engine.stats().publishedRealtimeFrameCount == 0u);
@@ -175,8 +175,8 @@ int main()
     assert(consumed.has_value());
     assert(consumed->generation == 9u);
     assert(engine.stats().consumedFrameCount == 1u);
-    assert(engine.stats().staleFrameDropCount == 1u);
-    assert(engine.stats().staleDebugFrameDropCount == 1u);
+    assert(engine.stats().staleFrameDropCount == 0u);      // triple-buffer: no stale drain on consume
+    assert(engine.stats().staleDebugFrameDropCount == 0u);
     assert(engine.stats().staleRealtimeFrameDropCount == 0u);
     assert(engine.stats().lastConsumedGeneration == 9u);
     assert(!engine.tryConsumeLatestFrame().has_value());

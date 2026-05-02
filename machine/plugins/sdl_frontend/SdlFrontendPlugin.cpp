@@ -218,64 +218,129 @@ public:
 
     bool serviceFrontend() override
     {
-        std::scoped_lock<std::mutex> lock(sharedStateMutex_);
-        ++stats_.serviceCalls;
-        stats_.renderServiceState = renderServiceState_.load(std::memory_order_acquire);
-        syncTimingStats();
-        applyLifecycleRecoveryPolicy();
-        if (renderServiceActive()) {
-            syncVideoTransportStats();
-            syncAudioTransportStats();
-            const bool hasVideoWork = config_.enableVideo && (frameDirty_ || lastFrame_.has_value());
-            const bool hasAudioState = config_.enableAudio && lastAudioState_.has_value();
-            const bool hadAudioPreview = config_.enableAudio && lastAudioPreview_.has_value();
-            return hasVideoWork || hasAudioState || hadAudioPreview || quitRequested_;
-        }
-
+        // ── First lock block: sync state, decisions, consume frame ───────────
+        // SDL_RenderPresent is intentionally excluded from this block so the
+        // emulation thread is not stalled during GPU upload/present (Phase 37B).
+        std::optional<BMMQ::VideoFramePacket> processedFrame;
         std::size_t handledEvents = 0;
-        if (!config_.pumpBackendEventsOnInputSample) {
-            handledEvents = pumpBackendEvents();
-            if (handledEvents != 0u) {
-                // Mirror renderServiceEventPumpCount via atomic so stats() fold
-                // sees a unified total from both the render-service and headless paths.
-                renderServiceEventPumpCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
+        bool hadFrame        = false;
+        bool hasAudioState   = false;
+        bool hadAudioPreview = false;
+        bool visibilityChanged = false;
+        bool presented       = false;
+        bool audioActive     = false;
+        {
+            std::unique_lock<std::mutex> lock(sharedStateMutex_);
+            ++stats_.serviceCalls;
+            stats_.renderServiceState = renderServiceState_.load(std::memory_order_acquire);
+            syncTimingStats();
+            applyLifecycleRecoveryPolicy();
+            if (renderServiceActive()) {
+                syncVideoTransportStats();
+                syncAudioTransportStats();
+                const bool hasVideoWork = config_.enableVideo && (frameDirty_ || lastFrame_.has_value());
+                const bool hasAudioStateRs = config_.enableAudio && lastAudioState_.has_value();
+                const bool hadAudioPreviewRs = config_.enableAudio && lastAudioPreview_.has_value();
+                return hasVideoWork || hasAudioStateRs || hadAudioPreviewRs || quitRequested_;
             }
-        }
 
-        syncVideoTransportStats();
-        // Drain any debug snapshots queued by the emulation thread.
-        if (debugSnapshotService_ != nullptr) {
-            // Keep only the latest video and audio captures from the queue.
-            while (auto vid = debugSnapshotService_->tryConsumeVideo()) {
-                lastVideoDebugModel_ = std::move(*vid);
-            }
-            while (auto aud = debugSnapshotService_->tryConsumeAudio()) {
-                lastAudioState_ = std::move(*aud);
-            }
-        }
-        const bool hadFrame = config_.enableVideo && lastFrame_.has_value();
-        const bool hasAudioState = config_.enableAudio && lastAudioState_.has_value();
-        const bool hadAudioPreview = config_.enableAudio && lastAudioPreview_.has_value();
-        const bool visibilityChanged = windowVisible_ != windowVisibilityRequested_;
-
-        bool presented = false;
-        if (hadFrame && (frameDirty_ || visibilityChanged)) {
-            ++stats_.renderServicePresentAttempts;
-            if (frameDirty_ && shouldDeferVideoFrameForAudioLowWater()) {
-                videoPresentDeferredForAudioLowWater_ = true;
-            } else {
-                presented = presentLatestFrame();
-                if (presented) {
-                    ++stats_.renderServicePresentSuccessCount;
-                } else {
-                    ++stats_.renderServicePresentFailureCount;
+            if (!config_.pumpBackendEventsOnInputSample) {
+                handledEvents = pumpBackendEvents();
+                if (handledEvents != 0u) {
+                    // Mirror renderServiceEventPumpCount via atomic so stats() fold
+                    // sees a unified total from both the render-service and headless paths.
+                    renderServiceEventPumpCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
                 }
             }
+
+            syncVideoTransportStats();
+            // Drain any debug snapshots queued by the emulation thread.
+            if (debugSnapshotService_ != nullptr) {
+                // Keep only the latest video and audio captures from the queue.
+                while (auto vid = debugSnapshotService_->tryConsumeVideo()) {
+                    lastVideoDebugModel_ = std::move(*vid);
+                }
+                while (auto aud = debugSnapshotService_->tryConsumeAudio()) {
+                    lastAudioState_ = std::move(*aud);
+                }
+            }
+            hadFrame        = config_.enableVideo && lastFrame_.has_value();
+            hasAudioState   = config_.enableAudio && lastAudioState_.has_value();
+            hadAudioPreview = config_.enableAudio && lastAudioPreview_.has_value();
+            visibilityChanged = windowVisible_ != windowVisibilityRequested_;
+            audioActive = hasAudioState ||
+                (audioService_ != nullptr && audioService_->engine().bufferedSamples() != 0u);
+
+            if (hadFrame && (frameDirty_ || visibilityChanged)) {
+                ++stats_.renderServicePresentAttempts;
+                if (frameDirty_ && shouldDeferVideoFrameForAudioLowWater()) {
+                    videoPresentDeferredForAudioLowWater_ = true;
+                } else if (videoService_ != nullptr &&
+                           backendReady_ &&
+                           videoService_->state() == BMMQ::VideoLifecycleState::Active) {
+                    if (config_.showWindowOnPresent) {
+                        requestWindowVisibility(true);
+                    }
+                    ++stats_.renderAttempts;
+                    processedFrame = videoService_->consumeAndProcessFrame();
+                    if (!processedFrame.has_value()) {
+                        // Headless: consumeAndProcessFrame set state; treat as success.
+                        presented = true;
+                        ++stats_.renderServicePresentSuccessCount;
+                        ++stats_.framesPresented;
+                        frameDirty_ = false;
+                        videoPresentDeferredForAudioLowWater_ = false;
+                        lastRenderSummary_ = "Presented (headless)";
+                    }
+                } else {
+                    ++stats_.renderServicePresentFailureCount;
+                    lastRenderSummary_ = "Frame prepared but backend not ready";
+                }
+            }
+            applyWindowVisibilityRequest();
         }
 
-        const bool audioActive = hasAudioState || (audioService_ != nullptr && audioService_->engine().bufferedSamples() != 0u);
-        applyWindowVisibilityRequest();
-        return handledEvents != 0 || hadFrame || hasAudioState || hadAudioPreview || visibilityChanged || presented || audioActive || quitRequested_;
+        // ── Outside lock: SDL texture upload + SDL_RenderPresent ─────────────
+        bool presentOk = false;
+        std::string presentError;
+        if (processedFrame.has_value()) {
+            if (videoPresenter_ != nullptr && videoPresenter_->ready()) {
+                presentOk = videoPresenter_->present(*processedFrame);
+                if (!presentOk) {
+                    presentError = std::string(videoPresenter_->lastError());
+                }
+            } else {
+                presentError = "presenter not ready";
+            }
+        }
+
+        // ── Second lock block: post-present state update ──────────────────────
+        if (processedFrame.has_value()) {
+            std::unique_lock<std::mutex> lock(sharedStateMutex_);
+            if (videoService_ != nullptr) {
+                videoService_->recordPresentOutcome(presentOk, presentError);
+            }
+            syncVideoTransportStats();
+            if (presentOk) {
+                presented = true;
+                ++stats_.renderServicePresentSuccessCount;
+                ++stats_.framesPresented;
+                frameDirty_ = false;
+                videoPresentDeferredForAudioLowWater_ = false;
+                lastRenderSummary_ = "Presented frame " +
+                    std::to_string(processedFrame->width) + "x" +
+                    std::to_string(processedFrame->height);
+            } else {
+                ++stats_.renderServicePresentFailureCount;
+                lastBackendError_ = presentError;
+                lastRenderSummary_ = lastBackendError_.empty()
+                    ? "Video presentation failed" : lastBackendError_;
+                appendLog("sdl: video presentation failed: " + lastRenderSummary_);
+            }
+        }
+
+        return handledEvents != 0 || hadFrame || hasAudioState || hadAudioPreview ||
+               visibilityChanged || presented || audioActive || quitRequested_;
     }
 
     void setQueuedDigitalInputMask(uint32_t pressedMask) override

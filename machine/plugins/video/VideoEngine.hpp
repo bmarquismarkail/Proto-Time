@@ -2,12 +2,13 @@
 #define BMMQ_VIDEO_ENGINE_HPP
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <cassert>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <deque>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -154,22 +155,24 @@ public:
             return {};
         }
 
-        bool overwroteOldFrame = false;
         auto stamped = frame;
         stamped.publishedAtNs = steadyClockNs();
         lastValidFrame_ = stamped;
-        if (mailboxFrames_.size() >= config_.mailboxDepthFrames) {
-            ++stats_.overwriteCount;
-            const auto dropped = mailboxFrames_.front();
-            if (dropped.source == VideoFrameSource::RealtimeSnapshot) {
-                ++stats_.overwriteRealtimeFrameCount;
-            } else {
-                ++stats_.overwriteDebugFrameCount;
-            }
-            mailboxFrames_.pop_front();
-            overwroteOldFrame = true;
-        }
-        mailboxFrames_.push_back(stamped);
+
+        // Write frame to the producer's private slot (never touched by consumer).
+        mailboxSlots_[mailboxProducerSlot_] = std::move(stamped);
+
+        // Atomically publish: set dirty flag and our slot index.
+        // Swap with the shared slot; the old shared slot becomes the new producer slot.
+        const auto toShare = static_cast<std::uint8_t>(kMailboxDirty | static_cast<std::uint8_t>(mailboxProducerSlot_));
+        const auto old = mailboxShared_.exchange(toShare, std::memory_order_acq_rel);
+        const bool overwroteOldFrame = (old & kMailboxDirty) != 0u;
+        const int oldSlot = static_cast<int>(old & kMailboxSlotMask);
+
+        // The old shared slot is now exclusively ours; recycle it for the next write.
+        mailboxProducerSlot_ = oldSlot;
+
+        // Stats
         ++stats_.publishedFrameCount;
         if (frame.source == VideoFrameSource::RealtimeSnapshot) {
             ++stats_.publishedRealtimeFrameCount;
@@ -179,33 +182,47 @@ public:
             stats_.publishedDebugPixelBytes += frame.pixelCount() * sizeof(std::uint32_t);
         }
         stats_.publishedPixelBytes += frame.pixelCount() * sizeof(std::uint32_t);
-        stats_.mailboxDepth = mailboxFrames_.size();
-        stats_.mailboxHighWaterMark = std::max(stats_.mailboxHighWaterMark, mailboxFrames_.size());
-        stats_.lastPublishedGeneration = stamped.generation;
+
+        if (overwroteOldFrame) {
+            ++stats_.overwriteCount;
+            // Read the overwritten frame's source from the recycled slot.
+            if (mailboxSlots_[oldSlot].source == VideoFrameSource::RealtimeSnapshot) {
+                ++stats_.overwriteRealtimeFrameCount;
+            } else {
+                ++stats_.overwriteDebugFrameCount;
+            }
+        }
+
+        stats_.mailboxDepth = overwroteOldFrame ? 1u : 1u;
+        stats_.mailboxHighWaterMark = std::max(stats_.mailboxHighWaterMark, static_cast<std::size_t>(1u));
+        stats_.lastPublishedGeneration = frame.generation;
         return VideoSubmitResult{.accepted = true, .overwroteOldFrame = overwroteOldFrame};
     }
 
     [[nodiscard]] std::optional<VideoPresentPacket> tryConsumeLatestFrame()
     {
-        if (mailboxFrames_.empty()) {
+        // Check if a new frame is available.  The dirty flag is set by the producer.
+        const auto current = mailboxShared_.load(std::memory_order_acquire);
+        if ((current & kMailboxDirty) == 0u) {
             return std::nullopt;
         }
 
-        while (mailboxFrames_.size() > 1u) {
-            const auto dropped = mailboxFrames_.front();
-            if (dropped.source == VideoFrameSource::RealtimeSnapshot) {
-                ++stats_.staleRealtimeFrameDropCount;
-            } else {
-                ++stats_.staleDebugFrameDropCount;
-            }
-            mailboxFrames_.pop_front();
-            ++stats_.staleFrameDropCount;
+        // Atomically take the latest slot; give the consumer's current slot back as
+        // the new shared slot (clean, no dirty flag).  Any concurrent producer write
+        // will simply replace our clean slot with a new dirty one.
+        const auto toGiveBack = static_cast<std::uint8_t>(mailboxConsumerSlot_);
+        const auto taken = mailboxShared_.exchange(toGiveBack, std::memory_order_acq_rel);
+
+        if ((taken & kMailboxDirty) == 0u) {
+            // No dirty frame (cannot happen in SPSC, but be defensive).
+            return std::nullopt;
         }
 
-        auto frame = mailboxFrames_.back();
-        mailboxFrames_.pop_back();
+        mailboxConsumerSlot_ = static_cast<int>(taken & kMailboxSlotMask);
+        auto frame = mailboxSlots_[mailboxConsumerSlot_];
+
         ++stats_.consumedFrameCount;
-        stats_.mailboxDepth = mailboxFrames_.size();
+        stats_.mailboxDepth = 0u;
         stats_.lastConsumedGeneration = frame.generation;
         if (frame.publishedAtNs != 0u) {
             const auto nowNs = steadyClockNs();
@@ -239,7 +256,8 @@ public:
 
     [[nodiscard]] std::size_t mailboxFrameCount() const noexcept
     {
-        return mailboxFrames_.size();
+        const auto shared = mailboxShared_.load(std::memory_order_acquire);
+        return (shared & kMailboxDirty) != 0u ? 1u : 0u;
     }
 
     std::uint64_t advanceGeneration() noexcept
@@ -293,15 +311,20 @@ private:
         return config;
     }
 
-    void initializeQueue()
+    void initializeQueue() noexcept
     {
-        mailboxFrames_.clear();
+        mailboxShared_.store(0x00u, std::memory_order_release);
+        mailboxProducerSlot_ = 1;
+        mailboxConsumerSlot_ = 2;
         stats_.mailboxDepth = 0u;
     }
 
     void clearQueue() noexcept
     {
-        mailboxFrames_.clear();
+        // Drop any pending frame by clearing the dirty flag.
+        const auto current = mailboxShared_.load(std::memory_order_acquire);
+        const auto clean = static_cast<std::uint8_t>(current & kMailboxSlotMask);
+        mailboxShared_.store(clean, std::memory_order_release);
         stats_.mailboxDepth = 0u;
     }
 
@@ -675,10 +698,24 @@ private:
         return (a << 24u) | (r << 16u) | (g << 8u) | b;
     }
 
+    // Triple-buffer SPSC mailbox:
+    // - 3 slots: one private to producer, one private to consumer, one shared (latest frame).
+    // - mailboxShared_: bits [2]=dirty (new frame available), bits [1:0]=slot index.
+    // - Producer writes to mailboxProducerSlot_, then atomically swaps with mailboxShared_.
+    // - Consumer atomically swaps mailboxConsumerSlot_ into mailboxShared_ to take the latest.
+    // - No two threads ever access the same slot concurrently.
+    static constexpr std::uint8_t kMailboxDirty    = 0x04u;
+    static constexpr std::uint8_t kMailboxSlotMask = 0x03u;
+    static constexpr int kMailboxSlotCount         = 3;
+
+    std::array<VideoPresentPacket, kMailboxSlotCount> mailboxSlots_{};
+    std::atomic<std::uint8_t> mailboxShared_{0x00u}; // (dirty:1 | slotIdx:2)
+    int mailboxProducerSlot_{1};  // emulation-thread-private
+    int mailboxConsumerSlot_{2};  // render-thread-private
+
     VideoEngineConfig config_{};
     VisualOverrideService* visualOverrideService_ = nullptr;
     mutable std::unordered_map<std::string, VisualResourceCacheEntry> visualResourceCache_{};
-    std::deque<VideoPresentPacket> mailboxFrames_{};
     std::optional<VideoPresentPacket> lastValidFrame_{};
     VideoEngineStats stats_{};
     std::uint64_t currentGeneration_ = 0;
