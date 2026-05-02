@@ -436,12 +436,24 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
         spritePalette[color] = decodedCram_[16u + color];
     }
     const auto backdrop = spritePalette[static_cast<std::size_t>(registers_[7u] & 0x0Fu)];
+    const auto vramSize = vram_.size();
+    const bool vramPowerOfTwo = (vramSize != 0u) && ((vramSize & (vramSize - 1u)) == 0u);
+    const auto vramMask = vramSize != 0u ? (vramSize - 1u) : 0u;
+    auto wrapVram = [&](std::size_t index) noexcept -> std::size_t {
+        if (vramSize == 0u) {
+            return 0u;
+        }
+        if (vramPowerOfTwo) {
+            return index & vramMask;
+        }
+        return index % vramSize;
+    };
     out.inVBlank = scanline_ >= activeLines + 1u;
     out.scanlineIndex = static_cast<uint8_t>(scanline_ & 0x00FFu);
     const auto pixelCount = static_cast<std::size_t>(out.width) * static_cast<std::size_t>(out.height);
     out.argbPixels.resize(pixelCount);
-    std::fill_n(out.argbPixels.data(), pixelCount, backdrop);
     if (!out.displayEnabled) {
+        std::fill_n(out.argbPixels.data(), pixelCount, backdrop);
         return out;
     }
 
@@ -460,10 +472,10 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                 const auto vdpX = static_cast<std::size_t>(gameGearTmsViewportX(out.width, x));
                 const auto tileX = (vdpX / 8u) % 32u;
                 const auto pixelX = vdpX % 8u;
-                const auto nameIndex = (nameBase + tileY * 32u + tileX) % vram_.size();
+                const auto nameIndex = wrapVram(nameBase + tileY * 32u + tileX);
                 const auto tileIndex = static_cast<std::size_t>(vram_[nameIndex]);
-                const auto patternAddress = (patternBase + bankOffset + tileIndex * 8u + pixelY) % vram_.size();
-                const auto colorAddress = (colorBase + bankOffset + tileIndex * 8u + pixelY) % vram_.size();
+                const auto patternAddress = wrapVram(patternBase + bankOffset + tileIndex * 8u + pixelY);
+                const auto colorAddress = wrapVram(colorBase + bankOffset + tileIndex * 8u + pixelY);
                 const auto pattern = vram_[patternAddress];
                 const auto color = vram_[colorAddress];
                 const bool foreground = ((pattern >> (7u - pixelX)) & 0x01u) != 0u;
@@ -510,7 +522,8 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
     }
     constexpr uint8_t kSpriteMaskBackgroundPriority = 0x01u;
     constexpr uint8_t kSpriteMaskOccupied = 0x02u;
-    std::vector<uint8_t> spriteMask;
+    thread_local std::vector<uint8_t> spriteMaskScratch;
+    auto& spriteMask = spriteMaskScratch;
     if (hasVisibleSprites) {
         spriteMask.assign(out.argbPixels.size(), 0u);
     }
@@ -519,8 +532,13 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
         (scrollX & 0x07u) == 0u &&
         (registers_[0u] & 0xA0u) == 0u &&
         !(activeLines == 192u && scrollY > 223u);
-    std::vector<std::size_t> simpleTileXs;
-    std::vector<std::size_t> simplePixelXs;
+    if (!useSimpleBackgroundPath) {
+        std::fill_n(out.argbPixels.data(), pixelCount, backdrop);
+    }
+    thread_local std::vector<std::size_t> simpleTileXsScratch;
+    thread_local std::vector<std::size_t> simplePixelXsScratch;
+    auto& simpleTileXs = simpleTileXsScratch;
+    auto& simplePixelXs = simplePixelXsScratch;
     if (useSimpleBackgroundPath) {
         simpleTileXs.resize(static_cast<std::size_t>(out.width));
         simplePixelXs.resize(static_cast<std::size_t>(out.width));
@@ -585,12 +603,12 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                 const auto sampleX = decoded.flipH ? (7u - pixelX) : pixelX;
                 const auto sampleY = decoded.flipV ? (7u - pixelY) : pixelY;
                 if (decodedPatternRowY[tileX] != static_cast<int>(sampleY)) {
-                    const auto tileBase = (static_cast<std::size_t>(decoded.tileIndex) * 32u) % vram_.size();
-                    const auto rowBase = (tileBase + static_cast<std::size_t>(sampleY) * 4u) % vram_.size();
+                    const auto tileBase = wrapVram(static_cast<std::size_t>(decoded.tileIndex) * 32u);
+                    const auto rowBase = wrapVram(tileBase + static_cast<std::size_t>(sampleY) * 4u);
                     const auto plane0 = vram_[rowBase];
-                    const auto plane1 = vram_[(rowBase + 1u) % vram_.size()];
-                    const auto plane2 = vram_[(rowBase + 2u) % vram_.size()];
-                    const auto plane3 = vram_[(rowBase + 3u) % vram_.size()];
+                    const auto plane1 = vram_[wrapVram(rowBase + 1u)];
+                    const auto plane2 = vram_[wrapVram(rowBase + 2u)];
+                    const auto plane3 = vram_[wrapVram(rowBase + 3u)];
                     for (std::size_t px = 0; px < 8u; ++px) {
                         const auto bit = static_cast<uint8_t>(7u - static_cast<uint8_t>(px));
                         decodedPatternRows[tileX][px] = static_cast<uint8_t>((((plane3 >> bit) & 0x01u) << 3u) |
@@ -662,12 +680,12 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
             // Decode the 4 bitplane bytes for this tile row once and reuse
             // the resulting 8 color indexes for pixels in the tile.
             if (decodedPatternRowY[tileX] != static_cast<int>(sampleY)) {
-                const auto tileBase = (static_cast<std::size_t>(decoded.tileIndex) * 32u) % vram_.size();
-                const auto rowBase = (tileBase + static_cast<std::size_t>(sampleY) * 4u) % vram_.size();
+                const auto tileBase = wrapVram(static_cast<std::size_t>(decoded.tileIndex) * 32u);
+                const auto rowBase = wrapVram(tileBase + static_cast<std::size_t>(sampleY) * 4u);
                 const auto plane0 = vram_[rowBase];
-                const auto plane1 = vram_[(rowBase + 1u) % vram_.size()];
-                const auto plane2 = vram_[(rowBase + 2u) % vram_.size()];
-                const auto plane3 = vram_[(rowBase + 3u) % vram_.size()];
+                const auto plane1 = vram_[wrapVram(rowBase + 1u)];
+                const auto plane2 = vram_[wrapVram(rowBase + 2u)];
+                const auto plane3 = vram_[wrapVram(rowBase + 3u)];
                 for (std::size_t px = 0; px < 8u; ++px) {
                     const auto bit = static_cast<uint8_t>(7u - static_cast<uint8_t>(px));
                     decodedPatternRows[tileX][px] = static_cast<uint8_t>((((plane3 >> bit) & 0x01u) << 3u) |
@@ -709,9 +727,9 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
         if (rawY == 0xE0u) {
             continue;
         }
-        const auto xyBase = (satBase + 0x80u + sprite * 2u) % vram_.size();
+        const auto xyBase = wrapVram(satBase + 0x80u + sprite * 2u);
         const int spriteX = static_cast<int>(vram_[xyBase]) - ((registers_[0u] & 0x08u) != 0u ? 8 : 0);
-        uint16_t tileIndex = vram_[(xyBase + 1u) % vram_.size()];
+        uint16_t tileIndex = vram_[wrapVram(xyBase + 1u)];
         if (tallSprites) {
             tileIndex = static_cast<uint16_t>(tileIndex & 0x00FEu);
         }
@@ -733,12 +751,12 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
             const auto rowTileOffset = tallSprites && py >= 8 ? 1u : 0u;
             const auto rowTileIndex = static_cast<uint16_t>(tileIndex + rowTileOffset);
             const auto rowSampleY = static_cast<std::size_t>((py / zoom) % 8);
-            const auto rowTileBase = (spriteBase + static_cast<std::size_t>(rowTileIndex) * 32u) % vram_.size();
-            const auto rowBase = (rowTileBase + rowSampleY * 4u) % vram_.size();
+            const auto rowTileBase = wrapVram(spriteBase + static_cast<std::size_t>(rowTileIndex) * 32u);
+            const auto rowBase = wrapVram(rowTileBase + rowSampleY * 4u);
             const auto plane0 = vram_[rowBase];
-            const auto plane1 = vram_[(rowBase + 1u) % vram_.size()];
-            const auto plane2 = vram_[(rowBase + 2u) % vram_.size()];
-            const auto plane3 = vram_[(rowBase + 3u) % vram_.size()];
+            const auto plane1 = vram_[wrapVram(rowBase + 1u)];
+            const auto plane2 = vram_[wrapVram(rowBase + 2u)];
+            const auto plane3 = vram_[wrapVram(rowBase + 3u)];
             std::array<uint8_t, 8u> spriteRowColors{};
             for (std::size_t sampleX = 0u; sampleX < 8u; ++sampleX) {
                 const auto bit = static_cast<uint8_t>(7u - static_cast<uint8_t>(sampleX));
