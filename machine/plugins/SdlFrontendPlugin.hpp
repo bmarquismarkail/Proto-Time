@@ -145,6 +145,16 @@ struct SdlFrontendStats {
     std::size_t videoRealtimePacketsAccepted = 0;
     std::size_t videoRealtimePacketsSkipped = 0;
     std::size_t videoRealtimePacketsBuiltOutsideLock = 0;
+    std::size_t videoRealtimeRenderRequestCount = 0;
+    std::size_t videoDebugRenderRequestCount = 0;
+    std::size_t videoRealtimeRenderFromVBlankCount = 0;
+    std::size_t videoRealtimeRenderFromScanlineCount = 0;
+    std::size_t videoRealtimeRenderFromMemoryWriteCount = 0;
+    std::size_t videoRealtimeRenderFromOtherCount = 0;
+    std::size_t videoDebugRenderFromVBlankCount = 0;
+    std::size_t videoDebugRenderFromScanlineCount = 0;
+    std::size_t videoDebugRenderFromMemoryWriteCount = 0;
+    std::size_t videoDebugRenderFromOtherCount = 0;
     /// Phase 38B: counts VBlank/scanline events where videoDebugFrameModel() was
     /// skipped because no debug consumer (DebugSnapshotService) was connected.
     /// In production mode this should equal videoEvents (all skipped).

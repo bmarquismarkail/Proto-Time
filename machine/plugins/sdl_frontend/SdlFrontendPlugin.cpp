@@ -84,6 +84,27 @@ constexpr std::size_t kApuFrameSamples = 256u;
     return BMMQ::VideoPresenterMode::Hardware;
 }
 
+enum class VideoRenderEventBucket : uint8_t {
+    VBlank = 0,
+    Scanline,
+    MemoryWrite,
+    Other,
+};
+
+[[nodiscard]] constexpr VideoRenderEventBucket videoRenderEventBucket(BMMQ::MachineEventType type) noexcept
+{
+    switch (type) {
+    case BMMQ::MachineEventType::VBlank:
+        return VideoRenderEventBucket::VBlank;
+    case BMMQ::MachineEventType::VideoScanlineReady:
+        return VideoRenderEventBucket::Scanline;
+    case BMMQ::MachineEventType::MemoryWriteObserved:
+        return VideoRenderEventBucket::MemoryWrite;
+    default:
+        return VideoRenderEventBucket::Other;
+    }
+}
+
 class SdlFrontendPluginImpl final : public BMMQ::ISdlFrontendPlugin,
                                     public BMMQ::LoggingPluginSupport {
 public:
@@ -787,6 +808,21 @@ public:
                 }
 
                 if (realtimeSubmitted) {
+                    ++stats_.videoRealtimeRenderRequestCount;
+                    switch (videoRenderEventBucket(event.type)) {
+                    case VideoRenderEventBucket::VBlank:
+                        ++stats_.videoRealtimeRenderFromVBlankCount;
+                        break;
+                    case VideoRenderEventBucket::Scanline:
+                        ++stats_.videoRealtimeRenderFromScanlineCount;
+                        break;
+                    case VideoRenderEventBucket::MemoryWrite:
+                        ++stats_.videoRealtimeRenderFromMemoryWriteCount;
+                        break;
+                    case VideoRenderEventBucket::Other:
+                        ++stats_.videoRealtimeRenderFromOtherCount;
+                        break;
+                    }
                     submittedVideoFrame = true;
                     // When the realtime packet path succeeds, forward the pre-built debug
                     // model to DebugSnapshotService so the render thread can consume it.
@@ -805,6 +841,21 @@ public:
                     }
                 } else if (BMMQ::VideoDebugFrameModel* videoModel = modelForVideoEvent(event, view, std::move(prebuiltDebugModel)); videoModel != nullptr) {
                     if (videoService_ != nullptr && videoService_->submitVideoDebugModel(event, *videoModel)) {
+                        ++stats_.videoDebugRenderRequestCount;
+                        switch (videoRenderEventBucket(event.type)) {
+                        case VideoRenderEventBucket::VBlank:
+                            ++stats_.videoDebugRenderFromVBlankCount;
+                            break;
+                        case VideoRenderEventBucket::Scanline:
+                            ++stats_.videoDebugRenderFromScanlineCount;
+                            break;
+                        case VideoRenderEventBucket::MemoryWrite:
+                            ++stats_.videoDebugRenderFromMemoryWriteCount;
+                            break;
+                        case VideoRenderEventBucket::Other:
+                            ++stats_.videoDebugRenderFromOtherCount;
+                            break;
+                        }
                         submittedVideoFrame = true;
                         if (event.type == BMMQ::MachineEventType::VBlank) {
                             lastVideoDebugModel_ = *videoModel;

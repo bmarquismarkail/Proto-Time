@@ -157,6 +157,17 @@ void writeDiagnosticsSample(std::ostream& output,
     output << ",\"video\":{";
     output << "\"frames_submitted\":" << stats.videoFramesPublished;
     output << ",\"frames_presented\":" << stats.framesPresented;
+    output << ",\"realtime_render_request_count\":" << stats.videoRealtimeRenderRequestCount;
+    output << ",\"debug_render_request_count\":" << stats.videoDebugRenderRequestCount;
+    output << ",\"realtime_render_request_from_vblank_count\":" << stats.videoRealtimeRenderFromVBlankCount;
+    output << ",\"realtime_render_request_from_scanline_count\":" << stats.videoRealtimeRenderFromScanlineCount;
+    output << ",\"realtime_render_request_from_memory_write_count\":" << stats.videoRealtimeRenderFromMemoryWriteCount;
+    output << ",\"realtime_render_request_from_other_count\":" << stats.videoRealtimeRenderFromOtherCount;
+    output << ",\"debug_render_request_from_vblank_count\":" << stats.videoDebugRenderFromVBlankCount;
+    output << ",\"debug_render_request_from_scanline_count\":" << stats.videoDebugRenderFromScanlineCount;
+    output << ",\"debug_render_request_from_memory_write_count\":" << stats.videoDebugRenderFromMemoryWriteCount;
+    output << ",\"debug_render_request_from_other_count\":" << stats.videoDebugRenderFromOtherCount;
+    output << ",\"debug_model_build_skip_count\":" << stats.videoDebugModelBuildSkipCount;
     output << ",\"fresh_presents\":" << stats.videoPresentFreshFrameCount;
     output << ",\"fallback_presents\":" << stats.videoPresentFallbackCount;
     output << ",\"mailbox_overwrites\":" << stats.videoMailboxOverwriteCount;
