@@ -60,6 +60,8 @@ private:
 
     struct PixelRenderOutput {
         BMMQ::RealtimeVideoPacket::VdpRenderBodyTiming renderBodyTiming{};
+        BMMQ::RealtimeVideoPacket::VdpMode4BackgroundAttributeStats mode4BackgroundAttributes{};
+        BMMQ::RealtimeVideoPacket::VdpMode4SimpleBackgroundStats mode4SimpleBackground{};
         int width = 0;
         int height = 0;
         bool displayEnabled = false;

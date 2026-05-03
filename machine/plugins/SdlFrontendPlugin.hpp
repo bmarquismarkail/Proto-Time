@@ -162,6 +162,27 @@ struct SdlFrontendStats {
     std::uint64_t videoVdpRenderBodySpriteProbeNs = 0;
     std::uint64_t videoVdpRenderBodySpriteOverlayNs = 0;
     std::uint64_t videoVdpRenderBodyOtherNs = 0;
+    std::uint64_t videoVdpMode4AttrTileCellsProcessed = 0;
+    std::uint64_t videoVdpMode4AttrTileCellsFlipH = 0;
+    std::uint64_t videoVdpMode4AttrTileCellsFlipV = 0;
+    std::uint64_t videoVdpMode4AttrTileCellsPalette1 = 0;
+    std::uint64_t videoVdpMode4AttrTileCellsPriority = 0;
+    std::uint64_t videoVdpMode4AttrTileCellsFixedTopRows = 0;
+    std::uint64_t videoVdpMode4AttrTileCellsFixedRightColumns = 0;
+    std::uint64_t videoVdpMode4AttrTileCellsLeftBlankOrFineSkip = 0;
+    std::uint64_t videoVdpMode4AttrTileCellsCommonCaseEligible = 0;
+    std::uint64_t videoVdpMode4AttrCommonCaseEligiblePixelsWritten = 0;
+    std::uint64_t videoVdpMode4SimplePathFrameCount = 0;
+    std::uint64_t videoVdpMode4SimplePathRowsRendered = 0;
+    std::uint64_t videoVdpMode4SimplePathPixelsWritten = 0;
+    std::uint64_t videoVdpMode4SimplePathTileEntriesDecoded = 0;
+    std::uint64_t videoVdpMode4SimplePathPatternRowsDecoded = 0;
+    std::uint64_t videoVdpMode4SimplePathScrollXAlignedCount = 0;
+    std::uint64_t videoVdpMode4SimplePathScrollYValueChanges = 0;
+    std::uint64_t videoVdpMode4SimplePathUniqueTileRowsSeen = 0;
+    std::uint64_t videoVdpMode4SimplePathUsedCount = 0;
+    std::uint64_t videoVdpMode4GeneralPathUsedCount = 0;
+    std::uint64_t videoTmsGraphicsPathUsedCount = 0;
     /// Phase 38B: counts VBlank/scanline events where videoDebugFrameModel() was
     /// skipped because no debug consumer (DebugSnapshotService) was connected.
     /// In production mode this should equal videoEvents (all skipped).

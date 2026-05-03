@@ -95,6 +95,31 @@ struct RealtimeVideoPacket {
         std::uint64_t spriteOverlayNs = 0;
         std::uint64_t otherNs = 0;
     } vdpRenderBodyTiming{};
+    struct VdpMode4BackgroundAttributeStats {
+        std::uint64_t tileCellsProcessed = 0;
+        std::uint64_t tileCellsFlipH = 0;
+        std::uint64_t tileCellsFlipV = 0;
+        std::uint64_t tileCellsPalette1 = 0;
+        std::uint64_t tileCellsPriority = 0;
+        std::uint64_t tileCellsFixedTopRows = 0;
+        std::uint64_t tileCellsFixedRightColumns = 0;
+        std::uint64_t tileCellsLeftBlankOrFineSkip = 0;
+        std::uint64_t tileCellsCommonCaseEligible = 0;
+        std::uint64_t commonCaseEligiblePixelsWritten = 0;
+    } vdpMode4BackgroundAttributes{};
+    struct VdpMode4SimpleBackgroundStats {
+        std::uint64_t simplePathFrameCount = 0;
+        std::uint64_t simplePathRowsRendered = 0;
+        std::uint64_t simplePathPixelsWritten = 0;
+        std::uint64_t simplePathTileEntriesDecoded = 0;
+        std::uint64_t simplePathPatternRowsDecoded = 0;
+        std::uint64_t simplePathScrollXAlignedCount = 0;
+        std::uint64_t simplePathScrollYValueChanges = 0;
+        std::uint64_t simplePathUniqueTileRowsSeen = 0;
+        std::uint64_t mode4SimplePathUsedCount = 0;
+        std::uint64_t mode4GeneralPathUsedCount = 0;
+        std::uint64_t tmsGraphicsPathUsedCount = 0;
+    } vdpMode4SimpleBackground{};
     std::vector<std::uint32_t> argbPixels;
 
     [[nodiscard]] bool empty() const noexcept

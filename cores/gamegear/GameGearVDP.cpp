@@ -11,6 +11,7 @@ constexpr int kGameGearViewportWidth = 160;
 constexpr int kGameGearViewportHeight = 144;
 constexpr int kGameGearViewportX = 48;
 constexpr int kGameGearViewportY = 24;
+constexpr bool kEnableMode4SimpleBackgroundDiagnostics = false;
 
 [[nodiscard]] int gameGearViewportXOffset(int frameWidth) noexcept
 {
@@ -478,6 +479,7 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
 
     const auto backgroundStart = Clock::now();
     if (!mode4 && (registers_[0u] & 0x02u) != 0u) {
+        out.mode4SimpleBackground.tmsGraphicsPathUsedCount = 1u;
         const bool graphicsII = (registers_[0u] & 0x02u) != 0u;
         const auto nameBase = static_cast<std::size_t>((registers_[2u] & 0x0Eu) << 10u);
         const auto patternBase = static_cast<std::size_t>((registers_[4u] & 0x04u) << 11u);
@@ -563,6 +565,13 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
         (scrollX & 0x07u) == 0u &&
         (registers_[0u] & 0xA0u) == 0u &&
         !(activeLines == 192u && scrollY > 223u);
+    if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
+        if (useSimpleBackgroundPath) {
+            out.mode4SimpleBackground.mode4SimplePathUsedCount = 1u;
+        } else {
+            out.mode4SimpleBackground.mode4GeneralPathUsedCount = 1u;
+        }
+    }
     if (!useSimpleBackgroundPath) {
         std::fill_n(out.argbPixels.data(), pixelCount, backdrop);
     }
@@ -571,6 +580,19 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
     auto& simpleTileXs = simpleTileXsScratch;
     auto& simplePixelXs = simplePixelXsScratch;
     if (useSimpleBackgroundPath) {
+        if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
+            thread_local uint8_t simplePrevScrollY = 0u;
+            thread_local bool simplePrevScrollYInitialized = false;
+            out.mode4SimpleBackground.simplePathFrameCount = 1u;
+            out.mode4SimpleBackground.simplePathScrollXAlignedCount = ((scrollX & 0x07u) == 0u) ? 1u : 0u;
+            if (!simplePrevScrollYInitialized) {
+                simplePrevScrollY = scrollY;
+                simplePrevScrollYInitialized = true;
+            } else if (simplePrevScrollY != scrollY) {
+                out.mode4SimpleBackground.simplePathScrollYValueChanges = 1u;
+                simplePrevScrollY = scrollY;
+            }
+        }
         simpleTileXs.resize(static_cast<std::size_t>(out.width));
         simplePixelXs.resize(static_cast<std::size_t>(out.width));
         const auto startingColumn = static_cast<std::size_t>((32u - (scrollX >> 3u)) & 0x1Fu);
@@ -581,6 +603,8 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
             simplePixelXs[index] = scrolledX % 8u;
         }
     }
+    std::array<bool, 32u> simpleSeenTileRows{};
+    std::size_t simpleUniqueTileRows = 0u;
     for (int y = 0; y < out.height; ++y) {
         const int vdpY = y + viewportY;
         const auto rowOffset = static_cast<std::size_t>(y) * static_cast<std::size_t>(out.width);
@@ -612,6 +636,13 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
             const auto pixelY = scrolledY % 8u;
             const auto wrappedTileY = tileY % 32u;
             const auto rowNameBase = nameBasePre + wrappedTileY * kTilesPerRow * 2u;
+            if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
+                if (!simpleSeenTileRows[wrappedTileY]) {
+                    simpleSeenTileRows[wrappedTileY] = true;
+                    ++simpleUniqueTileRows;
+                }
+                ++out.mode4SimpleBackground.simplePathRowsRendered;
+            }
             for (int x = 0; x < out.width; ++x) {
                 const auto index = static_cast<std::size_t>(x);
                 const auto tileX = simpleTileXs[index];
@@ -630,6 +661,9 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                     decodedEntries[tileX].priority = (entry & 0x1000u) != 0u;
                     decodedEntryRows[tileX] = tileY;
                     decodedValid[tileX] = true;
+                    if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
+                        ++out.mode4SimpleBackground.simplePathTileEntriesDecoded;
+                    }
                 }
                 const auto& decoded = decodedEntries[tileX];
                 const auto sampleX = decoded.flipH ? (7u - pixelX) : pixelX;
@@ -649,12 +683,18 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                                                                               ((plane0 >> bit) & 0x01u));
                     }
                     decodedPatternRowY[tileX] = static_cast<int>(sampleY);
+                    if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
+                        ++out.mode4SimpleBackground.simplePathPatternRowsDecoded;
+                    }
                 }
                 const auto colorCode = decodedPatternRows[tileX][static_cast<std::size_t>(sampleX)];
                 const auto pixelIndex = rowOffset + static_cast<std::size_t>(x);
                 out.argbPixels[pixelIndex] = decoded.palette1
                     ? spritePalette[colorCode & 0x0Fu]
                     : backgroundPalette[colorCode & 0x0Fu];
+                if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
+                    ++out.mode4SimpleBackground.simplePathPixelsWritten;
+                }
                 if (hasVisibleSprites) {
                     spriteMask[pixelIndex] = decoded.priority && colorCode != 0u
                         ? kSpriteMaskBackgroundPriority
@@ -674,7 +714,9 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
 
         const auto renderGeneralSegment = [&](int xStart,
                                               int xEnd,
-                                              uint8_t effectiveScrollY) {
+                                              uint8_t effectiveScrollY,
+                                              bool segmentFixedTopRows,
+                                              bool segmentFixedRightColumns) {
             if (xStart >= xEnd) {
                 return;
             }
@@ -695,11 +737,13 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                 const int fineSkipUntil = std::max(0, static_cast<int>(fineScrollX) - viewportX);
                 visibleStart = std::max(visibleStart, fineSkipUntil);
             }
+            const bool segmentHasLeadingSkip = visibleStart > xStart;
             if (visibleStart >= xEnd) {
                 return;
             }
 
             int x = visibleStart;
+            bool firstTileInSegment = true;
             while (x < xEnd) {
                 const int vdpX = x + viewportX;
                 const auto scrolledX = static_cast<std::size_t>(vdpX - static_cast<int>(fineScrollX)) & 0xFFu;
@@ -741,6 +785,42 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                 }
 
                 const int runLength = std::min(8 - static_cast<int>(pixelX), xEnd - x);
+                const bool tileHasLeftOrFineSkip = segmentHasLeadingSkip && firstTileInSegment;
+
+                ++out.mode4BackgroundAttributes.tileCellsProcessed;
+                if (decoded.flipH) {
+                    ++out.mode4BackgroundAttributes.tileCellsFlipH;
+                }
+                if (decoded.flipV) {
+                    ++out.mode4BackgroundAttributes.tileCellsFlipV;
+                }
+                if (decoded.palette1) {
+                    ++out.mode4BackgroundAttributes.tileCellsPalette1;
+                }
+                if (decoded.priority) {
+                    ++out.mode4BackgroundAttributes.tileCellsPriority;
+                }
+                if (segmentFixedTopRows) {
+                    ++out.mode4BackgroundAttributes.tileCellsFixedTopRows;
+                }
+                if (segmentFixedRightColumns) {
+                    ++out.mode4BackgroundAttributes.tileCellsFixedRightColumns;
+                }
+                if (tileHasLeftOrFineSkip) {
+                    ++out.mode4BackgroundAttributes.tileCellsLeftBlankOrFineSkip;
+                }
+
+                const bool commonCaseEligible = !decoded.flipH &&
+                                                !decoded.flipV &&
+                                                !decoded.priority &&
+                                                !segmentFixedTopRows &&
+                                                !segmentFixedRightColumns &&
+                                                !tileHasLeftOrFineSkip;
+                if (commonCaseEligible) {
+                    ++out.mode4BackgroundAttributes.tileCellsCommonCaseEligible;
+                    out.mode4BackgroundAttributes.commonCaseEligiblePixelsWritten +=
+                        static_cast<std::uint64_t>(runLength);
+                }
                 for (int run = 0; run < runLength; ++run) {
                     const auto tilePixelX = static_cast<std::size_t>(static_cast<int>(pixelX) + run);
                     const auto sampleX = decoded.flipH ? (7u - tilePixelX) : tilePixelX;
@@ -757,18 +837,23 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                     }
                 }
                 x += runLength;
+                firstTileInSegment = false;
             }
         };
 
         if (!useFixedRightColumns) {
-            renderGeneralSegment(0, out.width, effectiveScrollYMain);
+            renderGeneralSegment(0, out.width, effectiveScrollYMain, fixedTopRows, false);
         } else {
             const int splitX = std::clamp(192 - viewportX, 0, out.width);
-            renderGeneralSegment(0, splitX, effectiveScrollYMain);
-            renderGeneralSegment(splitX, out.width, 0u);
+            renderGeneralSegment(0, splitX, effectiveScrollYMain, fixedTopRows, false);
+            renderGeneralSegment(splitX, out.width, 0u, fixedTopRows, true);
         }
     }
     addNs(backgroundNs, backgroundStart, Clock::now());
+    if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
+        out.mode4SimpleBackground.simplePathUniqueTileRowsSeen =
+            static_cast<std::uint64_t>(simpleUniqueTileRows);
+    }
 
     if (!hasVisibleSprites) {
         out.renderBodyTiming.totalNs = static_cast<std::uint64_t>(
@@ -908,6 +993,8 @@ BMMQ::RealtimeVideoPacket GameGearVDP::buildRealtimeFrame(
     packet.inVBlank = out.inVBlank;
     packet.scanlineIndex = out.scanlineIndex;
     packet.vdpRenderBodyTiming = out.renderBodyTiming;
+    packet.vdpMode4BackgroundAttributes = out.mode4BackgroundAttributes;
+    packet.vdpMode4SimpleBackground = out.mode4SimpleBackground;
     packet.argbPixels = std::move(out.argbPixels);
     return packet;
 }

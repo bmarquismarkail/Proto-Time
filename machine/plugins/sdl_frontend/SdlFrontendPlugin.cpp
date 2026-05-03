@@ -1759,6 +1759,8 @@ private:
 
         ++stats_.videoRealtimePacketsAccepted;
         accumulateVdpRenderBodyTiming(packet->vdpRenderBodyTiming);
+        accumulateVdpMode4BackgroundAttributes(packet->vdpMode4BackgroundAttributes);
+        accumulateVdpMode4SimpleBackground(packet->vdpMode4SimpleBackground);
         updateLastFrameFromPacket(*packet);
         if (event.type == BMMQ::MachineEventType::VBlank) {
             lastVideoDebugModel_ = debugModelFromRealtimePacket(*packet);
@@ -1803,6 +1805,8 @@ private:
 
         ++stats_.videoRealtimePacketsAccepted;
         accumulateVdpRenderBodyTiming(packet.vdpRenderBodyTiming);
+        accumulateVdpMode4BackgroundAttributes(packet.vdpMode4BackgroundAttributes);
+        accumulateVdpMode4SimpleBackground(packet.vdpMode4SimpleBackground);
         updateLastFrameFromPacket(packet);
         if (event.type == BMMQ::MachineEventType::VBlank) {
             lastVideoDebugModel_ = debugModelFromRealtimePacket(packet);
@@ -1823,6 +1827,46 @@ private:
         stats_.videoVdpRenderBodySpriteProbeNs += timing.spriteProbeNs;
         stats_.videoVdpRenderBodySpriteOverlayNs += timing.spriteOverlayNs;
         stats_.videoVdpRenderBodyOtherNs += timing.otherNs;
+    }
+
+    void accumulateVdpMode4BackgroundAttributes(
+        const BMMQ::RealtimeVideoPacket::VdpMode4BackgroundAttributeStats& attrs) noexcept
+    {
+        if (attrs.tileCellsProcessed == 0u) {
+            return;
+        }
+        stats_.videoVdpMode4AttrTileCellsProcessed += attrs.tileCellsProcessed;
+        stats_.videoVdpMode4AttrTileCellsFlipH += attrs.tileCellsFlipH;
+        stats_.videoVdpMode4AttrTileCellsFlipV += attrs.tileCellsFlipV;
+        stats_.videoVdpMode4AttrTileCellsPalette1 += attrs.tileCellsPalette1;
+        stats_.videoVdpMode4AttrTileCellsPriority += attrs.tileCellsPriority;
+        stats_.videoVdpMode4AttrTileCellsFixedTopRows += attrs.tileCellsFixedTopRows;
+        stats_.videoVdpMode4AttrTileCellsFixedRightColumns += attrs.tileCellsFixedRightColumns;
+        stats_.videoVdpMode4AttrTileCellsLeftBlankOrFineSkip += attrs.tileCellsLeftBlankOrFineSkip;
+        stats_.videoVdpMode4AttrTileCellsCommonCaseEligible += attrs.tileCellsCommonCaseEligible;
+        stats_.videoVdpMode4AttrCommonCaseEligiblePixelsWritten += attrs.commonCaseEligiblePixelsWritten;
+    }
+
+    void accumulateVdpMode4SimpleBackground(
+        const BMMQ::RealtimeVideoPacket::VdpMode4SimpleBackgroundStats& stats) noexcept
+    {
+        if (stats.simplePathFrameCount == 0u &&
+            stats.mode4SimplePathUsedCount == 0u &&
+            stats.mode4GeneralPathUsedCount == 0u &&
+            stats.tmsGraphicsPathUsedCount == 0u) {
+            return;
+        }
+        stats_.videoVdpMode4SimplePathFrameCount += stats.simplePathFrameCount;
+        stats_.videoVdpMode4SimplePathRowsRendered += stats.simplePathRowsRendered;
+        stats_.videoVdpMode4SimplePathPixelsWritten += stats.simplePathPixelsWritten;
+        stats_.videoVdpMode4SimplePathTileEntriesDecoded += stats.simplePathTileEntriesDecoded;
+        stats_.videoVdpMode4SimplePathPatternRowsDecoded += stats.simplePathPatternRowsDecoded;
+        stats_.videoVdpMode4SimplePathScrollXAlignedCount += stats.simplePathScrollXAlignedCount;
+        stats_.videoVdpMode4SimplePathScrollYValueChanges += stats.simplePathScrollYValueChanges;
+        stats_.videoVdpMode4SimplePathUniqueTileRowsSeen += stats.simplePathUniqueTileRowsSeen;
+        stats_.videoVdpMode4SimplePathUsedCount += stats.mode4SimplePathUsedCount;
+        stats_.videoVdpMode4GeneralPathUsedCount += stats.mode4GeneralPathUsedCount;
+        stats_.videoTmsGraphicsPathUsedCount += stats.tmsGraphicsPathUsedCount;
     }
 
     BMMQ::VideoDebugFrameModel* modelForVideoEvent(const BMMQ::MachineEvent& event,
