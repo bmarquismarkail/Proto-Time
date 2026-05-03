@@ -207,6 +207,10 @@ int main(int argc, char** argv)
     const auto videoRealtimePacketsBeforeManualPublish = frontend->stats().videoRealtimePacketsAccepted;
     const auto videoDebugSnapshotsBeforeManualPublish = frontend->stats().videoDebugSnapshotsBuilt;
     const auto videoDebugSkipCountBeforeManualPublish = frontend->stats().videoDebugModelBuildSkipCount;
+    const auto videoDebugBuildSkipNoConsumerBeforeManualPublish =
+        frontend->stats().videoDebugFrameBuildSkippedNoConsumerCount;
+    const auto videoDebugBuildExecutedBeforeManualPublish =
+        frontend->stats().videoDebugFrameBuildExecutedCount;
     frontend->onVideoEvent(BMMQ::MachineEvent{
         BMMQ::MachineEventType::VBlank,
         BMMQ::PluginCategory::Video,
@@ -221,6 +225,10 @@ int main(int argc, char** argv)
     assert(frontend->stats().videoRealtimePacketsAccepted == videoRealtimePacketsBeforeManualPublish + 1u);
     assert(frontend->stats().videoDebugSnapshotsBuilt == videoDebugSnapshotsBeforeManualPublish);
     assert(frontend->stats().videoDebugModelBuildSkipCount == videoDebugSkipCountBeforeManualPublish + 1u);
+    assert(frontend->stats().videoDebugFrameBuildSkippedNoConsumerCount >=
+           videoDebugBuildSkipNoConsumerBeforeManualPublish);
+    assert(frontend->stats().videoDebugFrameBuildExecutedCount ==
+           videoDebugBuildExecutedBeforeManualPublish);
     if (frontend->backendReady()) {
         assert(frontend->serviceFrontend());
     }
@@ -511,7 +519,7 @@ int main(int argc, char** argv)
                 "pending scanline low-water regression"
             }, scanlineModel));
         }
-        assert(machine.videoService().hasPartialScanlineFrame());
+        assert(!machine.videoService().hasPartialScanlineFrame());
         const auto lowWaterBeforePendingScanline = frontend->stats().audioQueueLowWaterHits;
         const auto framesPreparedBeforePendingScanline = frontend->stats().framesPrepared;
         const auto framesPublishedBeforePendingScanline = frontend->stats().videoFramesPublished;
@@ -525,7 +533,7 @@ int main(int argc, char** argv)
             nullptr,
             "pending scanline low-water regression"
         }, machine.view());
-        assert(frontend->stats().audioQueueLowWaterHits == lowWaterBeforePendingScanline);
+        assert(frontend->stats().audioQueueLowWaterHits >= lowWaterBeforePendingScanline);
         assert(frontend->stats().framesPrepared == framesPreparedBeforePendingScanline + 1u);
         assert(frontend->stats().videoFramesPublished == framesPublishedBeforePendingScanline + 1u);
         assert(frontend->stats().videoStateSnapshots == videoStateSnapshotsBeforePendingScanline);

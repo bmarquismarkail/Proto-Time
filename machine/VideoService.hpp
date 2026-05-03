@@ -105,6 +105,16 @@ struct VideoServiceDiagnostics {
     std::size_t presenterPresentDuration2To5msCount = 0;
     std::size_t presenterPresentDuration5To10msCount = 0;
     std::size_t presenterPresentDurationOver10msCount = 0;
+    std::size_t buildDebugFrameCallCount = 0;
+    std::uint64_t buildDebugFrameTotalNs = 0;
+    std::size_t buildDebugFrameRealtimeReasonCount = 0;
+    std::size_t buildDebugFrameDebugReasonCount = 0;
+    std::size_t buildDebugFrameFallbackReasonCount = 0;
+    std::size_t buildDebugFrameUnknownReasonCount = 0;
+    std::size_t buildDebugFrameDebugConsumerActiveCount = 0;
+    std::size_t buildDebugFrameDebugConsumerInactiveCount = 0;
+    std::size_t videoDebugFrameBuildSkippedNoConsumerCount = 0;
+    std::size_t videoDebugFrameBuildExecutedCount = 0;
 };
 
 class VideoService {
@@ -343,7 +353,9 @@ public:
         return true;
     }
 
-    [[nodiscard]] bool submitVideoDebugModel(const MachineEvent& event, const VideoDebugFrameModel& model)
+    [[nodiscard]] bool submitVideoDebugModel(const MachineEvent& event,
+                                             const VideoDebugFrameModel& model,
+                                             bool debugConsumerActive = false)
     {
         std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
         if (event.type == MachineEventType::RomLoaded) {
@@ -354,7 +366,20 @@ public:
         }
 
         if (event.type == MachineEventType::VideoScanlineReady) {
-            captureScanline(event, model);
+            if (!debugConsumerActive) {
+                ++videoDebugFrameBuildSkippedNoConsumerCount_;
+                resetScanlineCapture();
+                syncEngineDiagnostics();
+                return false;
+            }
+            captureScanline(event, model, debugConsumerActive);
+            syncEngineDiagnostics();
+            return false;
+        }
+
+        if (!debugConsumerActive) {
+            ++videoDebugFrameBuildSkippedNoConsumerCount_;
+            resetScanlineCapture();
             syncEngineDiagnostics();
             return false;
         }
@@ -376,14 +401,22 @@ public:
             return submitFrame(frame);
         }
         if (event.type == MachineEventType::VBlank && hasPartialScanlineFrameLocked()) {
-            auto frame = engine_.buildDebugFrame(model, generation);
+            ++videoDebugFrameBuildExecutedCount_;
+            auto frame = engine_.buildDebugFrame(model,
+                                                 generation,
+                                                 VideoEngine::BuildDebugFrameReason::Realtime,
+                                                 debugConsumerActive);
             overlayCapturedScanlines(frame);
             resetScanlineCapture();
             return submitFrame(frame);
         }
 
         resetScanlineCapture();
-        return submitFrame(engine_.buildDebugFrame(model, generation));
+        ++videoDebugFrameBuildExecutedCount_;
+        return submitFrame(engine_.buildDebugFrame(model,
+                                                   generation,
+                                                   VideoEngine::BuildDebugFrameReason::Debug,
+                                                   debugConsumerActive));
     }
 
     [[nodiscard]] bool submitRealtimeVideoPacket(const MachineEvent& event, const RealtimeVideoPacket& packet)
@@ -694,6 +727,18 @@ private:
         diagnostics_.frameAge2To5msCount = engineStats.frameAge2To5msCount;
         diagnostics_.frameAge5To10msCount = engineStats.frameAge5To10msCount;
         diagnostics_.frameAgeOver10msCount = engineStats.frameAgeOver10msCount;
+        diagnostics_.buildDebugFrameCallCount = engineStats.buildDebugFrameCallCount;
+        diagnostics_.buildDebugFrameTotalNs = engineStats.buildDebugFrameTotalNs;
+        diagnostics_.buildDebugFrameRealtimeReasonCount = engineStats.buildDebugFrameRealtimeReasonCount;
+        diagnostics_.buildDebugFrameDebugReasonCount = engineStats.buildDebugFrameDebugReasonCount;
+        diagnostics_.buildDebugFrameFallbackReasonCount = engineStats.buildDebugFrameFallbackReasonCount;
+        diagnostics_.buildDebugFrameUnknownReasonCount = engineStats.buildDebugFrameUnknownReasonCount;
+        diagnostics_.buildDebugFrameDebugConsumerActiveCount = engineStats.buildDebugFrameDebugConsumerActiveCount;
+        diagnostics_.buildDebugFrameDebugConsumerInactiveCount =
+            engineStats.buildDebugFrameDebugConsumerInactiveCount;
+        diagnostics_.videoDebugFrameBuildSkippedNoConsumerCount =
+            videoDebugFrameBuildSkippedNoConsumerCount_;
+        diagnostics_.videoDebugFrameBuildExecutedCount = videoDebugFrameBuildExecutedCount_;
     }
 
     [[nodiscard]] bool hasCompleteScanlineFrameLocked() const noexcept
@@ -714,7 +759,9 @@ private:
         scanlineCaptureCount_ = 0;
     }
 
-    void captureScanline(const MachineEvent& event, const VideoDebugFrameModel& model)
+    void captureScanline(const MachineEvent& event,
+                         const VideoDebugFrameModel& model,
+                         bool debugConsumerActive = false)
     {
         if (!model.displayEnabled || model.inVBlank || !model.scanlineIndex.has_value()) {
             resetScanlineCapture();
@@ -731,7 +778,11 @@ private:
             return;
         }
 
-        const auto sourceFrame = engine_.buildDebugFrame(model, engine_.currentGeneration());
+        const auto sourceFrame = engine_.buildDebugFrame(model,
+                                                         engine_.currentGeneration(),
+                                                         VideoEngine::BuildDebugFrameReason::Debug,
+                                                         debugConsumerActive);
+        ++videoDebugFrameBuildExecutedCount_;
         if (sourceFrame.width != scanlineFrame_->width || sourceFrame.height != scanlineFrame_->height) {
             return;
         }
@@ -816,6 +867,8 @@ private:
     std::atomic<bool> enforceLifecycleContract_{false};
     std::atomic<std::size_t> lifecycleMutationScopeDepth_{0};
     mutable std::atomic<std::size_t> lifecycleContractDeniedCalls_{0};
+    std::size_t videoDebugFrameBuildSkippedNoConsumerCount_ = 0;
+    std::size_t videoDebugFrameBuildExecutedCount_ = 0;
 };
 
 } // namespace BMMQ

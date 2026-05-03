@@ -56,6 +56,14 @@ struct VideoEngineStats {
     std::size_t frameAge2To5msCount = 0;
     std::size_t frameAge5To10msCount = 0;
     std::size_t frameAgeOver10msCount = 0;
+    std::size_t buildDebugFrameCallCount = 0;
+    std::uint64_t buildDebugFrameTotalNs = 0;
+    std::size_t buildDebugFrameRealtimeReasonCount = 0;
+    std::size_t buildDebugFrameDebugReasonCount = 0;
+    std::size_t buildDebugFrameFallbackReasonCount = 0;
+    std::size_t buildDebugFrameUnknownReasonCount = 0;
+    std::size_t buildDebugFrameDebugConsumerActiveCount = 0;
+    std::size_t buildDebugFrameDebugConsumerInactiveCount = 0;
 };
 
 struct VideoSubmitResult {
@@ -65,6 +73,13 @@ struct VideoSubmitResult {
 
 class VideoEngine {
 public:
+    enum class BuildDebugFrameReason : std::uint8_t {
+        Unknown = 0,
+        Realtime = 1,
+        Debug = 2,
+        Fallback = 3,
+    };
+
     explicit VideoEngine(const VideoEngineConfig& config = {})
         : config_(normalizedConfig(config))
     {
@@ -96,8 +111,34 @@ public:
     }
 
     [[nodiscard]] VideoFramePacket buildDebugFrame(const VideoDebugFrameModel& model,
-                                                   std::uint64_t generation) const
+                                                   std::uint64_t generation,
+                                                   BuildDebugFrameReason reason = BuildDebugFrameReason::Unknown,
+                                                   bool debugConsumerActive = false) const
     {
+        using Clock = std::chrono::steady_clock;
+        const auto startedAt = Clock::now();
+        ++stats_.buildDebugFrameCallCount;
+        switch (reason) {
+        case BuildDebugFrameReason::Realtime:
+            ++stats_.buildDebugFrameRealtimeReasonCount;
+            break;
+        case BuildDebugFrameReason::Debug:
+            ++stats_.buildDebugFrameDebugReasonCount;
+            break;
+        case BuildDebugFrameReason::Fallback:
+            ++stats_.buildDebugFrameFallbackReasonCount;
+            break;
+        case BuildDebugFrameReason::Unknown:
+        default:
+            ++stats_.buildDebugFrameUnknownReasonCount;
+            break;
+        }
+        if (debugConsumerActive) {
+            ++stats_.buildDebugFrameDebugConsumerActiveCount;
+        } else {
+            ++stats_.buildDebugFrameDebugConsumerInactiveCount;
+        }
+
         VideoFramePacket frame;
         frame.width = config_.frameWidth;
         frame.height = config_.frameHeight;
@@ -116,6 +157,8 @@ public:
             if (notifyVisualComposition) {
                 visualOverrideService_->notifyFrameCompositionCompleted(generation);
             }
+            stats_.buildDebugFrameTotalNs += static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - startedAt).count());
             return frame;
         }
 
@@ -141,6 +184,8 @@ public:
         if (notifyVisualComposition) {
             visualOverrideService_->notifyFrameCompositionCompleted(generation);
         }
+        stats_.buildDebugFrameTotalNs += static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - startedAt).count());
         return frame;
     }
 
@@ -719,7 +764,7 @@ private:
     VisualOverrideService* visualOverrideService_ = nullptr;
     mutable std::unordered_map<std::string, VisualResourceCacheEntry> visualResourceCache_{};
     std::optional<VideoPresentPacket> lastValidFrame_{};
-    VideoEngineStats stats_{};
+    mutable VideoEngineStats stats_{};
     std::uint64_t currentGeneration_ = 0;
 };
 

@@ -91,6 +91,9 @@ struct RealtimeVideoPacket {
         std::uint64_t totalNs = 0;
         std::uint64_t setupNs = 0;
         std::uint64_t backgroundNs = 0;
+        std::uint64_t backgroundSimpleNs = 0;
+        std::uint64_t backgroundGeneralNs = 0;
+        std::uint64_t backgroundTmsNs = 0;
         std::uint64_t spriteProbeNs = 0;
         std::uint64_t spriteOverlayNs = 0;
         std::uint64_t otherNs = 0;

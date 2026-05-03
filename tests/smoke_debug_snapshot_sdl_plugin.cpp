@@ -104,6 +104,12 @@ int main(int argc, char** argv)
         // The service should have seen at least one video submission.
         const auto s = svc.stats();
         assert(s.videoSubmissions >= 1u);
+        const auto frontendStats = frontend->stats();
+        assert(frontendStats.videoDebugFrameBuildSkippedNoConsumerCount == 0u);
+        if (frontendStats.videoBuildDebugFrameCallCount != 0u) {
+            assert(frontendStats.videoDebugFrameBuildExecutedCount > 0u);
+            assert(frontendStats.videoBuildDebugFrameDebugConsumerActiveCount > 0u);
+        }
 
         // The plugin should now have a cached video debug model from the drain.
         // (Some may have been submitted and consumed.)

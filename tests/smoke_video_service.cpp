@@ -198,21 +198,21 @@ int main()
         .category = BMMQ::PluginCategory::Video,
         .address = 0xFF44u,
         .value = 0u,
-    }, line0));
+    }, line0, true));
     assert(scanlineService.engine().mailboxFrameCount() == 0u);
     assert(!scanlineService.submitVideoDebugModel(BMMQ::MachineEvent{
         .type = BMMQ::MachineEventType::VideoScanlineReady,
         .category = BMMQ::PluginCategory::Video,
         .address = 0xFF44u,
         .value = 1u,
-    }, line1));
+    }, line1, true));
     assert(scanlineService.engine().mailboxFrameCount() == 0u);
     assert(scanlineService.submitVideoDebugModel(BMMQ::MachineEvent{
         .type = BMMQ::MachineEventType::VBlank,
         .category = BMMQ::PluginCategory::Video,
         .address = 0xFF44u,
         .value = 144u,
-    }, vblank));
+    }, vblank, true));
 
     auto splitFrame = scanlineService.engine().tryConsumeLatestFrame();
     assert(splitFrame.has_value());
@@ -224,6 +224,31 @@ int main()
         [](std::uint32_t pixel) { return pixel != 0u; });
     assert(hasVisiblePixel);
     assert(splitFrame->pixelCount() == 16u);
+
+    BMMQ::VideoService noConsumerService(BMMQ::VideoEngineConfig{
+        .frameWidth = 8,
+        .frameHeight = 2,
+        .mailboxDepthFrames = 1,
+    });
+    const auto noConsumerBefore = noConsumerService.diagnostics();
+    assert(!noConsumerService.submitVideoDebugModel(BMMQ::MachineEvent{
+        .type = BMMQ::MachineEventType::VideoScanlineReady,
+        .category = BMMQ::PluginCategory::Video,
+        .address = 0xFF44u,
+        .value = 0u,
+    }, line0, false));
+    assert(!noConsumerService.submitVideoDebugModel(BMMQ::MachineEvent{
+        .type = BMMQ::MachineEventType::VBlank,
+        .category = BMMQ::PluginCategory::Video,
+        .address = 0xFF44u,
+        .value = 144u,
+    }, vblank, false));
+    const auto noConsumerAfter = noConsumerService.diagnostics();
+    assert(noConsumerAfter.buildDebugFrameCallCount == noConsumerBefore.buildDebugFrameCallCount);
+    assert(noConsumerAfter.videoDebugFrameBuildExecutedCount ==
+           noConsumerBefore.videoDebugFrameBuildExecutedCount);
+    assert(noConsumerAfter.videoDebugFrameBuildSkippedNoConsumerCount >=
+           noConsumerBefore.videoDebugFrameBuildSkippedNoConsumerCount + 2u);
 
     assert(!machine.setVideoService(nullptr));
     auto replacement = std::make_unique<BMMQ::VideoService>(BMMQ::VideoEngineConfig{

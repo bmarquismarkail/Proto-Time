@@ -840,7 +840,8 @@ public:
                         appendLog("sdl: deferred video presentation while audio buffer was low");
                     }
                 } else if (BMMQ::VideoDebugFrameModel* videoModel = modelForVideoEvent(event, view, std::move(prebuiltDebugModel)); videoModel != nullptr) {
-                    if (videoService_ != nullptr && videoService_->submitVideoDebugModel(event, *videoModel)) {
+                    if (videoService_ != nullptr &&
+                        videoService_->submitVideoDebugModel(event, *videoModel, debugSnapshotService_ != nullptr)) {
                         ++stats_.videoDebugRenderRequestCount;
                         switch (videoRenderEventBucket(event.type)) {
                         case VideoRenderEventBucket::VBlank:
@@ -1824,6 +1825,9 @@ private:
         stats_.videoVdpRenderBodyTotalNs += timing.totalNs;
         stats_.videoVdpRenderBodySetupNs += timing.setupNs;
         stats_.videoVdpRenderBodyBackgroundNs += timing.backgroundNs;
+        stats_.videoVdpRenderBodyBackgroundSimpleNs += timing.backgroundSimpleNs;
+        stats_.videoVdpRenderBodyBackgroundGeneralNs += timing.backgroundGeneralNs;
+        stats_.videoVdpRenderBodyBackgroundTmsNs += timing.backgroundTmsNs;
         stats_.videoVdpRenderBodySpriteProbeNs += timing.spriteProbeNs;
         stats_.videoVdpRenderBodySpriteOverlayNs += timing.spriteOverlayNs;
         stats_.videoVdpRenderBodyOtherNs += timing.otherNs;
@@ -2060,6 +2064,20 @@ private:
         stats_.videoFrameAge2To5msCount = diagnostics.frameAge2To5msCount;
         stats_.videoFrameAge5To10msCount = diagnostics.frameAge5To10msCount;
         stats_.videoFrameAgeOver10msCount = diagnostics.frameAgeOver10msCount;
+        stats_.videoBuildDebugFrameCallCount = diagnostics.buildDebugFrameCallCount;
+        stats_.videoBuildDebugFrameTotalNs = diagnostics.buildDebugFrameTotalNs;
+        stats_.videoBuildDebugFrameRealtimeReasonCount = diagnostics.buildDebugFrameRealtimeReasonCount;
+        stats_.videoBuildDebugFrameDebugReasonCount = diagnostics.buildDebugFrameDebugReasonCount;
+        stats_.videoBuildDebugFrameFallbackReasonCount = diagnostics.buildDebugFrameFallbackReasonCount;
+        stats_.videoBuildDebugFrameUnknownReasonCount = diagnostics.buildDebugFrameUnknownReasonCount;
+        stats_.videoBuildDebugFrameDebugConsumerActiveCount =
+            diagnostics.buildDebugFrameDebugConsumerActiveCount;
+        stats_.videoBuildDebugFrameDebugConsumerInactiveCount =
+            diagnostics.buildDebugFrameDebugConsumerInactiveCount;
+        stats_.videoDebugFrameBuildSkippedNoConsumerCount =
+            diagnostics.videoDebugFrameBuildSkippedNoConsumerCount;
+        stats_.videoDebugFrameBuildExecutedCount =
+            diagnostics.videoDebugFrameBuildExecutedCount;
         stats_.videoPresenterPresentDurationLastNanos = diagnostics.presenterPresentDurationLastNanos;
         stats_.videoPresenterPresentDurationHighWaterNanos = diagnostics.presenterPresentDurationHighWaterNanos;
         stats_.videoPresenterPresentDurationP50Nanos = diagnostics.presenterPresentDurationP50Nanos;

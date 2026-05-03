@@ -462,6 +462,9 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
     const auto renderStart = Clock::now();
     std::uint64_t setupNs = 0u;
     std::uint64_t backgroundNs = 0u;
+    std::uint64_t backgroundSimpleNs = 0u;
+    std::uint64_t backgroundGeneralNs = 0u;
+    std::uint64_t backgroundTmsNs = 0u;
     std::uint64_t spriteProbeNs = 0u;
     std::uint64_t spriteOverlayNs = 0u;
     const auto addNs = [](std::uint64_t& dst, const Clock::time_point begin, const Clock::time_point end) {
@@ -542,10 +545,12 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
             }
         }
         addNs(backgroundNs, backgroundStart, Clock::now());
+        backgroundTmsNs = backgroundNs;
         out.renderBodyTiming.totalNs = static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - renderStart).count());
         out.renderBodyTiming.setupNs = setupNs;
         out.renderBodyTiming.backgroundNs = backgroundNs;
+        out.renderBodyTiming.backgroundTmsNs = backgroundTmsNs;
         const auto accounted = setupNs + backgroundNs;
         out.renderBodyTiming.otherNs = out.renderBodyTiming.totalNs >= accounted
             ? (out.renderBodyTiming.totalNs - accounted)
@@ -623,11 +628,11 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
         }
     }
     Mode4SimpleBackgroundDiagScratch<kEnableMode4SimpleBackgroundDiagnostics> simpleDiagScratch{};
-    for (int y = 0; y < out.height; ++y) {
-        const int vdpY = y + viewportY;
-        const auto rowOffset = static_cast<std::size_t>(y) * static_cast<std::size_t>(out.width);
-
-        if (useSimpleBackgroundPath) {
+    if (useSimpleBackgroundPath) {
+        const auto backgroundSimpleStart = Clock::now();
+        for (int y = 0; y < out.height; ++y) {
+            const int vdpY = y + viewportY;
+            const auto rowOffset = static_cast<std::size_t>(y) * static_cast<std::size_t>(out.width);
             const auto scrolledY = static_cast<std::size_t>((vdpY + scrollY) & 0xFF);
             const auto pixelY = scrolledY % 8u;
             const auto tileY = scrolledY / 8u;
@@ -654,6 +659,7 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                 const bool flipV = (entry & 0x0400u) != 0u;
                 const bool palette1 = (entry & 0x0800u) != 0u;
                 const bool priority = (entry & 0x1000u) != 0u;
+                const auto* tilePalette = palette1 ? spritePalette.data() : backgroundPalette.data();
                 if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
                     ++out.mode4SimpleBackground.simplePathTileEntriesDecoded;
                 }
@@ -682,9 +688,7 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                     const auto sampleX = flipH ? (7u - tilePixelX) : tilePixelX;
                     const auto colorCode = rowColors[sampleX];
                     const auto pixelIndex = rowOffset + static_cast<std::size_t>(x + run);
-                    out.argbPixels[pixelIndex] = palette1
-                        ? spritePalette[colorCode & 0x0Fu]
-                        : backgroundPalette[colorCode & 0x0Fu];
+                    out.argbPixels[pixelIndex] = tilePalette[colorCode];
                     if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
                         ++out.mode4SimpleBackground.simplePathPixelsWritten;
                     }
@@ -696,43 +700,48 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                 }
                 x += runLength;
             }
-            continue;
         }
+        addNs(backgroundSimpleNs, backgroundSimpleStart, Clock::now());
+    } else {
+        const auto backgroundGeneralStart = Clock::now();
+        for (int y = 0; y < out.height; ++y) {
+            const int vdpY = y + viewportY;
+            const auto rowOffset = static_cast<std::size_t>(y) * static_cast<std::size_t>(out.width);
 
-        // Small per-row cache for decoded background tile entries. Decoding the
-        // name-table entry once per tile cell avoids repeated VRAM reads in the
-        // inner pixel loop and preserves semantics (tile index, flips,
-        // palette select, priority).
-        struct DecodedBgEntry {
-            uint16_t tileIndex = 0u;
-            bool flipH = false;
-            bool flipV = false;
-            bool palette1 = false;
-            bool priority = false;
-        };
-        std::array<DecodedBgEntry, kTilesPerRow> decodedEntries{};
-        std::array<std::size_t, kTilesPerRow> decodedEntryRows{};
-        std::array<bool, kTilesPerRow> decodedValid{};
-        // Per-tile per-row decoded pattern pixels (8 color indexes for the
-        // currently decoded sampleY). `decodedPatternRowY` stores the
-        // sampleY last decoded for that tile; -1 indicates no row decoded yet.
-        std::array<std::array<uint8_t, 8>, kTilesPerRow> decodedPatternRows{};
-        std::array<int, kTilesPerRow> decodedPatternRowY{};
-        decodedPatternRowY.fill(-1);
+            // Small per-row cache for decoded background tile entries. Decoding the
+            // name-table entry once per tile cell avoids repeated VRAM reads in the
+            // inner pixel loop and preserves semantics (tile index, flips,
+            // palette select, priority).
+            struct DecodedBgEntry {
+                uint16_t tileIndex = 0u;
+                bool flipH = false;
+                bool flipV = false;
+                bool palette1 = false;
+                bool priority = false;
+            };
+            std::array<DecodedBgEntry, kTilesPerRow> decodedEntries{};
+            std::array<std::size_t, kTilesPerRow> decodedEntryRows{};
+            std::array<bool, kTilesPerRow> decodedValid{};
+            // Per-tile per-row decoded pattern pixels (8 color indexes for the
+            // currently decoded sampleY). `decodedPatternRowY` stores the
+            // sampleY last decoded for that tile; -1 indicates no row decoded yet.
+            std::array<std::array<uint8_t, 8>, kTilesPerRow> decodedPatternRows{};
+            std::array<int, kTilesPerRow> decodedPatternRowY{};
+            decodedPatternRowY.fill(-1);
 
-        const bool fixedTopRows = smsMode_ && (registers_[0u] & 0x40u) != 0u && vdpY < 16;
-        const auto effectiveScrollX = static_cast<uint8_t>(fixedTopRows ? 0u : scrollX);
-        const auto effectiveScrollYMain = static_cast<uint8_t>(
-            activeLines == 192u && scrollY > 223u ? (scrollY & 0x1Fu) : scrollY);
-        const bool useFixedRightColumns = (registers_[0u] & 0x80u) != 0u;
-        const bool leftColumnBlanking = (registers_[0u] & 0x20u) != 0u;
-        const auto fineScrollX = static_cast<std::size_t>(effectiveScrollX & 0x07u);
+            const bool fixedTopRows = smsMode_ && (registers_[0u] & 0x40u) != 0u && vdpY < 16;
+            const auto effectiveScrollX = static_cast<uint8_t>(fixedTopRows ? 0u : scrollX);
+            const auto effectiveScrollYMain = static_cast<uint8_t>(
+                activeLines == 192u && scrollY > 223u ? (scrollY & 0x1Fu) : scrollY);
+            const bool useFixedRightColumns = (registers_[0u] & 0x80u) != 0u;
+            const bool leftColumnBlanking = (registers_[0u] & 0x20u) != 0u;
+            const auto fineScrollX = static_cast<std::size_t>(effectiveScrollX & 0x07u);
 
-        const auto renderGeneralSegment = [&](int xStart,
-                                              int xEnd,
-                                              uint8_t effectiveScrollY,
-                                              bool segmentFixedTopRows,
-                                              bool segmentFixedRightColumns) {
+            const auto renderGeneralSegment = [&](int xStart,
+                                                  int xEnd,
+                                                  uint8_t effectiveScrollY,
+                                                  bool segmentFixedTopRows,
+                                                  bool segmentFixedRightColumns) {
             if (xStart >= xEnd) {
                 return;
             }
@@ -857,13 +866,15 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
             }
         };
 
-        if (!useFixedRightColumns) {
-            renderGeneralSegment(0, out.width, effectiveScrollYMain, fixedTopRows, false);
-        } else {
-            const int splitX = std::clamp(192 - viewportX, 0, out.width);
-            renderGeneralSegment(0, splitX, effectiveScrollYMain, fixedTopRows, false);
-            renderGeneralSegment(splitX, out.width, 0u, fixedTopRows, true);
+            if (!useFixedRightColumns) {
+                renderGeneralSegment(0, out.width, effectiveScrollYMain, fixedTopRows, false);
+            } else {
+                const int splitX = std::clamp(192 - viewportX, 0, out.width);
+                renderGeneralSegment(0, splitX, effectiveScrollYMain, fixedTopRows, false);
+                renderGeneralSegment(splitX, out.width, 0u, fixedTopRows, true);
+            }
         }
+        addNs(backgroundGeneralNs, backgroundGeneralStart, Clock::now());
     }
     addNs(backgroundNs, backgroundStart, Clock::now());
     if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
@@ -876,6 +887,9 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
             std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - renderStart).count());
         out.renderBodyTiming.setupNs = setupNs;
         out.renderBodyTiming.backgroundNs = backgroundNs;
+        out.renderBodyTiming.backgroundSimpleNs = backgroundSimpleNs;
+        out.renderBodyTiming.backgroundGeneralNs = backgroundGeneralNs;
+        out.renderBodyTiming.backgroundTmsNs = backgroundTmsNs;
         out.renderBodyTiming.spriteProbeNs = spriteProbeNs;
         const auto accounted = setupNs + backgroundNs + spriteProbeNs;
         out.renderBodyTiming.otherNs = out.renderBodyTiming.totalNs >= accounted
@@ -974,6 +988,9 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
         std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - renderStart).count());
     out.renderBodyTiming.setupNs = setupNs;
     out.renderBodyTiming.backgroundNs = backgroundNs;
+    out.renderBodyTiming.backgroundSimpleNs = backgroundSimpleNs;
+    out.renderBodyTiming.backgroundGeneralNs = backgroundGeneralNs;
+    out.renderBodyTiming.backgroundTmsNs = backgroundTmsNs;
     out.renderBodyTiming.spriteProbeNs = spriteProbeNs;
     out.renderBodyTiming.spriteOverlayNs = spriteOverlayNs;
     const auto accounted = setupNs + backgroundNs + spriteProbeNs + spriteOverlayNs;
