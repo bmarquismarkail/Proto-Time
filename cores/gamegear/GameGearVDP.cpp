@@ -595,10 +595,7 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
         spriteMask.assign(out.argbPixels.size(), 0u);
     }
     const bool useSimpleBackgroundPath =
-        !smsMode_ &&
-        (scrollX & 0x07u) == 0u &&
-        (registers_[0u] & 0xA0u) == 0u &&
-        !(activeLines == 192u && scrollY > 223u);
+        mode4SimpleBackgroundPathEligible(scrollX, scrollY, activeLines);
     if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
         if (useSimpleBackgroundPath) {
             out.mode4SimpleBackground.mode4SimplePathUsedCount = 1u;
@@ -1152,6 +1149,23 @@ bool GameGearVDP::displayEnabled() const noexcept {
 
 bool GameGearVDP::mode4Enabled() const noexcept {
     return (registers_[0u] & 0x04u) != 0u;
+}
+
+bool GameGearVDP::mode4SimpleBackgroundPathEligible(uint8_t scrollX,
+                                                    uint8_t scrollY,
+                                                    std::size_t activeLines) const noexcept
+{
+    return !smsMode_ &&
+           (scrollX & 0x07u) == 0u &&
+           (registers_[0u] & 0xA0u) == 0u &&
+           !(activeLines == 192u && scrollY > 223u);
+}
+
+bool GameGearVDP::debugMode4SimpleBackgroundPathEligible() const noexcept
+{
+    return mode4SimpleBackgroundPathEligible(readCompatRegister(8u),
+                                             verticalScrollLatch_,
+                                             activeDisplayLines());
 }
 
 std::size_t GameGearVDP::activeDisplayLines() const noexcept {

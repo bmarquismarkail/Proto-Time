@@ -21,6 +21,8 @@ public:
     [[nodiscard]] const std::array<uint8_t, 0x0040>& debugCram() const noexcept { return cram_; }
     // Test-only: expose decoded CRAM color (ARGB) cache per color index (0..31)
     [[nodiscard]] uint32_t debugDecodedCramColor(std::size_t colorIndex) const noexcept;
+    // Test-only: expose the current Mode 4 simple-background path predicate.
+    [[nodiscard]] bool debugMode4SimpleBackgroundPathEligible() const noexcept;
 public:
     GameGearVDP();
     ~GameGearVDP();
@@ -89,6 +91,9 @@ private:
     [[nodiscard]] uint32_t sampleCramColor(uint8_t paletteSelect, uint8_t colorCode) const noexcept;
     [[nodiscard]] bool displayEnabled() const noexcept;
     [[nodiscard]] bool mode4Enabled() const noexcept;
+    [[nodiscard]] bool mode4SimpleBackgroundPathEligible(uint8_t scrollX,
+                                                         uint8_t scrollY,
+                                                         std::size_t activeLines) const noexcept;
     [[nodiscard]] std::size_t activeDisplayLines() const noexcept;
     [[nodiscard]] uint8_t vCounterValue() const noexcept;
     [[nodiscard]] bool spriteTallMode() const noexcept;

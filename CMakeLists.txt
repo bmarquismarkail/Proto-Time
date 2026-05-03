@@ -228,6 +228,10 @@ add_executable(time-smoke-gamegear-vdp-pattern-row tests/smoke_gamegear_vdp_patt
 target_link_libraries(time-smoke-gamegear-vdp-pattern-row time-gamegear-core)
 add_test(NAME smoke_gamegear_vdp_pattern_row COMMAND time-smoke-gamegear-vdp-pattern-row)
 
+add_executable(time-smoke-gamegear-vdp-simple-tile-run tests/smoke_gamegear_vdp_simple_tile_run.cpp)
+target_link_libraries(time-smoke-gamegear-vdp-simple-tile-run time-gamegear-core)
+add_test(NAME smoke_gamegear_vdp_simple_tile_run COMMAND time-smoke-gamegear-vdp-simple-tile-run)
+
 add_executable(time-perf-gamegear-vdp-bench tests/perf_gamegear_vdp_bench.cpp)
 target_link_libraries(time-perf-gamegear-vdp-bench time-gamegear-core)
 add_test(NAME perf_gamegear_vdp_bench COMMAND time-perf-gamegear-vdp-bench)
