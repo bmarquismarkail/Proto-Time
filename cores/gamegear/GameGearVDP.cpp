@@ -13,6 +13,40 @@ constexpr int kGameGearViewportX = 48;
 constexpr int kGameGearViewportY = 24;
 constexpr bool kEnableMode4SimpleBackgroundDiagnostics = false;
 
+template <bool Enabled>
+struct Mode4SimpleBackgroundDiagScratch {
+    bool markTileRowSeen(std::size_t) noexcept
+    {
+        return false;
+    }
+
+    [[nodiscard]] std::uint64_t uniqueTileRowsCount() const noexcept
+    {
+        return 0u;
+    }
+};
+
+template <>
+struct Mode4SimpleBackgroundDiagScratch<true> {
+    std::array<bool, 32u> seenTileRows{};
+    std::size_t uniqueTileRows = 0u;
+
+    bool markTileRowSeen(std::size_t tileRow) noexcept
+    {
+        if (!seenTileRows[tileRow]) {
+            seenTileRows[tileRow] = true;
+            ++uniqueTileRows;
+            return true;
+        }
+        return false;
+    }
+
+    [[nodiscard]] std::uint64_t uniqueTileRowsCount() const noexcept
+    {
+        return static_cast<std::uint64_t>(uniqueTileRows);
+    }
+};
+
 [[nodiscard]] int gameGearViewportXOffset(int frameWidth) noexcept
 {
     return frameWidth == kGameGearViewportWidth ? kGameGearViewportX : 0;
@@ -603,8 +637,7 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
             simplePixelXs[index] = scrolledX % 8u;
         }
     }
-    std::array<bool, 32u> simpleSeenTileRows{};
-    std::size_t simpleUniqueTileRows = 0u;
+    Mode4SimpleBackgroundDiagScratch<kEnableMode4SimpleBackgroundDiagnostics> simpleDiagScratch{};
     for (int y = 0; y < out.height; ++y) {
         const int vdpY = y + viewportY;
         const auto rowOffset = static_cast<std::size_t>(y) * static_cast<std::size_t>(out.width);
@@ -637,10 +670,7 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
             const auto wrappedTileY = tileY % 32u;
             const auto rowNameBase = nameBasePre + wrappedTileY * kTilesPerRow * 2u;
             if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
-                if (!simpleSeenTileRows[wrappedTileY]) {
-                    simpleSeenTileRows[wrappedTileY] = true;
-                    ++simpleUniqueTileRows;
-                }
+                simpleDiagScratch.markTileRowSeen(wrappedTileY);
                 ++out.mode4SimpleBackground.simplePathRowsRendered;
             }
             for (int x = 0; x < out.width; ++x) {
@@ -852,7 +882,7 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
     addNs(backgroundNs, backgroundStart, Clock::now());
     if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
         out.mode4SimpleBackground.simplePathUniqueTileRowsSeen =
-            static_cast<std::uint64_t>(simpleUniqueTileRows);
+            simpleDiagScratch.uniqueTileRowsCount();
     }
 
     if (!hasVisibleSprites) {
