@@ -2,9 +2,12 @@
 #include "cores/gamegear/GameGearVDP.hpp"
 
 #include <chrono>
+#include <algorithm>
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace {
 
@@ -57,20 +60,68 @@ void runFrames(GameGearVDP& vdp, int iterations)
     }
 }
 
+double runScenarioMedianNsPerFrame(GameGearVDP& vdp, int iterations, int repeats)
+{
+    std::vector<double> samples;
+    samples.reserve(static_cast<std::size_t>(std::max(repeats, 1)));
+    for (int run = 0; run < repeats; ++run) {
+        const auto started = std::chrono::steady_clock::now();
+        runFrames(vdp, iterations);
+        const auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - started).count();
+        const auto perFrame = static_cast<double>(elapsedNs) / static_cast<double>(std::max(iterations, 1));
+        samples.push_back(perFrame);
+    }
+    std::sort(samples.begin(), samples.end());
+    return samples[samples.size() / 2u];
+}
+
+int parsePositiveInt(const char* value, const char* flag)
+{
+    if (value == nullptr) {
+        throw std::invalid_argument(std::string(flag) + " requires a value");
+    }
+    const int parsed = std::stoi(value);
+    if (parsed <= 0) {
+        throw std::invalid_argument(std::string(flag) + " must be > 0");
+    }
+    return parsed;
+}
+
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    int iterations = 1000;
+    int repeats = 5;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--iterations") {
+            if (i + 1 >= argc) {
+                std::cerr << "--iterations requires a value\n";
+                return 2;
+            }
+            iterations = parsePositiveInt(argv[++i], "--iterations");
+        } else if (arg == "--repeats") {
+            if (i + 1 >= argc) {
+                std::cerr << "--repeats requires a value\n";
+                return 2;
+            }
+            repeats = parsePositiveInt(argv[++i], "--repeats");
+        } else {
+            std::cerr << "unknown argument: " << arg << '\n';
+            return 2;
+        }
+    }
+
     GameGearVDP vdp;
     GameGearMemoryMap memory;
     memory.setVdp(&vdp);
     vdp.reset();
 
-    constexpr int kIterations = 1000;
-
     // Measure the frame-clear path before enabling display and populating
     // any visible content.
-    runFrames(vdp, kIterations);
+    const auto clearMedian = runScenarioMedianNsPerFrame(vdp, iterations, repeats);
 
     // Turn display on
     memory.writeIoPort(0xBFu, 0x40u);
@@ -79,9 +130,15 @@ int main()
     populateBackground(vdp);
 
     try {
-        runFrames(vdp, kIterations);
+        const auto backgroundMedian = runScenarioMedianNsPerFrame(vdp, iterations, repeats);
         populateVisibleSprites(vdp);
-        runFrames(vdp, kIterations);
+        const auto spriteMedian = runScenarioMedianNsPerFrame(vdp, iterations, repeats);
+        std::cout << "bench iterations=" << iterations
+                  << " repeats=" << repeats
+                  << " clear_ns_per_frame_med=" << clearMedian
+                  << " background_ns_per_frame_med=" << backgroundMedian
+                  << " sprite_ns_per_frame_med=" << spriteMedian
+                  << '\n';
     } catch (const std::exception& ex) {
         std::cerr << ex.what() << '\n';
         return 1;

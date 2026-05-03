@@ -552,6 +552,7 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
     }
     for (int y = 0; y < out.height; ++y) {
         const int vdpY = y + viewportY;
+        const auto rowOffset = static_cast<std::size_t>(y) * static_cast<std::size_t>(out.width);
 
         // Small per-row cache for decoded background tile entries. Decoding the
         // name-table entry once per tile cell avoids repeated VRAM reads in the
@@ -619,8 +620,7 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                     decodedPatternRowY[tileX] = static_cast<int>(sampleY);
                 }
                 const auto colorCode = decodedPatternRows[tileX][static_cast<std::size_t>(sampleX)];
-                const auto pixelIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(out.width)
-                                      + static_cast<std::size_t>(x);
+                const auto pixelIndex = rowOffset + static_cast<std::size_t>(x);
                 out.argbPixels[pixelIndex] = decoded.palette1
                     ? spritePalette[colorCode & 0x0Fu]
                     : backgroundPalette[colorCode & 0x0Fu];
@@ -696,8 +696,7 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                 decodedPatternRowY[tileX] = static_cast<int>(sampleY);
             }
             const auto colorCode = decodedPatternRows[tileX][static_cast<std::size_t>(sampleX)];
-            const auto pixelIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(out.width)
-                                  + static_cast<std::size_t>(x);
+            const auto pixelIndex = rowOffset + static_cast<std::size_t>(x);
             out.argbPixels[pixelIndex] = decoded.palette1
                 ? spritePalette[colorCode & 0x0Fu]
                 : backgroundPalette[colorCode & 0x0Fu];
@@ -744,6 +743,8 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
             if (screenY < 0 || screenY >= out.height) {
                 continue;
             }
+            const auto spriteRowOffset =
+                static_cast<std::size_t>(screenY) * static_cast<std::size_t>(out.width);
             if (screenY >= 0 && screenY < static_cast<int>(spritesOnLine.size()) &&
                 spritesOnLine[static_cast<std::size_t>(screenY)] >= 8u) {
                 continue;
@@ -776,8 +777,7 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                     if (screenX < 0 || screenX >= out.width) {
                         continue;
                     }
-                    const auto pixelIndex = static_cast<std::size_t>(screenY) * static_cast<std::size_t>(out.width)
-                                          + static_cast<std::size_t>(screenX);
+                    const auto pixelIndex = spriteRowOffset + static_cast<std::size_t>(screenX);
                     if ((spriteMask[pixelIndex] &
                          (kSpriteMaskBackgroundPriority | kSpriteMaskOccupied)) != 0u) {
                         continue;

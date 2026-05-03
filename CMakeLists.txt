@@ -231,6 +231,7 @@ add_test(NAME smoke_gamegear_vdp_pattern_row COMMAND time-smoke-gamegear-vdp-pat
 add_executable(time-perf-gamegear-vdp-bench tests/perf_gamegear_vdp_bench.cpp)
 target_link_libraries(time-perf-gamegear-vdp-bench time-gamegear-core)
 add_test(NAME perf_gamegear_vdp_bench COMMAND time-perf-gamegear-vdp-bench)
+set_tests_properties(perf_gamegear_vdp_bench PROPERTIES TIMEOUT 120)
 
 add_executable(time-smoke-gamegear-vdp-cram tests/smoke_gamegear_vdp_cram.cpp)
 target_link_libraries(time-smoke-gamegear-vdp-cram time-gamegear-core)
