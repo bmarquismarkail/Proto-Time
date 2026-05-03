@@ -168,6 +168,15 @@ void writeDiagnosticsSample(std::ostream& output,
     output << ",\"debug_render_request_from_memory_write_count\":" << stats.videoDebugRenderFromMemoryWriteCount;
     output << ",\"debug_render_request_from_other_count\":" << stats.videoDebugRenderFromOtherCount;
     output << ",\"debug_model_build_skip_count\":" << stats.videoDebugModelBuildSkipCount;
+    output << ",\"vdp_render_body\":{";
+    output << "\"sample_count\":" << stats.videoVdpRenderBodySampleCount;
+    output << ",\"total_ns\":" << stats.videoVdpRenderBodyTotalNs;
+    output << ",\"setup_ns\":" << stats.videoVdpRenderBodySetupNs;
+    output << ",\"background_ns\":" << stats.videoVdpRenderBodyBackgroundNs;
+    output << ",\"sprite_probe_ns\":" << stats.videoVdpRenderBodySpriteProbeNs;
+    output << ",\"sprite_overlay_ns\":" << stats.videoVdpRenderBodySpriteOverlayNs;
+    output << ",\"other_ns\":" << stats.videoVdpRenderBodyOtherNs;
+    output << "}";
     output << ",\"fresh_presents\":" << stats.videoPresentFreshFrameCount;
     output << ",\"fallback_presents\":" << stats.videoPresentFallbackCount;
     output << ",\"mailbox_overwrites\":" << stats.videoMailboxOverwriteCount;

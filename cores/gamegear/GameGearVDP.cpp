@@ -1,6 +1,7 @@
 #include "GameGearVDP.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <vector>
 
@@ -422,6 +423,17 @@ void GameGearVDP::evaluateScanlineStatus(uint8_t scanline) noexcept {
 GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
     const BMMQ::VideoDebugRenderRequest& request) const
 {
+    using Clock = std::chrono::steady_clock;
+    const auto renderStart = Clock::now();
+    std::uint64_t setupNs = 0u;
+    std::uint64_t backgroundNs = 0u;
+    std::uint64_t spriteProbeNs = 0u;
+    std::uint64_t spriteOverlayNs = 0u;
+    const auto addNs = [](std::uint64_t& dst, const Clock::time_point begin, const Clock::time_point end) {
+        dst += static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin).count());
+    };
+
     PixelRenderOutput out;
     out.width = std::max(request.frameWidth, 1);
     out.height = std::max(request.frameHeight, 1);
@@ -452,11 +464,19 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
     out.scanlineIndex = static_cast<uint8_t>(scanline_ & 0x00FFu);
     const auto pixelCount = static_cast<std::size_t>(out.width) * static_cast<std::size_t>(out.height);
     out.argbPixels.resize(pixelCount);
+    addNs(setupNs, renderStart, Clock::now());
     if (!out.displayEnabled) {
         std::fill_n(out.argbPixels.data(), pixelCount, backdrop);
+        out.renderBodyTiming.totalNs = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - renderStart).count());
+        out.renderBodyTiming.setupNs = setupNs;
+        out.renderBodyTiming.otherNs = out.renderBodyTiming.totalNs >= setupNs
+            ? (out.renderBodyTiming.totalNs - setupNs)
+            : 0u;
         return out;
     }
 
+    const auto backgroundStart = Clock::now();
     if (!mode4 && (registers_[0u] & 0x02u) != 0u) {
         const bool graphicsII = (registers_[0u] & 0x02u) != 0u;
         const auto nameBase = static_cast<std::size_t>((registers_[2u] & 0x0Eu) << 10u);
@@ -485,6 +505,15 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                 out.argbPixels[pixelIndex] = colorCode == 0u ? backdrop : spritePalette[colorCode & 0x0Fu];
             }
         }
+        addNs(backgroundNs, backgroundStart, Clock::now());
+        out.renderBodyTiming.totalNs = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - renderStart).count());
+        out.renderBodyTiming.setupNs = setupNs;
+        out.renderBodyTiming.backgroundNs = backgroundNs;
+        const auto accounted = setupNs + backgroundNs;
+        out.renderBodyTiming.otherNs = out.renderBodyTiming.totalNs >= accounted
+            ? (out.renderBodyTiming.totalNs - accounted)
+            : 0u;
         return out;
     }
     const auto scrollX = readCompatRegister(8u);
@@ -496,6 +525,7 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
     const int zoom = spriteZoomMode() ? 2 : 1;
     const bool tallSprites = spriteTallMode();
     const int spriteHeight = (tallSprites ? 16 : 8) * zoom;
+    const auto spriteProbeStart = Clock::now();
     bool hasVisibleSprites = false;
     std::size_t visibleSpriteProbeCount = 0u;
     for (std::size_t sprite = 0; sprite < 64u; ++sprite) {
@@ -520,6 +550,7 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
             break;
         }
     }
+    addNs(spriteProbeNs, spriteProbeStart, Clock::now());
     constexpr uint8_t kSpriteMaskBackgroundPriority = 0x01u;
     constexpr uint8_t kSpriteMaskOccupied = 0x02u;
     thread_local std::vector<uint8_t> spriteMaskScratch;
@@ -633,85 +664,126 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
             continue;
         }
 
-        for (int x = 0; x < out.width; ++x) {
-            const int vdpX = x + viewportX;
-            const bool fixedTopRows = smsMode_ && (registers_[0u] & 0x40u) != 0u && vdpY < 16;
-            const bool fixedRightColumns = (registers_[0u] & 0x80u) != 0u && vdpX >= 192;
-            const auto effectiveScrollX = static_cast<uint8_t>(fixedTopRows ? 0u : scrollX);
-            const auto effectiveScrollY = static_cast<uint8_t>(fixedRightColumns
-                ? 0u
-                : (activeLines == 192u && scrollY > 223u ? (scrollY & 0x1Fu) : scrollY));
-            if ((registers_[0u] & 0x20u) != 0u && vdpX < 8) {
-                continue;
+        const bool fixedTopRows = smsMode_ && (registers_[0u] & 0x40u) != 0u && vdpY < 16;
+        const auto effectiveScrollX = static_cast<uint8_t>(fixedTopRows ? 0u : scrollX);
+        const auto effectiveScrollYMain = static_cast<uint8_t>(
+            activeLines == 192u && scrollY > 223u ? (scrollY & 0x1Fu) : scrollY);
+        const bool useFixedRightColumns = (registers_[0u] & 0x80u) != 0u;
+        const bool leftColumnBlanking = (registers_[0u] & 0x20u) != 0u;
+        const auto fineScrollX = static_cast<std::size_t>(effectiveScrollX & 0x07u);
+
+        const auto renderGeneralSegment = [&](int xStart,
+                                              int xEnd,
+                                              uint8_t effectiveScrollY) {
+            if (xStart >= xEnd) {
+                return;
             }
-            const auto fineScrollX = static_cast<std::size_t>(effectiveScrollX & 0x07u);
-            if (fineScrollX != 0u && vdpX < static_cast<int>(fineScrollX)) {
-                continue;
-            }
+
             const auto scrolledY = static_cast<std::size_t>((vdpY + effectiveScrollY) & 0xFF);
             const auto tileY = scrolledY / 8u;
             const auto pixelY = scrolledY % 8u;
             const auto wrappedTileY = tileY % (activeLines == 192u ? 28u : 32u);
             const auto rowNameBase = nameBasePre + wrappedTileY * kTilesPerRow * 2u;
             const auto startingColumn = static_cast<std::size_t>((32u - (effectiveScrollX >> 3u)) & 0x1Fu);
-            const auto scrolledX = static_cast<std::size_t>(vdpX - static_cast<int>(fineScrollX)) & 0xFFu;
-            const auto tileX = (startingColumn + (scrolledX / 8u)) % 32u;
-            const auto pixelX = scrolledX % 8u;
 
-            // Decode the name-table entry at most once per tile cell for this row.
-            if (!decodedValid[tileX] || decodedEntryRows[tileX] != tileY) {
-                const auto entryIndex = rowNameBase + tileX * 2u;
-                const auto entry = entryIndex + 1u < vram_.size()
-                    ? static_cast<uint16_t>(vram_[entryIndex] |
-                                            (static_cast<uint16_t>(vram_[entryIndex + 1u]) << 8u))
-                    : 0u;
-                decodedEntries[tileX].tileIndex = static_cast<uint16_t>(((entry >> 0u) & 0x01FFu));
-                decodedEntries[tileX].flipH = (entry & 0x0200u) != 0u;
-                decodedEntries[tileX].flipV = (entry & 0x0400u) != 0u;
-                decodedEntries[tileX].palette1 = (entry & 0x0800u) != 0u;
-                decodedEntries[tileX].priority = (entry & 0x1000u) != 0u;
-                decodedEntryRows[tileX] = tileY;
-                decodedValid[tileX] = true;
+            int visibleStart = xStart;
+            if (leftColumnBlanking) {
+                const int blankUntil = std::max(0, 8 - viewportX);
+                visibleStart = std::max(visibleStart, blankUntil);
             }
-            const auto &decoded = decodedEntries[tileX];
-            const auto sampleX = decoded.flipH ? (7u - pixelX) : pixelX;
-            const auto sampleY = decoded.flipV ? (7u - pixelY) : pixelY;
+            if (fineScrollX != 0u) {
+                const int fineSkipUntil = std::max(0, static_cast<int>(fineScrollX) - viewportX);
+                visibleStart = std::max(visibleStart, fineSkipUntil);
+            }
+            if (visibleStart >= xEnd) {
+                return;
+            }
 
-            // Decode the 4 bitplane bytes for this tile row once and reuse
-            // the resulting 8 color indexes for pixels in the tile.
-            if (decodedPatternRowY[tileX] != static_cast<int>(sampleY)) {
-                const auto tileBase = wrapVram(static_cast<std::size_t>(decoded.tileIndex) * 32u);
-                const auto rowBase = wrapVram(tileBase + static_cast<std::size_t>(sampleY) * 4u);
-                const auto plane0 = vram_[rowBase];
-                const auto plane1 = vram_[wrapVram(rowBase + 1u)];
-                const auto plane2 = vram_[wrapVram(rowBase + 2u)];
-                const auto plane3 = vram_[wrapVram(rowBase + 3u)];
-                for (std::size_t px = 0; px < 8u; ++px) {
-                    const auto bit = static_cast<uint8_t>(7u - static_cast<uint8_t>(px));
-                    decodedPatternRows[tileX][px] = static_cast<uint8_t>((((plane3 >> bit) & 0x01u) << 3u) |
-                                                                          (((plane2 >> bit) & 0x01u) << 2u) |
-                                                                          (((plane1 >> bit) & 0x01u) << 1u) |
-                                                                          ((plane0 >> bit) & 0x01u));
+            int x = visibleStart;
+            while (x < xEnd) {
+                const int vdpX = x + viewportX;
+                const auto scrolledX = static_cast<std::size_t>(vdpX - static_cast<int>(fineScrollX)) & 0xFFu;
+                const auto tileX = (startingColumn + (scrolledX / 8u)) % 32u;
+                const auto pixelX = scrolledX % 8u;
+
+                if (!decodedValid[tileX] || decodedEntryRows[tileX] != tileY) {
+                    const auto entryIndex = rowNameBase + tileX * 2u;
+                    const auto entry = entryIndex + 1u < vram_.size()
+                        ? static_cast<uint16_t>(vram_[entryIndex] |
+                                                (static_cast<uint16_t>(vram_[entryIndex + 1u]) << 8u))
+                        : 0u;
+                    decodedEntries[tileX].tileIndex = static_cast<uint16_t>((entry >> 0u) & 0x01FFu);
+                    decodedEntries[tileX].flipH = (entry & 0x0200u) != 0u;
+                    decodedEntries[tileX].flipV = (entry & 0x0400u) != 0u;
+                    decodedEntries[tileX].palette1 = (entry & 0x0800u) != 0u;
+                    decodedEntries[tileX].priority = (entry & 0x1000u) != 0u;
+                    decodedEntryRows[tileX] = tileY;
+                    decodedValid[tileX] = true;
                 }
-                decodedPatternRowY[tileX] = static_cast<int>(sampleY);
+
+                const auto& decoded = decodedEntries[tileX];
+                const auto sampleY = decoded.flipV ? (7u - pixelY) : pixelY;
+                if (decodedPatternRowY[tileX] != static_cast<int>(sampleY)) {
+                    const auto tileBase = wrapVram(static_cast<std::size_t>(decoded.tileIndex) * 32u);
+                    const auto rowBase = wrapVram(tileBase + sampleY * 4u);
+                    const auto plane0 = vram_[rowBase];
+                    const auto plane1 = vram_[wrapVram(rowBase + 1u)];
+                    const auto plane2 = vram_[wrapVram(rowBase + 2u)];
+                    const auto plane3 = vram_[wrapVram(rowBase + 3u)];
+                    for (std::size_t px = 0; px < 8u; ++px) {
+                        const auto bit = static_cast<uint8_t>(7u - static_cast<uint8_t>(px));
+                        decodedPatternRows[tileX][px] = static_cast<uint8_t>((((plane3 >> bit) & 0x01u) << 3u) |
+                                                                              (((plane2 >> bit) & 0x01u) << 2u) |
+                                                                              (((plane1 >> bit) & 0x01u) << 1u) |
+                                                                              ((plane0 >> bit) & 0x01u));
+                    }
+                    decodedPatternRowY[tileX] = static_cast<int>(sampleY);
+                }
+
+                const int runLength = std::min(8 - static_cast<int>(pixelX), xEnd - x);
+                for (int run = 0; run < runLength; ++run) {
+                    const auto tilePixelX = static_cast<std::size_t>(static_cast<int>(pixelX) + run);
+                    const auto sampleX = decoded.flipH ? (7u - tilePixelX) : tilePixelX;
+                    const auto colorCode = decodedPatternRows[tileX][sampleX];
+                    const auto dstX = static_cast<std::size_t>(x + run);
+                    const auto pixelIndex = rowOffset + dstX;
+                    out.argbPixels[pixelIndex] = decoded.palette1
+                        ? spritePalette[colorCode & 0x0Fu]
+                        : backgroundPalette[colorCode & 0x0Fu];
+                    if (hasVisibleSprites) {
+                        spriteMask[pixelIndex] = decoded.priority && colorCode != 0u
+                            ? kSpriteMaskBackgroundPriority
+                            : 0u;
+                    }
+                }
+                x += runLength;
             }
-            const auto colorCode = decodedPatternRows[tileX][static_cast<std::size_t>(sampleX)];
-            const auto pixelIndex = rowOffset + static_cast<std::size_t>(x);
-            out.argbPixels[pixelIndex] = decoded.palette1
-                ? spritePalette[colorCode & 0x0Fu]
-                : backgroundPalette[colorCode & 0x0Fu];
-            if (hasVisibleSprites) {
-                spriteMask[pixelIndex] = decoded.priority && colorCode != 0u
-                    ? kSpriteMaskBackgroundPriority
-                    : 0u;
-            }
+        };
+
+        if (!useFixedRightColumns) {
+            renderGeneralSegment(0, out.width, effectiveScrollYMain);
+        } else {
+            const int splitX = std::clamp(192 - viewportX, 0, out.width);
+            renderGeneralSegment(0, splitX, effectiveScrollYMain);
+            renderGeneralSegment(splitX, out.width, 0u);
         }
     }
+    addNs(backgroundNs, backgroundStart, Clock::now());
 
     if (!hasVisibleSprites) {
+        out.renderBodyTiming.totalNs = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - renderStart).count());
+        out.renderBodyTiming.setupNs = setupNs;
+        out.renderBodyTiming.backgroundNs = backgroundNs;
+        out.renderBodyTiming.spriteProbeNs = spriteProbeNs;
+        const auto accounted = setupNs + backgroundNs + spriteProbeNs;
+        out.renderBodyTiming.otherNs = out.renderBodyTiming.totalNs >= accounted
+            ? (out.renderBodyTiming.totalNs - accounted)
+            : 0u;
         return out;
     }
 
+    const auto spriteOverlayStart = Clock::now();
     std::array<std::uint8_t, 240u> spritesOnLine{};
     std::size_t spriteCount = 0u;
     for (std::size_t sprite = 0; sprite < 64u; ++sprite) {
@@ -796,6 +868,17 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
             break;
         }
     }
+    addNs(spriteOverlayNs, spriteOverlayStart, Clock::now());
+    out.renderBodyTiming.totalNs = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - renderStart).count());
+    out.renderBodyTiming.setupNs = setupNs;
+    out.renderBodyTiming.backgroundNs = backgroundNs;
+    out.renderBodyTiming.spriteProbeNs = spriteProbeNs;
+    out.renderBodyTiming.spriteOverlayNs = spriteOverlayNs;
+    const auto accounted = setupNs + backgroundNs + spriteProbeNs + spriteOverlayNs;
+    out.renderBodyTiming.otherNs = out.renderBodyTiming.totalNs >= accounted
+        ? (out.renderBodyTiming.totalNs - accounted)
+        : 0u;
 
     return out;
 }
@@ -824,6 +907,7 @@ BMMQ::RealtimeVideoPacket GameGearVDP::buildRealtimeFrame(
     packet.displayEnabled = out.displayEnabled;
     packet.inVBlank = out.inVBlank;
     packet.scanlineIndex = out.scanlineIndex;
+    packet.vdpRenderBodyTiming = out.renderBodyTiming;
     packet.argbPixels = std::move(out.argbPixels);
     return packet;
 }

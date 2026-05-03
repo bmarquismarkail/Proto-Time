@@ -59,6 +59,7 @@ private:
     static constexpr std::size_t kVramSize = 0x4000u;
 
     struct PixelRenderOutput {
+        BMMQ::RealtimeVideoPacket::VdpRenderBodyTiming renderBodyTiming{};
         int width = 0;
         int height = 0;
         bool displayEnabled = false;

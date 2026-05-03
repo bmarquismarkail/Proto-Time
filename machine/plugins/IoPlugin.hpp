@@ -87,6 +87,14 @@ struct RealtimeVideoPacket {
     bool inVBlank = false;
     std::optional<std::uint16_t> scanlineIndex;
     std::uint64_t generation = 0;
+    struct VdpRenderBodyTiming {
+        std::uint64_t totalNs = 0;
+        std::uint64_t setupNs = 0;
+        std::uint64_t backgroundNs = 0;
+        std::uint64_t spriteProbeNs = 0;
+        std::uint64_t spriteOverlayNs = 0;
+        std::uint64_t otherNs = 0;
+    } vdpRenderBodyTiming{};
     std::vector<std::uint32_t> argbPixels;
 
     [[nodiscard]] bool empty() const noexcept

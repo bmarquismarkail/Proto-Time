@@ -1758,6 +1758,7 @@ private:
         }
 
         ++stats_.videoRealtimePacketsAccepted;
+        accumulateVdpRenderBodyTiming(packet->vdpRenderBodyTiming);
         updateLastFrameFromPacket(*packet);
         if (event.type == BMMQ::MachineEventType::VBlank) {
             lastVideoDebugModel_ = debugModelFromRealtimePacket(*packet);
@@ -1801,12 +1802,27 @@ private:
         }
 
         ++stats_.videoRealtimePacketsAccepted;
+        accumulateVdpRenderBodyTiming(packet.vdpRenderBodyTiming);
         updateLastFrameFromPacket(packet);
         if (event.type == BMMQ::MachineEventType::VBlank) {
             lastVideoDebugModel_ = debugModelFromRealtimePacket(packet);
             scanlineVideoDebugModel_.reset();
         }
         return true;
+    }
+
+    void accumulateVdpRenderBodyTiming(const BMMQ::RealtimeVideoPacket::VdpRenderBodyTiming& timing) noexcept
+    {
+        if (timing.totalNs == 0u) {
+            return;
+        }
+        ++stats_.videoVdpRenderBodySampleCount;
+        stats_.videoVdpRenderBodyTotalNs += timing.totalNs;
+        stats_.videoVdpRenderBodySetupNs += timing.setupNs;
+        stats_.videoVdpRenderBodyBackgroundNs += timing.backgroundNs;
+        stats_.videoVdpRenderBodySpriteProbeNs += timing.spriteProbeNs;
+        stats_.videoVdpRenderBodySpriteOverlayNs += timing.spriteOverlayNs;
+        stats_.videoVdpRenderBodyOtherNs += timing.otherNs;
     }
 
     BMMQ::VideoDebugFrameModel* modelForVideoEvent(const BMMQ::MachineEvent& event,
