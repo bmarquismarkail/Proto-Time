@@ -609,10 +609,7 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
     if (!useSimpleBackgroundPath) {
         std::fill_n(out.argbPixels.data(), pixelCount, backdrop);
     }
-    thread_local std::vector<std::size_t> simpleTileXsScratch;
-    thread_local std::vector<std::size_t> simplePixelXsScratch;
-    auto& simpleTileXs = simpleTileXsScratch;
-    auto& simplePixelXs = simplePixelXsScratch;
+    const auto simpleStartingColumn = static_cast<std::size_t>((32u - (scrollX >> 3u)) & 0x1Fu);
     if (useSimpleBackgroundPath) {
         if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
             thread_local uint8_t simplePrevScrollY = 0u;
@@ -627,20 +624,83 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                 simplePrevScrollY = scrollY;
             }
         }
-        simpleTileXs.resize(static_cast<std::size_t>(out.width));
-        simplePixelXs.resize(static_cast<std::size_t>(out.width));
-        const auto startingColumn = static_cast<std::size_t>((32u - (scrollX >> 3u)) & 0x1Fu);
-        for (int x = 0; x < out.width; ++x) {
-            const auto scrolledX = static_cast<std::size_t>(x + viewportX) & 0xFFu;
-            const auto index = static_cast<std::size_t>(x);
-            simpleTileXs[index] = (startingColumn + (scrolledX / 8u)) % 32u;
-            simplePixelXs[index] = scrolledX % 8u;
-        }
     }
     Mode4SimpleBackgroundDiagScratch<kEnableMode4SimpleBackgroundDiagnostics> simpleDiagScratch{};
     for (int y = 0; y < out.height; ++y) {
         const int vdpY = y + viewportY;
         const auto rowOffset = static_cast<std::size_t>(y) * static_cast<std::size_t>(out.width);
+
+        if (useSimpleBackgroundPath) {
+            const auto scrolledY = static_cast<std::size_t>((vdpY + scrollY) & 0xFF);
+            const auto pixelY = scrolledY % 8u;
+            const auto tileY = scrolledY / 8u;
+            const auto wrappedTileY = tileY % 32u;
+            const auto rowNameBase = nameBasePre + wrappedTileY * kTilesPerRow * 2u;
+            if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
+                simpleDiagScratch.markTileRowSeen(wrappedTileY);
+                ++out.mode4SimpleBackground.simplePathRowsRendered;
+            }
+            int x = 0;
+            while (x < out.width) {
+                const auto scrolledX = static_cast<std::size_t>(x + viewportX) & 0xFFu;
+                const auto tileX = (simpleStartingColumn + (scrolledX / 8u)) & 0x1Fu;
+                const auto pixelX = scrolledX & 0x07u;
+                const int runLength = std::min(8 - static_cast<int>(pixelX), out.width - x);
+
+                const auto entryIndex = rowNameBase + tileX * 2u;
+                const auto entry = entryIndex + 1u < vram_.size()
+                    ? static_cast<uint16_t>(vram_[entryIndex] |
+                                            (static_cast<uint16_t>(vram_[entryIndex + 1u]) << 8u))
+                    : 0u;
+                const auto tileIndex = static_cast<uint16_t>(entry & 0x01FFu);
+                const bool flipH = (entry & 0x0200u) != 0u;
+                const bool flipV = (entry & 0x0400u) != 0u;
+                const bool palette1 = (entry & 0x0800u) != 0u;
+                const bool priority = (entry & 0x1000u) != 0u;
+                if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
+                    ++out.mode4SimpleBackground.simplePathTileEntriesDecoded;
+                }
+
+                const auto sampleY = flipV ? (7u - pixelY) : pixelY;
+                const auto tileBase = wrapVram(static_cast<std::size_t>(tileIndex) * 32u);
+                const auto rowBase = wrapVram(tileBase + static_cast<std::size_t>(sampleY) * 4u);
+                const auto plane0 = vram_[rowBase];
+                const auto plane1 = vram_[wrapVram(rowBase + 1u)];
+                const auto plane2 = vram_[wrapVram(rowBase + 2u)];
+                const auto plane3 = vram_[wrapVram(rowBase + 3u)];
+                std::array<uint8_t, 8u> rowColors{};
+                for (std::size_t px = 0; px < 8u; ++px) {
+                    const auto bit = static_cast<uint8_t>(7u - static_cast<uint8_t>(px));
+                    rowColors[px] = static_cast<uint8_t>((((plane3 >> bit) & 0x01u) << 3u) |
+                                                         (((plane2 >> bit) & 0x01u) << 2u) |
+                                                         (((plane1 >> bit) & 0x01u) << 1u) |
+                                                         ((plane0 >> bit) & 0x01u));
+                }
+                if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
+                    ++out.mode4SimpleBackground.simplePathPatternRowsDecoded;
+                }
+
+                for (int run = 0; run < runLength; ++run) {
+                    const auto tilePixelX = static_cast<std::size_t>(static_cast<int>(pixelX) + run);
+                    const auto sampleX = flipH ? (7u - tilePixelX) : tilePixelX;
+                    const auto colorCode = rowColors[sampleX];
+                    const auto pixelIndex = rowOffset + static_cast<std::size_t>(x + run);
+                    out.argbPixels[pixelIndex] = palette1
+                        ? spritePalette[colorCode & 0x0Fu]
+                        : backgroundPalette[colorCode & 0x0Fu];
+                    if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
+                        ++out.mode4SimpleBackground.simplePathPixelsWritten;
+                    }
+                    if (hasVisibleSprites) {
+                        spriteMask[pixelIndex] = priority && colorCode != 0u
+                            ? kSpriteMaskBackgroundPriority
+                            : 0u;
+                    }
+                }
+                x += runLength;
+            }
+            continue;
+        }
 
         // Small per-row cache for decoded background tile entries. Decoding the
         // name-table entry once per tile cell avoids repeated VRAM reads in the
@@ -662,77 +722,6 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
         std::array<std::array<uint8_t, 8>, kTilesPerRow> decodedPatternRows{};
         std::array<int, kTilesPerRow> decodedPatternRowY{};
         decodedPatternRowY.fill(-1);
-
-        if (useSimpleBackgroundPath) {
-            const auto scrolledY = static_cast<std::size_t>((vdpY + scrollY) & 0xFF);
-            const auto tileY = scrolledY / 8u;
-            const auto pixelY = scrolledY % 8u;
-            const auto wrappedTileY = tileY % 32u;
-            const auto rowNameBase = nameBasePre + wrappedTileY * kTilesPerRow * 2u;
-            if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
-                simpleDiagScratch.markTileRowSeen(wrappedTileY);
-                ++out.mode4SimpleBackground.simplePathRowsRendered;
-            }
-            for (int x = 0; x < out.width; ++x) {
-                const auto index = static_cast<std::size_t>(x);
-                const auto tileX = simpleTileXs[index];
-                const auto pixelX = simplePixelXs[index];
-
-                if (!decodedValid[tileX] || decodedEntryRows[tileX] != tileY) {
-                    const auto entryIndex = rowNameBase + tileX * 2u;
-                    const auto entry = entryIndex + 1u < vram_.size()
-                        ? static_cast<uint16_t>(vram_[entryIndex] |
-                                                (static_cast<uint16_t>(vram_[entryIndex + 1u]) << 8u))
-                        : 0u;
-                    decodedEntries[tileX].tileIndex = static_cast<uint16_t>(((entry >> 0u) & 0x01FFu));
-                    decodedEntries[tileX].flipH = (entry & 0x0200u) != 0u;
-                    decodedEntries[tileX].flipV = (entry & 0x0400u) != 0u;
-                    decodedEntries[tileX].palette1 = (entry & 0x0800u) != 0u;
-                    decodedEntries[tileX].priority = (entry & 0x1000u) != 0u;
-                    decodedEntryRows[tileX] = tileY;
-                    decodedValid[tileX] = true;
-                    if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
-                        ++out.mode4SimpleBackground.simplePathTileEntriesDecoded;
-                    }
-                }
-                const auto& decoded = decodedEntries[tileX];
-                const auto sampleX = decoded.flipH ? (7u - pixelX) : pixelX;
-                const auto sampleY = decoded.flipV ? (7u - pixelY) : pixelY;
-                if (decodedPatternRowY[tileX] != static_cast<int>(sampleY)) {
-                    const auto tileBase = wrapVram(static_cast<std::size_t>(decoded.tileIndex) * 32u);
-                    const auto rowBase = wrapVram(tileBase + static_cast<std::size_t>(sampleY) * 4u);
-                    const auto plane0 = vram_[rowBase];
-                    const auto plane1 = vram_[wrapVram(rowBase + 1u)];
-                    const auto plane2 = vram_[wrapVram(rowBase + 2u)];
-                    const auto plane3 = vram_[wrapVram(rowBase + 3u)];
-                    for (std::size_t px = 0; px < 8u; ++px) {
-                        const auto bit = static_cast<uint8_t>(7u - static_cast<uint8_t>(px));
-                        decodedPatternRows[tileX][px] = static_cast<uint8_t>((((plane3 >> bit) & 0x01u) << 3u) |
-                                                                              (((plane2 >> bit) & 0x01u) << 2u) |
-                                                                              (((plane1 >> bit) & 0x01u) << 1u) |
-                                                                              ((plane0 >> bit) & 0x01u));
-                    }
-                    decodedPatternRowY[tileX] = static_cast<int>(sampleY);
-                    if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
-                        ++out.mode4SimpleBackground.simplePathPatternRowsDecoded;
-                    }
-                }
-                const auto colorCode = decodedPatternRows[tileX][static_cast<std::size_t>(sampleX)];
-                const auto pixelIndex = rowOffset + static_cast<std::size_t>(x);
-                out.argbPixels[pixelIndex] = decoded.palette1
-                    ? spritePalette[colorCode & 0x0Fu]
-                    : backgroundPalette[colorCode & 0x0Fu];
-                if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
-                    ++out.mode4SimpleBackground.simplePathPixelsWritten;
-                }
-                if (hasVisibleSprites) {
-                    spriteMask[pixelIndex] = decoded.priority && colorCode != 0u
-                        ? kSpriteMaskBackgroundPriority
-                        : 0u;
-                }
-            }
-            continue;
-        }
 
         const bool fixedTopRows = smsMode_ && (registers_[0u] & 0x40u) != 0u && vdpY < 16;
         const auto effectiveScrollX = static_cast<uint8_t>(fixedTopRows ? 0u : scrollX);
