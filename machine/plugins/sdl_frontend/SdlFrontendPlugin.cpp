@@ -119,6 +119,12 @@ public:
         shutdownBackend();
     }
 
+    enum class AudioBatchFlushReason : std::uint8_t {
+        Target = 0,
+        FormatChange,
+        Lifecycle,
+    };
+
     [[nodiscard]] const BMMQ::SdlFrontendConfig& config() const noexcept override
     {
         return config_;
@@ -706,6 +712,8 @@ public:
         ++stats_.attachCount;
         lifecycleCoordinator_ = &view.mutableMachine.lifecycleCoordinator();
         audioService_ = &view.audioService();
+        clearAudioPacketBatch();
+        stats_.audioBatchConfiguredChunks = std::max<std::size_t>(config_.audioBatchChunks, 1u);
         audioService_->setBackendPausedOrClosed(true);
         inputService_ = &view.inputService();
         if (config_.enableInput) {
@@ -725,6 +733,7 @@ public:
     void onDetach(BMMQ::MutableMachineView&) override
     {
         ++stats_.detachCount;
+        flushAudioPacketBatch(AudioBatchFlushReason::Lifecycle);
         shutdownBackend();
         audioService_ = nullptr;
         if (config_.enableInput && inputService_ != nullptr) {
@@ -946,9 +955,9 @@ public:
         // from the emulation thread — serial with onAudioEvent, no race.
         if (audioService_ != nullptr) {
             if (realtimePacketValid) {
-                audioService_->appendRecentPcm(prebuiltRealtimePacket->pcmSamples,
-                                               prebuiltRealtimePacket->frameCounter);
+                enqueueAudioPacketBatch(*prebuiltRealtimePacket);
             } else if (prebuiltAudioState.has_value()) {
+                flushAudioPacketBatch(AudioBatchFlushReason::FormatChange);
                 audioService_->appendRecentPcm(prebuiltAudioState->pcmSamples,
                                                prebuiltAudioState->frameCounter);
             }
@@ -961,6 +970,22 @@ public:
         ++stats_.audioEvents;
         if (realtimePacketValid) {
             ++stats_.audioRealtimePacketsAccepted;
+            const auto packetSamples = prebuiltRealtimePacket->pcmSamples.size();
+            stats_.audioRealtimePacketSamplesLast = packetSamples;
+            if (stats_.audioRealtimePacketSamplesMin == 0u || packetSamples < stats_.audioRealtimePacketSamplesMin) {
+                stats_.audioRealtimePacketSamplesMin = packetSamples;
+            }
+            stats_.audioRealtimePacketSamplesMax =
+                std::max(stats_.audioRealtimePacketSamplesMax, packetSamples);
+            stats_.audioRealtimePacketSampleRateLast = prebuiltRealtimePacket->sampleRate;
+            stats_.audioRealtimePacketChannelCountLast = prebuiltRealtimePacket->channelCount;
+            stats_.audioRealtimePacketPsgChunksEmittedLast = prebuiltRealtimePacket->psgChunksEmitted;
+            stats_.audioRealtimePacketPsgSamplesGeneratedTotalLast =
+                prebuiltRealtimePacket->psgSamplesGeneratedTotal;
+            stats_.audioRealtimePacketPsgChunkSamplesLast = prebuiltRealtimePacket->psgChunkSamplesLast;
+            stats_.audioRealtimePacketPsgChunkSamplesMin = prebuiltRealtimePacket->psgChunkSamplesMin;
+            stats_.audioRealtimePacketPsgChunkSamplesMax = prebuiltRealtimePacket->psgChunkSamplesMax;
+            stats_.audioRealtimePacketPsgPendingSamplesLast = prebuiltRealtimePacket->psgPendingSamples;
             // Pre-built outside the lock (Phase 38A); just move into place.
             lastAudioPreview_ = std::move(prebuiltRealtimePreview);
             ++stats_.audioPreviewsBuilt;
@@ -968,6 +993,7 @@ public:
             // appendRecentPcm already dispatched above, outside the lock.
             lastAudioState_.reset();
         } else if (prebuiltRealtimePacket.has_value()) {
+            flushAudioPacketBatch(AudioBatchFlushReason::FormatChange);
             ++stats_.audioRealtimePacketsSkipped;
             lastAudioPreview_.reset();
         } else if (prebuiltAudioState.has_value()) {
@@ -985,6 +1011,7 @@ public:
                 (void)debugSnapshotService_->submitAudioState(lastAudioState_);
             }
         } else {
+            flushAudioPacketBatch(AudioBatchFlushReason::Lifecycle);
             ++stats_.audioRealtimePacketsSkipped;
             lastAudioPreview_.reset();
             if (audioService_ != nullptr && audioService_->canPerformReset()) {
@@ -1090,6 +1117,78 @@ private:
         // renderServiceState_ atomic, so writing stats_.renderServiceState here
         // is redundant and would introduce a race (TSAN 36B).
         renderServiceState_.store(state, std::memory_order_release);
+    }
+
+    void clearAudioPacketBatch()
+    {
+        audioBatchSamples_.clear();
+        audioBatchSampleRate_ = 0u;
+        audioBatchChannelCount_ = 0u;
+        audioBatchLastFrameCounter_ = 0u;
+        audioBatchPacketCount_ = 0u;
+        stats_.audioBatchCurrentSamples = 0u;
+    }
+
+    void noteAudioBatchFlush(std::size_t sampleCount,
+                             std::size_t packetCount,
+                             AudioBatchFlushReason reason)
+    {
+        ++stats_.audioBatchFlushCount;
+        stats_.audioBatchFlushSamplesLast = sampleCount;
+        if (stats_.audioBatchFlushSamplesMin == 0u || sampleCount < stats_.audioBatchFlushSamplesMin) {
+            stats_.audioBatchFlushSamplesMin = sampleCount;
+        }
+        stats_.audioBatchFlushSamplesMax = std::max(stats_.audioBatchFlushSamplesMax, sampleCount);
+        stats_.audioBatchPacketsFlushed += packetCount;
+        switch (reason) {
+        case AudioBatchFlushReason::Target:
+            ++stats_.audioBatchFlushReasonTargetCount;
+            break;
+        case AudioBatchFlushReason::FormatChange:
+            ++stats_.audioBatchFlushReasonFormatChangeCount;
+            break;
+        case AudioBatchFlushReason::Lifecycle:
+            ++stats_.audioBatchFlushReasonLifecycleCount;
+            break;
+        }
+    }
+
+    void flushAudioPacketBatch(AudioBatchFlushReason reason)
+    {
+        if (audioService_ == nullptr || audioBatchSamples_.empty()) {
+            clearAudioPacketBatch();
+            return;
+        }
+        const auto sampleCount = audioBatchSamples_.size();
+        const auto packetCount = audioBatchPacketCount_;
+        audioService_->appendRecentPcm(audioBatchSamples_, audioBatchLastFrameCounter_);
+        noteAudioBatchFlush(sampleCount, packetCount, reason);
+        clearAudioPacketBatch();
+    }
+
+    void enqueueAudioPacketBatch(const BMMQ::RealtimeAudioPacket& packet)
+    {
+        const auto configuredChunks = std::max<std::size_t>(config_.audioBatchChunks, 1u);
+        const bool formatMismatch =
+            audioBatchPacketCount_ != 0u &&
+            (audioBatchSampleRate_ != packet.sampleRate || audioBatchChannelCount_ != packet.channelCount);
+        if (formatMismatch) {
+            flushAudioPacketBatch(AudioBatchFlushReason::FormatChange);
+        }
+
+        audioBatchSampleRate_ = packet.sampleRate;
+        audioBatchChannelCount_ = packet.channelCount;
+        audioBatchLastFrameCounter_ = packet.frameCounter;
+        audioBatchSamples_.insert(audioBatchSamples_.end(), packet.pcmSamples.begin(), packet.pcmSamples.end());
+        ++audioBatchPacketCount_;
+        ++stats_.audioBatchPacketsAccumulated;
+        stats_.audioBatchCurrentSamples = audioBatchSamples_.size();
+        stats_.audioBatchConfiguredChunks = configuredChunks;
+
+        const auto targetSamples = configuredChunks * std::max<std::size_t>(packet.pcmSamples.size(), 1u);
+        if (configuredChunks <= 1u || audioBatchSamples_.size() >= targetSamples) {
+            flushAudioPacketBatch(AudioBatchFlushReason::Target);
+        }
     }
 
     void startRenderServiceIfNeeded()
@@ -1572,20 +1671,58 @@ private:
         stats_.audioResamplingActive = engineStats.resamplingActive;
         stats_.audioResampleRatio = engineStats.resampleRatio;
         stats_.audioSourceSamplesPushed = engineStats.sourceSamplesPushed;
+        stats_.audioAppendCallCount = engineStats.appendCallCount;
+        stats_.audioAppendSamplesRequested = engineStats.appendSamplesRequested;
+        stats_.audioAppendSamplesAccepted = engineStats.appendSamplesAccepted;
+        stats_.audioAppendSamplesRejected = engineStats.appendSamplesRejected;
+        stats_.audioAppendSamplesTruncated = engineStats.appendSamplesTruncated;
+        stats_.audioAppendBufferedSamplesLast = engineStats.appendBufferedSamplesLast;
         stats_.audioResampleSourceSamplesConsumed = engineStats.sourceSamplesConsumed;
         stats_.audioResampleOutputSamplesProduced = engineStats.outputSamplesProduced;
         stats_.audioPipelineCapacitySkipCount = engineStats.pipelineCapacitySkipCount;
         stats_.audioReadyQueueDepth = transportStats.readyQueueDepth;
+        stats_.audioTransportConfiguredReadyQueueChunks = transportStats.configuredReadyQueueChunks;
+        stats_.audioTransportReadyQueueCapacityChunks = transportStats.readyQueueCapacityChunks;
+        stats_.audioTransportReadyQueueUsableChunks = transportStats.readyQueueUsableChunks;
         stats_.audioReadyQueueHighWaterChunks = transportStats.readyQueueHighWaterChunks;
+        stats_.audioReadyQueueLowWaterChunks = transportStats.readyQueueLowWaterChunks;
+        stats_.audioReadyQueueEmptyCount = transportStats.readyQueueEmptyCount;
         stats_.audioTransportDrainCallbackCount = transportStats.drainCallbackCount;
+        stats_.audioTransportDrainRequestedSamples = transportStats.drainRequestedSamples;
+        stats_.audioTransportDrainReadySamples = transportStats.drainReadySamples;
         stats_.audioTransportUnderrunCount = transportStats.underrunCount;
         stats_.audioTransportSilenceSamplesFilled = transportStats.silenceSamplesFilled;
+        stats_.audioTransportWorkerProductionAttempts = transportStats.workerProductionAttempts;
+        stats_.audioTransportWorkerProductionSourceEmptyFailures =
+            transportStats.workerProductionSourceEmptyFailures;
+        stats_.audioTransportWorkerProductionReadyQueueFullFailures =
+            transportStats.workerProductionReadyQueueFullFailures;
         stats_.audioTransportWorkerProducedBlocks = transportStats.workerProducedBlocks;
+        stats_.audioTransportWorkerLoopIterations = transportStats.workerLoopIterations;
+        stats_.audioTransportWorkerWakeProducedBlocks0Count = transportStats.workerWakeProducedBlocks0Count;
+        stats_.audioTransportWorkerWakeProducedBlocks1Count = transportStats.workerWakeProducedBlocks1Count;
+        stats_.audioTransportWorkerWakeProducedBlocks2Count = transportStats.workerWakeProducedBlocks2Count;
+        stats_.audioTransportWorkerWakeProducedBlocks3PlusCount = transportStats.workerWakeProducedBlocks3PlusCount;
+        stats_.audioTransportWorkerProductionSourceBufferedSamplesSuccessLast =
+            transportStats.workerProductionSourceBufferedSamplesSuccessLast;
+        stats_.audioTransportWorkerProductionSourceBufferedSamplesFailureLast =
+            transportStats.workerProductionSourceBufferedSamplesFailureLast;
+        stats_.audioTransportWorkerWakePeriodMilliseconds = transportStats.workerWakePeriodMilliseconds;
         stats_.audioTransportDroppedReadyBlocks = transportStats.droppedReadyBlocks;
         stats_.audioTransportWorkerWakeCount = transportStats.workerWakeCount;
         stats_.audioTransportWorkerCallbackWakeCount = transportStats.workerCallbackWakeCount;
         stats_.audioTransportWorkerEmulationWakeCount = transportStats.workerEmulationWakeCount;
         stats_.audioTransportWorkerTimeoutWakeCount = transportStats.workerTimeoutWakeCount;
+        stats_.audioTransportWorkerWakeSourceBufferedSamplesLast =
+            transportStats.workerWakeSourceBufferedSamplesLast;
+        stats_.audioTransportWorkerWakeSourceBufferedSamplesHighWater =
+            transportStats.workerWakeSourceBufferedSamplesHighWater;
+        stats_.audioTransportWorkerWakeSourceBufferedSamplesLowWater =
+            transportStats.workerWakeSourceBufferedSamplesLowWater;
+        stats_.audioTransportAppendRecentPcmCallCount =
+            transportStats.appendRecentPcmCallCount;
+        stats_.audioTransportAppendRecentPcmSamplesAppended =
+            transportStats.appendRecentPcmSamplesAppended;
         stats_.audioTransportStaleEpochDropCount = transportStats.staleEpochDropCount;
         stats_.audioTransportEpochBumpCount = transportStats.epochBumpCount;
         stats_.audioTransportPrimedTransitionCount = transportStats.primedTransitionCount;
@@ -2284,6 +2421,7 @@ private:
                     .requestedSampleRate = kSourceAudioSampleRate,
                     .callbackChunkSamples = static_cast<std::size_t>(std::max(config_.audioCallbackChunkSamples, 1)) *
                                             sourceChannelMultiplier,
+                    .readyQueueChunks = std::clamp<std::size_t>(config_.audioReadyQueueChunks, 1u, 64u),
                     .channels = sourceChannelCount,
                     .testForcedDeviceSampleRate = config_.enableAudioResamplingDiagnostics
                                                     ? config_.testForcedAudioDeviceSampleRate
@@ -2431,6 +2569,11 @@ private:
     std::optional<BMMQ::VideoDebugFrameModel> scanlineVideoDebugModel_;
     std::optional<BMMQ::AudioStateView> lastAudioState_;
     std::optional<BMMQ::SdlAudioPreviewBuffer> lastAudioPreview_;
+    std::vector<int16_t> audioBatchSamples_;
+    std::uint32_t audioBatchSampleRate_ = 0u;
+    std::uint8_t audioBatchChannelCount_ = 0u;
+    std::uint64_t audioBatchLastFrameCounter_ = 0u;
+    std::size_t audioBatchPacketCount_ = 0u;
     std::optional<BMMQ::DigitalInputStateView> lastInputState_;
     std::optional<BMMQ::SdlFrameBuffer> lastFrame_;
     std::size_t lastSyncedVideoFramePublication_ = 0;

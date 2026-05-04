@@ -32,6 +32,10 @@ void GameGearPSG::reset() {
     waveRam_.fill(0u);
     currentFrameSamples_.clear();
     recentSamples_.clear();
+    chunkSamplesLast_ = 0u;
+    chunkSamplesMin_ = 0u;
+    chunkSamplesMax_ = 0u;
+    samplesGeneratedTotal_ = 0u;
     samplePhase_ = 0u;
     frameCounter_ = 0u;
     latchedChannel_ = 0u;
@@ -167,13 +171,44 @@ uint8_t GameGearPSG::noiseControl() const noexcept {
     return noiseControl_;
 }
 
+std::size_t GameGearPSG::chunkSamplesLast() const noexcept {
+    return chunkSamplesLast_;
+}
+
+std::size_t GameGearPSG::chunkSamplesMin() const noexcept {
+    return chunkSamplesMin_;
+}
+
+std::size_t GameGearPSG::chunkSamplesMax() const noexcept {
+    return chunkSamplesMax_;
+}
+
+std::uint64_t GameGearPSG::chunksEmitted() const noexcept {
+    return frameCounter_;
+}
+
+std::uint64_t GameGearPSG::samplesGeneratedTotal() const noexcept {
+    return samplesGeneratedTotal_;
+}
+
+std::size_t GameGearPSG::pendingSamples() const noexcept {
+    return currentFrameSamples_.size();
+}
+
 void GameGearPSG::produceFrame() {
     advanceGenerators();
     const auto frame = mixFrame();
     currentFrameSamples_.push_back(frame[0]);
     currentFrameSamples_.push_back(frame[1]);
+    samplesGeneratedTotal_ += 2u;
     if (currentFrameSamples_.size() >= kFramesPerChunk * kOutputChannelCount) {
+        const auto chunkSamples = currentFrameSamples_.size();
         recentSamples_ = currentFrameSamples_;
+        chunkSamplesLast_ = chunkSamples;
+        if (chunkSamplesMin_ == 0u || chunkSamples < chunkSamplesMin_) {
+            chunkSamplesMin_ = chunkSamples;
+        }
+        chunkSamplesMax_ = std::max(chunkSamplesMax_, chunkSamples);
         currentFrameSamples_.clear();
         ++frameCounter_;
     }

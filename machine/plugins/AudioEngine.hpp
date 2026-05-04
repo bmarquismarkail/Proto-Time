@@ -30,6 +30,12 @@ struct AudioEngineStats {
     std::size_t overrunDropCount = 0;
     std::size_t droppedSamples = 0;
     std::size_t sourceSamplesPushed = 0;
+    std::size_t appendCallCount = 0;
+    std::size_t appendSamplesRequested = 0;
+    std::size_t appendSamplesAccepted = 0;
+    std::size_t appendSamplesRejected = 0;
+    std::size_t appendSamplesTruncated = 0;
+    std::size_t appendBufferedSamplesLast = 0;
     std::size_t sourceSamplesConsumed = 0;
     std::size_t outputSamplesProduced = 0;
     std::size_t pipelineCapacitySkipCount = 0;
@@ -106,6 +112,12 @@ public:
         overrunDropCount_.store(0u, std::memory_order_relaxed);
         droppedSamples_.store(0u, std::memory_order_relaxed);
         sourceSamplesPushed_.store(0u, std::memory_order_relaxed);
+        appendCallCount_.store(0u, std::memory_order_relaxed);
+        appendSamplesRequested_.store(0u, std::memory_order_relaxed);
+        appendSamplesAccepted_.store(0u, std::memory_order_relaxed);
+        appendSamplesRejected_.store(0u, std::memory_order_relaxed);
+        appendSamplesTruncated_.store(0u, std::memory_order_relaxed);
+        appendBufferedSamplesLast_.store(0u, std::memory_order_relaxed);
         sourceSamplesConsumed_.store(0u, std::memory_order_relaxed);
         outputSamplesProduced_.store(0u, std::memory_order_relaxed);
         pipelineCapacitySkipCount_.store(0u, std::memory_order_relaxed);
@@ -131,33 +143,48 @@ public:
         if (pcm.empty()) {
             return;
         }
+        appendCallCount_.fetch_add(1u, std::memory_order_relaxed);
+        appendSamplesRequested_.fetch_add(pcm.size(), std::memory_order_relaxed);
 
         const bool isFirstFrame = (lastFrameCounter_ == 0u);
         const bool resetRequired = frameCounter < lastFrameCounter_;
         std::size_t desiredSampleCount = 0u;
         if (isFirstFrame || resetRequired) {
-            desiredSampleCount = std::min<std::size_t>(pcm.size(), config_.frameChunkSamples);
+            desiredSampleCount = pcm.size();
         } else if (frameCounter > lastFrameCounter_) {
-            desiredSampleCount = std::min<std::size_t>(pcm.size(), config_.frameChunkSamples);
+            desiredSampleCount = pcm.size();
         }
 
         if (desiredSampleCount == 0u) {
+            appendSamplesRejected_.fetch_add(pcm.size(), std::memory_order_relaxed);
             return;
         }
+        std::size_t acceptedSampleCount = 0u;
 
         if (resetRequired) {
-            stageDeferredResetChunk(pcm, desiredSampleCount);
+            acceptedSampleCount = stageDeferredResetChunk(pcm, desiredSampleCount);
             pendingReset_.store(true, std::memory_order_release);
         } else if (pendingReset_.load(std::memory_order_acquire)) {
             // Keep post-reset audio out of the live ring until the callback has flushed
             // the old generation. With a single deferred chunk, newest data wins.
-            stageDeferredResetChunk(pcm, desiredSampleCount);
+            acceptedSampleCount = stageDeferredResetChunk(pcm, desiredSampleCount);
         } else {
-            const auto startIndex = pcm.size() - desiredSampleCount;
+            const auto writableCapacity = writableCapacitySamples();
+            const auto boundedSampleCount = std::min(desiredSampleCount, writableCapacity);
+            const auto startIndex = pcm.size() - boundedSampleCount;
             for (std::size_t i = startIndex; i < pcm.size(); ++i) {
-                pushSample(pcm[i]);
+                if (pushSampleNoOverwrite(pcm[i])) {
+                    ++acceptedSampleCount;
+                }
             }
         }
+        if (desiredSampleCount > acceptedSampleCount) {
+            appendSamplesTruncated_.fetch_add(
+                desiredSampleCount - acceptedSampleCount,
+                std::memory_order_relaxed);
+        }
+        appendSamplesAccepted_.fetch_add(acceptedSampleCount, std::memory_order_relaxed);
+        appendBufferedSamplesLast_.store(bufferedSamples(), std::memory_order_relaxed);
         lastFrameCounter_ = frameCounter;
     }
 
@@ -210,6 +237,12 @@ public:
         stats.overrunDropCount = overrunDropCount_.load(std::memory_order_relaxed);
         stats.droppedSamples = droppedSamples_.load(std::memory_order_relaxed);
         stats.sourceSamplesPushed = sourceSamplesPushed_.load(std::memory_order_relaxed);
+        stats.appendCallCount = appendCallCount_.load(std::memory_order_relaxed);
+        stats.appendSamplesRequested = appendSamplesRequested_.load(std::memory_order_relaxed);
+        stats.appendSamplesAccepted = appendSamplesAccepted_.load(std::memory_order_relaxed);
+        stats.appendSamplesRejected = appendSamplesRejected_.load(std::memory_order_relaxed);
+        stats.appendSamplesTruncated = appendSamplesTruncated_.load(std::memory_order_relaxed);
+        stats.appendBufferedSamplesLast = appendBufferedSamplesLast_.load(std::memory_order_relaxed);
         stats.sourceSamplesConsumed = sourceSamplesConsumed_.load(std::memory_order_relaxed);
         stats.outputSamplesProduced = outputSamplesProduced_.load(std::memory_order_relaxed);
         stats.pipelineCapacitySkipCount = pipelineCapacitySkipCount_.load(std::memory_order_relaxed);
@@ -230,7 +263,9 @@ private:
     {
         const auto capacity = std::max<std::size_t>(config_.ringBufferCapacitySamples, config_.frameChunkSamples);
         buffer_.assign(capacity, 0);
-        const auto chunkCapacity = std::max<std::size_t>(config_.frameChunkSamples, 1u);
+        const auto usableCapacity = capacity > 1u ? (capacity - 1u) : 0u;
+        const auto chunkCapacity =
+            std::max<std::size_t>(std::max<std::size_t>(usableCapacity, config_.frameChunkSamples), 1u);
         deferredResetChunks_[0].assign(chunkCapacity, 0);
         deferredResetChunks_[1].assign(chunkCapacity, 0);
         deferredResetPublishScratch_.assign(chunkCapacity, 0);
@@ -239,7 +274,8 @@ private:
         deferredResetNextWriteSlot_ = 0u;
     }
 
-    void stageDeferredResetChunk(std::span<const int16_t> pcm, std::size_t desiredSampleCount) noexcept
+    [[nodiscard]] std::size_t stageDeferredResetChunk(
+        std::span<const int16_t> pcm, std::size_t desiredSampleCount) noexcept
     {
         const auto publishedSlot = deferredResetPublishedSlot_.load(std::memory_order_acquire);
         const uint8_t targetSlot = publishedSlot < deferredResetChunks_.size()
@@ -254,6 +290,7 @@ private:
         deferredResetPublishedSize_.store(boundedCount, std::memory_order_relaxed);
         deferredResetPublishedSlot_.store(targetSlot, std::memory_order_release);
         deferredResetNextWriteSlot_ = static_cast<uint8_t>(targetSlot ^ 1u);
+        return boundedCount;
     }
 
     [[nodiscard]] bool publishDeferredResetChunk() noexcept
@@ -286,7 +323,7 @@ private:
 
         deferredResetPublishedSize_.store(0u, std::memory_order_relaxed);
         for (std::size_t i = 0; i < count; ++i) {
-            pushSample(deferredResetPublishScratch_[i]);
+            (void)pushSampleNoOverwrite(deferredResetPublishScratch_[i]);
         }
         return true;
     }
@@ -307,27 +344,39 @@ private:
         }
     }
 
-    void pushSample(int16_t sample) noexcept
+    [[nodiscard]] std::size_t writableCapacitySamples() const noexcept
     {
         const auto capacity = buffer_.size();
-        if (capacity == 0u) {
-            return;
+        if (capacity <= 1u) {
+            return 0u;
+        }
+        const auto usableCapacity = capacity - 1u;
+        const auto buffered = bufferedSamples();
+        return buffered >= usableCapacity ? 0u : (usableCapacity - buffered);
+    }
+
+    [[nodiscard]] bool pushSampleNoOverwrite(int16_t sample) noexcept
+    {
+        const auto capacity = buffer_.size();
+        if (capacity <= 1u) {
+            return false;
         }
 
         const auto readIndex = readIndex_.load(std::memory_order_acquire);
         const auto writeIndex = writeIndex_.load(std::memory_order_relaxed);
         const auto nextWriteIndex = (writeIndex + 1u) % capacity;
         if (nextWriteIndex == readIndex) {
-            // Keep index ownership simple: producer drops on full buffer.
+            // Preserve callback-thread safety: never overwrite unread slots.
             overrunDropCount_.fetch_add(1u, std::memory_order_relaxed);
             droppedSamples_.fetch_add(1u, std::memory_order_relaxed);
-            return;
+            return false;
         }
 
         buffer_[writeIndex] = sample;
         writeIndex_.store(nextWriteIndex, std::memory_order_release);
         sourceSamplesPushed_.fetch_add(1u, std::memory_order_relaxed);
         noteBufferedHighWater(bufferedSamples());
+        return true;
     }
 
     [[nodiscard]] bool peekSample(std::size_t offset, int16_t& sample) const noexcept
@@ -383,6 +432,12 @@ private:
     std::atomic<std::size_t> overrunDropCount_{0};
     std::atomic<std::size_t> droppedSamples_{0};
     std::atomic<std::size_t> sourceSamplesPushed_{0};
+    std::atomic<std::size_t> appendCallCount_{0};
+    std::atomic<std::size_t> appendSamplesRequested_{0};
+    std::atomic<std::size_t> appendSamplesAccepted_{0};
+    std::atomic<std::size_t> appendSamplesRejected_{0};
+    std::atomic<std::size_t> appendSamplesTruncated_{0};
+    std::atomic<std::size_t> appendBufferedSamplesLast_{0};
     std::atomic<std::size_t> sourceSamplesConsumed_{0};
     std::atomic<std::size_t> outputSamplesProduced_{0};
     std::atomic<std::size_t> pipelineCapacitySkipCount_{0};

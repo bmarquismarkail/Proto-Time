@@ -158,6 +158,16 @@ void applyConfigValue(EmulatorConfig& config,
             config.audioEnabled = parseBool(text, label);
         } else if (key == "backend") {
             config.audioBackend = text;
+        } else if (key == "ready_queue_chunks") {
+            const auto parsed = parseUnsigned(text, label);
+            const auto clamped = std::min<std::uint64_t>(parsed, 64u);
+            config.audioReadyQueueChunks =
+                static_cast<std::uint32_t>(std::max<std::uint64_t>(1u, clamped));
+        } else if (key == "batch_chunks") {
+            const auto parsed = parseUnsigned(text, label);
+            const auto clamped = std::min<std::uint64_t>(parsed, 16u);
+            config.audioBatchChunks =
+                static_cast<std::uint32_t>(std::max<std::uint64_t>(1u, clamped));
         } else {
             throw std::invalid_argument("Unknown config key: " + label);
         }
@@ -285,6 +295,14 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     if (overrides.audioBackend.has_value()) {
         config.audioBackend = *overrides.audioBackend;
     }
+    if (overrides.audioReadyQueueChunks.has_value()) {
+        config.audioReadyQueueChunks =
+            static_cast<std::uint32_t>(std::clamp<std::uint32_t>(*overrides.audioReadyQueueChunks, 1u, 64u));
+    }
+    if (overrides.audioBatchChunks.has_value()) {
+        config.audioBatchChunks =
+            static_cast<std::uint32_t>(std::clamp<std::uint32_t>(*overrides.audioBatchChunks, 1u, 16u));
+    }
     if (overrides.visualPackPaths.has_value()) {
         config.visualPackPaths = *overrides.visualPackPaths;
     }
@@ -408,6 +426,22 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
                 throw std::invalid_argument("--audio-backend requires a backend name");
             }
             arguments.overrides.audioBackend = argv[++i];
+        } else if (arg == "--audio-ready-queue-chunks") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--audio-ready-queue-chunks requires a positive integer");
+            }
+            auto parsed = parseUnsigned(argv[++i], "--audio-ready-queue-chunks");
+            parsed = std::min(parsed, static_cast<std::uint64_t>(64u));
+            arguments.overrides.audioReadyQueueChunks =
+                static_cast<std::uint32_t>(std::max<std::uint64_t>(1u, parsed));
+        } else if (arg == "--audio-batch-chunks") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--audio-batch-chunks requires a positive integer");
+            }
+            auto parsed = parseUnsigned(argv[++i], "--audio-batch-chunks");
+            parsed = std::min(parsed, static_cast<std::uint64_t>(16u));
+            arguments.overrides.audioBatchChunks =
+                static_cast<std::uint32_t>(std::max<std::uint64_t>(1u, parsed));
         } else if (arg == "--visual-pack" || arg == "--texture-pack") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument(arg + " requires a path");

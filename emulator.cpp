@@ -66,6 +66,9 @@ void printUsage(std::string_view program)
               << "  --no-audio         Disable frontend audio output\n"
               << "  --audio-backend <name>\n"
               << "                     Frontend audio backend: sdl, dummy, or file (default: sdl)\n"
+              << "  --audio-ready-queue-chunks <n>\n"
+              << "  --audio-batch-chunks <n>\n"
+              << "                     Audio output ready-queue chunk depth (1-64, default: 3)\n"
               << "  --visual-pack <path>\n"
               << "                     Load a visual override pack.json; repeat to load multiple packs\n"
               << "  --visual-capture <dir>\n"
@@ -258,6 +261,88 @@ void writeDiagnosticsSample(std::ostream& output,
     output << "\"primed_for_drain\":" << (stats.audioTransportPrimedForDrain ? "true" : "false");
     output << ",\"underruns_after_priming\":" << stats.audioTransportUnderrunCount;
     output << ",\"silence_samples_after_priming\":" << stats.audioTransportSilenceSamplesFilled;
+    output << ",\"ready_queue\":{";
+    output << "\"configured_chunks\":" << stats.audioTransportConfiguredReadyQueueChunks;
+    output << ",\"capacity_chunks\":" << stats.audioTransportReadyQueueCapacityChunks;
+    output << ",\"usable_chunks\":" << stats.audioTransportReadyQueueUsableChunks;
+    output << ",\"depth_last\":" << stats.audioReadyQueueDepth;
+    output << ",\"depth_high_water\":" << stats.audioReadyQueueHighWaterChunks;
+    output << ",\"depth_low_water\":" << stats.audioReadyQueueLowWaterChunks;
+    output << ",\"empty_count\":" << stats.audioReadyQueueEmptyCount;
+    output << ",\"drop_count\":" << stats.audioTransportDroppedReadyBlocks;
+    output << "}";
+    output << ",\"worker\":{";
+    output << "\"wake_count\":" << stats.audioTransportWorkerWakeCount;
+    output << ",\"callback_wake_count\":" << stats.audioTransportWorkerCallbackWakeCount;
+    output << ",\"emulation_wake_count\":" << stats.audioTransportWorkerEmulationWakeCount;
+    output << ",\"timeout_wake_count\":" << stats.audioTransportWorkerTimeoutWakeCount;
+    output << ",\"loop_iterations\":" << stats.audioTransportWorkerLoopIterations;
+    output << ",\"wake_produced_blocks_0\":" << stats.audioTransportWorkerWakeProducedBlocks0Count;
+    output << ",\"wake_produced_blocks_1\":" << stats.audioTransportWorkerWakeProducedBlocks1Count;
+    output << ",\"wake_produced_blocks_2\":" << stats.audioTransportWorkerWakeProducedBlocks2Count;
+    output << ",\"wake_produced_blocks_3_plus\":" << stats.audioTransportWorkerWakeProducedBlocks3PlusCount;
+    output << ",\"wake_period_ms\":" << stats.audioTransportWorkerWakePeriodMilliseconds;
+    output << ",\"production_attempts\":" << stats.audioTransportWorkerProductionAttempts;
+    output << ",\"production_source_empty_failures\":"
+           << stats.audioTransportWorkerProductionSourceEmptyFailures;
+    output << ",\"production_ready_queue_full_failures\":"
+           << stats.audioTransportWorkerProductionReadyQueueFullFailures;
+    output << ",\"produced_blocks\":" << stats.audioTransportWorkerProducedBlocks;
+    output << ",\"source_buffered_samples_last\":"
+           << stats.audioTransportWorkerWakeSourceBufferedSamplesLast;
+    output << ",\"source_buffered_samples_high_water\":"
+           << stats.audioTransportWorkerWakeSourceBufferedSamplesHighWater;
+    output << ",\"source_buffered_samples_low_water\":"
+           << stats.audioTransportWorkerWakeSourceBufferedSamplesLowWater;
+    output << ",\"source_buffered_samples_on_success_last\":"
+           << stats.audioTransportWorkerProductionSourceBufferedSamplesSuccessLast;
+    output << ",\"source_buffered_samples_on_failure_last\":"
+           << stats.audioTransportWorkerProductionSourceBufferedSamplesFailureLast;
+    output << "}";
+    output << ",\"drain\":{";
+    output << "\"callback_count\":" << stats.audioTransportDrainCallbackCount;
+    output << ",\"requested_samples_total\":" << stats.audioTransportDrainRequestedSamples;
+    output << ",\"drained_ready_samples_total\":" << stats.audioTransportDrainReadySamples;
+    output << ",\"underrun_count\":" << stats.audioTransportUnderrunCount;
+    output << ",\"silence_samples_filled\":" << stats.audioTransportSilenceSamplesFilled;
+    output << "}";
+    output << ",\"append_recent_pcm\":{";
+    output << "\"call_count\":" << stats.audioTransportAppendRecentPcmCallCount;
+    output << ",\"samples_appended_total\":" << stats.audioTransportAppendRecentPcmSamplesAppended;
+    output << ",\"engine_append_call_count\":" << stats.audioAppendCallCount;
+    output << ",\"engine_samples_requested_total\":" << stats.audioAppendSamplesRequested;
+    output << ",\"engine_samples_accepted_total\":" << stats.audioAppendSamplesAccepted;
+    output << ",\"engine_samples_rejected_total\":" << stats.audioAppendSamplesRejected;
+    output << ",\"engine_samples_truncated_total\":" << stats.audioAppendSamplesTruncated;
+    output << ",\"engine_buffered_samples_after_append_last\":" << stats.audioAppendBufferedSamplesLast;
+    output << "}";
+    output << ",\"source_packet\":{";
+    output << "\"realtime_packets_accepted\":" << stats.audioRealtimePacketsAccepted;
+    output << ",\"samples_last\":" << stats.audioRealtimePacketSamplesLast;
+    output << ",\"samples_min\":" << stats.audioRealtimePacketSamplesMin;
+    output << ",\"samples_max\":" << stats.audioRealtimePacketSamplesMax;
+    output << ",\"sample_rate_last\":" << stats.audioRealtimePacketSampleRateLast;
+    output << ",\"channel_count_last\":" << static_cast<unsigned int>(stats.audioRealtimePacketChannelCountLast);
+    output << ",\"psg_chunks_emitted_last\":" << stats.audioRealtimePacketPsgChunksEmittedLast;
+    output << ",\"psg_samples_generated_total_last\":" << stats.audioRealtimePacketPsgSamplesGeneratedTotalLast;
+    output << ",\"psg_chunk_samples_last\":" << stats.audioRealtimePacketPsgChunkSamplesLast;
+    output << ",\"psg_chunk_samples_min\":" << stats.audioRealtimePacketPsgChunkSamplesMin;
+    output << ",\"psg_chunk_samples_max\":" << stats.audioRealtimePacketPsgChunkSamplesMax;
+    output << ",\"psg_pending_samples_last\":" << stats.audioRealtimePacketPsgPendingSamplesLast;
+    output << "}";
+    output << ",\"batching\":{";
+    output << "\"configured_chunks\":" << stats.audioBatchConfiguredChunks;
+    output << ",\"flush_count\":" << stats.audioBatchFlushCount;
+    output << ",\"flush_samples_last\":" << stats.audioBatchFlushSamplesLast;
+    output << ",\"flush_samples_min\":" << stats.audioBatchFlushSamplesMin;
+    output << ",\"flush_samples_max\":" << stats.audioBatchFlushSamplesMax;
+    output << ",\"packets_accumulated\":" << stats.audioBatchPacketsAccumulated;
+    output << ",\"packets_flushed\":" << stats.audioBatchPacketsFlushed;
+    output << ",\"flush_reason_target_count\":" << stats.audioBatchFlushReasonTargetCount;
+    output << ",\"flush_reason_format_change_count\":" << stats.audioBatchFlushReasonFormatChangeCount;
+    output << ",\"flush_reason_lifecycle_count\":" << stats.audioBatchFlushReasonLifecycleCount;
+    output << ",\"current_samples\":" << stats.audioBatchCurrentSamples;
+    output << "}";
     output << ",\"worker_wake_latency\":{";
     output << "\"sample_count\":" << stats.audioTransportWorkerEmulationWakeLatencySampleCount;
     output << ",\"last_ns\":" << stats.audioTransportWorkerEmulationWakeLatencyLastNs;
@@ -332,6 +417,10 @@ int main(int argc, char** argv)
             config.showWindowOnPresent = true;
             config.enableAudio = options.audioEnabled;
             config.audioBackend = options.audioBackend;
+            config.audioReadyQueueChunks =
+                static_cast<std::size_t>(std::clamp<std::uint32_t>(options.audioReadyQueueChunks, 1u, 64u));
+            config.audioBatchChunks =
+                static_cast<std::size_t>(std::clamp<std::uint32_t>(options.audioBatchChunks, 1u, 16u));
 
             const auto pluginPath = options.pluginPath.value_or(
                 BMMQ::defaultSdlFrontendPluginPath((argc > 0 && argv != nullptr)

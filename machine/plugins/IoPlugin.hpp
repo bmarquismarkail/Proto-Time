@@ -144,6 +144,12 @@ struct RealtimeAudioPacket {
     std::uint32_t sampleRate = 48000u;
     std::uint8_t channelCount = 1u;
     std::uint64_t frameCounter = 0;
+    std::uint64_t psgChunksEmitted = 0;
+    std::uint64_t psgSamplesGeneratedTotal = 0;
+    std::uint32_t psgChunkSamplesLast = 0;
+    std::uint32_t psgChunkSamplesMin = 0;
+    std::uint32_t psgChunkSamplesMax = 0;
+    std::uint32_t psgPendingSamples = 0;
     std::vector<std::int16_t> pcmSamples;
 
     [[nodiscard]] bool empty() const noexcept

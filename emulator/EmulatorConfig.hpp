@@ -25,6 +25,8 @@ struct EmulatorConfig {
     std::uint32_t diagnosticsIntervalMs = 1000;
     bool audioEnabled = true;
     std::string audioBackend = "sdl";
+    std::uint32_t audioReadyQueueChunks = 3;
+    std::uint32_t audioBatchChunks = 1;
     std::vector<std::filesystem::path> visualPackPaths;
     std::optional<std::filesystem::path> visualCapturePath;
     bool visualPackReload = false;
@@ -46,6 +48,8 @@ struct CommandLineConfigOverrides {
     std::optional<std::uint32_t> diagnosticsIntervalMs;
     std::optional<bool> audioEnabled;
     std::optional<std::string> audioBackend;
+    std::optional<std::uint32_t> audioReadyQueueChunks;
+    std::optional<std::uint32_t> audioBatchChunks;
     std::optional<std::vector<std::filesystem::path>> visualPackPaths;
     std::optional<std::filesystem::path> visualCapturePath;
     std::optional<bool> visualPackReload;

@@ -29,17 +29,39 @@ struct AudioOutputTransportConfig {
 };
 
 struct AudioOutputTransportStats {
+    std::size_t configuredReadyQueueChunks = 0;
+    std::size_t readyQueueCapacityChunks = 0;
+    std::size_t readyQueueUsableChunks = 0;
     std::size_t readyQueueDepth = 0;
     std::size_t readyQueueHighWaterChunks = 0;
+    std::size_t readyQueueLowWaterChunks = 0;
+    std::size_t readyQueueEmptyCount = 0;
     std::size_t drainCallbackCount = 0;
+    std::size_t drainRequestedSamples = 0;
+    std::size_t drainReadySamples = 0;
     std::size_t underrunCount = 0;
     std::size_t silenceSamplesFilled = 0;
+    std::size_t workerProductionAttempts = 0;
+    std::size_t workerProductionSourceEmptyFailures = 0;
+    std::size_t workerProductionReadyQueueFullFailures = 0;
     std::size_t workerProducedBlocks = 0;
+    std::size_t workerLoopIterations = 0;
+    std::size_t workerWakeProducedBlocks0Count = 0;
+    std::size_t workerWakeProducedBlocks1Count = 0;
+    std::size_t workerWakeProducedBlocks2Count = 0;
+    std::size_t workerWakeProducedBlocks3PlusCount = 0;
+    std::size_t workerProductionSourceBufferedSamplesSuccessLast = 0;
+    std::size_t workerProductionSourceBufferedSamplesFailureLast = 0;
     std::size_t droppedReadyBlocks = 0;
     std::size_t workerWakeCount = 0;
     std::size_t workerCallbackWakeCount = 0;
     std::size_t workerEmulationWakeCount = 0;
     std::size_t workerTimeoutWakeCount = 0;
+    std::size_t workerWakeSourceBufferedSamplesLast = 0;
+    std::size_t workerWakeSourceBufferedSamplesHighWater = 0;
+    std::size_t workerWakeSourceBufferedSamplesLowWater = 0;
+    std::size_t appendRecentPcmCallCount = 0;
+    std::size_t appendRecentPcmSamplesAppended = 0;
     std::size_t staleEpochDropCount = 0;
     std::size_t epochBumpCount = 0;
     std::size_t primedTransitionCount = 0;
@@ -72,6 +94,7 @@ struct AudioOutputTransportStats {
     std::size_t workerEmulationWakeLatency5To10msCount = 0;
     std::size_t workerEmulationWakeLatency10To20msCount = 0;
     std::size_t workerEmulationWakeLatencyOver20msCount = 0;
+    std::size_t workerWakePeriodMilliseconds = 0;
 };
 
 class AudioService {
@@ -373,6 +396,8 @@ public:
     void appendRecentPcm(std::span<const int16_t> pcm, uint64_t frameCounter)
     {
         engine_.appendRecentPcm(pcm, frameCounter);
+        transportAppendRecentPcmCallCount_.fetch_add(1u, std::memory_order_relaxed);
+        transportAppendRecentPcmSamplesAppended_.fetch_add(pcm.size(), std::memory_order_relaxed);
         appendNotifyTimeNs_.store(
             std::chrono::steady_clock::now().time_since_epoch().count(),
             std::memory_order_relaxed);
@@ -381,14 +406,25 @@ public:
 
     [[nodiscard]] bool produceReadyOutputBlock() noexcept
     {
-        if (!outputTransportConfigured_ || producerScratch_.empty() || engine_.bufferedSamples() == 0u) {
+        transportWorkerProductionAttemptCount_.fetch_add(1u, std::memory_order_relaxed);
+        if (!outputTransportConfigured_ || producerScratch_.empty()) {
+            transportWorkerProductionSourceBufferedSamplesFailureLast_.store(0u, std::memory_order_relaxed);
+            return false;
+        }
+        const auto sourceBufferedSamples = engine_.bufferedSamples();
+        if (sourceBufferedSamples == 0u) {
+            transportWorkerProductionSourceBufferedSamplesFailureLast_.store(0u, std::memory_order_relaxed);
+            transportWorkerProductionSourceEmptyFailureCount_.fetch_add(1u, std::memory_order_relaxed);
             return false;
         }
 
         const auto writeIndex = readyWriteIndex_.load(std::memory_order_relaxed);
         const auto nextWriteIndex = nextReadyIndex(writeIndex);
         if (nextWriteIndex == readyReadIndex_.load(std::memory_order_acquire)) {
+            transportWorkerProductionSourceBufferedSamplesFailureLast_.store(
+                sourceBufferedSamples, std::memory_order_relaxed);
             transportDroppedReadyBlocks_.fetch_add(1u, std::memory_order_relaxed);
+            transportWorkerProductionReadyQueueFullFailureCount_.fetch_add(1u, std::memory_order_relaxed);
             return false;
         }
 
@@ -411,6 +447,8 @@ public:
             transportPrimedTransitionCount_.fetch_add(1u, std::memory_order_relaxed);
         }
         readyWriteIndex_.store(nextWriteIndex, std::memory_order_release);
+        transportWorkerProductionSourceBufferedSamplesSuccessLast_.store(
+            sourceBufferedSamples, std::memory_order_relaxed);
         transportWorkerProducedBlocks_.fetch_add(1u, std::memory_order_relaxed);
         noteReadyQueueHighWater(readyQueueDepth());
         return true;
@@ -419,6 +457,7 @@ public:
     void drainReadyOutput(std::span<int16_t> output) noexcept
     {
         transportDrainCallbackCount_.fetch_add(1u, std::memory_order_relaxed);
+        transportDrainRequestedSamples_.fetch_add(output.size(), std::memory_order_relaxed);
         if (output.empty()) {
             return;
         }
@@ -428,6 +467,7 @@ public:
             const auto readIndex = readyReadIndex_.load(std::memory_order_relaxed);
             if (readIndex == readyWriteIndex_.load(std::memory_order_acquire)) {
                 std::fill(output.begin(), output.end(), 0);
+                transportReadyQueueEmptyCount_.fetch_add(1u, std::memory_order_relaxed);
                 transportUnderrunCount_.fetch_add(1u, std::memory_order_relaxed);
                 transportSilenceSamplesFilled_.fetch_add(output.size(), std::memory_order_relaxed);
                 audioCallbackWakeRequest_.store(true, std::memory_order_release);
@@ -444,6 +484,7 @@ public:
             const auto copyCount = std::min(output.size(), block.samples.size());
             if (copyCount > 0u) {
                 std::memmove(output.data(), block.samples.data(), copyCount * sizeof(int16_t));
+                transportDrainReadySamples_.fetch_add(copyCount, std::memory_order_relaxed);
             }
             if (copyCount < output.size()) {
                 std::fill(output.begin() + static_cast<std::ptrdiff_t>(copyCount), output.end(), 0);
@@ -459,17 +500,53 @@ public:
     [[nodiscard]] AudioOutputTransportStats transportStats() const noexcept
     {
         AudioOutputTransportStats stats;
+        stats.configuredReadyQueueChunks = outputTransportConfig_.readyQueueChunks;
+        const auto queueCapacity = readyBlocks_.empty() ? 0u : (readyBlocks_.size() - 1u);
+        stats.readyQueueCapacityChunks = queueCapacity;
+        stats.readyQueueUsableChunks = queueCapacity;
         stats.readyQueueDepth = readyQueueDepth();
         stats.readyQueueHighWaterChunks = transportReadyQueueHighWaterChunks_.load(std::memory_order_relaxed);
+        stats.readyQueueLowWaterChunks = transportReadyQueueLowWaterChunks_.load(std::memory_order_relaxed);
+        stats.readyQueueEmptyCount = transportReadyQueueEmptyCount_.load(std::memory_order_relaxed);
         stats.drainCallbackCount = transportDrainCallbackCount_.load(std::memory_order_relaxed);
+        stats.drainRequestedSamples = transportDrainRequestedSamples_.load(std::memory_order_relaxed);
+        stats.drainReadySamples = transportDrainReadySamples_.load(std::memory_order_relaxed);
         stats.underrunCount = transportUnderrunCount_.load(std::memory_order_relaxed);
         stats.silenceSamplesFilled = transportSilenceSamplesFilled_.load(std::memory_order_relaxed);
+        stats.workerProductionAttempts = transportWorkerProductionAttemptCount_.load(std::memory_order_relaxed);
+        stats.workerProductionSourceEmptyFailures =
+            transportWorkerProductionSourceEmptyFailureCount_.load(std::memory_order_relaxed);
+        stats.workerProductionReadyQueueFullFailures =
+            transportWorkerProductionReadyQueueFullFailureCount_.load(std::memory_order_relaxed);
         stats.workerProducedBlocks = transportWorkerProducedBlocks_.load(std::memory_order_relaxed);
+        stats.workerLoopIterations = transportWorkerLoopIterations_.load(std::memory_order_relaxed);
+        stats.workerWakeProducedBlocks0Count =
+            transportWorkerWakeProducedBlocks0Count_.load(std::memory_order_relaxed);
+        stats.workerWakeProducedBlocks1Count =
+            transportWorkerWakeProducedBlocks1Count_.load(std::memory_order_relaxed);
+        stats.workerWakeProducedBlocks2Count =
+            transportWorkerWakeProducedBlocks2Count_.load(std::memory_order_relaxed);
+        stats.workerWakeProducedBlocks3PlusCount =
+            transportWorkerWakeProducedBlocks3PlusCount_.load(std::memory_order_relaxed);
+        stats.workerProductionSourceBufferedSamplesSuccessLast =
+            transportWorkerProductionSourceBufferedSamplesSuccessLast_.load(std::memory_order_relaxed);
+        stats.workerProductionSourceBufferedSamplesFailureLast =
+            transportWorkerProductionSourceBufferedSamplesFailureLast_.load(std::memory_order_relaxed);
         stats.droppedReadyBlocks = transportDroppedReadyBlocks_.load(std::memory_order_relaxed);
         stats.workerWakeCount = transportWorkerWakeCount_.load(std::memory_order_relaxed);
         stats.workerCallbackWakeCount = transportWorkerCallbackWakeCount_.load(std::memory_order_relaxed);
         stats.workerEmulationWakeCount = transportWorkerEmulationWakeCount_.load(std::memory_order_relaxed);
         stats.workerTimeoutWakeCount = transportWorkerTimeoutWakeCount_.load(std::memory_order_relaxed);
+        stats.workerWakeSourceBufferedSamplesLast =
+            transportWorkerWakeSourceBufferedSamplesLast_.load(std::memory_order_relaxed);
+        stats.workerWakeSourceBufferedSamplesHighWater =
+            transportWorkerWakeSourceBufferedSamplesHighWater_.load(std::memory_order_relaxed);
+        stats.workerWakeSourceBufferedSamplesLowWater =
+            transportWorkerWakeSourceBufferedSamplesLowWater_.load(std::memory_order_relaxed);
+        stats.appendRecentPcmCallCount =
+            transportAppendRecentPcmCallCount_.load(std::memory_order_relaxed);
+        stats.appendRecentPcmSamplesAppended =
+            transportAppendRecentPcmSamplesAppended_.load(std::memory_order_relaxed);
         stats.staleEpochDropCount = transportStaleEpochDropCount_.load(std::memory_order_relaxed);
         stats.epochBumpCount = transportEpochBumpCount_.load(std::memory_order_relaxed);
         stats.lifecycleEpoch = transportEpoch_.load(std::memory_order_acquire);
@@ -529,6 +606,7 @@ public:
             transportWorkerEmulationWakeLatencyBuckets_[6].load(std::memory_order_relaxed);
         stats.workerEmulationWakeLatencyOver20msCount =
             transportWorkerEmulationWakeLatencyBuckets_[7].load(std::memory_order_relaxed);
+        stats.workerWakePeriodMilliseconds = static_cast<std::size_t>(outputTransportWakePeriod().count());
         return stats;
     }
 
@@ -658,6 +736,11 @@ private:
                !transportReadyQueueHighWaterChunks_.compare_exchange_weak(
                    previous, depth, std::memory_order_relaxed, std::memory_order_relaxed)) {
         }
+        previous = transportReadyQueueLowWaterChunks_.load(std::memory_order_relaxed);
+        while (depth < previous &&
+               !transportReadyQueueLowWaterChunks_.compare_exchange_weak(
+                   previous, depth, std::memory_order_relaxed, std::memory_order_relaxed)) {
+        }
     }
 
     [[nodiscard]] bool readyQueueHasSpace() const noexcept
@@ -711,7 +794,29 @@ private:
                 break;
             }
 
+            transportWorkerLoopIterations_.fetch_add(1u, std::memory_order_relaxed);
             transportWorkerWakeCount_.fetch_add(1u, std::memory_order_relaxed);
+            const auto sourceBufferedSamples = engine_.bufferedSamples();
+            transportWorkerWakeSourceBufferedSamplesLast_.store(
+                sourceBufferedSamples, std::memory_order_relaxed);
+            auto sourceHighWater =
+                transportWorkerWakeSourceBufferedSamplesHighWater_.load(std::memory_order_relaxed);
+            while (sourceBufferedSamples > sourceHighWater &&
+                   !transportWorkerWakeSourceBufferedSamplesHighWater_.compare_exchange_weak(
+                       sourceHighWater,
+                       sourceBufferedSamples,
+                       std::memory_order_relaxed,
+                       std::memory_order_relaxed)) {
+            }
+            auto sourceLowWater =
+                transportWorkerWakeSourceBufferedSamplesLowWater_.load(std::memory_order_relaxed);
+            while (sourceBufferedSamples < sourceLowWater &&
+                   !transportWorkerWakeSourceBufferedSamplesLowWater_.compare_exchange_weak(
+                       sourceLowWater,
+                       sourceBufferedSamples,
+                       std::memory_order_relaxed,
+                       std::memory_order_relaxed)) {
+            }
             if (!predicateMet) {
                 transportWorkerTimeoutWakeCount_.fetch_add(1u, std::memory_order_relaxed);
             } else if (callbackWoke) {
@@ -720,8 +825,19 @@ private:
                 transportWorkerEmulationWakeCount_.fetch_add(1u, std::memory_order_relaxed);
                 noteWorkerEmulationWakeLatency();
             }
+            std::size_t producedThisWake = 0u;
             while (!outputTransportStopRequested_.load(std::memory_order_acquire) &&
                    produceReadyOutputBlock()) {
+                ++producedThisWake;
+            }
+            if (producedThisWake == 0u) {
+                transportWorkerWakeProducedBlocks0Count_.fetch_add(1u, std::memory_order_relaxed);
+            } else if (producedThisWake == 1u) {
+                transportWorkerWakeProducedBlocks1Count_.fetch_add(1u, std::memory_order_relaxed);
+            } else if (producedThisWake == 2u) {
+                transportWorkerWakeProducedBlocks2Count_.fetch_add(1u, std::memory_order_relaxed);
+            } else {
+                transportWorkerWakeProducedBlocks3PlusCount_.fetch_add(1u, std::memory_order_relaxed);
             }
         }
     }
@@ -729,15 +845,34 @@ private:
     void resetTransportStats() noexcept
     {
         transportReadyQueueHighWaterChunks_.store(0u, std::memory_order_relaxed);
+        transportReadyQueueLowWaterChunks_.store(0u, std::memory_order_relaxed);
+        transportReadyQueueEmptyCount_.store(0u, std::memory_order_relaxed);
         transportDrainCallbackCount_.store(0u, std::memory_order_relaxed);
+        transportDrainRequestedSamples_.store(0u, std::memory_order_relaxed);
+        transportDrainReadySamples_.store(0u, std::memory_order_relaxed);
         transportUnderrunCount_.store(0u, std::memory_order_relaxed);
         transportSilenceSamplesFilled_.store(0u, std::memory_order_relaxed);
+        transportWorkerProductionAttemptCount_.store(0u, std::memory_order_relaxed);
+        transportWorkerProductionSourceEmptyFailureCount_.store(0u, std::memory_order_relaxed);
+        transportWorkerProductionReadyQueueFullFailureCount_.store(0u, std::memory_order_relaxed);
         transportWorkerProducedBlocks_.store(0u, std::memory_order_relaxed);
+        transportWorkerLoopIterations_.store(0u, std::memory_order_relaxed);
+        transportWorkerWakeProducedBlocks0Count_.store(0u, std::memory_order_relaxed);
+        transportWorkerWakeProducedBlocks1Count_.store(0u, std::memory_order_relaxed);
+        transportWorkerWakeProducedBlocks2Count_.store(0u, std::memory_order_relaxed);
+        transportWorkerWakeProducedBlocks3PlusCount_.store(0u, std::memory_order_relaxed);
+        transportWorkerProductionSourceBufferedSamplesSuccessLast_.store(0u, std::memory_order_relaxed);
+        transportWorkerProductionSourceBufferedSamplesFailureLast_.store(0u, std::memory_order_relaxed);
         transportDroppedReadyBlocks_.store(0u, std::memory_order_relaxed);
         transportWorkerWakeCount_.store(0u, std::memory_order_relaxed);
         transportWorkerCallbackWakeCount_.store(0u, std::memory_order_relaxed);
         transportWorkerEmulationWakeCount_.store(0u, std::memory_order_relaxed);
         transportWorkerTimeoutWakeCount_.store(0u, std::memory_order_relaxed);
+        transportWorkerWakeSourceBufferedSamplesLast_.store(0u, std::memory_order_relaxed);
+        transportWorkerWakeSourceBufferedSamplesHighWater_.store(0u, std::memory_order_relaxed);
+        transportWorkerWakeSourceBufferedSamplesLowWater_.store(0u, std::memory_order_relaxed);
+        transportAppendRecentPcmCallCount_.store(0u, std::memory_order_relaxed);
+        transportAppendRecentPcmSamplesAppended_.store(0u, std::memory_order_relaxed);
         transportStaleEpochDropCount_.store(0u, std::memory_order_relaxed);
         transportPrimedTransitionCount_.store(0u, std::memory_order_relaxed);
         transportDrainDurationSampleCount_.store(0u, std::memory_order_relaxed);
@@ -752,6 +887,10 @@ private:
         for (auto& bucket : transportWorkerEmulationWakeLatencyBuckets_) {
             bucket.store(0u, std::memory_order_relaxed);
         }
+        const auto readyQueueCapacity = readyBlocks_.empty() ? 0u : (readyBlocks_.size() - 1u);
+        transportReadyQueueLowWaterChunks_.store(readyQueueCapacity, std::memory_order_relaxed);
+        transportWorkerWakeSourceBufferedSamplesLowWater_.store(
+            engine_.bufferCapacitySamples(), std::memory_order_relaxed);
     }
 
     void noteWorkerEmulationWakeLatency() noexcept
@@ -872,15 +1011,34 @@ private:
     std::condition_variable outputTransportCv_{};
     std::mutex outputTransportWaitMutex_{};
     std::atomic<std::size_t> transportReadyQueueHighWaterChunks_{0};
+    std::atomic<std::size_t> transportReadyQueueLowWaterChunks_{0};
+    std::atomic<std::size_t> transportReadyQueueEmptyCount_{0};
     std::atomic<std::size_t> transportDrainCallbackCount_{0};
+    std::atomic<std::size_t> transportDrainRequestedSamples_{0};
+    std::atomic<std::size_t> transportDrainReadySamples_{0};
     std::atomic<std::size_t> transportUnderrunCount_{0};
     std::atomic<std::size_t> transportSilenceSamplesFilled_{0};
+    std::atomic<std::size_t> transportWorkerProductionAttemptCount_{0};
+    std::atomic<std::size_t> transportWorkerProductionSourceEmptyFailureCount_{0};
+    std::atomic<std::size_t> transportWorkerProductionReadyQueueFullFailureCount_{0};
     std::atomic<std::size_t> transportWorkerProducedBlocks_{0};
+    std::atomic<std::size_t> transportWorkerLoopIterations_{0};
+    std::atomic<std::size_t> transportWorkerWakeProducedBlocks0Count_{0};
+    std::atomic<std::size_t> transportWorkerWakeProducedBlocks1Count_{0};
+    std::atomic<std::size_t> transportWorkerWakeProducedBlocks2Count_{0};
+    std::atomic<std::size_t> transportWorkerWakeProducedBlocks3PlusCount_{0};
+    std::atomic<std::size_t> transportWorkerProductionSourceBufferedSamplesSuccessLast_{0};
+    std::atomic<std::size_t> transportWorkerProductionSourceBufferedSamplesFailureLast_{0};
     std::atomic<std::size_t> transportDroppedReadyBlocks_{0};
     std::atomic<std::size_t> transportWorkerWakeCount_{0};
     std::atomic<std::size_t> transportWorkerCallbackWakeCount_{0};
     std::atomic<std::size_t> transportWorkerEmulationWakeCount_{0};
     std::atomic<std::size_t> transportWorkerTimeoutWakeCount_{0};
+    std::atomic<std::size_t> transportWorkerWakeSourceBufferedSamplesLast_{0};
+    std::atomic<std::size_t> transportWorkerWakeSourceBufferedSamplesHighWater_{0};
+    std::atomic<std::size_t> transportWorkerWakeSourceBufferedSamplesLowWater_{0};
+    std::atomic<std::size_t> transportAppendRecentPcmCallCount_{0};
+    std::atomic<std::size_t> transportAppendRecentPcmSamplesAppended_{0};
     std::atomic<std::size_t> transportStaleEpochDropCount_{0};
     std::atomic<std::size_t> transportEpochBumpCount_{0};
     std::atomic<std::uint64_t> transportEpoch_{1};

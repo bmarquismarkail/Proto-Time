@@ -455,6 +455,22 @@ std::optional<RealtimeVideoPacket> GameGearMachine::realtimeVideoPacket(
     return impl->vdp.buildRealtimeFrame(request);
 }
 
+std::optional<RealtimeAudioPacket> GameGearMachine::realtimeAudioPacket() const
+{
+    RealtimeAudioPacket packet;
+    packet.sampleRate = impl->psg.sampleRate();
+    packet.channelCount = impl->psg.outputChannelCount();
+    packet.frameCounter = impl->psg.frameCounter();
+    packet.psgChunksEmitted = impl->psg.chunksEmitted();
+    packet.psgSamplesGeneratedTotal = impl->psg.samplesGeneratedTotal();
+    packet.psgChunkSamplesLast = static_cast<std::uint32_t>(impl->psg.chunkSamplesLast());
+    packet.psgChunkSamplesMin = static_cast<std::uint32_t>(impl->psg.chunkSamplesMin());
+    packet.psgChunkSamplesMax = static_cast<std::uint32_t>(impl->psg.chunkSamplesMax());
+    packet.psgPendingSamples = static_cast<std::uint32_t>(impl->psg.pendingSamples());
+    packet.pcmSamples = impl->psg.copyRecentSamples();
+    return packet;
+}
+
 uint32_t GameGearMachine::clockHz() const {
     return impl->context.clockHz();
 }

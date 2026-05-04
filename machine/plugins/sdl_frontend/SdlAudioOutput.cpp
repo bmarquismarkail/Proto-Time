@@ -109,7 +109,7 @@ public:
                 .deviceSampleRate = deviceInfo_.sampleRate,
                 .channelCount = static_cast<uint8_t>(deviceInfo_.channels),
                 .callbackChunkSamples = deviceInfo_.callbackChunkSamples,
-                .readyQueueChunks = 3u,
+                .readyQueueChunks = std::clamp<std::size_t>(config.readyQueueChunks, 1u, 64u),
             })) {
             lastError_ = "Audio output transport configuration failed";
             lastErrorCode_ = AudioOutputErrorCode::InvalidConfig;

@@ -43,6 +43,7 @@ public:
         const VideoDebugRenderRequest& request) const override;
     std::optional<RealtimeVideoPacket> realtimeVideoPacket(
         const VideoDebugRenderRequest& request) const override;
+    std::optional<RealtimeAudioPacket> realtimeAudioPacket() const override;
     uint32_t clockHz() const override;
     std::string stopSummary() const override;
     [[nodiscard]] bool flushCartridgeSave();

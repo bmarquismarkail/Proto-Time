@@ -75,6 +75,7 @@ int main(int argc, char** argv)
     config.frameWidth = 32;
     config.frameHeight = 24;
     config.audioPreviewSampleCount = 64;
+    config.audioBatchChunks = 1u;
     config.autoInitializeBackend = false;
     config.autoPresentOnVideoEvent = false;
     config.enableRenderServiceThread = true;
@@ -541,7 +542,10 @@ int main(int argc, char** argv)
         const auto nextAudioFrame = machine.audioFrameCounter() + 1u;
         assert(stepUntilAudioFrames(machine, nextAudioFrame));
         assert(frontend->stats().audioEvents >= audioEventsBeforeLowWater + 1u);
-        assert(frontend->bufferedAudioSamples() > 0u);
+        const auto audioStats = frontend->stats();
+        assert(audioStats.audioBatchConfiguredChunks == 1u);
+        assert(audioStats.audioBatchFlushCount >= 1u);
+        assert(audioStats.audioBatchFlushSamplesMin == audioStats.audioRealtimePacketSamplesMin);
 
         const auto highWaterStartFrame = machine.audioFrameCounter() + 1u;
         std::vector<int16_t> highWaterChunk(256u, 700);
@@ -583,6 +587,41 @@ int main(int argc, char** argv)
 
     machine.pluginManager().shutdown(machine.mutableView());
     assert(frontend->stats().detachCount == 1);
+
+    {
+        GameBoyMachine batchedMachine;
+        std::vector<uint8_t> batchedRom(0x8000, 0x00);
+        batchedRom[0x0100] = 0x00;
+        batchedMachine.loadRom(batchedRom);
+
+        BMMQ::SdlFrontendConfig batchedConfig = config;
+        batchedConfig.audioBatchChunks = 2u;
+        auto batchedPlugin = BMMQ::loadSdlFrontendPlugin(
+            BMMQ::defaultSdlFrontendPluginPath(executablePath),
+            batchedConfig);
+        auto* batchedFrontend = batchedPlugin.get();
+        batchedMachine.pluginManager().add(std::move(batchedPlugin));
+        batchedMachine.pluginManager().initialize(batchedMachine.mutableView());
+
+        const auto batchTargetFrame = batchedMachine.audioFrameCounter() + 3u;
+        assert(stepUntilAudioFrames(batchedMachine, batchTargetFrame));
+        auto batchedStats = batchedFrontend->stats();
+        assert(batchedStats.audioBatchConfiguredChunks == 2u);
+        assert(batchedStats.audioBatchFlushSamplesMax >=
+               batchedStats.audioRealtimePacketSamplesMax * 2u);
+        assert(batchedStats.audioTransportAppendRecentPcmCallCount <
+               batchedStats.audioRealtimePacketsAccepted);
+        const auto pendingBatchSamplesBeforeDetach = batchedStats.audioBatchCurrentSamples;
+        const auto lifecycleFlushesBeforeDetach = batchedStats.audioBatchFlushReasonLifecycleCount;
+
+        batchedMachine.pluginManager().shutdown(batchedMachine.mutableView());
+        batchedStats = batchedFrontend->stats();
+        if (pendingBatchSamplesBeforeDetach > 0u) {
+            assert(batchedStats.audioBatchFlushReasonLifecycleCount > lifecycleFlushesBeforeDetach);
+        }
+        assert(batchedStats.audioBatchCurrentSamples == 0u);
+        assert(batchedStats.detachCount == 1u);
+    }
 
     return 0;
 }

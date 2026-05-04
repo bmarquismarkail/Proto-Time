@@ -28,6 +28,12 @@ public:
     [[nodiscard]] uint16_t tonePeriod(std::size_t channel) const noexcept;
     [[nodiscard]] uint8_t channelAttenuation(std::size_t channel) const noexcept;
     [[nodiscard]] uint8_t noiseControl() const noexcept;
+    [[nodiscard]] std::size_t chunkSamplesLast() const noexcept;
+    [[nodiscard]] std::size_t chunkSamplesMin() const noexcept;
+    [[nodiscard]] std::size_t chunkSamplesMax() const noexcept;
+    [[nodiscard]] std::uint64_t chunksEmitted() const noexcept;
+    [[nodiscard]] std::uint64_t samplesGeneratedTotal() const noexcept;
+    [[nodiscard]] std::size_t pendingSamples() const noexcept;
 
 private:
     struct ToneChannel {
@@ -65,6 +71,10 @@ private:
     std::array<uint8_t, 0x10u> waveRam_{};
     std::vector<int16_t> currentFrameSamples_;
     std::vector<int16_t> recentSamples_;
+    std::size_t chunkSamplesLast_ = 0u;
+    std::size_t chunkSamplesMin_ = 0u;
+    std::size_t chunkSamplesMax_ = 0u;
+    std::uint64_t samplesGeneratedTotal_ = 0u;
     uint64_t samplePhase_ = 0u;
     uint64_t frameCounter_ = 0u;
     uint8_t latchedChannel_ = 0u;

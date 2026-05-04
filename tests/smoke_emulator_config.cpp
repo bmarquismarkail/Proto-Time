@@ -84,6 +84,8 @@ int main()
         CHECK_TRUE(defaults.diagnosticsIntervalMs == 1000u);
         CHECK_TRUE(defaults.audioEnabled);
         CHECK_TRUE(defaults.audioBackend == "sdl");
+        CHECK_TRUE(defaults.audioReadyQueueChunks == 3u);
+        CHECK_TRUE(defaults.audioBatchChunks == 1u);
         CHECK_TRUE(defaults.visualPackPaths.empty());
         CHECK_TRUE(!defaults.visualCapturePath.has_value());
         CHECK_TRUE(!defaults.visualPackReload);
@@ -111,6 +113,8 @@ int main()
         "[audio]\n"
         "enabled = false\n"
         "backend = file\n"
+        "ready_queue_chunks = 8\n"
+        "batch_chunks = 4\n"
         "\n"
         "[visual]\n"
         "pack = packs/base.json\n"
@@ -136,6 +140,8 @@ int main()
     CHECK_TRUE(fileConfig.diagnosticsIntervalMs == 1000u);
     CHECK_TRUE(!fileConfig.audioEnabled);
     CHECK_TRUE(fileConfig.audioBackend == "file");
+    CHECK_TRUE(fileConfig.audioReadyQueueChunks == 8u);
+    CHECK_TRUE(fileConfig.audioBatchChunks == 4u);
     CHECK_TRUE(fileConfig.visualPackPaths.size() == 2u);
     CHECK_TRUE(fileConfig.visualPackPaths[0] == tempDir / "packs/base.json");
     CHECK_TRUE(fileConfig.visualPackPaths[1] == tempDir / "packs/compat.json");
@@ -158,6 +164,8 @@ int main()
     overrides.diagnosticsIntervalMs = 250u;
     overrides.audioEnabled = true;
     overrides.audioBackend = "dummy";
+    overrides.audioReadyQueueChunks = 6u;
+    overrides.audioBatchChunks = 3u;
     overrides.visualPackPaths = std::vector<std::filesystem::path>{
         std::filesystem::path("cli-pack-a.json"),
         std::filesystem::path("cli-pack-b.json"),
@@ -182,6 +190,8 @@ int main()
     CHECK_TRUE(fileConfig.diagnosticsIntervalMs == 250u);
     CHECK_TRUE(fileConfig.audioEnabled);
     CHECK_TRUE(fileConfig.audioBackend == "dummy");
+    CHECK_TRUE(fileConfig.audioReadyQueueChunks == 6u);
+    CHECK_TRUE(fileConfig.audioBatchChunks == 3u);
     CHECK_TRUE(fileConfig.visualPackPaths.size() == 2u);
     CHECK_TRUE(fileConfig.visualPackPaths[0] == "cli-pack-a.json");
     CHECK_TRUE(fileConfig.visualPackPaths[1] == "cli-pack-b.json");
@@ -265,6 +275,13 @@ int main()
         (void)parseArgs({"timeEmulator", "--diagnostics-interval-ms"});
     }));
 
+    CHECK_TRUE(throwsInvalidArgumentContaining("--audio-ready-queue-chunks requires a positive integer", [] {
+        (void)parseArgs({"timeEmulator", "--audio-ready-queue-chunks"});
+    }));
+    CHECK_TRUE(throwsInvalidArgumentContaining("--audio-batch-chunks requires a positive integer", [] {
+        (void)parseArgs({"timeEmulator", "--audio-batch-chunks"});
+    }));
+
     const auto help = parseArgs({"timeEmulator", "--help", "--unknown-after-help"});
     CHECK_TRUE(help.helpRequested);
 
@@ -296,6 +313,8 @@ int main()
                              "--diagnostics-report", "runtime-diag.jsonl",
                              "--diagnostics-interval-ms", "125",
                              "--audio-backend", "dummy",
+                             "--audio-ready-queue-chunks", "12",
+                             "--audio-batch-chunks", "5",
                              "--visual-pack", "cli-pack-a.json",
                              "--texture-pack", "cli-pack-b.json",
                              "--visual-capture", "cli-capture",
@@ -308,6 +327,8 @@ int main()
     CHECK_TRUE(resolved.diagnosticsReportPath == "runtime-diag.jsonl");
     CHECK_TRUE(resolved.diagnosticsIntervalMs == 125u);
     CHECK_TRUE(resolved.audioBackend == "dummy");
+    CHECK_TRUE(resolved.audioReadyQueueChunks == 12u);
+    CHECK_TRUE(resolved.audioBatchChunks == 5u);
     CHECK_TRUE(resolved.visualPackPaths.size() == 2u);
     CHECK_TRUE(resolved.visualPackPaths[0] == "cli-pack-a.json");
     CHECK_TRUE(resolved.visualPackPaths[1] == "cli-pack-b.json");
