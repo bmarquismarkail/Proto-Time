@@ -27,6 +27,12 @@ DEFAULT_SCENARIOS = (
     ("deterministic_test", 8, 2),
 )
 
+# Keep these policy thresholds synchronized with emulator/AudioKpiStatus.hpp.
+SOURCE_REALTIME_THRESHOLD = 0.95
+DRAIN_REALTIME_THRESHOLD = 0.95
+SOURCE_DRAIN_CLOSE_TOLERANCE = 0.05
+TRANSPORT_LOSS_SUSPICIOUS_THRESHOLD = 0.10
+
 
 def run_text(args: list[str], cwd: Path) -> str:
     result = subprocess.run(args, cwd=cwd, text=True, capture_output=True, check=False)
@@ -80,23 +86,46 @@ def div(num: Any, den: Any) -> float | None:
 def metrics_from_diag(diag: dict[str, Any] | None, wall_clock_seconds: float) -> dict[str, Any]:
     drain_requested = get_path(diag, ("audio", "drain", "requested_samples_total"), 0)
     drain_ready = get_path(diag, ("audio", "drain", "drained_ready_samples_total"), 0)
+    silence = get_path(diag, ("audio", "silence_samples_after_priming"), 0)
     append_calls = get_path(diag, ("audio", "append_recent_pcm", "call_count"), 0)
     appended = get_path(diag, ("audio", "append_recent_pcm", "samples_appended_total"), 0)
+    requested = get_path(diag, ("audio", "append_recent_pcm", "engine_samples_requested_total"))
+    accepted = get_path(diag, ("audio", "append_recent_pcm", "engine_samples_accepted_total"))
+    psg_generated = get_path(diag, ("audio", "source_packet", "psg_samples_generated_total_last"))
+    sample_rate = get_path(diag, ("audio", "config", "configured_sample_rate"))
+    channels = get_path(diag, ("audio", "config", "configured_channel_count"))
+    expected_samples_per_second = None
+    if isinstance(sample_rate, (int, float)) and isinstance(channels, (int, float)):
+        expected_samples_per_second = int(sample_rate) * int(channels)
     return {
         "underruns": get_path(diag, ("audio", "underruns_after_priming")),
-        "silence_samples": get_path(diag, ("audio", "silence_samples_after_priming")),
-        "requested_samples": get_path(diag, ("audio", "append_recent_pcm", "engine_samples_requested_total")),
-        "accepted_samples": get_path(diag, ("audio", "append_recent_pcm", "engine_samples_accepted_total")),
+        "runtime_audio_kpi_status": get_path(diag, ("audio", "kpi_status")),
+        "runtime_audio_kpi_source_ratio": get_path(diag, ("audio", "kpi_source_ratio")),
+        "runtime_audio_kpi_drain_ratio": get_path(diag, ("audio", "kpi_drain_ratio")),
+        "silence_samples": silence,
+        "requested_samples": requested,
+        "accepted_samples": accepted,
         "rejected_samples": get_path(diag, ("audio", "append_recent_pcm", "engine_samples_rejected_total")),
         "truncated_samples": get_path(diag, ("audio", "append_recent_pcm", "engine_samples_truncated_total")),
+        "append_samples_total": appended,
+        "psg_samples_generated_total": psg_generated,
+        "psg_chunks_emitted_total": get_path(diag, ("audio", "source_packet", "psg_chunks_emitted_last")),
+        "audio_frame_ready_events_total": get_path(diag, ("audio", "source_packet", "psg_chunks_emitted_last")),
+        "realtime_packets_accepted_total": get_path(diag, ("audio", "source_packet", "realtime_packets_accepted")),
         "drained_ready_samples": drain_ready,
         "drain_requested_samples": drain_requested,
         "drained_requested_ratio": div(drain_ready, drain_requested),
+        "appended_requested_ratio": div(appended, requested),
+        "silence_requested_ratio": div(silence, drain_requested),
         "append_calls": append_calls,
         "samples_per_append": div(appended, append_calls),
         "source_empty_failures": get_path(diag, ("audio", "worker", "production_source_empty_failures")),
         "ready_full_failures": get_path(diag, ("audio", "worker", "production_ready_queue_full_failures")),
         "produced_blocks": get_path(diag, ("audio", "worker", "produced_blocks")),
+        "wake_count": get_path(diag, ("audio", "worker", "wake_count")),
+        "callback_wake_count": get_path(diag, ("audio", "worker", "callback_wake_count")),
+        "emulation_wake_count": get_path(diag, ("audio", "worker", "emulation_wake_count")),
+        "timeout_wake_count": get_path(diag, ("audio", "worker", "timeout_wake_count")),
         "wake_produced_blocks_0": get_path(diag, ("audio", "worker", "wake_produced_blocks_0")),
         "wake_produced_blocks_1": get_path(diag, ("audio", "worker", "wake_produced_blocks_1")),
         "wake_produced_blocks_2": get_path(diag, ("audio", "worker", "wake_produced_blocks_2")),
@@ -111,21 +140,42 @@ def metrics_from_diag(diag: dict[str, Any] | None, wall_clock_seconds: float) ->
         "total_rendered_samples": drain_ready,
         "emulated_cycles": get_path(diag, ("emulated_cycles",)),
         "host_elapsed_ns": get_path(diag, ("host_elapsed_ns",)),
+        "expected_source_samples_per_second": expected_samples_per_second,
+        "expected_source_samples_per_second_48k_stereo": 96000,
+        "source_samples_generated_per_second": div(psg_generated, wall_clock_seconds),
+        "source_samples_appended_per_second": div(appended, wall_clock_seconds),
+        "requested_samples_per_second": div(drain_requested, wall_clock_seconds),
+        "drained_samples_per_second": div(drain_ready, wall_clock_seconds),
+        "generated_expected_ratio": div(psg_generated, expected_samples_per_second * wall_clock_seconds if expected_samples_per_second else None),
         "wall_clock_seconds": wall_clock_seconds,
     }
 
 
 def observed_audio_config(diag: dict[str, Any] | None) -> dict[str, Any]:
-    callback_size = div(
-        get_path(diag, ("audio", "drain", "requested_samples_total"), 0),
-        get_path(diag, ("audio", "drain", "callback_count"), 0),
-    )
+    direct_callback_last = get_path(diag, ("audio", "config", "callback_requested_samples_last"))
+    direct_callback_min = get_path(diag, ("audio", "config", "callback_requested_samples_min"))
+    direct_callback_max = get_path(diag, ("audio", "config", "callback_requested_samples_max"))
+    callback_size = direct_callback_last
+    if callback_size is None:
+        callback_size = div(
+            get_path(diag, ("audio", "drain", "requested_samples_total"), 0),
+            get_path(diag, ("audio", "drain", "callback_count"), 0),
+        )
     return {
-        "frame_chunk_size": get_path(diag, ("audio", "source_packet", "samples_last")),
-        "ring_capacity_samples": get_path(diag, ("audio", "ring_buffer_capacity_samples")),
+        "frame_chunk_size": get_path(
+            diag, ("audio", "config", "frame_chunk_samples"),
+            get_path(diag, ("audio", "source_packet", "samples_last")),
+        ),
+        "ring_capacity_samples": get_path(diag, ("audio", "config", "ring_capacity_samples")),
+        "ring_capacity_chunks": get_path(diag, ("audio", "config", "ring_capacity_chunks")),
         "callback_size": callback_size,
+        "callback_requested_samples_last": direct_callback_last,
+        "callback_requested_samples_min": direct_callback_min,
+        "callback_requested_samples_max": direct_callback_max,
         "source_sample_rate": get_path(diag, ("audio", "source_packet", "sample_rate_last")),
+        "configured_sample_rate": get_path(diag, ("audio", "config", "configured_sample_rate")),
         "channel_count": get_path(diag, ("audio", "source_packet", "channel_count_last")),
+        "configured_channel_count": get_path(diag, ("audio", "config", "configured_channel_count")),
         "ready_queue_configured_chunks": get_path(diag, ("audio", "ready_queue", "configured_chunks")),
         "batch_configured_chunks": get_path(diag, ("audio", "batching", "configured_chunks")),
     }
@@ -145,6 +195,108 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "max": max(nums),
             "median": statistics.median(nums),
         }
+    required_fields = [
+        "requested_samples",
+        "accepted_samples",
+        "append_samples_total",
+        "psg_samples_generated_total",
+        "drain_requested_samples",
+        "drained_ready_samples",
+        "silence_samples",
+        "source_samples_generated_per_second",
+        "source_samples_appended_per_second",
+        "requested_samples_per_second",
+        "drained_samples_per_second",
+        "generated_expected_ratio",
+        "drained_requested_ratio",
+        "silence_requested_ratio",
+    ]
+    missing_fields: list[str] = []
+    for key in required_fields:
+        if all(row["metrics"].get(key) is None for row in rows):
+            missing_fields.append(key)
+    out["missing_fields"] = missing_fields
+    runtime_statuses = sorted({
+        str(row["metrics"].get("runtime_audio_kpi_status"))
+        for row in rows
+        if row["metrics"].get("runtime_audio_kpi_status") is not None
+    })
+    out["runtime_audio_kpi_statuses"] = runtime_statuses
+
+    metric_summary = out["metrics"]
+    source_ratio = get_path(metric_summary, ("generated_expected_ratio", "avg"))
+    drain_ratio = get_path(metric_summary, ("drained_requested_ratio", "avg"))
+    silence_ratio = get_path(metric_summary, ("silence_requested_ratio", "avg"))
+
+    transport_loss_ratio = None
+    if isinstance(source_ratio, (int, float)) and isinstance(drain_ratio, (int, float)):
+        transport_loss_ratio = max(0.0, float(source_ratio) - float(drain_ratio))
+
+    expected_underrun_due_to_slow_emulation = None
+    transport_loss_suspicious = None
+    primary_audio_kpi_status = "unknown"
+    notes: list[str] = []
+
+    if isinstance(source_ratio, (int, float)) and isinstance(drain_ratio, (int, float)):
+        source_limited = (
+            source_ratio < SOURCE_REALTIME_THRESHOLD and
+            abs(source_ratio - drain_ratio) <= SOURCE_DRAIN_CLOSE_TOLERANCE
+        )
+        transport_limited = (
+            source_ratio >= SOURCE_REALTIME_THRESHOLD and
+            drain_ratio < DRAIN_REALTIME_THRESHOLD
+        )
+        healthy = (
+            source_ratio >= SOURCE_REALTIME_THRESHOLD and
+            drain_ratio >= DRAIN_REALTIME_THRESHOLD
+        )
+        expected_underrun_due_to_slow_emulation = source_ratio < SOURCE_REALTIME_THRESHOLD
+        transport_loss_suspicious = (
+            source_ratio >= SOURCE_REALTIME_THRESHOLD and
+            isinstance(transport_loss_ratio, (int, float)) and
+            transport_loss_ratio > TRANSPORT_LOSS_SUSPICIOUS_THRESHOLD
+        )
+        if source_limited:
+            primary_audio_kpi_status = "source_limited"
+            notes.append(
+                "Source generation is below realtime and drain ratio tracks source ratio within tolerance."
+            )
+        elif transport_limited:
+            primary_audio_kpi_status = "transport_limited"
+            notes.append(
+                "Source generation is near realtime but drain ratio is below realtime threshold."
+            )
+        elif healthy:
+            primary_audio_kpi_status = "healthy"
+            notes.append(
+                "Both source generation and drain ratios meet realtime threshold."
+            )
+        else:
+            primary_audio_kpi_status = "unknown"
+            notes.append(
+                "Ratios are mixed and do not match source-limited, transport-limited, or healthy rules."
+            )
+    else:
+        notes.append(
+            "Missing generated_expected_ratio or drained_requested_ratio prevented classification."
+        )
+
+    out["classification"] = {
+        "audio_source_realtime_ratio": source_ratio,
+        "audio_drain_ratio": drain_ratio,
+        "audio_silence_ratio": silence_ratio,
+        "expected_underrun_due_to_slow_emulation": expected_underrun_due_to_slow_emulation,
+        "transport_loss_ratio": transport_loss_ratio,
+        "transport_loss_suspicious": transport_loss_suspicious,
+        "primary_audio_kpi_status": primary_audio_kpi_status,
+        "classification_notes": notes,
+        "thresholds": {
+            "source_realtime_threshold": SOURCE_REALTIME_THRESHOLD,
+            "drain_realtime_threshold": DRAIN_REALTIME_THRESHOLD,
+            "source_drain_close_tolerance": SOURCE_DRAIN_CLOSE_TOLERANCE,
+            "transport_loss_suspicious_threshold": TRANSPORT_LOSS_SUSPICIOUS_THRESHOLD,
+        },
+    }
     return out
 
 

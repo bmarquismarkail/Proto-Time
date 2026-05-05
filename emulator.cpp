@@ -28,6 +28,7 @@
 #include <thread>
 #include <vector>
 
+#include "emulator/AudioKpiStatus.hpp"
 #include "emulator/EmulatorConfig.hpp"
 #include "emulator/EmulatorHost.hpp"
 #include "machine/BackgroundTaskService.hpp"
@@ -130,6 +131,15 @@ std::string jsonEscape(std::string_view text)
     return escaped;
 }
 
+void writeJsonDoubleOrNull(std::ostream& output, bool hasValue, double value)
+{
+    if (hasValue) {
+        output << value;
+    } else {
+        output << "null";
+    }
+}
+
 void writeDiagnosticsSample(std::ostream& output,
                             std::chrono::steady_clock::time_point startedAt,
                             std::chrono::steady_clock::time_point now,
@@ -148,6 +158,21 @@ void writeDiagnosticsSample(std::ostream& output,
 
     const BMMQ::SdlFrontendStats defaults{};
     const auto& stats = (frontendStats != nullptr) ? *frontendStats : defaults;
+    const auto audioConfiguredChannelCount =
+        static_cast<unsigned int>(stats.audioRealtimePacketChannelCountLast);
+    const double audioExpectedSamplesPerSecond =
+        (stats.audioSourceSampleRate > 0 && audioConfiguredChannelCount != 0u)
+            ? static_cast<double>(stats.audioSourceSampleRate) *
+                  static_cast<double>(audioConfiguredChannelCount)
+            : 0.0;
+    const auto audioKpi = BMMQ::classifyAudioKpiStatus(BMMQ::AudioKpiInputs{
+        .elapsedSeconds = elapsedSeconds,
+        .generatedSamples = stats.audioRealtimePacketPsgSamplesGeneratedTotalLast,
+        .appendedSamples = stats.audioTransportAppendRecentPcmSamplesAppended,
+        .expectedSamplesPerSecond = audioExpectedSamplesPerSecond,
+        .drainedReadySamples = stats.audioTransportDrainReadySamples,
+        .drainRequestedSamples = stats.audioTransportDrainRequestedSamples,
+    });
 
     output << "{";
     output << "\"host_elapsed_ns\":" << elapsedNs;
@@ -259,8 +284,32 @@ void writeDiagnosticsSample(std::ostream& output,
 
     output << ",\"audio\":{";
     output << "\"primed_for_drain\":" << (stats.audioTransportPrimedForDrain ? "true" : "false");
+    output << ",\"kpi_status\":\"" << BMMQ::audioKpiStatusName(audioKpi.status) << "\"";
+    output << ",\"kpi_source_ratio\":";
+    writeJsonDoubleOrNull(output, audioKpi.hasSourceRatio, audioKpi.sourceRatio);
+    output << ",\"kpi_drain_ratio\":";
+    writeJsonDoubleOrNull(output, audioKpi.hasDrainRatio, audioKpi.drainRatio);
+    output << ",\"kpi_thresholds\":{";
+    output << "\"source_realtime_threshold\":" << BMMQ::kAudioKpiSourceRealtimeThreshold;
+    output << ",\"drain_realtime_threshold\":" << BMMQ::kAudioKpiDrainRealtimeThreshold;
+    output << ",\"source_drain_close_tolerance\":" << BMMQ::kAudioKpiSourceDrainCloseTolerance;
+    output << "}";
     output << ",\"underruns_after_priming\":" << stats.audioTransportUnderrunCount;
     output << ",\"silence_samples_after_priming\":" << stats.audioTransportSilenceSamplesFilled;
+    output << ",\"config\":{";
+    const auto frameChunkSamples = stats.audioRealtimePacketSamplesLast;
+    const auto ringCapacitySamples = stats.audioRingBufferCapacitySamples;
+    const auto ringCapacityChunks =
+        frameChunkSamples != 0u ? (ringCapacitySamples / frameChunkSamples) : 0u;
+    output << "\"ring_capacity_samples\":" << ringCapacitySamples;
+    output << ",\"ring_capacity_chunks\":" << ringCapacityChunks;
+    output << ",\"frame_chunk_samples\":" << frameChunkSamples;
+    output << ",\"callback_requested_samples_last\":" << stats.audioCallbackChunkSamples;
+    output << ",\"callback_requested_samples_min\":" << stats.audioCallbackChunkSamples;
+    output << ",\"callback_requested_samples_max\":" << stats.audioCallbackChunkSamples;
+    output << ",\"configured_sample_rate\":" << stats.audioSourceSampleRate;
+    output << ",\"configured_channel_count\":" << audioConfiguredChannelCount;
+    output << "}";
     output << ",\"ready_queue\":{";
     output << "\"configured_chunks\":" << stats.audioTransportConfiguredReadyQueueChunks;
     output << ",\"capacity_chunks\":" << stats.audioTransportReadyQueueCapacityChunks;
