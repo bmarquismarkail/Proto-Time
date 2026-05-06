@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.10)
 project(timeEmulator)
 
 option(BMMQ_ENABLE_TSAN "Enable ThreadSanitizer for race detection builds" OFF)
+option(BMMQ_PROFILE_VDP_RENDER "Enable profiling-oriented compile flags for GameGearVDP::renderFramePixels attribution" OFF)
 
 find_package(SDL2 QUIET)
 find_package(ZLIB REQUIRED)
@@ -62,6 +63,18 @@ add_library(time-gamegear-core STATIC
 )
 set_target_properties(time-gamegear-core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(time-gamegear-core PUBLIC time-machine-runtime-common)
+if (BMMQ_PROFILE_VDP_RENDER)
+    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        set_source_files_properties(
+            cores/gamegear/GameGearVDP.cpp
+            PROPERTIES
+                COMPILE_OPTIONS "-fno-omit-frame-pointer;-g;-fno-inline-functions"
+        )
+        message(STATUS "BMMQ_PROFILE_VDP_RENDER=ON: applying profiling flags to cores/gamegear/GameGearVDP.cpp")
+    else()
+        message(WARNING "BMMQ_PROFILE_VDP_RENDER=ON requested, but compiler is not Clang/GNU; no per-file profiling flags applied")
+    endif()
+endif()
 
 set_target_properties(time-gameboy-interpreter-core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(time-gameboy-interpreter-core PUBLIC time-machine-runtime-common)

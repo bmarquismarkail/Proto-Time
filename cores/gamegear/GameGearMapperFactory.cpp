@@ -7,6 +7,7 @@
 
 #include <memory>
 #include <algorithm>
+#include <climits>
 #include <cctype>
 #include <string>
 #include <vector>
