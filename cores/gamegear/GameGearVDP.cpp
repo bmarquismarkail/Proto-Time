@@ -672,13 +672,38 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                 const auto plane2 = vram_[wrapVram(rowBase + 2u)];
                 const auto plane3 = vram_[wrapVram(rowBase + 3u)];
                 std::array<uint8_t, 8u> rowColors{};
-                for (std::size_t px = 0; px < 8u; ++px) {
-                    const auto bit = static_cast<uint8_t>(7u - static_cast<uint8_t>(px));
-                    rowColors[px] = static_cast<uint8_t>((((plane3 >> bit) & 0x01u) << 3u) |
-                                                         (((plane2 >> bit) & 0x01u) << 2u) |
-                                                         (((plane1 >> bit) & 0x01u) << 1u) |
-                                                         ((plane0 >> bit) & 0x01u));
-                }
+                rowColors[0] = static_cast<uint8_t>(((plane3 & 0x80u) >> 4u) |
+                                                    ((plane2 & 0x80u) >> 5u) |
+                                                    ((plane1 & 0x80u) >> 6u) |
+                                                    ((plane0 & 0x80u) >> 7u));
+                rowColors[1] = static_cast<uint8_t>(((plane3 & 0x40u) >> 3u) |
+                                                    ((plane2 & 0x40u) >> 4u) |
+                                                    ((plane1 & 0x40u) >> 5u) |
+                                                    ((plane0 & 0x40u) >> 6u));
+                rowColors[2] = static_cast<uint8_t>(((plane3 & 0x20u) >> 2u) |
+                                                    ((plane2 & 0x20u) >> 3u) |
+                                                    ((plane1 & 0x20u) >> 4u) |
+                                                    ((plane0 & 0x20u) >> 5u));
+                rowColors[3] = static_cast<uint8_t>(((plane3 & 0x10u) >> 1u) |
+                                                    ((plane2 & 0x10u) >> 2u) |
+                                                    ((plane1 & 0x10u) >> 3u) |
+                                                    ((plane0 & 0x10u) >> 4u));
+                rowColors[4] = static_cast<uint8_t>(((plane3 & 0x08u)) |
+                                                    ((plane2 & 0x08u) >> 1u) |
+                                                    ((plane1 & 0x08u) >> 2u) |
+                                                    ((plane0 & 0x08u) >> 3u));
+                rowColors[5] = static_cast<uint8_t>(((plane3 & 0x04u) << 1u) |
+                                                    ((plane2 & 0x04u)) |
+                                                    ((plane1 & 0x04u) >> 1u) |
+                                                    ((plane0 & 0x04u) >> 2u));
+                rowColors[6] = static_cast<uint8_t>(((plane3 & 0x02u) << 2u) |
+                                                    ((plane2 & 0x02u) << 1u) |
+                                                    ((plane1 & 0x02u)) |
+                                                    ((plane0 & 0x02u) >> 1u));
+                rowColors[7] = static_cast<uint8_t>(((plane3 & 0x01u) << 3u) |
+                                                    ((plane2 & 0x01u) << 2u) |
+                                                    ((plane1 & 0x01u) << 1u) |
+                                                    (plane0 & 0x01u));
                 if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
                     ++out.mode4SimpleBackground.simplePathPatternRowsDecoded;
                 }
