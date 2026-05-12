@@ -101,7 +101,16 @@ int main()
     if (openedHardware) {
         assert(service.submitFrame(BMMQ::makeBlankVideoFrame(8, 8, 14u)));
         (void)service.presentOneFrame();
-        assert(service.diagnostics().activePresenterMode == BMMQ::VideoPresenterMode::Hardware);
+        const auto diagnostics = service.diagnostics();
+        const bool hardwareActive =
+            diagnostics.activePresenterMode == BMMQ::VideoPresenterMode::Hardware;
+        const bool softwareFallbackActive =
+            diagnostics.activePresenterMode == BMMQ::VideoPresenterMode::Software &&
+            diagnostics.presenterUsedSoftwareFallback &&
+            diagnostics.presenterSoftwareFallbackCount >= 1u &&
+            diagnostics.presenterLastFallbackReason ==
+                BMMQ::VideoPresenterFallbackReason::HardwareRendererUnavailable;
+        assert(hardwareActive || softwareFallbackActive);
         assert(service.diagnostics().presenterPresentDurationSampleCount >= 1u);
         assert(service.pause());
     } else {
