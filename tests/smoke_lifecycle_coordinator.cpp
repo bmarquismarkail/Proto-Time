@@ -36,7 +36,7 @@ int main()
         const auto ok = video.configure({
             .frameWidth = 16,
             .frameHeight = 16,
-            .mailboxDepthFrames = 2,
+            .mailboxDepthFrames = 1,
         });
         return BMMQ::MachineTransitionMutationResult{
             .success = ok,

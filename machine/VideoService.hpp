@@ -38,6 +38,7 @@ struct VideoServiceDiagnostics {
     std::size_t staleDebugFrameDropCount = 0;
     std::size_t staleRealtimeFrameDropCount = 0;
     std::size_t overwriteCount = 0;
+    std::size_t consumeCount = 0;
     std::size_t overwriteDebugFrameCount = 0;
     std::size_t overwriteRealtimeFrameCount = 0;
     bool headlessModeActive = true;
@@ -671,6 +672,7 @@ private:
         diagnostics_.staleDebugFrameDropCount = engineStats.staleDebugFrameDropCount;
         diagnostics_.staleRealtimeFrameDropCount = engineStats.staleRealtimeFrameDropCount;
         diagnostics_.overwriteCount = engineStats.overwriteCount;
+        diagnostics_.consumeCount = engineStats.consumedFrameCount;
         diagnostics_.overwriteDebugFrameCount = engineStats.overwriteDebugFrameCount;
         diagnostics_.overwriteRealtimeFrameCount = engineStats.overwriteRealtimeFrameCount;
         diagnostics_.mailboxDepth = engineStats.mailboxDepth;

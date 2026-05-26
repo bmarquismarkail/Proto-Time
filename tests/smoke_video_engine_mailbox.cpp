@@ -39,6 +39,7 @@ int main()
     // 1. Empty mailbox returns nullopt.
     // -------------------------------------------------------------------------
     BMMQ::VideoEngine engine({.frameWidth = 4, .frameHeight = 2, .mailboxDepthFrames = 2});
+    assert(engine.config().mailboxDepthFrames == 1u);
     assert(!engine.tryConsumeLatestFrame().has_value());
     assert(engine.mailboxFrameCount() == 0u);
 

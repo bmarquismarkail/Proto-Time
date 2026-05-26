@@ -2114,7 +2114,7 @@ private:
             const bool configured = videoService_->configure({
                 .frameWidth = std::max(config_.frameWidth, 1),
                 .frameHeight = std::max(config_.frameHeight, 1),
-                .mailboxDepthFrames = 2,
+                .mailboxDepthFrames = 1,
             });
             videoService_->setPresenterPolicy(config_.videoPresenterPolicy);
             const bool presenterConfigured = configured && videoService_->configurePresenter({

@@ -24,7 +24,7 @@ namespace BMMQ {
 struct VideoEngineConfig {
     int frameWidth = 160;
     int frameHeight = 144;
-    std::size_t mailboxDepthFrames = 2;
+    std::size_t mailboxDepthFrames = 1;
 };
 
 struct VideoEngineStats {
@@ -354,7 +354,7 @@ private:
     {
         config.frameWidth = std::max(config.frameWidth, 1);
         config.frameHeight = std::max(config.frameHeight, 1);
-        config.mailboxDepthFrames = std::max<std::size_t>(config.mailboxDepthFrames, 1u);
+        config.mailboxDepthFrames = 1u;
         return config;
     }
 

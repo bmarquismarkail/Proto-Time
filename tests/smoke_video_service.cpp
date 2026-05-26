@@ -123,7 +123,7 @@ int main()
     assert(service.configure({
         .frameWidth = 32,
         .frameHeight = 24,
-        .mailboxDepthFrames = 2,
+        .mailboxDepthFrames = 1,
     }));
 
     assert(service.addProcessor(std::make_unique<PassthroughVideoProcessor>()));
@@ -138,7 +138,7 @@ int main()
     assert(!service.configure({
         .frameWidth = 16,
         .frameHeight = 16,
-        .mailboxDepthFrames = 2,
+        .mailboxDepthFrames = 1,
     }));
     assert(!service.addProcessor(std::make_unique<PassthroughVideoProcessor>()));
     service.setBackendActiveForTesting(false);

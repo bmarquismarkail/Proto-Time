@@ -128,7 +128,7 @@ int main()
     BMMQ::VideoEngine engine({
         .frameWidth = 32,
         .frameHeight = 24,
-        .mailboxDepthFrames = 2,
+        .mailboxDepthFrames = 1,
     });
 
     const auto state = makeDebugVideoState();
@@ -205,7 +205,7 @@ int main()
     BMMQ::VideoEngine fullFrameEngine({
         .frameWidth = 160,
         .frameHeight = 144,
-        .mailboxDepthFrames = 2,
+        .mailboxDepthFrames = 1,
     });
     BMMQ::AudioEngine audioEngine({
         .sourceSampleRate = 48000,

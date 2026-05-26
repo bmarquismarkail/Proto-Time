@@ -32,7 +32,7 @@ int main()
     assert(!video.configure({
         .frameWidth = 16,
         .frameHeight = 16,
-        .mailboxDepthFrames = 2,
+        .mailboxDepthFrames = 1,
     }));
     assert(!video.configurePresenter({
         .windowTitle = "contract-deny",
@@ -61,7 +61,7 @@ int main()
         const bool videoOk = video.configure({
             .frameWidth = 16,
             .frameHeight = 16,
-            .mailboxDepthFrames = 2,
+            .mailboxDepthFrames = 1,
         }) && video.configurePresenter({
             .windowTitle = "contract-allow",
             .scale = 1,
