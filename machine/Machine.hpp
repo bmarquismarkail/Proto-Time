@@ -224,6 +224,17 @@ public:
         packet.pcmSamples = recentAudioSamples();
         return packet;
     }
+    virtual std::optional<SlimVideoPacket> realtimeSlimVideoPacket() const {
+        return std::nullopt;
+    }
+    virtual std::optional<SlimAudioPacket> realtimeSlimAudioPacket() const {
+        SlimAudioPacket packet;
+        packet.sampleRate = audioSampleRate();
+        packet.channelCount = audioChannelCount();
+        packet.frameCounter = audioFrameCounter();
+        packet.pcmSamples = recentAudioSamples();
+        return packet;
+    }
     virtual bool supportsVisualPacks() const noexcept {
         return visualDebugAdapter() != nullptr && !visualTargetId().empty();
     }
@@ -335,6 +346,14 @@ inline uint8_t queryAudioChannelCount(const Machine& machine) {
 
 inline uint64_t queryAudioFrameCounter(const Machine& machine) {
     return machine.audioFrameCounter();
+}
+
+inline std::optional<SlimVideoPacket> querySlimVideoPacket(const Machine& machine) {
+    return machine.realtimeSlimVideoPacket();
+}
+
+inline std::optional<SlimAudioPacket> querySlimAudioPacket(const Machine& machine) {
+    return machine.realtimeSlimAudioPacket();
 }
 
 } // namespace BMMQ

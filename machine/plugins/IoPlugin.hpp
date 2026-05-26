@@ -1,6 +1,7 @@
 #ifndef BMMQ_IO_PLUGIN_HPP
 #define BMMQ_IO_PLUGIN_HPP
 
+#include <algorithm>
 #include <cstdint>
 #include <cstddef>
 #include <optional>
@@ -40,6 +41,10 @@ struct RealtimeAudioPacket;
 std::optional<RealtimeVideoPacket> queryRealtimeVideoPacket(const Machine& machine,
                                                             const VideoDebugRenderRequest& request);
 std::optional<RealtimeAudioPacket> queryRealtimeAudioPacket(const Machine& machine);
+struct SlimVideoPacket;
+struct SlimAudioPacket;
+std::optional<SlimVideoPacket> querySlimVideoPacket(const Machine& machine);
+std::optional<SlimAudioPacket> querySlimAudioPacket(const Machine& machine);
 TimingService& queryTimingService(Machine& machine);
 const TimingService& queryTimingService(const Machine& machine);
 
@@ -293,6 +298,50 @@ struct ParallelStateView {
     std::string_view detail = "placeholder";
 };
 
+// Compact representation of a memory region for real-time video.
+// Today this can carry full VRAM/OAM snapshots; future writers can narrow it to actual dirty spans.
+struct VideoDirtyRegion {
+    uint16_t start = 0;
+    uint16_t size = 0;
+    std::vector<uint8_t> bytes;
+
+    [[nodiscard]] bool empty() const noexcept {
+        return bytes.empty() || size == 0;
+    }
+};
+
+// Slim video packet: memory-region payload plus minimal LCD state, without an ARGB frame copy.
+// Dirty regions may currently cover full VRAM/OAM until write-span tracking is available.
+struct SlimVideoPacket {
+    static constexpr std::uint16_t kContractVersion = 1u;
+    std::uint16_t contractVersion = kContractVersion;
+    std::vector<VideoDirtyRegion> dirtyRegions;
+    bool displayEnabled = false;
+    bool inVBlank = false;
+    uint8_t lcdc = 0;
+    uint8_t stat = 0;
+    uint8_t ly = 0;
+
+    [[nodiscard]] bool empty() const noexcept {
+        return dirtyRegions.empty();
+    }
+};
+
+// Slim audio packet: contiguous PCM samples with minimal metadata.
+// Avoids re-deriving full AudioStateView when only PCM is needed.
+struct SlimAudioPacket {
+    static constexpr std::uint16_t kContractVersion = 1u;
+    std::uint16_t contractVersion = kContractVersion;
+    std::vector<std::int16_t> pcmSamples;
+    uint32_t sampleRate = 48000;
+    uint8_t channelCount = 1;
+    uint64_t frameCounter = 0;
+
+    [[nodiscard]] bool empty() const noexcept {
+        return pcmSamples.empty();
+    }
+};
+
 struct MachineView {
     const Machine& machine;
     const RuntimeContext& runtime;
@@ -438,6 +487,60 @@ struct MachineView {
     [[nodiscard]] std::optional<RealtimeAudioPacket> realtimeAudioPacket() const
     {
         return queryRealtimeAudioPacket(machine);
+    }
+
+    // Slim video state: returns memory regions with their bytes plus minimal LCD state,
+    // avoiding full VideoStateView construction and ARGB frame copies.
+    // Currently emits full VRAM/OAM spans; future write tracking can narrow these.
+    [[nodiscard]] std::optional<SlimVideoPacket> videoDirtyRegions() const
+    {
+        const auto vramRegion = findRegion(PluginCategory::Video, "VRAM");
+        const auto oamRegion = findRegion(PluginCategory::Video, "OAM");
+
+        SlimVideoPacket packet;
+        packet.displayEnabled = (read8(0xFF40u) & 0x80u) != 0;
+        packet.lcdc = read8(0xFF40u);
+        packet.stat = read8(0xFF41u);
+        packet.ly = read8(0xFF44u);
+        packet.inVBlank = packet.ly >= 144u;
+
+        if (vramRegion.has_value()) {
+            VideoDirtyRegion vramDirty;
+            vramDirty.start = vramRegion->start;
+            const auto byteCount = static_cast<uint16_t>(std::min<uint32_t>(vramRegion->size, 0x2000u));
+            vramDirty.size = byteCount;
+            vramDirty.bytes.reserve(byteCount);
+            for (uint32_t offset = 0; offset < byteCount; ++offset) {
+                vramDirty.bytes.push_back(read8(static_cast<uint16_t>(vramRegion->start + offset)));
+            }
+            packet.dirtyRegions.push_back(std::move(vramDirty));
+        }
+
+        if (oamRegion.has_value()) {
+            VideoDirtyRegion oamDirty;
+            oamDirty.start = oamRegion->start;
+            const auto byteCount = static_cast<uint16_t>(std::min<uint32_t>(oamRegion->size, 0xA0u));
+            oamDirty.size = byteCount;
+            oamDirty.bytes.reserve(byteCount);
+            for (uint32_t offset = 0; offset < byteCount; ++offset) {
+                oamDirty.bytes.push_back(read8(static_cast<uint16_t>(oamRegion->start + offset)));
+            }
+            packet.dirtyRegions.push_back(std::move(oamDirty));
+        }
+
+        return packet;
+    }
+
+    // Slim audio state: returns only contiguous PCM samples with minimal metadata,
+    // avoiding the full register+WAVE+NRxx copy that audioState() performs.
+    [[nodiscard]] std::optional<SlimAudioPacket> realtimeSlimAudioPacket() const
+    {
+        SlimAudioPacket packet;
+        packet.sampleRate = queryAudioSampleRate(machine);
+        packet.channelCount = queryAudioChannelCount(machine);
+        packet.frameCounter = queryAudioFrameCounter(machine);
+        packet.pcmSamples = queryRecentAudioSamples(machine);
+        return packet;
     }
 
     [[nodiscard]] std::optional<SerialStateView> serialState() const {

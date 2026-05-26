@@ -444,6 +444,11 @@ add_executable(time-smoke-timing-service tests/smoke_timing_service.cpp)
 target_link_libraries(time-smoke-timing-service time-gameboy-interpreter-core)
 add_test(NAME smoke_timing_service COMMAND time-smoke-timing-service)
 
+# Slim packets smoke test
+add_executable(time-smoke-slim-packets tests/smoke_slim_packets.cpp)
+target_link_libraries(time-smoke-slim-packets time-gameboy-interpreter-core)
+add_test(NAME smoke_slim_packets COMMAND time-smoke-slim-packets)
+
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     get_property(BMMQ_ALL_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
     foreach(bmmq_target IN LISTS BMMQ_ALL_TARGETS)
