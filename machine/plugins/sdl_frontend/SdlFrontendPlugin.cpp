@@ -1440,7 +1440,8 @@ private:
             ++stats_.lifecycleRecoveryAudioAttemptCount;
             const bool reopened = ensureAudioDevice();
             syncAudioTransportStats();
-            const bool transportPrimed = audioService_ != nullptr && audioService_->isOutputTransportPrimed();
+            const bool transportPrimed = audioService_ != nullptr &&
+                audioService_->transportStats().workerProducedBlocks > 0u;
             if (reopened && transportPrimed) {
                 ++stats_.lifecycleRecoveryAudioSuccessCount;
             } else {

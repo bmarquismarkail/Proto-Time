@@ -260,6 +260,9 @@ public:
         }
 
         bumpTransportEpochLocked();
+        if (engine_.bufferedSamples() != 0u) {
+            (void)produceReadyOutputBlock();
+        }
         outputTransportStopRequested_.store(false, std::memory_order_release);
         outputTransportRunning_.store(true, std::memory_order_release);
         backendPausedOrClosed_.store(false, std::memory_order_release);
@@ -445,18 +448,6 @@ public:
         auto& block = readyBlocks_[writeIndex];
         block.samples = producerScratch_;
         block.epoch = transportEpoch_.load(std::memory_order_acquire);
-        const auto currentEpoch = block.epoch;
-        auto primedEpoch = transportPrimedEpoch_.load(std::memory_order_acquire);
-        while (primedEpoch != currentEpoch &&
-               !transportPrimedEpoch_.compare_exchange_weak(
-                   primedEpoch,
-                   currentEpoch,
-                   std::memory_order_acq_rel,
-                   std::memory_order_acquire)) {
-        }
-        if (primedEpoch != currentEpoch) {
-            transportPrimedTransitionCount_.fetch_add(1u, std::memory_order_relaxed);
-        }
         readyWriteIndex_.store(nextWriteIndex, std::memory_order_release);
         transportWorkerProductionSourceBufferedSamplesSuccessLast_.store(
             sourceBufferedSamples, std::memory_order_relaxed);
@@ -476,39 +467,29 @@ public:
             return;
         }
 
-        const auto currentEpoch = transportEpoch_.load(std::memory_order_acquire);
-        while (true) {
-            const auto readIndex = readyReadIndex_.load(std::memory_order_relaxed);
-            if (readIndex == readyWriteIndex_.load(std::memory_order_acquire)) {
-                std::fill(output.begin(), output.end(), 0);
-                transportReadyQueueEmptyCount_.fetch_add(1u, std::memory_order_relaxed);
-                transportUnderrunCount_.fetch_add(1u, std::memory_order_relaxed);
-                transportSilenceSamplesFilled_.fetch_add(output.size(), std::memory_order_relaxed);
-                audioCallbackWakeRequest_.store(true, std::memory_order_release);
-                return;
-            }
-
-            const auto& block = readyBlocks_[readIndex];
-            if (block.epoch != currentEpoch) {
-                transportStaleEpochDropCount_.fetch_add(1u, std::memory_order_relaxed);
-                readyReadIndex_.store(nextReadyIndex(readIndex), std::memory_order_release);
-                continue;
-            }
-
-            const auto copyCount = std::min(output.size(), block.samples.size());
-            if (copyCount > 0u) {
-                std::memmove(output.data(), block.samples.data(), copyCount * sizeof(int16_t));
-                transportDrainReadySamples_.fetch_add(copyCount, std::memory_order_relaxed);
-            }
-            if (copyCount < output.size()) {
-                std::fill(output.begin() + static_cast<std::ptrdiff_t>(copyCount), output.end(), 0);
-                transportSilenceSamplesFilled_.fetch_add(output.size() - copyCount, std::memory_order_relaxed);
-            }
-
-            readyReadIndex_.store(nextReadyIndex(readIndex), std::memory_order_release);
-            audioCallbackWakeRequest_.store(true, std::memory_order_release);
+        const auto readIndex = readyReadIndex_.load(std::memory_order_relaxed);
+        if (readIndex == readyWriteIndex_.load(std::memory_order_acquire)) {
+            // Queue empty: zero-fill and return.
+            // Worker will proactively produce when FIFO depth drops below 2.
+            std::fill(output.begin(), output.end(), 0);
+            transportReadyQueueEmptyCount_.fetch_add(1u, std::memory_order_relaxed);
+            transportUnderrunCount_.fetch_add(1u, std::memory_order_relaxed);
+            transportSilenceSamplesFilled_.fetch_add(output.size(), std::memory_order_relaxed);
             return;
         }
+
+        const auto& block = readyBlocks_[readIndex];
+        const auto copyCount = std::min(output.size(), block.samples.size());
+        if (copyCount > 0u) {
+            std::memmove(output.data(), block.samples.data(), copyCount * sizeof(int16_t));
+            transportDrainReadySamples_.fetch_add(copyCount, std::memory_order_relaxed);
+        }
+        if (copyCount < output.size()) {
+            std::fill(output.begin() + static_cast<std::ptrdiff_t>(copyCount), output.end(), 0);
+            transportSilenceSamplesFilled_.fetch_add(output.size() - copyCount, std::memory_order_relaxed);
+        }
+
+        readyReadIndex_.store(nextReadyIndex(readIndex), std::memory_order_release);
     }
 
     [[nodiscard]] AudioOutputTransportStats transportStats() const noexcept
@@ -548,7 +529,7 @@ public:
             transportWorkerProductionSourceBufferedSamplesFailureLast_.load(std::memory_order_relaxed);
         stats.droppedReadyBlocks = transportDroppedReadyBlocks_.load(std::memory_order_relaxed);
         stats.workerWakeCount = transportWorkerWakeCount_.load(std::memory_order_relaxed);
-        stats.workerCallbackWakeCount = transportWorkerCallbackWakeCount_.load(std::memory_order_relaxed);
+        stats.workerCallbackWakeCount = 0;
         stats.workerEmulationWakeCount = transportWorkerEmulationWakeCount_.load(std::memory_order_relaxed);
         stats.workerTimeoutWakeCount = transportWorkerTimeoutWakeCount_.load(std::memory_order_relaxed);
         stats.workerWakeSourceBufferedSamplesLast =
@@ -561,11 +542,12 @@ public:
             transportAppendRecentPcmCallCount_.load(std::memory_order_relaxed);
         stats.appendRecentPcmSamplesAppended =
             transportAppendRecentPcmSamplesAppended_.load(std::memory_order_relaxed);
-        stats.staleEpochDropCount = transportStaleEpochDropCount_.load(std::memory_order_relaxed);
+        // Epoch checks removed from drain path (Phase 3): not populated.
+        stats.staleEpochDropCount = 0;
         stats.epochBumpCount = transportEpochBumpCount_.load(std::memory_order_relaxed);
         stats.lifecycleEpoch = transportEpoch_.load(std::memory_order_acquire);
-        stats.primedTransitionCount = transportPrimedTransitionCount_.load(std::memory_order_relaxed);
-        stats.primedForDrain = transportPrimedEpoch_.load(std::memory_order_acquire) == stats.lifecycleEpoch;
+        stats.primedTransitionCount = 0;
+        stats.primedForDrain = false;
         stats.drainCallbackDurationSampleCount =
             transportDrainDurationSampleCount_.load(std::memory_order_relaxed);
         stats.drainCallbackDurationLastNanos =
@@ -639,12 +621,6 @@ public:
         transportDrainDurationSampleCount_.fetch_add(1u, std::memory_order_relaxed);
         transportDrainDurationBuckets_[drainDurationBucketIndex(static_cast<std::uint64_t>(nanos))]
             .fetch_add(1u, std::memory_order_relaxed);
-    }
-
-    [[nodiscard]] bool isOutputTransportPrimed() const noexcept
-    {
-        const auto currentEpoch = transportEpoch_.load(std::memory_order_acquire);
-        return transportPrimedEpoch_.load(std::memory_order_acquire) == currentEpoch;
     }
 
     // Synchronous compatibility helper. Do not call this from audio callback/output threads;
@@ -807,7 +783,6 @@ private:
     {
         transportEpoch_.fetch_add(1u, std::memory_order_release);
         transportEpochBumpCount_.fetch_add(1u, std::memory_order_relaxed);
-        transportPrimedEpoch_.store(0u, std::memory_order_release);
         clearReadyQueue();
     }
 
@@ -828,11 +803,8 @@ private:
             const bool predicateMet = outputTransportCv_.wait_for(
                 lock, outputTransportWakePeriod(), [this]() noexcept {
                     return outputTransportStopRequested_.load(std::memory_order_acquire) ||
-                           audioCallbackWakeRequest_.load(std::memory_order_acquire) ||
                            (readyQueueHasSpace() && engine_.bufferedSamples() != 0u);
                 });
-            const bool callbackWoke =
-                audioCallbackWakeRequest_.exchange(false, std::memory_order_acq_rel);
             lock.unlock();
 
             if (outputTransportStopRequested_.load(std::memory_order_acquire)) {
@@ -864,11 +836,14 @@ private:
             }
             if (!predicateMet) {
                 transportWorkerTimeoutWakeCount_.fetch_add(1u, std::memory_order_relaxed);
-            } else if (callbackWoke) {
-                transportWorkerCallbackWakeCount_.fetch_add(1u, std::memory_order_relaxed);
             } else {
                 transportWorkerEmulationWakeCount_.fetch_add(1u, std::memory_order_relaxed);
                 noteWorkerEmulationWakeLatency();
+            }
+            // Proactive drain: skip production if queue already has >= 2 blocks.
+            if (readyQueueDepth() >= 2u) {
+                transportWorkerWakeProducedBlocks0Count_.fetch_add(1u, std::memory_order_relaxed);
+                continue;
             }
             std::size_t producedThisWake = 0u;
             while (!outputTransportStopRequested_.load(std::memory_order_acquire) &&
@@ -930,7 +905,6 @@ private:
         transportAppendRecentPcmCallCount_.store(0u, std::memory_order_relaxed);
         transportAppendRecentPcmSamplesAppended_.store(0u, std::memory_order_relaxed);
         transportStaleEpochDropCount_.store(0u, std::memory_order_relaxed);
-        transportPrimedTransitionCount_.store(0u, std::memory_order_relaxed);
         transportDrainDurationSampleCount_.store(0u, std::memory_order_relaxed);
         transportDrainDurationLastNanos_.store(0, std::memory_order_relaxed);
         transportDrainDurationHighWaterNanos_.store(0, std::memory_order_relaxed);
@@ -1062,7 +1036,6 @@ private:
     alignas(64) std::atomic<std::size_t> readyWriteIndex_{0};   // written by worker, read by SDL callback
     std::atomic<bool> outputTransportRunning_{false};
     std::atomic<bool> outputTransportStopRequested_{false};
-    std::atomic<bool> audioCallbackWakeRequest_{false};
     std::thread outputTransportWorker_{};
     std::condition_variable outputTransportCv_{};
     std::mutex outputTransportWaitMutex_{};
@@ -1109,8 +1082,6 @@ private:
     std::atomic<std::size_t> transportStaleEpochDropCount_{0};
     std::atomic<std::size_t> transportEpochBumpCount_{0};
     std::atomic<std::uint64_t> transportEpoch_{1};
-    std::atomic<std::uint64_t> transportPrimedEpoch_{0};
-    std::atomic<std::size_t> transportPrimedTransitionCount_{0};
     std::atomic<std::size_t> transportDrainDurationSampleCount_{0};
     std::atomic<std::int64_t> transportDrainDurationLastNanos_{0};
     std::atomic<std::int64_t> transportDrainDurationHighWaterNanos_{0};
