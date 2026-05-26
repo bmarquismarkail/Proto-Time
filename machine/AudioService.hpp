@@ -36,6 +36,17 @@ struct AudioOutputTransportStats {
     std::size_t readyQueueHighWaterChunks = 0;
     std::size_t readyQueueLowWaterChunks = 0;
     std::size_t readyQueueEmptyCount = 0;
+    /// FIFO occupancy sampled at drain (audio callback) ticks — T2.2 Phase 2
+    std::size_t readyQueueDrainOccupancyDepthLast = 0;
+    std::size_t readyQueueDrainOccupancyHighWaterChunks = 0;
+    std::size_t readyQueueDrainOccupancyLowWaterChunks = 0;
+    std::size_t readyQueueDrainOccupancySampleCount = 0;
+    std::size_t readyQueueDrainOccupancyUnder1ChunkCount = 0;
+    std::size_t readyQueueDrainOccupancy1ChunkCount = 0;
+    std::size_t readyQueueDrainOccupancy2ChunksCount = 0;
+    std::size_t readyQueueDrainOccupancy3ChunksCount = 0;
+    std::size_t readyQueueDrainOccupancy4ChunksCount = 0;
+    std::size_t readyQueueDrainOccupancy5PlusChunksCount = 0;
     std::size_t drainCallbackCount = 0;
     std::size_t drainRequestedSamples = 0;
     std::size_t drainReadySamples = 0;
@@ -457,6 +468,9 @@ public:
     void drainReadyOutput(std::span<int16_t> output) noexcept
     {
         transportDrainCallbackCount_.fetch_add(1u, std::memory_order_relaxed);
+        // T2.2 Phase 2: sample FIFO occupancy at each drain callback tick
+        const auto fifoDepth = readyQueueDepth();
+        recordReadyQueueDrainOccupancy(fifoDepth);
         transportDrainRequestedSamples_.fetch_add(output.size(), std::memory_order_relaxed);
         if (output.empty()) {
             return;
@@ -743,6 +757,37 @@ private:
         }
     }
 
+    // T2.2 Phase 2: record FIFO occupancy sampled at drain callback tick
+    void recordReadyQueueDrainOccupancy(std::size_t depth) noexcept
+    {
+        transportReadyQueueDrainOccupancyDepthLast_.store(depth, std::memory_order_relaxed);
+        auto previous = transportReadyQueueDrainOccupancyHighWaterChunks_.load(std::memory_order_relaxed);
+        while (depth > previous &&
+               !transportReadyQueueDrainOccupancyHighWaterChunks_.compare_exchange_weak(
+                   previous, depth, std::memory_order_relaxed, std::memory_order_relaxed)) {
+        }
+        previous = transportReadyQueueDrainOccupancyLowWaterChunks_.load(std::memory_order_relaxed);
+        while (depth < previous &&
+               !transportReadyQueueDrainOccupancyLowWaterChunks_.compare_exchange_weak(
+                   previous, depth, std::memory_order_relaxed, std::memory_order_relaxed)) {
+        }
+        transportReadyQueueDrainOccupancySampleCount_.fetch_add(1u, std::memory_order_relaxed);
+        // Bucket into histogram-like categories
+        if (depth == 0) {
+            transportReadyQueueDrainOccupancyUnder1ChunkCount_.fetch_add(1u, std::memory_order_relaxed);
+        } else if (depth == 1) {
+            transportReadyQueueDrainOccupancy1ChunkCount_.fetch_add(1u, std::memory_order_relaxed);
+        } else if (depth == 2) {
+            transportReadyQueueDrainOccupancy2ChunksCount_.fetch_add(1u, std::memory_order_relaxed);
+        } else if (depth == 3) {
+            transportReadyQueueDrainOccupancy3ChunksCount_.fetch_add(1u, std::memory_order_relaxed);
+        } else if (depth == 4) {
+            transportReadyQueueDrainOccupancy4ChunksCount_.fetch_add(1u, std::memory_order_relaxed);
+        } else {
+            transportReadyQueueDrainOccupancy5PlusChunksCount_.fetch_add(1u, std::memory_order_relaxed);
+        }
+    }
+
     [[nodiscard]] bool readyQueueHasSpace() const noexcept
     {
         if (readyBlocks_.empty()) {
@@ -847,6 +892,17 @@ private:
         transportReadyQueueHighWaterChunks_.store(0u, std::memory_order_relaxed);
         transportReadyQueueLowWaterChunks_.store(0u, std::memory_order_relaxed);
         transportReadyQueueEmptyCount_.store(0u, std::memory_order_relaxed);
+        // T2.2 Phase 2: FIFO occupancy at drain callback tick
+        transportReadyQueueDrainOccupancyDepthLast_.store(0u, std::memory_order_relaxed);
+        transportReadyQueueDrainOccupancyHighWaterChunks_.store(0u, std::memory_order_relaxed);
+        transportReadyQueueDrainOccupancyLowWaterChunks_.store(0u, std::memory_order_relaxed);
+        transportReadyQueueDrainOccupancySampleCount_.store(0u, std::memory_order_relaxed);
+        transportReadyQueueDrainOccupancyUnder1ChunkCount_.store(0u, std::memory_order_relaxed);
+        transportReadyQueueDrainOccupancy1ChunkCount_.store(0u, std::memory_order_relaxed);
+        transportReadyQueueDrainOccupancy2ChunksCount_.store(0u, std::memory_order_relaxed);
+        transportReadyQueueDrainOccupancy3ChunksCount_.store(0u, std::memory_order_relaxed);
+        transportReadyQueueDrainOccupancy4ChunksCount_.store(0u, std::memory_order_relaxed);
+        transportReadyQueueDrainOccupancy5PlusChunksCount_.store(0u, std::memory_order_relaxed);
         transportDrainCallbackCount_.store(0u, std::memory_order_relaxed);
         transportDrainRequestedSamples_.store(0u, std::memory_order_relaxed);
         transportDrainReadySamples_.store(0u, std::memory_order_relaxed);
@@ -1013,6 +1069,17 @@ private:
     std::atomic<std::size_t> transportReadyQueueHighWaterChunks_{0};
     std::atomic<std::size_t> transportReadyQueueLowWaterChunks_{0};
     std::atomic<std::size_t> transportReadyQueueEmptyCount_{0};
+    // T2.2 Phase 2: FIFO occupancy sampling at drain callback tick
+    std::atomic<std::size_t> transportReadyQueueDrainOccupancyDepthLast_{0};
+    std::atomic<std::size_t> transportReadyQueueDrainOccupancyHighWaterChunks_{0};
+    std::atomic<std::size_t> transportReadyQueueDrainOccupancyLowWaterChunks_{0};
+    std::atomic<std::size_t> transportReadyQueueDrainOccupancySampleCount_{0};
+    std::atomic<std::size_t> transportReadyQueueDrainOccupancyUnder1ChunkCount_{0};
+    std::atomic<std::size_t> transportReadyQueueDrainOccupancy1ChunkCount_{0};
+    std::atomic<std::size_t> transportReadyQueueDrainOccupancy2ChunksCount_{0};
+    std::atomic<std::size_t> transportReadyQueueDrainOccupancy3ChunksCount_{0};
+    std::atomic<std::size_t> transportReadyQueueDrainOccupancy4ChunksCount_{0};
+    std::atomic<std::size_t> transportReadyQueueDrainOccupancy5PlusChunksCount_{0};
     std::atomic<std::size_t> transportDrainCallbackCount_{0};
     std::atomic<std::size_t> transportDrainRequestedSamples_{0};
     std::atomic<std::size_t> transportDrainReadySamples_{0};

@@ -788,9 +788,13 @@ public:
         // submittedVideoFrame is hoisted before the lock so it is visible to the
         // post-lock notification block (Phase 36A).
         bool submittedVideoFrame = false;
+        // T2.3 Phase 3: time the frame build section (lock-protected)
+        const auto frameBuildT0 = std::chrono::steady_clock::now();
         {
             std::unique_lock<std::mutex> lock(sharedStateMutex_);
             if (!config_.enableVideo) {
+                // T2.3: record early-return frame build time
+                recordFrameBuildDuration(std::chrono::steady_clock::now() - frameBuildT0);
                 return;
             }
             ++stats_.videoEvents;
@@ -1687,6 +1691,17 @@ private:
         stats_.audioReadyQueueHighWaterChunks = transportStats.readyQueueHighWaterChunks;
         stats_.audioReadyQueueLowWaterChunks = transportStats.readyQueueLowWaterChunks;
         stats_.audioReadyQueueEmptyCount = transportStats.readyQueueEmptyCount;
+        // T2.2 Phase 2: FIFO occupancy at drain callback tick
+        stats_.audioReadyQueueDrainOccupancyDepthLast = transportStats.readyQueueDrainOccupancyDepthLast;
+        stats_.audioReadyQueueDrainOccupancyHighWaterChunks = transportStats.readyQueueDrainOccupancyHighWaterChunks;
+        stats_.audioReadyQueueDrainOccupancyLowWaterChunks = transportStats.readyQueueDrainOccupancyLowWaterChunks;
+        stats_.audioReadyQueueDrainOccupancySampleCount = transportStats.readyQueueDrainOccupancySampleCount;
+        stats_.audioReadyQueueDrainOccupancyUnder1ChunkCount = transportStats.readyQueueDrainOccupancyUnder1ChunkCount;
+        stats_.audioReadyQueueDrainOccupancy1ChunkCount = transportStats.readyQueueDrainOccupancy1ChunkCount;
+        stats_.audioReadyQueueDrainOccupancy2ChunksCount = transportStats.readyQueueDrainOccupancy2ChunksCount;
+        stats_.audioReadyQueueDrainOccupancy3ChunksCount = transportStats.readyQueueDrainOccupancy3ChunksCount;
+        stats_.audioReadyQueueDrainOccupancy4ChunksCount = transportStats.readyQueueDrainOccupancy4ChunksCount;
+        stats_.audioReadyQueueDrainOccupancy5PlusChunksCount = transportStats.readyQueueDrainOccupancy5PlusChunksCount;
         stats_.audioTransportDrainCallbackCount = transportStats.drainCallbackCount;
         stats_.audioTransportDrainRequestedSamples = transportStats.drainRequestedSamples;
         stats_.audioTransportDrainReadySamples = transportStats.drainReadySamples;
@@ -1804,6 +1819,39 @@ private:
         stats_.timingFrontendTickDelayLastNanos = timingStats.frontendTickDelayLast.count();
         stats_.timingFrontendTickDelayHighWaterNanos = timingStats.frontendTickDelayHighWater.count();
         stats_.timingProfileName = BMMQ::timingPolicyProfileName(timingStats.activeProfile);
+    }
+
+    // T2.3 Phase 3: record frame build duration histogram
+    void recordFrameBuildDuration(std::chrono::nanoseconds duration) noexcept
+    {
+        const auto nanos = std::max<std::int64_t>(duration.count(), 0);
+        stats_.videoFrameBuildDurationLastNanos = nanos;
+        auto previous = stats_.videoFrameBuildDurationHighWaterNanos;
+        while (nanos > previous &&
+               !__sync_bool_compare_and_swap(&stats_.videoFrameBuildDurationHighWaterNanos, previous, nanos)) {
+            previous = stats_.videoFrameBuildDurationHighWaterNanos;
+        }
+        ++stats_.videoFrameBuildDurationSampleCount;
+        // Bucket into histogram categories
+        if (nanos < 50'000) {
+            ++stats_.videoFrameBuildDurationUnder50usCount;
+        } else if (nanos < 100'000) {
+            ++stats_.videoFrameBuildDuration50To100usCount;
+        } else if (nanos < 250'000) {
+            ++stats_.videoFrameBuildDuration100To250usCount;
+        } else if (nanos < 500'000) {
+            ++stats_.videoFrameBuildDuration250To500usCount;
+        } else if (nanos < 1'000'000) {
+            ++stats_.videoFrameBuildDuration500usTo1msCount;
+        } else if (nanos < 2'000'000) {
+            ++stats_.videoFrameBuildDuration1To2msCount;
+        } else if (nanos < 5'000'000) {
+            ++stats_.videoFrameBuildDuration2To5msCount;
+        } else if (nanos < 10'000'000) {
+            ++stats_.videoFrameBuildDuration5To10msCount;
+        } else {
+            ++stats_.videoFrameBuildDurationOver10msCount;
+        }
     }
 
     [[nodiscard]] bool shouldDeferVideoFrameForAudioLowWater() const noexcept

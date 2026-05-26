@@ -198,6 +198,19 @@ struct SdlFrontendStats {
     std::uint64_t videoVdpMode4SimplePathUsedCount = 0;
     std::uint64_t videoVdpMode4GeneralPathUsedCount = 0;
     std::uint64_t videoTmsGraphicsPathUsedCount = 0;
+    // T2.3 Phase 3: overall frame build duration histogram (separate from present)
+    std::size_t videoFrameBuildDurationSampleCount = 0;
+    std::int64_t videoFrameBuildDurationLastNanos = 0;
+    std::int64_t videoFrameBuildDurationHighWaterNanos = 0;
+    std::size_t videoFrameBuildDurationUnder50usCount = 0;
+    std::size_t videoFrameBuildDuration50To100usCount = 0;
+    std::size_t videoFrameBuildDuration100To250usCount = 0;
+    std::size_t videoFrameBuildDuration250To500usCount = 0;
+    std::size_t videoFrameBuildDuration500usTo1msCount = 0;
+    std::size_t videoFrameBuildDuration1To2msCount = 0;
+    std::size_t videoFrameBuildDuration2To5msCount = 0;
+    std::size_t videoFrameBuildDuration5To10msCount = 0;
+    std::size_t videoFrameBuildDurationOver10msCount = 0;
     /// Phase 38B: counts VBlank/scanline events where videoDebugFrameModel() was
     /// skipped because no debug consumer (DebugSnapshotService) was connected.
     /// In production mode this should equal videoEvents (all skipped).
@@ -259,6 +272,17 @@ struct SdlFrontendStats {
     std::size_t audioReadyQueueHighWaterChunks = 0;
     std::size_t audioReadyQueueLowWaterChunks = 0;
     std::size_t audioReadyQueueEmptyCount = 0;
+    // T2.2 Phase 2: FIFO occupancy at drain callback tick
+    std::size_t audioReadyQueueDrainOccupancyDepthLast = 0;
+    std::size_t audioReadyQueueDrainOccupancyHighWaterChunks = 0;
+    std::size_t audioReadyQueueDrainOccupancyLowWaterChunks = 0;
+    std::size_t audioReadyQueueDrainOccupancySampleCount = 0;
+    std::size_t audioReadyQueueDrainOccupancyUnder1ChunkCount = 0;
+    std::size_t audioReadyQueueDrainOccupancy1ChunkCount = 0;
+    std::size_t audioReadyQueueDrainOccupancy2ChunksCount = 0;
+    std::size_t audioReadyQueueDrainOccupancy3ChunksCount = 0;
+    std::size_t audioReadyQueueDrainOccupancy4ChunksCount = 0;
+    std::size_t audioReadyQueueDrainOccupancy5PlusChunksCount = 0;
     std::size_t audioTransportDrainCallbackCount = 0;
     std::size_t audioTransportDrainRequestedSamples = 0;
     std::size_t audioTransportDrainReadySamples = 0;
