@@ -1,4 +1,4 @@
-#include "SdlVideoPresenter.hpp"
+#include "HardwareVideoPresenter.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -34,21 +34,21 @@ namespace {
 
 } // namespace
 
-SdlVideoPresenter::~SdlVideoPresenter()
+HardwareVideoPresenter::~HardwareVideoPresenter()
 {
     close();
 }
 
-std::string_view SdlVideoPresenter::name() const noexcept
+std::string_view HardwareVideoPresenter::name() const noexcept
 {
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
-    return "SDL2 video";
+    return "SDL2 hardware";
 #else
-    return "SDL2 video unavailable";
+    return "SDL2 hardware unavailable";
 #endif
 }
 
-VideoPluginCapabilities SdlVideoPresenter::capabilities() const noexcept
+VideoPluginCapabilities HardwareVideoPresenter::capabilities() const noexcept
 {
     return {
         .realtimeSafe = false,
@@ -60,7 +60,7 @@ VideoPluginCapabilities SdlVideoPresenter::capabilities() const noexcept
     };
 }
 
-bool SdlVideoPresenter::open(const VideoPresenterConfig& config)
+bool HardwareVideoPresenter::open(const VideoPresenterConfig& config)
 {
     config_ = config;
     config_.frameWidth = std::max(config_.frameWidth, 1);
@@ -71,7 +71,7 @@ bool SdlVideoPresenter::open(const VideoPresenterConfig& config)
         std::lock_guard<std::mutex> lk(diagMutex_);
         diagnostics_ = {};
         diagnostics_.configuredMode = config_.mode;
-        diagnostics_.activeMode = config_.mode;
+        diagnostics_.activeMode = VideoPresenterMode::Hardware;
         rendererNameStorage_.clear();
         diagnostics_.rendererName = rendererNameStorage_;
     }
@@ -104,6 +104,13 @@ bool SdlVideoPresenter::open(const VideoPresenterConfig& config)
     }
     windowVisible_.store(!config_.createHiddenWindowOnOpen, std::memory_order_relaxed);
     windowVisibilityRequested_.store(windowVisible_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+
+    // Ensure a renderer is available before the first frame upload.
+    if (!ensureRenderer(config_.frameWidth, config_.frameHeight)) {
+        close();
+        return false;
+    }
+
     ready_ = true;
     return true;
 #else
@@ -113,15 +120,20 @@ bool SdlVideoPresenter::open(const VideoPresenterConfig& config)
 #endif
 }
 
-void SdlVideoPresenter::close() noexcept
+void HardwareVideoPresenter::close() noexcept
 {
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
-    if (texture_ != nullptr) {
-        SDL_DestroyTexture(texture_);
-        texture_ = nullptr;
+    if (uploadTexture_ != nullptr) {
+        SDL_DestroyTexture(uploadTexture_);
+        uploadTexture_ = nullptr;
+    }
+    if (renderTarget_ != nullptr) {
+        SDL_DestroyTexture(renderTarget_);
+        renderTarget_ = nullptr;
     }
     textureWidth_ = 0;
     textureHeight_ = 0;
+    renderTargetAvailable_ = false;
     if (renderer_ != nullptr) {
         SDL_DestroyRenderer(renderer_);
         renderer_ = nullptr;
@@ -139,16 +151,16 @@ void SdlVideoPresenter::close() noexcept
     windowVisible_.store(false, std::memory_order_release);
 }
 
-bool SdlVideoPresenter::ready() const noexcept
+bool HardwareVideoPresenter::ready() const noexcept
 {
     return ready_;
 }
 
-bool SdlVideoPresenter::present(const VideoFramePacket& frame) noexcept
+bool HardwareVideoPresenter::present(const VideoFramePacket& frame) noexcept
 {
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
     // diagMutex_ covers all diagnostics_ mutations in this function and its
-    // callees (ensureRenderer, ensureTexture, fallbackToSoftwareRenderer).
+    // callees (ensureRenderer, ensureTextures, fallbackToSoftwareRenderer).
     std::lock_guard<std::mutex> diagLock(diagMutex_);
     if (!ready_ || window_ == nullptr) {
         lastError_ = "video presenter not ready";
@@ -175,45 +187,67 @@ bool SdlVideoPresenter::present(const VideoFramePacket& frame) noexcept
         return false;
     }
 
-    if (!ensureTexture(frame.width, frame.height)) {
+    if (!ensureTextures(frame.width, frame.height)) {
         return false;
     }
 
-    if (SDL_UpdateTexture(texture_, nullptr, frame.pixels.data(), frame.width * static_cast<int>(sizeof(uint32_t))) != 0) {
+    if (SDL_UpdateTexture(uploadTexture_, nullptr, frame.pixels.data(),
+                          frame.width * static_cast<int>(sizeof(uint32_t))) != 0) {
         const auto updateError = std::string(SDL_GetError());
-        if (!fallbackToSoftwareRenderer(frame.width, frame.height, VideoPresenterFallbackReason::RuntimePresentFailure)) {
+        if (!fallbackToSoftwareRenderer(frame.width, frame.height, VideoPresenterFallbackReason::RuntimePresentFailure) ||
+            !ensureTextures(frame.width, frame.height) ||
+            SDL_UpdateTexture(uploadTexture_, nullptr, frame.pixels.data(),
+                              frame.width * static_cast<int>(sizeof(uint32_t))) != 0) {
             lastError_ = updateError;
-            return false;
-        }
-        if (SDL_UpdateTexture(texture_, nullptr, frame.pixels.data(), frame.width * static_cast<int>(sizeof(uint32_t))) != 0) {
-            lastError_ = SDL_GetError();
             return false;
         }
     }
     ++diagnostics_.textureUploadCount;
 
+    SDL_Texture* presentTexture = uploadTexture_;
+    if (renderTargetAvailable_ && renderTarget_ != nullptr) {
+        if (SDL_SetRenderTarget(renderer_, renderTarget_) != 0 ||
+            SDL_RenderClear(renderer_) != 0 ||
+            SDL_RenderCopy(renderer_, uploadTexture_, nullptr, nullptr) != 0 ||
+            SDL_SetRenderTarget(renderer_, nullptr) != 0) {
+            const auto targetError = std::string(SDL_GetError());
+            if (!fallbackToSoftwareRenderer(frame.width, frame.height, VideoPresenterFallbackReason::RuntimePresentFailure) ||
+                !ensureTextures(frame.width, frame.height) ||
+                SDL_UpdateTexture(uploadTexture_, nullptr, frame.pixels.data(),
+                                  frame.width * static_cast<int>(sizeof(uint32_t))) != 0) {
+                lastError_ = targetError;
+                return false;
+            }
+            presentTexture = uploadTexture_;
+        } else {
+            presentTexture = renderTarget_;
+        }
+    }
+
     if (SDL_RenderClear(renderer_) != 0) {
         const auto clearError = std::string(SDL_GetError());
-        if (!fallbackToSoftwareRenderer(frame.width, frame.height, VideoPresenterFallbackReason::RuntimePresentFailure)) {
+        if (!fallbackToSoftwareRenderer(frame.width, frame.height, VideoPresenterFallbackReason::RuntimePresentFailure) ||
+            !ensureTextures(frame.width, frame.height) ||
+            SDL_UpdateTexture(uploadTexture_, nullptr, frame.pixels.data(),
+                              frame.width * static_cast<int>(sizeof(uint32_t))) != 0 ||
+            SDL_RenderClear(renderer_) != 0) {
             lastError_ = clearError;
             return false;
         }
-        if (SDL_RenderClear(renderer_) != 0) {
-            lastError_ = SDL_GetError();
-            return false;
-        }
+        presentTexture = uploadTexture_;
     }
-    if (SDL_RenderCopy(renderer_, texture_, nullptr, nullptr) != 0) {
+    if (SDL_RenderCopy(renderer_, presentTexture, nullptr, nullptr) != 0) {
         const auto copyError = std::string(SDL_GetError());
-        if (!fallbackToSoftwareRenderer(frame.width, frame.height, VideoPresenterFallbackReason::RuntimePresentFailure)) {
+        if (!fallbackToSoftwareRenderer(frame.width, frame.height, VideoPresenterFallbackReason::RuntimePresentFailure) ||
+            !ensureTextures(frame.width, frame.height) ||
+            SDL_UpdateTexture(uploadTexture_, nullptr, frame.pixels.data(),
+                              frame.width * static_cast<int>(sizeof(uint32_t))) != 0 ||
+            SDL_RenderCopy(renderer_, uploadTexture_, nullptr, nullptr) != 0) {
             lastError_ = copyError;
             return false;
         }
-        if (SDL_RenderCopy(renderer_, texture_, nullptr, nullptr) != 0) {
-            lastError_ = SDL_GetError();
-            return false;
-        }
     }
+
     const auto presentStart = std::chrono::high_resolution_clock::now();
     SDL_RenderPresent(renderer_);
     const auto presentEnd = std::chrono::high_resolution_clock::now();
@@ -230,33 +264,33 @@ bool SdlVideoPresenter::present(const VideoFramePacket& frame) noexcept
 #endif
 }
 
-std::string_view SdlVideoPresenter::lastError() const noexcept
+std::string_view HardwareVideoPresenter::lastError() const noexcept
 {
     return lastError_;
 }
 
-VideoPresenterDiagnostics SdlVideoPresenter::diagnostics() const noexcept
+VideoPresenterDiagnostics HardwareVideoPresenter::diagnostics() const noexcept
 {
     std::lock_guard<std::mutex> lk(diagMutex_);
     return diagnostics_;
 }
 
-bool SdlVideoPresenter::windowVisible() const noexcept
+bool HardwareVideoPresenter::windowVisible() const noexcept
 {
     return windowVisible_.load(std::memory_order_acquire);
 }
 
-void SdlVideoPresenter::requestWindowVisibility(bool visible) noexcept
+void HardwareVideoPresenter::requestWindowVisibility(bool visible) noexcept
 {
     windowVisibilityRequested_.store(visible, std::memory_order_relaxed);
 }
 
-bool SdlVideoPresenter::windowVisibilityRequested() const noexcept
+bool HardwareVideoPresenter::windowVisibilityRequested() const noexcept
 {
     return windowVisibilityRequested_.load(std::memory_order_relaxed);
 }
 
-bool SdlVideoPresenter::ensureRenderer(int frameWidth, int frameHeight) noexcept
+bool HardwareVideoPresenter::ensureRenderer(int frameWidth, int frameHeight) noexcept
 {
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
     if (renderer_ != nullptr) {
@@ -275,6 +309,17 @@ bool SdlVideoPresenter::ensureRenderer(int frameWidth, int frameHeight) noexcept
         diagnostics_.rendererName = rendererNameStorage_;
     };
 
+    auto createHardwareRenderer = [&](uint32_t flags) -> bool {
+        renderer_ = SDL_CreateRenderer(window_, -1, static_cast<int>(flags));
+        if (renderer_ == nullptr) {
+            return false;
+        }
+        diagnostics_.activeMode = VideoPresenterMode::Hardware;
+        SDL_RenderSetLogicalSize(renderer_, frameWidth, frameHeight);
+        assignRendererMetadata();
+        return true;
+    };
+
     auto createSoftwareRenderer = [&]() -> bool {
         renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_SOFTWARE);
         if (renderer_ == nullptr) {
@@ -287,29 +332,15 @@ bool SdlVideoPresenter::ensureRenderer(int frameWidth, int frameHeight) noexcept
         return true;
     };
 
-    auto createHardwareRenderer = [&](uint32_t flags) -> bool {
-        renderer_ = SDL_CreateRenderer(window_, -1, static_cast<int>(flags));
-        if (renderer_ == nullptr) {
-            return false;
-        }
-        diagnostics_.activeMode = VideoPresenterMode::Hardware;
-        SDL_RenderSetLogicalSize(renderer_, frameWidth, frameHeight);
-        assignRendererMetadata();
-        return true;
-    };
-
-    if (config_.mode == VideoPresenterMode::Software) {
-        return createSoftwareRenderer();
-    }
-
+    // Always prefer hardware-accelerated renderer
     if (createHardwareRenderer(SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC)) {
         return true;
     }
-
     if (createHardwareRenderer(SDL_RENDERER_ACCELERATED)) {
         return true;
     }
 
+    // Fall back to software
     if (!createSoftwareRenderer()) {
         return false;
     }
@@ -324,9 +355,56 @@ bool SdlVideoPresenter::ensureRenderer(int frameWidth, int frameHeight) noexcept
 #endif
 }
 
-bool SdlVideoPresenter::fallbackToSoftwareRenderer(int frameWidth,
-                                                   int frameHeight,
-                                                   VideoPresenterFallbackReason reason) noexcept
+bool HardwareVideoPresenter::ensureTextures(int frameWidth, int frameHeight) noexcept
+{
+#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
+    if (uploadTexture_ != nullptr && textureWidth_ == frameWidth && textureHeight_ == frameHeight) {
+        return true;
+    }
+    if (uploadTexture_ != nullptr) {
+        SDL_DestroyTexture(uploadTexture_);
+        uploadTexture_ = nullptr;
+    }
+    if (renderTarget_ != nullptr) {
+        SDL_DestroyTexture(renderTarget_);
+        renderTarget_ = nullptr;
+    }
+    renderTargetAvailable_ = false;
+    SDL_RenderSetLogicalSize(renderer_, frameWidth, frameHeight);
+
+    uploadTexture_ = SDL_CreateTexture(renderer_,
+                                       SDL_PIXELFORMAT_ARGB8888,
+                                       SDL_TEXTUREACCESS_STREAMING,
+                                       frameWidth,
+                                       frameHeight);
+    if (uploadTexture_ == nullptr) {
+        lastError_ = SDL_GetError();
+        return false;
+    }
+
+    if (diagnostics_.activeMode == VideoPresenterMode::Hardware) {
+        renderTarget_ = SDL_CreateTexture(renderer_,
+                                          SDL_PIXELFORMAT_ARGB8888,
+                                          SDL_TEXTUREACCESS_TARGET,
+                                          frameWidth,
+                                          frameHeight);
+        renderTargetAvailable_ = renderTarget_ != nullptr;
+    }
+
+    textureWidth_ = frameWidth;
+    textureHeight_ = frameHeight;
+    ++diagnostics_.textureRecreateCount;
+    return true;
+#else
+    (void)frameWidth;
+    (void)frameHeight;
+    return false;
+#endif
+}
+
+bool HardwareVideoPresenter::fallbackToSoftwareRenderer(int frameWidth,
+                                                         int frameHeight,
+                                                         VideoPresenterFallbackReason reason) noexcept
 {
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
     if (window_ == nullptr) {
@@ -335,12 +413,17 @@ bool SdlVideoPresenter::fallbackToSoftwareRenderer(int frameWidth,
     if (renderer_ != nullptr && diagnostics_.activeMode == VideoPresenterMode::Software) {
         return false;
     }
-    if (texture_ != nullptr) {
-        SDL_DestroyTexture(texture_);
-        texture_ = nullptr;
+    if (uploadTexture_ != nullptr) {
+        SDL_DestroyTexture(uploadTexture_);
+        uploadTexture_ = nullptr;
+    }
+    if (renderTarget_ != nullptr) {
+        SDL_DestroyTexture(renderTarget_);
+        renderTarget_ = nullptr;
     }
     textureWidth_ = 0;
     textureHeight_ = 0;
+    renderTargetAvailable_ = false;
     if (renderer_ != nullptr) {
         SDL_DestroyRenderer(renderer_);
         renderer_ = nullptr;
@@ -364,7 +447,7 @@ bool SdlVideoPresenter::fallbackToSoftwareRenderer(int frameWidth,
         rendererNameStorage_.clear();
     }
     diagnostics_.rendererName = rendererNameStorage_;
-    return ensureTexture(frameWidth, frameHeight);
+    return true;
 #else
     (void)frameWidth;
     (void)frameHeight;
@@ -373,39 +456,7 @@ bool SdlVideoPresenter::fallbackToSoftwareRenderer(int frameWidth,
 #endif
 }
 
-bool SdlVideoPresenter::ensureTexture(int frameWidth, int frameHeight) noexcept
-{
-#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
-    if (texture_ != nullptr && textureWidth_ == frameWidth && textureHeight_ == frameHeight) {
-        return true;
-    }
-    if (texture_ != nullptr) {
-        SDL_DestroyTexture(texture_);
-        texture_ = nullptr;
-    }
-    SDL_RenderSetLogicalSize(renderer_, frameWidth, frameHeight);
-
-    texture_ = SDL_CreateTexture(renderer_,
-                                 SDL_PIXELFORMAT_ARGB8888,
-                                 SDL_TEXTUREACCESS_STREAMING,
-                                 frameWidth,
-                                 frameHeight);
-    if (texture_ == nullptr) {
-        lastError_ = SDL_GetError();
-        return false;
-    }
-    textureWidth_ = frameWidth;
-    textureHeight_ = frameHeight;
-    ++diagnostics_.textureRecreateCount;
-    return true;
-#else
-    (void)frameWidth;
-    (void)frameHeight;
-    return false;
-#endif
-}
-
-void SdlVideoPresenter::updatePresentDurationMetric(std::int64_t durationNanos) noexcept
+void HardwareVideoPresenter::updatePresentDurationMetric(std::int64_t durationNanos) noexcept
 {
     diagnostics_.presenterPresentDurationLastNanos = durationNanos;
     diagnostics_.presenterPresentDurationHighWaterNanos =

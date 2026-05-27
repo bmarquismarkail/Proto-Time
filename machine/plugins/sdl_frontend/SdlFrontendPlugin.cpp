@@ -4,6 +4,7 @@
 #include "../../VideoService.hpp"
 #include "../audio_output/DummyAudioOutput.hpp"
 #include "../audio_output/FileAudioOutput.hpp"
+#include "../video/adapters/HardwareVideoPresenter.hpp"
 #include "../video/adapters/SdlVideoPresenter.hpp"
 #include "SdlAudioOutput.hpp"
 
@@ -2130,7 +2131,12 @@ private:
             });
             bool presenterAttached = true;
             if (config_.enableVideo) {
-                auto presenter = std::make_unique<BMMQ::SdlVideoPresenter>();
+                std::unique_ptr<BMMQ::IVideoPresenterPlugin> presenter;
+                if (presenterModeForPolicy(config_.videoPresenterPolicy) == BMMQ::VideoPresenterMode::Software) {
+                    presenter = std::make_unique<BMMQ::SdlVideoPresenter>();
+                } else {
+                    presenter = std::make_unique<BMMQ::HardwareVideoPresenter>();
+                }
                 videoPresenter_ = presenter.get();
                 videoPresenter_->requestWindowVisibility(
                     windowVisibilityRequested_.load(std::memory_order_acquire));
@@ -2676,7 +2682,7 @@ private:
     BMMQ::VideoService* videoService_ = nullptr;
     BMMQ::TimingService* timingService_ = nullptr;
     BMMQ::MachineLifecycleCoordinator* lifecycleCoordinator_ = nullptr;
-    BMMQ::SdlVideoPresenter* videoPresenter_ = nullptr;
+    BMMQ::IVideoPresenterPlugin* videoPresenter_ = nullptr;
     BMMQ::DebugSnapshotService* debugSnapshotService_ = nullptr;
     std::unique_ptr<BMMQ::IAudioOutputBackend> audioOutput_ = std::make_unique<BMMQ::SdlAudioOutputBackend>();
     std::string selectedAudioBackend_ = "sdl";

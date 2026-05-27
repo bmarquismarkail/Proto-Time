@@ -7,6 +7,7 @@
 
 #include "machine/VideoService.hpp"
 #include "machine/plugins/video/adapters/HeadlessFrameDumper.hpp"
+#include "machine/plugins/video/adapters/HardwareVideoPresenter.hpp"
 #include "machine/plugins/video/adapters/SdlVideoPresenter.hpp"
 
 int main()
@@ -87,6 +88,9 @@ int main()
     assert(service.diagnostics().configuredPresenterMode == BMMQ::VideoPresenterMode::Auto);
     assert(service.diagnostics().presenterPresentDurationSampleCount >= 1u);
     assert(service.pause());
+    assert(service.detachPresenter());
+    auto hardware = std::make_unique<BMMQ::HardwareVideoPresenter>();
+    assert(service.attachPresenter(std::move(hardware)));
 
     assert(service.configurePresenter({
         .windowTitle = "hardware",

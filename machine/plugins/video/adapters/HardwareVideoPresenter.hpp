@@ -1,5 +1,5 @@
-#ifndef BMMQ_SDL_VIDEO_PRESENTER_HPP
-#define BMMQ_SDL_VIDEO_PRESENTER_HPP
+#ifndef BMMQ_HARDWARE_VIDEO_PRESENTER_HPP
+#define BMMQ_HARDWARE_VIDEO_PRESENTER_HPP
 
 #include <atomic>
 #include <cstdint>
@@ -17,12 +17,12 @@ struct SDL_Texture;
 
 namespace BMMQ {
 
-class SdlVideoPresenter final : public IVideoPresenterPlugin {
+class HardwareVideoPresenter final : public IVideoPresenterPlugin {
 public:
-    SdlVideoPresenter() = default;
-    ~SdlVideoPresenter() override;
-    SdlVideoPresenter(const SdlVideoPresenter&) = delete;
-    SdlVideoPresenter& operator=(const SdlVideoPresenter&) = delete;
+    HardwareVideoPresenter() = default;
+    ~HardwareVideoPresenter() override;
+    HardwareVideoPresenter(const HardwareVideoPresenter&) = delete;
+    HardwareVideoPresenter& operator=(const HardwareVideoPresenter&) = delete;
 
     [[nodiscard]] std::string_view name() const noexcept override;
     [[nodiscard]] VideoPluginCapabilities capabilities() const noexcept override;
@@ -38,12 +38,10 @@ public:
 
 private:
     bool ensureRenderer(int frameWidth, int frameHeight) noexcept;
-    bool ensureTexture(int frameWidth, int frameHeight) noexcept;
+    bool ensureTextures(int frameWidth, int frameHeight) noexcept;
     bool fallbackToSoftwareRenderer(int frameWidth, int frameHeight,
                                     VideoPresenterFallbackReason reason) noexcept;
-    // Phase 39A: helper to update presenter timing metrics
     void updatePresentDurationMetric(std::int64_t durationNanos) noexcept;
-
 
     VideoPresenterConfig config_{};
     std::string lastError_{};
@@ -56,21 +54,23 @@ private:
     VideoPresenterDiagnostics diagnostics_{};
     std::string rendererNameStorage_{};
     bool ready_ = false;
-    // windowVisible_ and windowVisibilityRequested_ are read by SdlFrontendPlugin::windowVisible()
-    // (render thread) without holding sharedStateMutex_, and written by close() (main thread).
-    // Use atomic to prevent TSAN data races.
     std::atomic<bool> windowVisible_{false};
     std::atomic<bool> windowVisibilityRequested_{false};
     uint32_t initializedBackendFlags_ = 0;
     int textureWidth_ = 0;
     int textureHeight_ = 0;
+    bool renderTargetAvailable_ = false;
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
     ::SDL_Window* window_ = nullptr;
     ::SDL_Renderer* renderer_ = nullptr;
-    ::SDL_Texture* texture_ = nullptr;
+    // uploadTexture_ receives CPU-produced frame pixels.
+    ::SDL_Texture* uploadTexture_ = nullptr;
+    // renderTarget_ is the optional GPU-composited target texture.
+    // The upload texture is copied into it before presenting when supported.
+    ::SDL_Texture* renderTarget_ = nullptr;
 #endif
 };
 
 } // namespace BMMQ
 
-#endif // BMMQ_SDL_VIDEO_PRESENTER_HPP
+#endif // BMMQ_HARDWARE_VIDEO_PRESENTER_HPP

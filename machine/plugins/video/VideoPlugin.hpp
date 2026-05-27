@@ -67,6 +67,20 @@ public:
     {
         return {};
     }
+
+    [[nodiscard]] virtual bool windowVisible() const noexcept
+    {
+        return false;
+    }
+
+    virtual void requestWindowVisibility(bool) noexcept
+    {
+    }
+
+    [[nodiscard]] virtual bool windowVisibilityRequested() const noexcept
+    {
+        return false;
+    }
 };
 
 class IVideoFrameProcessorPlugin {
