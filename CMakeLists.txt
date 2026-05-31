@@ -19,6 +19,16 @@ set (CMAKE_CXX_STANDARD_REQUIRED True)
 include_directories(. templ memory cores)
 add_compile_options(-Wall -Wextra )
 
+add_library(time-simd-pixel-ops STATIC
+    machine/plugins/video/SimdPixelOps.cpp
+)
+set_target_properties(time-simd-pixel-ops PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if (CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|i[3-6]86")
+    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(time-simd-pixel-ops PRIVATE -msse4.2)
+    endif()
+endif()
+
 if (BMMQ_ENABLE_TSAN)
     if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         add_compile_options(-fsanitize=thread -fno-omit-frame-pointer -g)
@@ -41,7 +51,7 @@ add_library(time-machine-runtime-common STATIC
     machine/DebugSnapshotService.cpp
 )
 set_target_properties(time-machine-runtime-common PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_link_libraries(time-machine-runtime-common PUBLIC ZLIB::ZLIB)
+target_link_libraries(time-machine-runtime-common PUBLIC ZLIB::ZLIB time-simd-pixel-ops)
 
 add_library(time-gameboy-interpreter-core
 	cores/gameboy/decode/gb_decoder.cpp
@@ -155,7 +165,7 @@ target_compile_definitions(time-sdl-audio-output PRIVATE BMMQ_SDL_FRONTEND_COMPI
 target_compile_definitions(time-sdl-video-adapter PUBLIC BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL=${BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE})
 target_compile_definitions(time-hardware-video-adapter PUBLIC BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL=${BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE})
 target_compile_definitions(time-sdl-frontend-plugin PRIVATE BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL=${BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE})
-target_link_libraries(time-sdl-frontend-plugin PRIVATE time-sdl-audio-output time-dummy-audio-output time-file-audio-output time-sdl-video-adapter time-hardware-video-adapter)
+target_link_libraries(time-sdl-frontend-plugin PRIVATE time-sdl-audio-output time-dummy-audio-output time-file-audio-output time-sdl-video-adapter time-hardware-video-adapter time-simd-pixel-ops)
 
 enable_testing()
 add_executable(time-smoke-gamegear-core tests/smoke_gamegear_core.cpp)
@@ -312,7 +322,7 @@ add_executable(time-smoke-plugin-io tests/smoke_plugin_io.cpp)
 target_link_libraries(time-smoke-plugin-io time-gameboy-interpreter-core)
 add_test(NAME smoke_plugin_io COMMAND time-smoke-plugin-io)
 add_executable(time-smoke-sdl-frontend-plugin tests/smoke_sdl_frontend_plugin.cpp)
-target_link_libraries(time-smoke-sdl-frontend-plugin time-gameboy-interpreter-core time-sdl-frontend-loader)
+target_link_libraries(time-smoke-sdl-frontend-plugin time-gameboy-interpreter-core time-sdl-frontend-loader time-simd-pixel-ops)
 add_test(NAME smoke_sdl_frontend_plugin COMMAND time-smoke-sdl-frontend-plugin)
 add_executable(time-smoke-sdl-frontend-gamegear tests/smoke_sdl_frontend_gamegear.cpp)
 target_link_libraries(time-smoke-sdl-frontend-gamegear time-gamegear-core time-sdl-frontend-loader)
@@ -442,6 +452,10 @@ add_test(NAME smoke_interpreter_math_i8 COMMAND time-smoke-interpreter-math-i8)
 add_executable(time-smoke-trace-executor tests/smoke_trace_executor.cpp)
 target_link_libraries(time-smoke-trace-executor time-gameboy-interpreter-core)
 add_test(NAME smoke_trace_executor COMMAND time-smoke-trace-executor)
+
+add_executable(time-smoke-simd-pixel-ops tests/smoke_simd_pixel_ops.cpp)
+target_link_libraries(time-smoke-simd-pixel-ops time-simd-pixel-ops)
+add_test(NAME smoke_simd_pixel_ops COMMAND time-smoke-simd-pixel-ops)
 
 # Timing engine smoke test
 add_executable(time-smoke-timing-engine tests/smoke_timing_engine.cpp)

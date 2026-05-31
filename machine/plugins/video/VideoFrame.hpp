@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include "SimdPixelOps.hpp"
+
 namespace BMMQ {
 
 enum class VideoFrameFormat : uint8_t {
@@ -89,7 +91,10 @@ struct VideoPresenterConfig {
     frame.height = std::max(height, 1);
     frame.generation = generation;
     frame.source = VideoFrameSource::BlankFallback;
-    frame.pixels.assign(static_cast<std::size_t>(frame.width) * static_cast<std::size_t>(frame.height), 0xFF000000u);
+    const auto pixel_count = static_cast<std::size_t>(frame.width) * static_cast<std::size_t>(frame.height);
+    frame.pixels.resize(pixel_count);
+    // Phase 8: SIMD-accelerated fill
+    SimdPixelOps::fill_pixels(frame.pixels.data(), 0xFF000000u, pixel_count);
     return frame;
 }
 

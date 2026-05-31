@@ -43,6 +43,12 @@ private:
                                     VideoPresenterFallbackReason reason) noexcept;
     // Phase 39A: helper to update presenter timing metrics
     void updatePresentDurationMetric(std::int64_t durationNanos) noexcept;
+    // Phase 8: SIMD-accelerated pixel conversion for RGB565 textures
+    bool uploadTextureRgb565(const VideoFramePacket& frame) noexcept;
+    bool uploadTextureArgb8888(const VideoFramePacket& frame) noexcept;
+
+    bool config_uses_rgb565_ = false;
+    std::vector<std::uint16_t> rgb565_buffer_;
 
 
     VideoPresenterConfig config_{};

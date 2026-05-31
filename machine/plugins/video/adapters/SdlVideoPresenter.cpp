@@ -5,6 +5,8 @@
 #include <chrono>
 #include <limits>
 
+#include "../SimdPixelOps.hpp"
+
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
 #  if defined(__has_include)
 #    if __has_include(<SDL2/SDL.h>)
@@ -179,16 +181,12 @@ bool SdlVideoPresenter::present(const VideoFramePacket& frame) noexcept
         return false;
     }
 
-    if (SDL_UpdateTexture(texture_, nullptr, frame.pixels.data(), frame.width * static_cast<int>(sizeof(uint32_t))) != 0) {
-        const auto updateError = std::string(SDL_GetError());
-        if (!fallbackToSoftwareRenderer(frame.width, frame.height, VideoPresenterFallbackReason::RuntimePresentFailure)) {
-            lastError_ = updateError;
-            return false;
-        }
-        if (SDL_UpdateTexture(texture_, nullptr, frame.pixels.data(), frame.width * static_cast<int>(sizeof(uint32_t))) != 0) {
-            lastError_ = SDL_GetError();
-            return false;
-        }
+    // Phase 8: use SIMD-accelerated upload path
+    bool uploadOk = config_uses_rgb565_
+        ? uploadTextureRgb565(frame)
+        : uploadTextureArgb8888(frame);
+    if (!uploadOk) {
+        return false;
     }
     ++diagnostics_.textureUploadCount;
 
@@ -385,6 +383,21 @@ bool SdlVideoPresenter::ensureTexture(int frameWidth, int frameHeight) noexcept
     }
     SDL_RenderSetLogicalSize(renderer_, frameWidth, frameHeight);
 
+    // Try RGB565 first (half the memory bandwidth of ARGB8888)
+    texture_ = SDL_CreateTexture(renderer_,
+                                 SDL_PIXELFORMAT_RGB565,
+                                 SDL_TEXTUREACCESS_STREAMING,
+                                 frameWidth,
+                                 frameHeight);
+    if (texture_ != nullptr) {
+        config_uses_rgb565_ = true;
+        textureWidth_ = frameWidth;
+        textureHeight_ = frameHeight;
+        ++diagnostics_.textureRecreateCount;
+        return true;
+    }
+
+    // Fall back to ARGB8888
     texture_ = SDL_CreateTexture(renderer_,
                                  SDL_PIXELFORMAT_ARGB8888,
                                  SDL_TEXTUREACCESS_STREAMING,
@@ -394,6 +407,7 @@ bool SdlVideoPresenter::ensureTexture(int frameWidth, int frameHeight) noexcept
         lastError_ = SDL_GetError();
         return false;
     }
+    config_uses_rgb565_ = false;
     textureWidth_ = frameWidth;
     textureHeight_ = frameHeight;
     ++diagnostics_.textureRecreateCount;
@@ -487,6 +501,60 @@ void SdlVideoPresenter::updatePresentDurationMetric(std::int64_t durationNanos) 
     diagnostics_.presenterPresentDurationP95Nanos = estimateAtRank(targetP95);
     diagnostics_.presenterPresentDurationP99Nanos = estimateAtRank(targetP99);
     diagnostics_.presenterPresentDurationP999Nanos = estimateAtRank(targetP999);
+}
+
+bool SdlVideoPresenter::uploadTextureRgb565(const VideoFramePacket& frame) noexcept
+{
+#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
+    const auto pixel_count = static_cast<std::size_t>(frame.width) * static_cast<std::size_t>(frame.height);
+    rgb565_buffer_.resize(pixel_count);
+
+    // Phase 8: SIMD-accelerated ARGB8888 -> RGB565 conversion
+    SimdPixelOps::convert_argb8888_to_rgb565(frame.pixels.data(),
+                                              rgb565_buffer_.data(),
+                                              pixel_count);
+
+    if (SDL_UpdateTexture(texture_, nullptr, rgb565_buffer_.data(),
+                          frame.width * static_cast<int>(sizeof(std::uint16_t))) != 0) {
+        const auto updateError = std::string(SDL_GetError());
+        if (!fallbackToSoftwareRenderer(frame.width, frame.height, VideoPresenterFallbackReason::RuntimePresentFailure)) {
+            lastError_ = updateError;
+            return false;
+        }
+        if (SDL_UpdateTexture(texture_, nullptr, rgb565_buffer_.data(),
+                              frame.width * static_cast<int>(sizeof(std::uint16_t))) != 0) {
+            lastError_ = SDL_GetError();
+            return false;
+        }
+    }
+    return true;
+#else
+    (void)frame;
+    return false;
+#endif
+}
+
+bool SdlVideoPresenter::uploadTextureArgb8888(const VideoFramePacket& frame) noexcept
+{
+#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
+    if (SDL_UpdateTexture(texture_, nullptr, frame.pixels.data(),
+                          frame.width * static_cast<int>(sizeof(std::uint32_t))) != 0) {
+        const auto updateError = std::string(SDL_GetError());
+        if (!fallbackToSoftwareRenderer(frame.width, frame.height, VideoPresenterFallbackReason::RuntimePresentFailure)) {
+            lastError_ = updateError;
+            return false;
+        }
+        if (SDL_UpdateTexture(texture_, nullptr, frame.pixels.data(),
+                              frame.width * static_cast<int>(sizeof(std::uint32_t))) != 0) {
+            lastError_ = SDL_GetError();
+            return false;
+        }
+    }
+    return true;
+#else
+    (void)frame;
+    return false;
+#endif
 }
 
 } // namespace BMMQ

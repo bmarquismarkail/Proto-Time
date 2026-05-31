@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -17,6 +18,7 @@
 
 #include "../../VideoDebugModel.hpp"
 #include "../../VisualOverrideService.hpp"
+#include "SimdPixelOps.hpp"
 #include "VideoFrame.hpp"
 
 namespace BMMQ {
@@ -152,7 +154,9 @@ public:
         }
 
         const auto pixelCount = static_cast<std::size_t>(frame.width) * static_cast<std::size_t>(frame.height);
-        frame.pixels.assign(pixelCount, 0xFF000000u);
+        frame.pixels.resize(pixelCount);
+        // Phase 8: SIMD-accelerated fill for black background
+        SimdPixelOps::fill_pixels(frame.pixels.data(), 0xFF000000u, pixelCount);
         if (model.empty()) {
             if (notifyVisualComposition) {
                 visualOverrideService_->notifyFrameCompositionCompleted(generation);
@@ -164,21 +168,36 @@ public:
 
         resetVisualResourceCache();
         const auto copyCount = std::min(frame.pixels.size(), model.argbPixels.size());
-        for (std::size_t i = 0; i < copyCount; ++i) {
-            auto pixel = model.argbPixels[i];
-            if (i < model.semantics.size()) {
+
+        std::memcpy(frame.pixels.data(), model.argbPixels.data(),
+                    copyCount * sizeof(std::uint32_t));
+        if (notifyVisualComposition) {
+            std::vector<std::uint8_t> replacementMask(copyCount, 0u);
+            std::vector<std::uint32_t> replacementPixels(copyCount, 0u);
+            bool hasReplacement = false;
+            for (std::size_t i = 0; i < copyCount && i < model.semantics.size(); ++i) {
                 const auto& semantic = model.semantics[i];
-                if (semantic.hasResource() && semantic.resourceIndex < model.resources.size()) {
-                    if (const auto replacement = replacementPixelForResource(model.resources[semantic.resourceIndex],
-                                                                            semantic.sampleX,
-                                                                            semantic.sampleY,
-                                                                            generation);
-                        replacement.has_value()) {
-                        pixel = *replacement;
-                    }
+                if (!semantic.hasResource() || semantic.resourceIndex >= model.resources.size()) {
+                    continue;
+                }
+                if (const auto replacement = replacementPixelForResource(model.resources[semantic.resourceIndex],
+                                                                          semantic.sampleX,
+                                                                          semantic.sampleY,
+                                                                          generation);
+                    replacement.has_value()) {
+                    replacementMask[i] = 1u;
+                    replacementPixels[i] = *replacement;
+                    hasReplacement = true;
                 }
             }
-            frame.pixels[i] = pixel;
+
+            if (hasReplacement) {
+                SimdPixelOps::replace_pixels_with_mask(model.argbPixels.data(),
+                                                       replacementMask.data(),
+                                                       replacementPixels.data(),
+                                                       frame.pixels.data(),
+                                                       copyCount);
+            }
         }
 
         if (notifyVisualComposition) {
