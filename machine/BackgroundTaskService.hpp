@@ -1,13 +1,13 @@
 #ifndef BMMQ_BACKGROUND_TASK_SERVICE_HPP
 #define BMMQ_BACKGROUND_TASK_SERVICE_HPP
 
-#include <atomic>
-#include <condition_variable>
 #include <cstddef>
-#include <deque>
+#include <atomic>
 #include <functional>
-#include <mutex>
-#include <thread>
+#include <memory>
+#include <optional>
+
+#include "machine/BackgroundThreadPool.hpp"
 
 namespace BMMQ {
 
@@ -20,13 +20,19 @@ struct BackgroundTaskStats {
     std::size_t tasksHighWaterPending = 0;
 };
 
+// Backward-compatible wrapper around BackgroundThreadPool.
+// Existing code that uses BackgroundTaskService continues to work;
+// the underlying implementation is now a work-stealing thread pool.
 class BackgroundTaskService final {
 public:
     static constexpr std::size_t kDefaultMaxQueuedTasks = 1024u;
 
-    explicit BackgroundTaskService(std::size_t maxQueuedTasks = kDefaultMaxQueuedTasks) noexcept
-        : maxQueuedTasks_(maxQueuedTasks == 0u ? 1u : maxQueuedTasks)
+    explicit BackgroundTaskService(
+        std::optional<std::size_t> maxQueuedTasks = std::nullopt,
+        std::optional<std::size_t> threadCount = std::nullopt) noexcept
     {
+        auto cap = maxQueuedTasks.value_or(kDefaultMaxQueuedTasks);
+        pool_ = std::make_unique<BackgroundThreadPool>(threadCount, cap);
     }
 
     BackgroundTaskService(const BackgroundTaskService&) = delete;
@@ -39,115 +45,55 @@ public:
 
     void start()
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (running_) {
-            return;
-        }
-        stopRequested_ = false;
-        worker_ = std::thread([this]() { workerLoop(); });
-        running_ = true;
+        pool_->start();
+        running_.store(true, std::memory_order_release);
     }
 
     void shutdown()
     {
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (!running_) {
-                return;
-            }
-            stopRequested_ = true;
+        if (pool_) {
+            pool_->shutdown();
         }
-        cv_.notify_all();
-        if (worker_.joinable()) {
-            worker_.join();
-        }
-        std::lock_guard<std::mutex> lock(mutex_);
-        running_ = false;
+        running_.store(false, std::memory_order_release);
     }
 
     [[nodiscard]] bool submit(std::function<void()> task)
     {
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (!running_ || stopRequested_) {
-                return false;
-            }
-            if (queue_.size() >= maxQueuedTasks_) {
-                tasksRejected_.fetch_add(1u, std::memory_order_relaxed);
-                return false;
-            }
-            queue_.push_back(std::move(task));
-            tasksSubmitted_.fetch_add(1u, std::memory_order_relaxed);
-            const auto pending = tasksPending_.fetch_add(1u, std::memory_order_relaxed) + 1u;
-            auto highWater = tasksHighWaterPending_.load(std::memory_order_relaxed);
-            while (pending > highWater &&
-                   !tasksHighWaterPending_.compare_exchange_weak(
-                       highWater,
-                       pending,
-                       std::memory_order_relaxed,
-                       std::memory_order_relaxed)) {
-            }
+        if (!running_.load(std::memory_order_acquire)) {
+            return false;
         }
-        cv_.notify_one();
-        return true;
+        return pool_ ? pool_->submit(std::move(task)) : false;
     }
 
     [[nodiscard]] BackgroundTaskStats stats() const noexcept
     {
+        if (!pool_) {
+            return {};
+        }
+        auto s = pool_->stats();
         return BackgroundTaskStats{
-            tasksSubmitted_.load(std::memory_order_relaxed),
-            tasksCompleted_.load(std::memory_order_relaxed),
-            tasksPending_.load(std::memory_order_relaxed),
-            taskFailures_.load(std::memory_order_relaxed),
-            tasksRejected_.load(std::memory_order_relaxed),
-            tasksHighWaterPending_.load(std::memory_order_relaxed),
+            s.tasksSubmitted,
+            s.tasksCompleted,
+            s.tasksPending,
+            s.taskFailures,
+            s.tasksRejected,
+            s.tasksHighWaterPending,
         };
     }
 
-private:
-    void workerLoop()
+    // Cancel all queued tasks that have not yet started executing.
+    // Returns the number of tasks removed from queues.
+    std::size_t cancelAll()
     {
-        while (true) {
-            std::function<void()> task;
-            {
-                std::unique_lock<std::mutex> lock(mutex_);
-                cv_.wait(lock, [this]() {
-                    return stopRequested_ || !queue_.empty();
-                });
-
-                if (stopRequested_ && queue_.empty()) {
-                    break;
-                }
-
-                task = std::move(queue_.front());
-                queue_.pop_front();
-            }
-
-            try {
-                task();
-            } catch (...) {
-                taskFailures_.fetch_add(1u, std::memory_order_relaxed);
-            }
-
-            tasksCompleted_.fetch_add(1u, std::memory_order_relaxed);
-            tasksPending_.fetch_sub(1u, std::memory_order_relaxed);
+        if (!pool_) {
+            return 0;
         }
+        return pool_->cancelAll();
     }
 
-    mutable std::mutex mutex_{};
-    std::condition_variable cv_{};
-    std::deque<std::function<void()>> queue_{};
-    std::thread worker_{};
-    bool running_ = false;
-    bool stopRequested_ = false;
-    const std::size_t maxQueuedTasks_;
-
-    std::atomic<std::size_t> tasksSubmitted_{0};
-    std::atomic<std::size_t> tasksCompleted_{0};
-    std::atomic<std::size_t> tasksPending_{0};
-    std::atomic<std::size_t> taskFailures_{0};
-    std::atomic<std::size_t> tasksRejected_{0};
-    std::atomic<std::size_t> tasksHighWaterPending_{0};
+private:
+    std::unique_ptr<BackgroundThreadPool> pool_;
+    std::atomic<bool> running_{false};
 };
 
 } // namespace BMMQ

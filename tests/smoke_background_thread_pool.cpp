@@ -2,14 +2,35 @@
 #undef NDEBUG
 #endif
 
+#include <atomic>
 #include <cassert>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
-#include <atomic>
+#include <mutex>
+#include <stdexcept>
 #include <thread>
+#include <vector>
 
 #include "machine/BackgroundThreadPool.hpp"
+
+namespace {
+
+template <typename Predicate>
+bool waitUntil(Predicate predicate, std::chrono::milliseconds timeout)
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (predicate()) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return predicate();
+}
+
+} // namespace
 
 int main()
 {
@@ -66,50 +87,59 @@ int main()
         pool.shutdown();
     }
 
-    // Test 3: Work stealing — one worker busy, others steal.
+    // Test 3: Work stealing — idle workers steal queued work from a blocked owner.
     {
         constexpr std::size_t kThreadCount = 4u;
         BMMQ::BackgroundThreadPool pool(kThreadCount);
         pool.start();
 
-        std::atomic<bool> firstTaskRunning{false};
         std::mutex gateMutex;
         std::condition_variable gateCv;
-        bool allowGate = false;
+        bool allowOwner = false;
+        bool allowOthers = false;
+        std::atomic<std::size_t> blockersRunning{0};
+        std::atomic<bool> stolenMarkerRan{false};
 
-        // Pin a long-running task to worker 0 via round-robin.
-        const bool pinned = pool.submit([&]() {
-            firstTaskRunning.store(true, std::memory_order_release);
-            std::unique_lock<std::mutex> lock(gateMutex);
-            gateCv.wait(lock, [&allowGate]() { return allowGate; });
-        });
-        assert(pinned);
-
-        while (!firstTaskRunning.load(std::memory_order_acquire)) {
-            std::this_thread::yield();
-        }
-
-         // Submit 3 more tasks — worker 0 is busy, so workers 1-3 should steal.
-        for (std::size_t i = 0; i < 3u; ++i) {
-            const bool ok = pool.submit([&]() {
-                // Quick no-op.
+        for (std::size_t i = 0; i < kThreadCount; ++i) {
+            const bool ok = pool.submit([&, i]() {
+                blockersRunning.fetch_add(1u, std::memory_order_release);
+                std::unique_lock<std::mutex> lock(gateMutex);
+               gateCv.wait(lock, [&]() { return i == 0u ? allowOwner : allowOthers; });
             });
             assert(ok);
         }
 
-        // Let the stealing tasks run before unblocking the pinned task.
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        assert(waitUntil([&]() {
+            return blockersRunning.load(std::memory_order_acquire) == kThreadCount;
+        }, std::chrono::seconds(2)));
+
+        // Round-robin puts this task behind worker 0. It can run before owner release only by stealing.
+        const bool markerQueued = pool.submit([&]() {
+            stolenMarkerRan.store(true, std::memory_order_release);
+        });
+        assert(markerQueued);
 
         {
             std::lock_guard<std::mutex> lock(gateMutex);
-            allowGate = true;
+            allowOthers = true;
         }
-        gateCv.notify_one();
+        gateCv.notify_all();
+
+        assert(waitUntil([&]() {
+            return stolenMarkerRan.load(std::memory_order_acquire);
+        }, std::chrono::seconds(2)));
+
+        {
+            std::lock_guard<std::mutex> lock(gateMutex);
+            allowOwner = true;
+        }
+        gateCv.notify_all();
 
         pool.shutdown();
 
         auto s = pool.stats();
-        assert(s.tasksCompleted == 4u);
+        assert(s.tasksCompleted == kThreadCount + 1u);
+        assert(s.stealsSucceeded >= 1u);
     }
 
     // Test 4: Task failure does not crash the worker.
@@ -146,7 +176,6 @@ int main()
         pool.start();
 
         // Block all workers by filling their queues.
-        std::atomic<bool> blockAll{false};
         std::mutex gMutex;
         std::condition_variable gCv;
         bool allowAll = false;
@@ -154,7 +183,7 @@ int main()
         for (std::size_t i = 0; i < kThreadCount * kMaxPerWorker; ++i) {
             const bool ok = pool.submit([&]() {
                 std::unique_lock<std::mutex> lock(gMutex);
-                gCv.wait(lock, [&allowAll]() { return allowAll; });
+               gCv.wait(lock, [&allowAll]() { return allowAll; });
             });
             assert(ok);
         }
@@ -184,18 +213,19 @@ int main()
         constexpr std::size_t kN = 256u;
 
         for (std::size_t i = 0; i < kN; ++i) {
-            pool.submit([&counter]() {
+            const bool ok = pool.submit([&counter]() {
                 counter.fetch_add(1, std::memory_order_relaxed);
             });
+            assert(ok);
         }
 
         // Sample stats concurrently.
         std::atomic<bool> stopSampling{false};
         std::thread sampler([&pool, &stopSampling]() {
             while (!stopSampling.load(std::memory_order_relaxed)) {
-                auto s = pool.stats();
-                assert(s.tasksCompleted <= s.tasksSubmitted);
-                assert(s.tasksPending == s.tasksSubmitted - s.tasksCompleted);
+               auto s = pool.stats();
+               assert(s.tasksCompleted <= s.tasksSubmitted);
+               assert(s.tasksPending == s.tasksSubmitted - s.tasksCompleted);
             }
         });
 
@@ -210,11 +240,10 @@ int main()
 
     // Test 7: cancelAll — queued tasks removed, in-flight tasks complete.
     {
-        constexpr std::size_t kThreadCount = 2u;
+        constexpr std::size_t kThreadCount = 1u;
         BMMQ::BackgroundThreadPool pool(kThreadCount);
         pool.start();
 
-        std::atomic<bool> blockFirst{false};
         std::mutex gMutex;
         std::condition_variable gCv;
         bool allowBlock{false};
@@ -243,8 +272,8 @@ int main()
         assert(cancelled >= 1u);  // at least one task was in a queue when cancelled
         assert(cancelled <= 6u);  // can't cancel more than total submitted
 
-        auto s = pool.stats();
-        assert(s.tasksCancelled >= 1u);
+        auto midStats = pool.stats();
+        assert(midStats.tasksCancelled >= 1u);
 
         // Unblock pinned task so shutdown can complete.
         {
@@ -253,17 +282,24 @@ int main()
         }
         gCv.notify_all();
 
-         pool.shutdown();
+        pool.shutdown();
 
+        auto s = pool.stats();
         // Invariant: submitted == completed + pending + cancelled.
         assert(s.tasksCompleted + s.tasksPending + s.tasksCancelled == s.tasksSubmitted);
     }
 
-    // Test 8: cancelAll before start — no-op, returns zero.
+    // Test 8: stopped pools reject submissions; cancelAll before start is a no-op.
     {
         BMMQ::BackgroundThreadPool pool(2u);
+        assert(!pool.submit([]() {}));
         auto cancelled = pool.cancelAll();
         assert(cancelled == 0u);
+        pool.start();
+        pool.shutdown();
+        assert(!pool.submit([]() {}));
+        auto s = pool.stats();
+        assert(s.tasksPending == 0u);
     }
 
     // Test 9: shutdown with queued work — workers drain remaining tasks.
@@ -319,7 +355,6 @@ int main()
         BMMQ::BackgroundThreadPool pool(kThreadCount);
         pool.start();
 
-        std::atomic<bool> blockAll{false};
         std::mutex gMutex;
         std::condition_variable gCv;
         bool allowBlock{false};
@@ -328,23 +363,23 @@ int main()
         for (std::size_t i = 0; i < kThreadCount; ++i) {
             const bool ok = pool.submit([&]() {
                 std::unique_lock<std::mutex> lock(gMutex);
-                gCv.wait(lock, [&allowBlock]() { return allowBlock; });
+               gCv.wait(lock, [&allowBlock]() { return allowBlock; });
             });
             assert(ok);
         }
 
         // Give workers time to pick up tasks and enter their CV waits.
-         std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-         // Signal all blocking tasks to unblock so shutdown can complete cleanly.
-         {
-             std::lock_guard<std::mutex> lock(gMutex);
-             allowBlock = true;
-         }
-         gCv.notify_all();
+        // Signal all blocking tasks to unblock so shutdown can complete cleanly.
+        {
+            std::lock_guard<std::mutex> lock(gMutex);
+            allowBlock = true;
+        }
+        gCv.notify_all();
 
-         // Shutdown — each worker should exit cleanly even while stealing from others.
-         pool.shutdown();
+        // Shutdown — each worker should exit cleanly even while stealing from others.
+        pool.shutdown();
 
         auto s = pool.stats();
         assert(s.tasksCompleted == kThreadCount);
@@ -352,11 +387,10 @@ int main()
 
     // Test 12: Exception containment with cancellation.
     {
-        BMMQ::BackgroundThreadPool pool(2u);
+        BMMQ::BackgroundThreadPool pool(1u);
         pool.start();
 
         std::atomic<int> goodCount{0};
-        std::atomic<bool> blockTask{false};
         std::mutex gMutex;
         std::condition_variable gCv;
         bool allowBlock{false};

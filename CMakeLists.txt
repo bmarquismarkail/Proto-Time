@@ -424,7 +424,13 @@ add_executable(time-smoke-gameboy-cartridge-save tests/smoke_gameboy_cartridge_s
 target_link_libraries(time-smoke-gameboy-cartridge-save time-gameboy-interpreter-core)
 add_test(NAME smoke_gameboy_cartridge_save COMMAND time-smoke-gameboy-cartridge-save)
 add_executable(time-smoke-background-task-service tests/smoke_background_task_service.cpp)
+target_link_libraries(time-smoke-background-task-service time-machine-runtime-common)
 add_test(NAME smoke_background_task_service COMMAND time-smoke-background-task-service)
+
+# Background thread pool smoke test (directly exercises the pool).
+add_executable(time-smoke-background-thread-pool tests/smoke_background_thread_pool.cpp)
+target_link_libraries(time-smoke-background-thread-pool time-machine-runtime-common)
+add_test(NAME smoke_background_thread_pool COMMAND time-smoke-background-thread-pool)
 add_executable(time-smoke-image-decode-pipeline tests/smoke_image_decode_pipeline.cpp)
 target_link_libraries(time-smoke-image-decode-pipeline time-gameboy-interpreter-core)
 add_test(NAME smoke_image_decode_pipeline COMMAND time-smoke-image-decode-pipeline)

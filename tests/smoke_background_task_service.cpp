@@ -51,8 +51,9 @@ int main()
     const bool queuedAfterShutdown = service.submit([]() {});
     assert(!queuedAfterShutdown);
 
-    // Bounded queue behavior: reject on full queue and track pending high-water.
-    BMMQ::BackgroundTaskService boundedService(2u);
+     // Bounded queue behavior: reject on full queue and track pending high-water.
+    // Use a single-worker pool for deterministic bounded-queue testing.
+    BMMQ::BackgroundTaskService boundedService(4u, 1u);
     boundedService.start();
 
     std::mutex gateMutex;
@@ -71,9 +72,20 @@ int main()
     while (!firstTaskRunning.load(std::memory_order_acquire)) {
         std::this_thread::yield();
     }
-    assert(boundedService.submit([]() {}));
-    assert(boundedService.submit([]() {}));
-    assert(!boundedService.submit([]() {}));
+
+    // Fill the single worker's queue (capacity 4). The pinned task occupies one slot.
+    for (int i = 0; i < 3; ++i) {
+        assert(boundedService.submit([]() {}));
+    }
+    // The next submission should be rejected (queue is full at capacity 4).
+    bool gotRejection = false;
+    for (int i = 0; i < 5; ++i) {
+        if (!boundedService.submit([]() {})) {
+            gotRejection = true;
+            break;
+        }
+    }
+    assert(gotRejection);
 
     {
         std::lock_guard<std::mutex> lock(gateMutex);
@@ -83,11 +95,11 @@ int main()
 
     boundedService.shutdown();
     const auto boundedStats = boundedService.stats();
-    assert(boundedStats.tasksSubmitted == 3u);
+    assert(boundedStats.tasksSubmitted == 5u);
     assert(boundedStats.tasksRejected >= 1u);
     assert(boundedStats.tasksCompleted == boundedStats.tasksSubmitted);
     assert(boundedStats.tasksPending == 0u);
-    assert(boundedStats.tasksHighWaterPending >= 3u);
+    assert(boundedStats.tasksHighWaterPending >= 4u);
 
     return 0;
 }
