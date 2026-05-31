@@ -35,6 +35,7 @@
 #include "machine/plugins/SdlFrontendPluginLoader.hpp"
 #include "machine/TimingService.hpp"
 #include "cores/gameboy/GameBoyMachine.hpp"
+#include "cores/gamegear/GameGearMachine.hpp"
 
 namespace {
 
@@ -488,9 +489,14 @@ int main(int argc, char** argv)
         auto& machine = *bootstrapped.machine;
         const auto& descriptor = bootstrapped.descriptor;
         const auto romSize = bootstrapped.romSize;
+        machine.videoService().setBackgroundTaskService(&backgroundTaskService);
         if (auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get());
             gameBoyMachine != nullptr) {
             gameBoyMachine->setBackgroundTaskService(&backgroundTaskService);
+        }
+        if (auto* gameGearMachine = dynamic_cast<BMMQ::GameGearMachine*>(bootstrapped.machine.get());
+            gameGearMachine != nullptr) {
+            gameGearMachine->setBackgroundTaskService(&backgroundTaskService);
         }
 
         BMMQ::ISdlFrontendPlugin* frontend = nullptr;

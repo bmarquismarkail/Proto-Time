@@ -5,11 +5,18 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 
 class GameGearSaveManager {
 public:
+    struct SaveSnapshot {
+        std::filesystem::path savePath;
+        std::filesystem::path saveTempPath;
+        std::vector<uint8_t> saveData;
+    };
+
     void bindRomPath(const std::filesystem::path& romPath)
     {
         savePath_ = romPath;
@@ -58,6 +65,26 @@ public:
         return true;
     }
 
+    [[nodiscard]] std::optional<SaveSnapshot> extractDirtySaveSnapshot(GameGearMapper& cartridge) const
+    {
+        if (!bound_ || !cartridge.supportsSaveData() || !cartridge.hasDirtySaveData()) {
+            return std::nullopt;
+        }
+
+        SaveSnapshot snapshot;
+        snapshot.savePath = savePath_;
+        snapshot.saveTempPath = savePath_;
+        snapshot.saveTempPath += ".tmp";
+        snapshot.saveData = cartridge.exportSaveData();
+        cartridge.markSaveClean();
+        return snapshot;
+    }
+
+    static void flushSnapshot(const SaveSnapshot& snapshot)
+    {
+        writeFileAtomic(snapshot.savePath, snapshot.saveTempPath, snapshot.saveData);
+    }
+
 private:
     [[nodiscard]] static std::vector<uint8_t> readFile(const std::filesystem::path& path)
     {
@@ -70,13 +97,20 @@ private:
 
     static void writeFileAtomic(const std::filesystem::path& path, const std::vector<uint8_t>& bytes)
     {
+        auto tempPath = path;
+        tempPath += ".tmp";
+        writeFileAtomic(path, tempPath, bytes);
+    }
+
+    static void writeFileAtomic(
+        const std::filesystem::path& path,
+        const std::filesystem::path& tempPath,
+        const std::vector<uint8_t>& bytes)
+    {
         const auto parent = path.parent_path();
         if (!parent.empty()) {
             std::filesystem::create_directories(parent);
         }
-
-        auto tempPath = path;
-        tempPath += ".tmp";
 
         {
             std::ofstream output(tempPath, std::ios::binary | std::ios::trunc);

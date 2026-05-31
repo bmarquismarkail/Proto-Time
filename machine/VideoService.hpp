@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "BackgroundTaskService.hpp"
 #include "VisualDebugAdapter.hpp"
 #include "VisualOverrideService.hpp"
 #include "plugins/IoPlugin.hpp"
@@ -116,6 +117,8 @@ struct VideoServiceDiagnostics {
     std::size_t buildDebugFrameDebugConsumerInactiveCount = 0;
     std::size_t videoDebugFrameBuildSkippedNoConsumerCount = 0;
     std::size_t videoDebugFrameBuildExecutedCount = 0;
+    std::size_t captureBackgroundSubmitCount = 0;
+    std::size_t captureBackgroundFallbackCount = 0;
 };
 
 class VideoService {
@@ -143,6 +146,12 @@ public:
     {
         visualOverrideService_ = service;
         engine_.setVisualOverrideService(service);
+    }
+
+    void setBackgroundTaskService(BackgroundTaskService* service) noexcept
+    {
+        std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
+        backgroundTaskService_ = service;
     }
 
     void setVisualDebugAdapter(const IVisualDebugAdapter* adapter) noexcept
@@ -346,11 +355,17 @@ public:
             return false;
         }
         const auto caps = capture->capabilities();
-        if (!caps.realtimeSafe || !caps.deterministic || caps.nonRealtimeOnly) {
+        std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
+        const bool inlineSafe = caps.realtimeSafe && caps.deterministic && !caps.nonRealtimeOnly;
+        const bool backgroundSafe =
+            backgroundTaskService_ != nullptr && caps.deterministic && !caps.requiresHostThreadAffinity;
+        if (!inlineSafe && !backgroundSafe) {
             return false;
         }
-        std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
-        captures_.push_back(std::move(capture));
+        captures_.push_back(CaptureRegistration{
+            std::shared_ptr<IVideoCapturePlugin>(std::move(capture)),
+            !inlineSafe,
+        });
         return true;
     }
 
@@ -539,9 +554,7 @@ public:
             processed = std::move(output);
         }
 
-        for (auto& capture : captures_) {
-            (void)capture->capture(processed);
-        }
+        dispatchCaptures(processed);
 
         diagnostics_.lastPresentedGeneration = processed.generation;
         const auto publishedGeneration = diagnostics_.lastPublishedGeneration;
@@ -743,6 +756,40 @@ private:
         diagnostics_.videoDebugFrameBuildExecutedCount = videoDebugFrameBuildExecutedCount_;
     }
 
+    void dispatchCaptures(const VideoFramePacket& frame)
+    {
+        if (captures_.empty()) {
+            return;
+        }
+
+        if (backgroundTaskService_ != nullptr) {
+            auto captures = captures_;
+            auto captureDispatchMutex = captureDispatchMutex_;
+            auto frameCopy = frame;
+            const bool queued = backgroundTaskService_->submit([
+                captures = std::move(captures),
+                captureDispatchMutex = std::move(captureDispatchMutex),
+                frameCopy = std::move(frameCopy)]() mutable {
+                    std::lock_guard<std::mutex> lock(*captureDispatchMutex);
+                    for (const auto& capture : captures) {
+                        (void)capture.plugin->capture(frameCopy);
+                    }
+                });
+            if (queued) {
+                ++diagnostics_.captureBackgroundSubmitCount;
+                return;
+            }
+            ++diagnostics_.captureBackgroundFallbackCount;
+        }
+
+        std::lock_guard<std::mutex> lock(*captureDispatchMutex_);
+        for (const auto& capture : captures_) {
+            if (!capture.backgroundOnly) {
+                (void)capture.plugin->capture(frame);
+            }
+        }
+    }
+
     [[nodiscard]] bool hasCompleteScanlineFrameLocked() const noexcept
     {
         return scanlineFrame_.has_value() &&
@@ -850,13 +897,20 @@ private:
         ++lifecycleEpochBumpCount_;
     }
 
+    struct CaptureRegistration {
+        std::shared_ptr<IVideoCapturePlugin> plugin;
+        bool backgroundOnly = false;
+    };
+
     VideoEngine engine_{};
     VisualOverrideService* visualOverrideService_ = nullptr;
+    BackgroundTaskService* backgroundTaskService_ = nullptr;
     const IVisualDebugAdapter* visualDebugAdapter_ = nullptr;
     VideoPresenterConfig presenterConfig_{};
     std::unique_ptr<IVideoPresenterPlugin> presenter_{};
     std::vector<std::unique_ptr<IVideoFrameProcessorPlugin>> processors_{};
-    std::vector<std::unique_ptr<IVideoCapturePlugin>> captures_{};
+    std::vector<CaptureRegistration> captures_{};
+    std::shared_ptr<std::mutex> captureDispatchMutex_ = std::make_shared<std::mutex>();
     mutable VideoServiceDiagnostics diagnostics_{};
     VideoLifecycleState state_ = VideoLifecycleState::Headless;
     mutable std::mutex nonRealTimeMutex_;

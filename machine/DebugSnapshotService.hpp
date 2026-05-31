@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstddef>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <optional>
 
@@ -11,6 +12,8 @@
 #include "machine/plugins/IoPlugin.hpp"
 
 namespace BMMQ {
+
+class BackgroundTaskService;
 
 /// Decouples debug snapshot delivery from sharedStateMutex_ contention.
 ///
@@ -33,6 +36,8 @@ public:
         std::size_t audioCapacity = kDefaultAudioCapacity) noexcept;
 
     ~DebugSnapshotService() noexcept = default;
+
+    void setBackgroundTaskService(BackgroundTaskService* service) noexcept;
 
     DebugSnapshotService(const DebugSnapshotService&) = delete;
     DebugSnapshotService& operator=(const DebugSnapshotService&) = delete;
@@ -70,21 +75,13 @@ public:
     [[nodiscard]] DebugSnapshotStats stats() const noexcept;
 
 private:
-    const std::size_t videoCapacity_;
-    const std::size_t audioCapacity_;
+    struct State;
 
-    mutable std::mutex videoMutex_;
-    std::deque<VideoDebugFrameModel> videoQueue_;
+    [[nodiscard]] static bool enqueueVideo(const std::shared_ptr<State>& state, VideoDebugFrameModel model);
+    [[nodiscard]] static bool enqueueAudio(const std::shared_ptr<State>& state, AudioStateView stateView);
 
-    mutable std::mutex audioMutex_;
-    std::deque<AudioStateView> audioQueue_;
-
-    std::atomic<std::size_t> videoSubmissions_{0};
-    std::atomic<std::size_t> videoConsumptions_{0};
-    std::atomic<std::size_t> videoOverflows_{0};
-    std::atomic<std::size_t> audioSubmissions_{0};
-    std::atomic<std::size_t> audioConsumptions_{0};
-    std::atomic<std::size_t> audioOverflows_{0};
+    std::shared_ptr<State> state_;
+    BackgroundTaskService* backgroundTaskService_ = nullptr;
 };
 
 } // namespace BMMQ

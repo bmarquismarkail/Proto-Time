@@ -3,8 +3,11 @@
 #endif
 
 #include <cassert>
+#include <chrono>
 #include <optional>
+#include <thread>
 
+#include "machine/BackgroundTaskService.hpp"
 #include "machine/DebugSnapshotService.hpp"
 #include "machine/DebugSnapshotTypes.hpp"
 #include "machine/VideoDebugModel.hpp"
@@ -29,6 +32,19 @@ BMMQ::AudioStateView makeAudioState(uint64_t frame = 1)
     state.sampleRate = 48000;
     state.channelCount = 2;
     return state;
+}
+
+template <typename Predicate>
+bool waitUntil(Predicate predicate, std::chrono::milliseconds timeout)
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (predicate()) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return predicate();
 }
 
 } // namespace
@@ -180,6 +196,39 @@ int main()
         assert(b.has_value() && b->width == 20);
         assert(c.has_value() && c->width == 30);
         assert(!svc.tryConsumeVideo().has_value());
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 8: Optional background task service defers queue insertion.
+    // -----------------------------------------------------------------------
+    {
+        BMMQ::BackgroundTaskService backgroundTasks;
+        backgroundTasks.start();
+
+        BMMQ::DebugSnapshotService svc(/*videoCapacity=*/4u, /*audioCapacity=*/4u);
+        svc.setBackgroundTaskService(&backgroundTasks);
+        assert(svc.submitVideoModel(makeVideoModel(40, 30)));
+        assert(svc.submitAudioState(makeAudioState(77u)));
+
+        assert(waitUntil([&]() {
+            const auto stats = svc.stats();
+            return stats.videoSubmissions == 1u && stats.audioSubmissions == 1u;
+        }, std::chrono::seconds(2)));
+
+        const auto stats = svc.stats();
+        assert(stats.videoBackgroundSubmissions == 1u);
+        assert(stats.audioBackgroundSubmissions == 1u);
+        assert(stats.videoBackgroundFallbacks == 0u);
+        assert(stats.audioBackgroundFallbacks == 0u);
+
+        auto video = svc.tryConsumeVideo();
+        assert(video.has_value());
+        assert(video->width == 40);
+        auto audio = svc.tryConsumeAudio();
+        assert(audio.has_value());
+        assert(audio->frameCounter == 77u);
+
+        backgroundTasks.shutdown();
     }
 
     return 0;

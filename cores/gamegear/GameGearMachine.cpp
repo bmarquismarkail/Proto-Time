@@ -11,6 +11,7 @@
 #include "inst_cycle/executor/PluginContract.hpp"
 #include "machine/plugins/IoPlugin.hpp"
 #include "machine/plugins/PluginManager.hpp"
+#include "machine/BackgroundTaskService.hpp"
 #include "Z80Interpreter.hpp"
 #include "GameGearVDP.hpp"
 #include "GameGearPSG.hpp"
@@ -190,6 +191,32 @@ private:
 }
 
 struct GameGearMachine::Impl {
+    void flushCartridgeSaveOnSchedule()
+    {
+        if (!cart) {
+            return;
+        }
+
+        if (backgroundTaskService == nullptr) {
+            (void)saveManager.flush(*cart);
+            return;
+        }
+
+        auto extracted = saveManager.extractDirtySaveSnapshot(*cart);
+        if (!extracted.has_value()) {
+            return;
+        }
+
+        auto snapshot = std::move(*extracted);
+        auto fallbackSnapshot = snapshot;
+        const bool queued = backgroundTaskService->submit([snapshot = std::move(snapshot)]() mutable {
+            GameGearSaveManager::flushSnapshot(snapshot);
+        });
+        if (!queued) {
+            GameGearSaveManager::flushSnapshot(fallbackSnapshot);
+        }
+    }
+
     Z80Interpreter cpu;
     GameGearVDP vdp;
     GameGearPSG psg;
@@ -198,6 +225,7 @@ struct GameGearMachine::Impl {
     GameGearMemoryMap mem;
     PluginManager pluginManager;
     GameGearSaveManager saveManager;
+    BMMQ::BackgroundTaskService* backgroundTaskService = nullptr;
     Plugin::DefaultStepPolicy defaultPolicy;
     Plugin::IExecutorPolicyPlugin* activePolicy = &defaultPolicy;
     bool romLoaded = false;
@@ -380,6 +408,7 @@ void GameGearMachine::step() {
                 "entered VBlank"
             });
         }
+        impl->flushCartridgeSaveOnSchedule();
     }
     if (impl->vdp.takeIrqAsserted()) {
         impl->interruptRequested = true;
@@ -501,6 +530,10 @@ std::string GameGearMachine::stopSummary() const {
 bool GameGearMachine::flushCartridgeSave() {
     if (!impl->cart) return false;
     return impl->saveManager.flush(*impl->cart);
+}
+
+void GameGearMachine::setBackgroundTaskService(BMMQ::BackgroundTaskService* service) noexcept {
+    impl->backgroundTaskService = service;
 }
 
 bool GameGearMachine::cpuInterruptsEnabled() const {

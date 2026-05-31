@@ -2,14 +2,18 @@
 #undef NDEBUG
 #endif
 
+#include <atomic>
 #include <cassert>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <thread>
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+#include "machine/BackgroundTaskService.hpp"
 #include "machine/VideoService.hpp"
 #include "tests/visual_test_helpers.hpp"
 
@@ -60,6 +64,32 @@ public:
     }
 };
 
+
+class NonRealtimeRecordingCapture final : public BMMQ::IVideoCapturePlugin {
+public:
+    [[nodiscard]] BMMQ::VideoPluginCapabilities capabilities() const noexcept override
+    {
+        return {
+            .realtimeSafe = false,
+            .frameSizePreserving = true,
+            .snapshotAware = true,
+            .deterministic = true,
+            .headlessSafe = true,
+            .nonRealtimeOnly = true,
+        };
+    }
+
+    bool capture(const BMMQ::VideoFramePacket& frame) noexcept override
+    {
+        lastGeneration.store(frame.generation, std::memory_order_release);
+        captureCount.fetch_add(1u, std::memory_order_release);
+        return true;
+    }
+
+    std::atomic<std::size_t> captureCount{0};
+    std::atomic<std::uint64_t> lastGeneration{0};
+};
+
 class RecordingCapture final : public BMMQ::IVideoCapturePlugin {
 public:
     [[nodiscard]] BMMQ::VideoPluginCapabilities capabilities() const noexcept override
@@ -75,13 +105,13 @@ public:
 
     bool capture(const BMMQ::VideoFramePacket& frame) noexcept override
     {
-        lastGeneration = frame.generation;
-        ++captureCount;
+        lastGeneration.store(frame.generation, std::memory_order_release);
+        captureCount.fetch_add(1u, std::memory_order_release);
         return true;
     }
 
-    std::size_t captureCount = 0;
-    std::uint64_t lastGeneration = 0;
+    std::atomic<std::size_t> captureCount{0};
+    std::atomic<std::uint64_t> lastGeneration{0};
 };
 
 BMMQ::VideoStateView makeSplitScrollState(uint8_t ly, uint8_t scx)
@@ -106,6 +136,19 @@ BMMQ::VideoStateView makeSplitScrollState(uint8_t ly, uint8_t scx)
     state.vram[0x1800u] = 0x00u;
     state.vram[0x1801u] = 0x01u;
     return state;
+}
+
+template <typename Predicate>
+bool waitUntil(Predicate predicate, std::chrono::milliseconds timeout)
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (predicate()) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return predicate();
 }
 
 } // namespace
@@ -147,8 +190,8 @@ int main()
     assert(service.submitFrame(frame));
     assert(service.diagnostics().presentCount == 0u);
     assert(service.presentOneFrame());
-    assert(capturePtr->captureCount == 1u);
-    assert(capturePtr->lastGeneration == 3u);
+    assert(capturePtr->captureCount.load(std::memory_order_acquire) == 1u);
+    assert(capturePtr->lastGeneration.load(std::memory_order_acquire) == 3u);
     assert(service.diagnostics().lastPresentedGeneration == 3u);
     assert(service.diagnostics().presentCount == 1u);
     assert(service.diagnostics().lastPublishedGeneration == 3u);
@@ -183,6 +226,31 @@ int main()
     assert(service.diagnostics().lifecycleEpoch == lifecycleEpochBeforePresenterConfig + 1u);
     assert(service.presentOneFrame());
     assert(service.diagnostics().presentFallbackCount >= 1u);
+
+    BMMQ::BackgroundTaskService backgroundTasks;
+    backgroundTasks.start();
+    BMMQ::VideoService asyncCaptureService(BMMQ::VideoEngineConfig{
+        .frameWidth = 32,
+        .frameHeight = 24,
+        .mailboxDepthFrames = 1,
+    });
+    asyncCaptureService.setBackgroundTaskService(&backgroundTasks);
+    auto asyncCapture = std::make_unique<RecordingCapture>();
+    auto* asyncCapturePtr = asyncCapture.get();
+    assert(asyncCaptureService.addCapture(std::move(asyncCapture)));
+    auto nonRealtimeCapture = std::make_unique<NonRealtimeRecordingCapture>();
+    auto* nonRealtimeCapturePtr = nonRealtimeCapture.get();
+    assert(asyncCaptureService.addCapture(std::move(nonRealtimeCapture)));
+    assert(asyncCaptureService.submitFrame(BMMQ::makeBlankVideoFrame(32, 24, 9u)));
+    assert(asyncCaptureService.presentOneFrame());
+    assert(asyncCaptureService.diagnostics().captureBackgroundSubmitCount == 1u);
+    assert(waitUntil([&]() {
+        return asyncCapturePtr->captureCount.load(std::memory_order_acquire) == 1u &&
+               nonRealtimeCapturePtr->captureCount.load(std::memory_order_acquire) == 1u;
+    }, std::chrono::seconds(2)));
+    assert(asyncCapturePtr->lastGeneration.load(std::memory_order_acquire) == 9u);
+    assert(nonRealtimeCapturePtr->lastGeneration.load(std::memory_order_acquire) == 9u);
+    backgroundTasks.shutdown();
 
     BMMQ::VideoService scanlineService(BMMQ::VideoEngineConfig{
         .frameWidth = 8,
