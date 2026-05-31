@@ -31,8 +31,11 @@ public:
         std::optional<std::size_t> maxQueuedTasks = std::nullopt,
         std::optional<std::size_t> threadCount = std::nullopt) noexcept
     {
-        auto cap = maxQueuedTasks.value_or(kDefaultMaxQueuedTasks);
-        pool_ = std::make_unique<BackgroundThreadPool>(threadCount, cap);
+        const auto cap = maxQueuedTasks.value_or(kDefaultMaxQueuedTasks);
+        pool_ = std::make_unique<BackgroundThreadPool>(
+            threadCount,
+            BackgroundThreadPool::kDefaultMaxQueuedTasksPerWorker,
+            cap == 0u ? 1u : cap);
     }
 
     BackgroundTaskService(const BackgroundTaskService&) = delete;

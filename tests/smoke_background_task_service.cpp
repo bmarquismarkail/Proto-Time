@@ -9,6 +9,23 @@
 
 #include "machine/BackgroundTaskService.hpp"
 
+namespace {
+
+template <typename Predicate>
+bool waitUntil(Predicate predicate, std::chrono::milliseconds timeout)
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (predicate()) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return predicate();
+}
+
+} // namespace
+
 int main()
 {
     BMMQ::BackgroundTaskService service;
@@ -51,7 +68,7 @@ int main()
     const bool queuedAfterShutdown = service.submit([]() {});
     assert(!queuedAfterShutdown);
 
-     // Bounded queue behavior: reject on full queue and track pending high-water.
+    // Bounded queue behavior: reject on full queue and track pending high-water.
     // Use a single-worker pool for deterministic bounded-queue testing.
     BMMQ::BackgroundTaskService boundedService(4u, 1u);
     boundedService.start();
@@ -73,11 +90,11 @@ int main()
         std::this_thread::yield();
     }
 
-    // Fill the single worker's queue (capacity 4). The pinned task occupies one slot.
+    // Fill the single worker's queue while the first task is pinned in flight.
     for (int i = 0; i < 3; ++i) {
         assert(boundedService.submit([]() {}));
     }
-    // The next submission should be rejected (queue is full at capacity 4).
+    // One of these submissions should be rejected once the queue reaches capacity 4.
     bool gotRejection = false;
     for (int i = 0; i < 5; ++i) {
         if (!boundedService.submit([]() {})) {
@@ -100,6 +117,47 @@ int main()
     assert(boundedStats.tasksCompleted == boundedStats.tasksSubmitted);
     assert(boundedStats.tasksPending == 0u);
     assert(boundedStats.tasksHighWaterPending >= 4u);
+
+    // Preserve BackgroundTaskService's total queue cap when backed by a multi-worker pool.
+    BMMQ::BackgroundTaskService globalBoundedService(2u, 2u);
+    globalBoundedService.start();
+
+    std::mutex globalGateMutex;
+    std::condition_variable globalGateCv;
+    bool allowGlobalBlockers = false;
+    std::atomic<std::size_t> globalBlockersRunning{0};
+
+    for (std::size_t i = 0; i < 2u; ++i) {
+        const bool queued = globalBoundedService.submit([&]() {
+            globalBlockersRunning.fetch_add(1u, std::memory_order_release);
+            std::unique_lock<std::mutex> lock(globalGateMutex);
+            globalGateCv.wait(lock, [&allowGlobalBlockers]() {
+                return allowGlobalBlockers;
+            });
+        });
+        assert(queued);
+    }
+
+    assert(waitUntil([&]() {
+        return globalBlockersRunning.load(std::memory_order_acquire) == 2u;
+    }, std::chrono::seconds(2)));
+
+    assert(globalBoundedService.submit([]() {}));
+    assert(globalBoundedService.submit([]() {}));
+    assert(!globalBoundedService.submit([]() {}));
+
+    {
+        std::lock_guard<std::mutex> lock(globalGateMutex);
+        allowGlobalBlockers = true;
+    }
+    globalGateCv.notify_all();
+
+    globalBoundedService.shutdown();
+    const auto globalBoundedStats = globalBoundedService.stats();
+    assert(globalBoundedStats.tasksSubmitted == 4u);
+    assert(globalBoundedStats.tasksRejected >= 1u);
+    assert(globalBoundedStats.tasksCompleted == globalBoundedStats.tasksSubmitted);
+    assert(globalBoundedStats.tasksPending == 0u);
 
     return 0;
 }

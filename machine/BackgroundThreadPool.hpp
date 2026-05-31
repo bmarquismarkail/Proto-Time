@@ -35,11 +35,13 @@ public:
 
     explicit BackgroundThreadPool(
         std::optional<std::size_t> threadCount = std::nullopt,
-        std::size_t maxQueuedTasksPerWorker = kDefaultMaxQueuedTasksPerWorker) noexcept
+        std::size_t maxQueuedTasksPerWorker = kDefaultMaxQueuedTasksPerWorker,
+        std::optional<std::size_t> maxQueuedTasksTotal = std::nullopt) noexcept
         : threadCount_(std::max<std::size_t>(
               1u,
               threadCount.value_or(std::max<std::size_t>(1u, std::thread::hardware_concurrency())))),
-          maxQueuedTasksPerWorker_(maxQueuedTasksPerWorker == 0u ? 1u : maxQueuedTasksPerWorker)
+          maxQueuedTasksPerWorker_(maxQueuedTasksPerWorker == 0u ? 1u : maxQueuedTasksPerWorker),
+          maxQueuedTasksTotal_(maxQueuedTasksTotal.value_or(0u))
     {
         // Reserve storage for workers.
         workerLocal_.reserve(threadCount_);
@@ -105,6 +107,7 @@ public:
             std::lock_guard<std::mutex> lock(ws.mutex);
             cancelled += ws.queue.size();
             tasksPending_.fetch_sub(ws.queue.size(), std::memory_order_relaxed);
+            releaseQueuedSlots(ws.queue.size());
             ws.queue.clear();
         }
         if (cancelled > 0) {
@@ -115,13 +118,20 @@ public:
 
     // Submit a task to the pool. The pool uses round-robin load-balancing
     // to distribute submissions across workers. Returns false if the pool
-    // is shut down or all worker queues are full.
+    // is shut down, a configured queue cap is reached, or all worker queues are full.
     [[nodiscard]] bool submit(std::function<void()> task)
     {
         std::size_t queuedWorker = workerLocal_.size();
+        bool queuedSlotReserved = false;
         {
             std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
             if (!running_.load(std::memory_order_acquire) || stopRequested_.load(std::memory_order_acquire)) {
+                tasksRejected_.fetch_add(1, std::memory_order_relaxed);
+                return false;
+            }
+
+            queuedSlotReserved = reserveQueuedSlot();
+            if (!queuedSlotReserved) {
                 tasksRejected_.fetch_add(1, std::memory_order_relaxed);
                 return false;
             }
@@ -151,6 +161,9 @@ public:
             return true;
         }
 
+        if (queuedSlotReserved) {
+            releaseQueuedSlots(1u);
+        }
         tasksRejected_.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
@@ -214,7 +227,7 @@ private:
             workerLocal_[myId]->cv.wait_for(lock, std::chrono::milliseconds(1), [this, myId]() {
                 return stopRequested_.load(std::memory_order_acquire) ||
                        !workerLocal_[myId]->queue.empty() ||
-                       tasksPending_.load(std::memory_order_relaxed) > 0u;
+                       queuedTasks_.load(std::memory_order_relaxed) > 0u;
             });
         }
     }
@@ -240,6 +253,7 @@ private:
 
         auto task = std::move(ws.queue.front());
         ws.queue.pop_front();
+        releaseQueuedSlots(1u);
         return task;
     }
 
@@ -257,6 +271,7 @@ private:
             if (!victim.queue.empty()) {
                 auto stolen = std::move(victim.queue.back());
                 victim.queue.pop_back();
+                releaseQueuedSlots(1u);
                 stealSucceeded_.fetch_add(1, std::memory_order_relaxed);
                 return stolen;
             }
@@ -282,11 +297,40 @@ private:
         }
     }
 
+    [[nodiscard]] bool reserveQueuedSlot() noexcept
+    {
+        if (maxQueuedTasksTotal_ == 0u) {
+            queuedTasks_.fetch_add(1u, std::memory_order_relaxed);
+            return true;
+        }
+
+        auto queued = queuedTasks_.load(std::memory_order_relaxed);
+        while (queued < maxQueuedTasksTotal_) {
+            if (queuedTasks_.compare_exchange_weak(
+                    queued,
+                    queued + 1u,
+                    std::memory_order_relaxed,
+                    std::memory_order_relaxed)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void releaseQueuedSlots(std::size_t count) noexcept
+    {
+        if (count == 0u) {
+            return;
+        }
+        queuedTasks_.fetch_sub(count, std::memory_order_relaxed);
+    }
+
     mutable std::mutex lifecycleMutex_{};
     std::atomic<bool> running_{false};
     std::atomic<bool> stopRequested_{false};
     const std::size_t threadCount_;
     const std::size_t maxQueuedTasksPerWorker_;
+    const std::size_t maxQueuedTasksTotal_;
 
     std::atomic<std::size_t> roundRobin_{0};
 
@@ -304,6 +348,7 @@ private:
     std::atomic<std::size_t> stealSucceeded_{0};
     std::atomic<std::size_t> tasksHighWaterPending_{0};
     std::atomic<std::size_t> cancelled_{0};
+    std::atomic<std::size_t> queuedTasks_{0};
 };
 
 } // namespace BMMQ
