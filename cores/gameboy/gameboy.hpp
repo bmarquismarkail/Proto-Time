@@ -13,6 +13,7 @@
 #include "../../machine/CPU.hpp"
 #include "../../common_microcode.hpp"
 #include "../../inst_cycle/opcode.hpp"
+#include "../../inst_cycle/BlockCache.hpp"
 #include "../../inst_cycle/execute/executionBlock.hpp"
 #include "../../inst_cycle/fetch/fetchBlock.hpp"
 #include "../../memory/MemoryPool.hpp"
@@ -268,6 +269,17 @@ public:
                   BMMQ::executionBlock<AddressType, DataType, AddressType>& block);
   bool tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fetchData);
 
+  // Phase 10: guarded single-instruction block cache over the LR3592 fast interpreter.
+  bool tryExecuteFromCache(BMMQ::fetchBlock<AddressType, DataType>& fetchData);
+  void populateBlockCache(BMMQ::fetchBlock<AddressType, DataType>& fetchData);
+  void invalidateBlockCacheForWrite(AddressType address, std::size_t size = 1);
+  void invalidateAllBlockCache();
+  [[nodiscard]] BMMQ::CacheStats blockCacheStats() const;
+
+private:
+  BMMQ::BlockCache<AddressType, std::vector<DataType>> blockCache_;
+
+public:
   void
   execute(const BMMQ::executionBlock<AddressType, DataType, AddressType> &block,
           BMMQ::fetchBlock<AddressType, DataType> &fb) override;

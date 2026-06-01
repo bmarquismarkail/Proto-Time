@@ -2283,6 +2283,78 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
     return false;
 }
 
+
+
+bool LR3592_DMG::tryExecuteFromCache(BMMQ::fetchBlock<AddressType, DataType>& fetchData)
+{
+    const auto& blocks = fetchData.getblockData();
+    if (blocks.empty() || blocks.front().data.empty()) {
+        return false;
+    }
+
+    const auto pcAddress = static_cast<AddressType>(fetchData.getbaseAddress());
+    if (!blockCache_.guardValid(pcAddress)) {
+        blockCache_.recordMiss();
+        return false;
+    }
+
+    const auto cachedBlock = blockCache_.getBlock(pcAddress);
+    if (!cachedBlock.has_value()) {
+        return false;
+    }
+
+    const auto& currentBytes = blocks.front().data;
+    if (cachedBlock->size() != currentBytes.size() ||
+        !std::equal(cachedBlock->begin(), cachedBlock->end(), currentBytes.begin())) {
+        blockCache_.invalidateGuard(pcAddress);
+        return false;
+    }
+
+    if (!tryFastExecute(fetchData)) {
+        blockCache_.invalidateGuard(pcAddress);
+        return false;
+    }
+
+    return true;
+}
+
+void LR3592_DMG::populateBlockCache(BMMQ::fetchBlock<AddressType, DataType>& fetchData)
+{
+    const auto& blocks = fetchData.getblockData();
+    if (blocks.empty() || blocks.front().data.empty()) {
+        return;
+    }
+
+    const auto pcAddress = static_cast<AddressType>(fetchData.getbaseAddress());
+    blockCache_.setBlock(pcAddress, blocks.front().data, 0xDEADBEEFu);
+}
+
+void LR3592_DMG::invalidateBlockCacheForWrite(AddressType address, std::size_t size)
+{
+    address = normalizeAccessAddress(address);
+    if (size == 0u) {
+        return;
+    }
+
+    if (address < 0x8000u || address == 0xFF50u) {
+        invalidateAllBlockCache();
+        return;
+    }
+
+    const auto end = static_cast<AddressType>(address + static_cast<AddressType>(size - 1u));
+    blockCache_.invalidateRange(address, end);
+}
+
+void LR3592_DMG::invalidateAllBlockCache()
+{
+    blockCache_.invalidateAll();
+}
+
+BMMQ::CacheStats LR3592_DMG::blockCacheStats() const
+{
+    return blockCache_.getStats();
+}
+
 void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, AddressType>& block, BMMQ::fetchBlock<AddressType, DataType>& fb)
 {
     feedback.pcBefore = (pcRegister_ != nullptr)
@@ -2439,6 +2511,7 @@ bool LR3592_DMG::handleMemoryRead(AddressType address, std::span<DataType> value
 bool LR3592_DMG::handleMemoryWrite(AddressType address, std::span<const DataType> value)
 {
     address = normalizeAccessAddress(address);
+    invalidateBlockCacheForWrite(address, value.size());
     if (value.size() == 1 && address == 0xFF00) {
         const DataType oldLow = joypadLowNibble();
         joypSelect = static_cast<DataType>(value[0] & 0x30u);

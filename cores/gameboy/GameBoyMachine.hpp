@@ -299,6 +299,10 @@ public:
         return saveManager_.flush(cartridge_);
     }
 
+    [[nodiscard]] BMMQ::CacheStats blockCacheStats() const {
+        return cpu_.cpu().blockCacheStats();
+    }
+
     void setBackgroundTaskService(BMMQ::BackgroundTaskService* service) noexcept {
         backgroundTaskService_ = service;
     }
@@ -353,7 +357,13 @@ public:
             bootEntryPending_ = false;
             return;
         }
-        context_.step();
+
+        auto& cpu = cpu_.cpu();
+        auto fetchBlock = context_.fetch();
+        if (!cpu.tryExecuteFromCache(fetchBlock)) {
+            context_.step(fetchBlock);
+            cpu.populateBlockCache(fetchBlock);
+        }
         ++stepCounter_;
         const auto& feedback = context_.getLastFeedback();
 
@@ -517,6 +527,7 @@ private:
         lastPolledDigitalInput_.reset();
         lastLy_ = context_.read8(0xFF44);
         lastPpuMode_ = static_cast<uint8_t>(context_.read8(0xFF41) & 0x03u);
+        cpu_.cpu().invalidateAllBlockCache();
         scanlineVideoCaptureActive_ = false;
         lastScanlineVideoSignature_ = currentScanlineVideoSignature();
         emitMachineEvent(BMMQ::MachineEvent{
