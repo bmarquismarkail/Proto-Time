@@ -2287,6 +2287,10 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
 
 bool LR3592_DMG::tryExecuteFromCache(BMMQ::fetchBlock<AddressType, DataType>& fetchData)
 {
+    if (!blockCacheEnabled_) {
+        return false;
+    }
+
     const auto& blocks = fetchData.getblockData();
     if (blocks.empty() || blocks.front().data.empty()) {
         return false;
@@ -2320,6 +2324,10 @@ bool LR3592_DMG::tryExecuteFromCache(BMMQ::fetchBlock<AddressType, DataType>& fe
 
 void LR3592_DMG::populateBlockCache(BMMQ::fetchBlock<AddressType, DataType>& fetchData)
 {
+    if (!blockCacheEnabled_) {
+        return;
+    }
+
     const auto& blocks = fetchData.getblockData();
     if (blocks.empty() || blocks.front().data.empty()) {
         return;
@@ -2348,6 +2356,23 @@ void LR3592_DMG::invalidateBlockCacheForWrite(AddressType address, std::size_t s
 void LR3592_DMG::invalidateAllBlockCache()
 {
     blockCache_.invalidateAll();
+}
+
+void LR3592_DMG::setBlockCacheEnabled(bool enabled)
+{
+    if (blockCacheEnabled_ == enabled) {
+        return;
+    }
+
+    blockCacheEnabled_ = enabled;
+    if (!enabled) {
+        blockCache_.clear();
+    }
+}
+
+bool LR3592_DMG::blockCacheEnabled() const noexcept
+{
+    return blockCacheEnabled_;
 }
 
 BMMQ::CacheStats LR3592_DMG::blockCacheStats() const

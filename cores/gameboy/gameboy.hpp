@@ -274,10 +274,13 @@ public:
   void populateBlockCache(BMMQ::fetchBlock<AddressType, DataType>& fetchData);
   void invalidateBlockCacheForWrite(AddressType address, std::size_t size = 1);
   void invalidateAllBlockCache();
+  void setBlockCacheEnabled(bool enabled);
+  [[nodiscard]] bool blockCacheEnabled() const noexcept;
   [[nodiscard]] BMMQ::CacheStats blockCacheStats() const;
 
 private:
   BMMQ::BlockCache<AddressType, std::vector<DataType>> blockCache_;
+  bool blockCacheEnabled_ = true;
 
 public:
   void

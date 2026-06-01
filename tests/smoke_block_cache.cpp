@@ -1,5 +1,8 @@
 #include <iostream>
+#include <string_view>
 #include <cassert>
+#include <array>
+#include <chrono>
 #include <vector>
 #include "cores/gameboy/GameBoyMachine.hpp"
 #include "inst_cycle/BlockCache.hpp"
@@ -198,6 +201,170 @@ void test_gameboy_cached_fast_path_execution() {
     std::cout << "  PASSED" << std::endl;
 }
 
+
+std::vector<uint8_t> makeControlFlowRom() {
+    std::vector<uint8_t> rom(0x8000u, 0x00u);
+    rom[0x0100u] = 0xCDu; rom[0x0101u] = 0x10u; rom[0x0102u] = 0x01u; // CALL 0x0110
+    rom[0x0103u] = 0x18u; rom[0x0104u] = 0xFBu;                         // JR 0x0100
+    rom[0x0110u] = 0x87u;                                                 // ADD A,A
+    rom[0x0111u] = 0xC9u;                                                 // RET
+    rom[0x0120u] = 0xF3u;                                                 // DI
+    rom[0x0121u] = 0xFBu;                                                 // EI
+    rom[0x0122u] = 0x76u;                                                 // HALT
+    return rom;
+}
+
+std::vector<uint8_t> makeMbcRom() {
+    std::vector<uint8_t> rom(0x4000u * 3u, 0x00u);
+    rom[0x0147u] = 0x01u; // MBC1
+    rom[0x0148u] = 0x01u; // 4 ROM banks in header terms; actual fixture has 3 banks.
+    rom[0x4000u] = 0x3Eu; rom[0x4001u] = 0x11u; // Bank 1: LD A,0x11
+    rom[0x8000u] = 0x3Eu; rom[0x8001u] = 0x22u; // Bank 2 visible at 0x4000 after switch.
+    return rom;
+}
+
+void assertMachineCoreStateEqual(const GameBoyMachine& lhs, const GameBoyMachine& rhs) {
+    for (const std::string_view reg : {
+             GB::RegisterId::AF,
+             GB::RegisterId::BC,
+             GB::RegisterId::DE,
+             GB::RegisterId::HL,
+             GB::RegisterId::SP,
+             GB::RegisterId::PC,
+         }) {
+        assert(lhs.runtimeContext().readRegister16(reg) == rhs.runtimeContext().readRegister16(reg));
+    }
+
+    const auto& leftFeedback = lhs.runtimeContext().getLastFeedback();
+    const auto& rightFeedback = rhs.runtimeContext().getLastFeedback();
+    assert(leftFeedback.pcBefore == rightFeedback.pcBefore);
+    assert(leftFeedback.pcAfter == rightFeedback.pcAfter);
+    assert(leftFeedback.retiredCycles == rightFeedback.retiredCycles);
+}
+
+void test_runtime_cache_disable() {
+    std::cout << "Test: Runtime Cache Disable..." << std::endl;
+
+    GameBoyMachine machine;
+    std::vector<uint8_t> rom(0x8000u, 0x00u);
+    machine.loadRom(rom);
+    machine.setBlockCacheEnabled(false);
+    assert(!machine.blockCacheEnabled());
+
+    machine.runtimeContext().write8(0xC000u, 0x3Eu);
+    machine.runtimeContext().write8(0xC001u, 0x12u);
+    for (int i = 0; i < 2; ++i) {
+        machine.runtimeContext().writeRegister16(GB::RegisterId::PC, 0xC000u);
+        machine.runtimeContext().writeRegister16(GB::RegisterId::AF, 0x0000u);
+        machine.step();
+        assert((machine.runtimeContext().readRegister16(GB::RegisterId::AF) >> 8) == 0x12u);
+    }
+    assert(machine.blockCacheStats().hits.load() == 0u);
+
+    machine.setBlockCacheEnabled(true);
+    assert(machine.blockCacheEnabled());
+    for (int i = 0; i < 2; ++i) {
+        machine.runtimeContext().writeRegister16(GB::RegisterId::PC, 0xC000u);
+        machine.runtimeContext().writeRegister16(GB::RegisterId::AF, 0x0000u);
+        machine.step();
+        assert((machine.runtimeContext().readRegister16(GB::RegisterId::AF) >> 8) == 0x12u);
+    }
+    assert(machine.blockCacheStats().hits.load() >= 1u);
+
+    std::cout << "  PASSED" << std::endl;
+}
+
+void test_control_flow_equivalence_with_cache() {
+    std::cout << "Test: Control Flow Equivalence With Cache..." << std::endl;
+
+    GameBoyMachine baseline;
+    GameBoyMachine cached;
+    const auto rom = makeControlFlowRom();
+    baseline.loadRom(rom);
+    cached.loadRom(rom);
+    baseline.setBlockCacheEnabled(false);
+
+    for (int stepIndex = 0; stepIndex < 12; ++stepIndex) {
+        baseline.step();
+        cached.step();
+        assertMachineCoreStateEqual(baseline, cached);
+    }
+    assert(cached.blockCacheStats().hits.load() >= 4u);
+
+    baseline.runtimeContext().writeRegister16(GB::RegisterId::PC, 0x0120u);
+    cached.runtimeContext().writeRegister16(GB::RegisterId::PC, 0x0120u);
+    for (int stepIndex = 0; stepIndex < 3; ++stepIndex) {
+        baseline.step();
+        cached.step();
+        assertMachineCoreStateEqual(baseline, cached);
+    }
+
+    std::cout << "  PASSED" << std::endl;
+}
+
+void test_bank_switch_invalidates_cached_rom_window() {
+    std::cout << "Test: Bank Switch Invalidates Cached ROM Window..." << std::endl;
+
+    GameBoyMachine machine;
+    machine.loadRom(makeMbcRom());
+
+    machine.runtimeContext().writeRegister16(GB::RegisterId::PC, 0x4000u);
+    machine.runtimeContext().writeRegister16(GB::RegisterId::AF, 0x0000u);
+    machine.step();
+    assert((machine.runtimeContext().readRegister16(GB::RegisterId::AF) >> 8) == 0x11u);
+
+    machine.runtimeContext().writeRegister16(GB::RegisterId::PC, 0x4000u);
+    machine.runtimeContext().writeRegister16(GB::RegisterId::AF, 0x0000u);
+    machine.step();
+    assert((machine.runtimeContext().readRegister16(GB::RegisterId::AF) >> 8) == 0x11u);
+    assert(machine.blockCacheStats().hits.load() >= 1u);
+
+    const auto invalidationsBefore = machine.blockCacheStats().invalidations.load();
+    machine.runtimeContext().write8(0x2000u, 0x02u);
+    assert(machine.blockCacheStats().invalidations.load() > invalidationsBefore);
+
+    machine.runtimeContext().writeRegister16(GB::RegisterId::PC, 0x4000u);
+    machine.runtimeContext().writeRegister16(GB::RegisterId::AF, 0x0000u);
+    machine.step();
+    assert((machine.runtimeContext().readRegister16(GB::RegisterId::AF) >> 8) == 0x22u);
+
+    std::cout << "  PASSED" << std::endl;
+}
+
+void test_cache_throughput_probe() {
+    std::cout << "Test: Cache Throughput Probe..." << std::endl;
+
+    constexpr int kSteps = 20000;
+    const auto rom = makeControlFlowRom();
+
+    auto run = [&](bool cacheEnabled) {
+        GameBoyMachine machine;
+        machine.loadRom(rom);
+        machine.setBlockCacheEnabled(cacheEnabled);
+        const auto start = std::chrono::steady_clock::now();
+        for (int i = 0; i < kSteps; ++i) {
+            machine.step();
+        }
+        const auto elapsed = std::chrono::steady_clock::now() - start;
+        return std::pair{
+            std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count(),
+            machine.blockCacheStats().hits.load()
+        };
+    };
+
+    const auto [disabledNs, disabledHits] = run(false);
+    const auto [enabledNs, enabledHits] = run(true);
+    assert(disabledNs > 0);
+    assert(enabledNs > 0);
+    assert(disabledHits == 0u);
+    assert(enabledHits > 0u);
+
+    std::cout << "  disabled_ns=" << disabledNs
+              << " enabled_ns=" << enabledNs
+              << " enabled_hits=" << enabledHits << std::endl;
+    std::cout << "  PASSED" << std::endl;
+}
+
 void test_generation_coherency() {
     std::cout << "Test: Generation Coherency..." << std::endl;
 
@@ -226,6 +393,10 @@ int main() {
     test_range_invalidation();
     test_range_overlap_invalidation();
     test_gameboy_cached_fast_path_execution();
+    test_runtime_cache_disable();
+    test_control_flow_equivalence_with_cache();
+    test_bank_switch_invalidates_cached_rom_window();
+    test_cache_throughput_probe();
     test_generation_coherency();
 
     std::cout << std::endl << "=== All Tests Passed ===" << std::endl;

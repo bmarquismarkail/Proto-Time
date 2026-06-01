@@ -303,6 +303,14 @@ public:
         return cpu_.cpu().blockCacheStats();
     }
 
+    void setBlockCacheEnabled(bool enabled) {
+        cpu_.cpu().setBlockCacheEnabled(enabled);
+    }
+
+    [[nodiscard]] bool blockCacheEnabled() const noexcept {
+        return cpu_.cpu().blockCacheEnabled();
+    }
+
     void setBackgroundTaskService(BMMQ::BackgroundTaskService* service) noexcept {
         backgroundTaskService_ = service;
     }
