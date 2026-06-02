@@ -102,14 +102,12 @@ public:
     }
 
     // Get block (with thread-safe access)
-    std::optional<DataType> getBlock(CacheKey address) {
+    std::optional<DataType> getBlock(CacheKey address) const {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = blocks_.find(address);
         if (it != blocks_.end()) {
-            stats_.hits.fetch_add(1, std::memory_order_relaxed);
             return it->second;
         }
-        stats_.misses.fetch_add(1, std::memory_order_relaxed);
         return std::nullopt;
     }
 
@@ -154,11 +152,14 @@ public:
 
     void invalidateRange(CacheKey start, CacheKey end) {
         std::lock_guard<std::mutex> lock(mutex_);
+        const auto rangeStart = static_cast<std::uint64_t>(start);
+        const auto rangeEnd = static_cast<std::uint64_t>(end);
         for (auto& [addr, guard] : guards_) {
             const auto sizeIt = blockSizes_.find(addr);
             const std::size_t size = sizeIt != blockSizes_.end() ? sizeIt->second : 1u;
-            const auto blockEnd = static_cast<CacheKey>(addr + static_cast<CacheKey>(size - 1u));
-            if (addr <= end && blockEnd >= start && guard.validity == GuardValidity::Valid) {
+            const auto blockStart = static_cast<std::uint64_t>(addr);
+            const auto blockEnd = blockStart + static_cast<std::uint64_t>(size - 1u);
+            if (blockStart <= rangeEnd && blockEnd >= rangeStart && guard.validity == GuardValidity::Valid) {
                 guard.validity = GuardValidity::Invalidated;
                 stats_.invalidations.fetch_add(1, std::memory_order_relaxed);
             }

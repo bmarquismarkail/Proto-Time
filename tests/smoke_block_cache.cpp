@@ -122,14 +122,18 @@ void test_cache_stats() {
     }
 
     for (int i = 0; i < 5; i++) {
-        cache.getBlock(static_cast<std::uint16_t>(0x1000 + i));
+        assert(cache.getBlock(static_cast<std::uint16_t>(0x1000 + i)).has_value());
+        cache.recordHit();
     }
+    assert(!cache.getBlock(0x2000).has_value());
+    cache.recordMiss();
 
     // Invalidate one entry
     cache.invalidateGuard(0x1000);
 
     auto stats = cache.getStats();
-    assert(stats.hits.load() >= 5);
+    assert(stats.hits.load() == 5u);
+    assert(stats.misses.load() == 1u);
     assert(stats.invalidations.load() >= 1);
 
     double hitRate = stats.hitRate();
@@ -168,6 +172,11 @@ void test_range_overlap_invalidation() {
     cache.invalidateRange(0xC001, 0xC001);
     assert(!cache.guardValid(0xC000));
 
+    cache.setBlock(0xFFFE, std::vector<std::uint8_t>{0x00, 0x00, 0x00, 0x00}, 0xDEADBEEF);
+    assert(cache.guardValid(0xFFFE));
+    cache.invalidateRange(0xFFFF, 0xFFFF);
+    assert(!cache.guardValid(0xFFFE));
+
     std::cout << "  PASSED" << std::endl;
 }
 
@@ -175,6 +184,8 @@ void test_gameboy_cached_fast_path_execution() {
     std::cout << "Test: Game Boy Cached Fast Path Execution..." << std::endl;
 
     GameBoyMachine machine;
+    BMMQ::Plugin::VisibleStatePreservingStepPolicy optimizedPolicy;
+    machine.attachExecutorPolicy(optimizedPolicy);
     std::vector<uint8_t> rom(0x8000u, 0x00u);
     machine.loadRom(rom);
 
@@ -242,10 +253,45 @@ void assertMachineCoreStateEqual(const GameBoyMachine& lhs, const GameBoyMachine
     assert(leftFeedback.retiredCycles == rightFeedback.retiredCycles);
 }
 
+void test_baseline_policy_disables_cache_execution() {
+    std::cout << "Test: Baseline Policy Disables Cache Execution..." << std::endl;
+
+    GameBoyMachine machine;
+    std::vector<uint8_t> rom(0x8000u, 0x00u);
+    machine.loadRom(rom);
+    assert(machine.guarantee() == BMMQ::ExecutionGuarantee::BaselineFaithful);
+    assert(machine.blockCacheEnabled());
+
+    machine.runtimeContext().write8(0xC000u, 0x3Eu);
+    machine.runtimeContext().write8(0xC001u, 0x12u);
+    for (int i = 0; i < 3; ++i) {
+        machine.runtimeContext().writeRegister16(GB::RegisterId::PC, 0xC000u);
+        machine.runtimeContext().writeRegister16(GB::RegisterId::AF, 0x0000u);
+        machine.step();
+        assert((machine.runtimeContext().readRegister16(GB::RegisterId::AF) >> 8) == 0x12u);
+    }
+    assert(machine.blockCacheStats().hits.load() == 0u);
+    assert(machine.blockCacheStats().misses.load() == 0u);
+
+    BMMQ::Plugin::VisibleStatePreservingStepPolicy optimizedPolicy;
+    machine.attachExecutorPolicy(optimizedPolicy);
+    for (int i = 0; i < 3; ++i) {
+        machine.runtimeContext().writeRegister16(GB::RegisterId::PC, 0xC000u);
+        machine.runtimeContext().writeRegister16(GB::RegisterId::AF, 0x0000u);
+        machine.step();
+        assert((machine.runtimeContext().readRegister16(GB::RegisterId::AF) >> 8) == 0x12u);
+    }
+    assert(machine.blockCacheStats().hits.load() >= 1u);
+
+    std::cout << "  PASSED" << std::endl;
+}
+
 void test_runtime_cache_disable() {
     std::cout << "Test: Runtime Cache Disable..." << std::endl;
 
     GameBoyMachine machine;
+    BMMQ::Plugin::VisibleStatePreservingStepPolicy optimizedPolicy;
+    machine.attachExecutorPolicy(optimizedPolicy);
     std::vector<uint8_t> rom(0x8000u, 0x00u);
     machine.loadRom(rom);
     machine.setBlockCacheEnabled(false);
@@ -282,6 +328,8 @@ void test_control_flow_equivalence_with_cache() {
     const auto rom = makeControlFlowRom();
     baseline.loadRom(rom);
     cached.loadRom(rom);
+    BMMQ::Plugin::VisibleStatePreservingStepPolicy optimizedPolicy;
+    cached.attachExecutorPolicy(optimizedPolicy);
     baseline.setBlockCacheEnabled(false);
 
     for (int stepIndex = 0; stepIndex < 12; ++stepIndex) {
@@ -306,6 +354,8 @@ void test_bank_switch_invalidates_cached_rom_window() {
     std::cout << "Test: Bank Switch Invalidates Cached ROM Window..." << std::endl;
 
     GameBoyMachine machine;
+    BMMQ::Plugin::VisibleStatePreservingStepPolicy optimizedPolicy;
+    machine.attachExecutorPolicy(optimizedPolicy);
     machine.loadRom(makeMbcRom());
 
     machine.runtimeContext().writeRegister16(GB::RegisterId::PC, 0x4000u);
@@ -339,6 +389,8 @@ void test_cache_throughput_probe() {
 
     auto run = [&](bool cacheEnabled) {
         GameBoyMachine machine;
+        BMMQ::Plugin::VisibleStatePreservingStepPolicy optimizedPolicy;
+        machine.attachExecutorPolicy(optimizedPolicy);
         machine.loadRom(rom);
         machine.setBlockCacheEnabled(cacheEnabled);
         const auto start = std::chrono::steady_clock::now();
@@ -393,6 +445,7 @@ int main() {
     test_range_invalidation();
     test_range_overlap_invalidation();
     test_gameboy_cached_fast_path_execution();
+    test_baseline_policy_disables_cache_execution();
     test_runtime_cache_disable();
     test_control_flow_equivalence_with_cache();
     test_bank_switch_invalidates_cached_rom_window();

@@ -2304,6 +2304,7 @@ bool LR3592_DMG::tryExecuteFromCache(BMMQ::fetchBlock<AddressType, DataType>& fe
 
     const auto cachedBlock = blockCache_.getBlock(pcAddress);
     if (!cachedBlock.has_value()) {
+        blockCache_.recordMiss();
         return false;
     }
 
@@ -2311,14 +2312,17 @@ bool LR3592_DMG::tryExecuteFromCache(BMMQ::fetchBlock<AddressType, DataType>& fe
     if (cachedBlock->size() != currentBytes.size() ||
         !std::equal(cachedBlock->begin(), cachedBlock->end(), currentBytes.begin())) {
         blockCache_.invalidateGuard(pcAddress);
+        blockCache_.recordMiss();
         return false;
     }
 
     if (!tryFastExecute(fetchData)) {
         blockCache_.invalidateGuard(pcAddress);
+        blockCache_.recordMiss();
         return false;
     }
 
+    blockCache_.recordHit();
     return true;
 }
 
@@ -2349,8 +2353,16 @@ void LR3592_DMG::invalidateBlockCacheForWrite(AddressType address, std::size_t s
         return;
     }
 
-    const auto end = static_cast<AddressType>(address + static_cast<AddressType>(size - 1u));
-    blockCache_.invalidateRange(address, end);
+    constexpr auto kAddressSpaceSize = static_cast<std::size_t>(UINT16_MAX) + 1u;
+    const auto start = static_cast<std::size_t>(address);
+    const auto offsetEnd = start + size - 1u;
+    if (offsetEnd >= kAddressSpaceSize) {
+        blockCache_.invalidateRange(address, UINT16_MAX);
+        blockCache_.invalidateRange(0, static_cast<AddressType>(offsetEnd % kAddressSpaceSize));
+        return;
+    }
+
+    blockCache_.invalidateRange(address, static_cast<AddressType>(offsetEnd));
 }
 
 void LR3592_DMG::invalidateAllBlockCache()

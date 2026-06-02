@@ -54,7 +54,7 @@ public:
     }
 
     BMMQ::CpuFeedback step(FetchBlock& fetchBlock) override {
-        if (allowFastPath_ && runtime_.cpu().tryFastExecute(fetchBlock)) {
+        if (fastExecutionAllowed() && runtime_.cpu().tryFastExecute(fetchBlock)) {
             return runtime_.getLastFeedback();
         }
         cachedExecutionBlock_.clear();
@@ -191,6 +191,10 @@ public:
     void refreshExecutionMode() {
         allowFastPath_ = activePolicy_ != nullptr &&
             activePolicy_->guarantee() != BMMQ::ExecutionGuarantee::BaselineFaithful;
+    }
+
+    [[nodiscard]] bool fastExecutionAllowed() const noexcept {
+        return allowFastPath_;
     }
 
 private:
@@ -368,9 +372,11 @@ public:
 
         auto& cpu = cpu_.cpu();
         auto fetchBlock = context_.fetch();
-        if (!cpu.tryExecuteFromCache(fetchBlock)) {
+        if (!context_.fastExecutionAllowed() || !cpu.tryExecuteFromCache(fetchBlock)) {
             context_.step(fetchBlock);
-            cpu.populateBlockCache(fetchBlock);
+            if (context_.fastExecutionAllowed()) {
+                cpu.populateBlockCache(fetchBlock);
+            }
         }
         ++stepCounter_;
         const auto& feedback = context_.getLastFeedback();
