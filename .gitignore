@@ -5,6 +5,7 @@ build-*/
 .vscode/
 .old/
 .cache/
+logs/
 compile_commands.json
 
 # MemPalace per-project files (issue #185)
