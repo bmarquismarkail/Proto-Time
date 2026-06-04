@@ -168,6 +168,7 @@ target_compile_definitions(time-sdl-frontend-plugin PRIVATE BMMQ_SDL_FRONTEND_CO
 target_link_libraries(time-sdl-frontend-plugin PRIVATE time-sdl-audio-output time-dummy-audio-output time-file-audio-output time-sdl-video-adapter time-hardware-video-adapter time-simd-pixel-ops)
 
 enable_testing()
+add_test(NAME smoke_run_emulated_corpus COMMAND bash ${CMAKE_SOURCE_DIR}/tests/smoke_run_emulated_corpus.sh)
 add_executable(time-smoke-gamegear-core tests/smoke_gamegear_core.cpp)
 target_link_libraries(time-smoke-gamegear-core time-gamegear-core)
 add_test(NAME smoke_gamegear_core COMMAND time-smoke-gamegear-core)

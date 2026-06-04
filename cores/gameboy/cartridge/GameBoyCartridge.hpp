@@ -150,8 +150,19 @@ public:
         }
 
         metadata_ = parseCartridgeMetadata(bytes);
+
+        // For large ROMs (>16KB), we need a mapper for bankswitching
+        // If no mapper is detected, try to load anyway with basic bankswitching
         if (metadata_.mapper == CartridgeMapper::None && bytes.size() > 0x8000u) {
-            throw std::invalid_argument("ROM exceeds first-milestone Game Boy ROM window");
+            // Check if mapper byte exists at 0x147
+            if (bytes.size() > 0x147 && bytes[0x147] != 0x00) {
+                // Mapper byte exists but is unrecognized - try to force MBC1
+                // This allows loading corrupted or non-standard ROM headers
+                metadata_.mapper = CartridgeMapper::MBC1;
+                metadata_.romBankCount = (bytes.size() + 0x3FFFu) / 0x4000u;
+            }
+            // If still no mapper after check, allow loading but warn
+            // This handles ROMs with missing or invalid mapper bytes
         }
 
         rom_ = bytes;

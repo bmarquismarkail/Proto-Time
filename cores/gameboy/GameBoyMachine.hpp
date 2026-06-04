@@ -499,6 +499,7 @@ public:
         return cpu_.cpu().clockHz();
     }
 
+
     void attachExecutorPolicy(BMMQ::Plugin::IExecutorPolicyPlugin& policy) override {
         BMMQ::Plugin::validateExecutorPolicyStartup(policy);
         activePolicy_ = &policy;
@@ -887,7 +888,7 @@ private:
 
     void configureMemoryMap() {
         memoryMap_.reset();
-        memoryMap_.mapRom(0x0000, 0x4000);
+        memoryMap_.mapRange(0x0000, 0x4000, BMMQ::memAccess::ReadWrite);
         memoryMap_.mapRom(0x4000, 0x4000);
         memoryMap_.mapRange(0x8000, 0x2000, BMMQ::memAccess::ReadWrite);
         memoryMap_.mapRange(0xa000, 0x2000, BMMQ::memAccess::ReadWrite);
@@ -899,8 +900,7 @@ private:
         memoryMap_.mapRange(0xff4c, 0x0001, BMMQ::memAccess::Unmapped);
         memoryMap_.mapRange(0xff4d, 0x001f, BMMQ::memAccess::ReadWrite);
         memoryMap_.mapRange(0xff6c, 0x0014, BMMQ::memAccess::Unmapped);
-        memoryMap_.mapRange(0xff80, 0x007f, BMMQ::memAccess::ReadWrite);
-        memoryMap_.mapRange(0xffff, 0x0001, BMMQ::memAccess::ReadWrite);
+        memoryMap_.mapRange(0xff80, 0x0080, BMMQ::memAccess::ReadWrite);
         memoryMap_.storage().setAddressTranslator([](uint16_t address) {
             if (address >= 0xE000 && address <= 0xFDFF) {
                 return static_cast<uint16_t>(address - 0x2000);

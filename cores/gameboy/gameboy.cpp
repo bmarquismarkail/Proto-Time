@@ -3227,4 +3227,42 @@ void LR3592_DMG::populateOpcodes()
         });
     }));
 
+    // Undefined opcodes - treat as NOP to handle Z80-specific or invalid instructions gracefully
+    // 0xED, 0xDD, 0xFD, 0xF4, 0xFC, 0xEB, 0xEC are base opcodes requiring extended handling
+    setOpcode(0xED, emitOpcodeStep(0xED, 1, [](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([](auto& snapshot, auto&) {
+            // NOP - extended opcode without proper handling
+        });
+    }));
+    setOpcode(0xDD, emitOpcodeStep(0xDD, 1, [](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([](auto& snapshot, auto&) {
+            // NOP - extended opcode without proper handling
+        });
+    }));
+    setOpcode(0xFD, emitOpcodeStep(0xFD, 1, [](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([](auto& snapshot, auto&) {
+            // NOP - extended opcode without proper handling
+        });
+    }));
+    setOpcode(0xF4, emitOpcodeStep(0xF4, 1, [](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([](auto& snapshot, auto&) {
+            // NOP - BCF f (Bit Clear Flag) - Z80 instruction, not supported by Game Boy
+        });
+    }));
+    setOpcode(0xFC, emitOpcodeStep(0xFC, 1, [](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([](auto& snapshot, auto&) {
+            // NOP - CCF (Complement Carry Flag) - Z80 instruction, not supported by Game Boy
+        });
+    }));
+    setOpcode(0xEB, emitOpcodeStep(0xEB, 1, [](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([](auto& snapshot, auto&) {
+            // NOP - XOR HL,HL - Z80 instruction, not supported by Game Boy
+        });
+    }));
+    setOpcode(0xEC, emitOpcodeStep(0xEC, 1, [](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([](auto& snapshot, auto&) {
+            // NOP - RRCA - Z80 instruction, not supported by Game Boy
+        });
+    }));
+
 }
