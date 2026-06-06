@@ -28,6 +28,7 @@ struct AudioOutputOpenConfig {
     std::string backend = "sdl";
     int requestedSampleRate = 48000;
     std::size_t callbackChunkSamples = 256;
+    std::size_t readyQueueChunks = 3;
     int channels = 1;
     int testForcedDeviceSampleRate = 0;
     std::filesystem::path filePath;

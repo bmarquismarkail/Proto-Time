@@ -125,7 +125,7 @@ public:
         return implementation_->lastError();
     }
 
-    [[nodiscard]] const BMMQ::SdlFrontendStats& stats() const noexcept override
+    [[nodiscard]] BMMQ::SdlFrontendStats stats() const noexcept override
     {
         return implementation_->stats();
     }
@@ -135,9 +135,9 @@ public:
         return implementation_->diagnostics();
     }
 
-    [[nodiscard]] const std::optional<BMMQ::VideoStateView>& lastVideoState() const noexcept override
+    [[nodiscard]] const std::optional<BMMQ::VideoDebugFrameModel>& lastVideoDebugModel() const noexcept override
     {
-        return implementation_->lastVideoState();
+        return implementation_->lastVideoDebugModel();
     }
 
     [[nodiscard]] const std::optional<BMMQ::AudioStateView>& lastAudioState() const noexcept override
@@ -283,6 +283,16 @@ public:
     [[nodiscard]] std::size_t pumpBackendEvents() override
     {
         return implementation_->pumpBackendEvents();
+    }
+
+    void setDebugSnapshotService(BMMQ::DebugSnapshotService* service) noexcept override
+    {
+        implementation_->setDebugSnapshotService(service);
+    }
+
+    [[nodiscard]] BMMQ::DebugSnapshotService* debugSnapshotService() const noexcept override
+    {
+        return implementation_->debugSnapshotService();
     }
 
 private:

@@ -1,15 +1,127 @@
 #pragma once
-// Sega Game Gear Z80 CPU interpreter stub
-// References: SMS Power, MAME, Emulicious, Genesis Plus GX
+// Sega Game Gear Z80 CPU interpreter.
+// References: Zilog Z80 Family User Manual and The Undocumented Z80 Documented.
 
 #include <cstdint>
+#include <functional>
+#include <optional>
 
 class Z80Interpreter {
 public:
+    using MemRead = std::function<uint8_t(uint16_t)>;
+    using MemWrite = std::function<void(uint16_t, uint8_t)>;
+    using IoRead = std::function<uint8_t(uint8_t)>;
+    using IoWrite = std::function<void(uint8_t, uint8_t)>;
+
     Z80Interpreter();
     ~Z80Interpreter();
 
     void reset();
-    void step();
-    // TODO: Add register/memory interface
+    [[nodiscard]] uint32_t step();
+
+    // Register interface
+    void setMemoryInterface(MemRead reader, MemWrite writer);
+    void setIoInterface(IoRead reader, IoWrite writer);
+
+    // Install a provider for setInterruptRequestProvider that returns a
+    // std::optional<uint8_t> containing the interrupt vector byte when an
+    // external IRQ should be serviced (for example, an IM2 vector). The
+    // provider MUST atomically clear the pending request when it returns a
+    // value, and the interpreter will call it from the CPU thread.
+    void setInterruptRequestProvider(std::function<std::optional<uint8_t>()> provider);
+
+    // Programmatic setter for interrupt mode (0,1,2). Invalid values fall
+    // back to IM1 so interrupt handling stays in a defined state.
+    void setInterruptMode(uint8_t mode) { interruptMode_ = (mode <= 2u) ? mode : 1u; }
+
+    // Z80 registers
+    uint16_t AF = 0;
+    uint16_t BC = 0;
+    uint16_t DE = 0;
+    uint16_t HL = 0;
+    uint16_t IX = 0;
+    uint16_t IY = 0;
+    uint16_t SP = 0;
+    uint16_t PC = 0;
+    uint16_t AF_ = 0;
+    uint16_t BC_ = 0;
+    uint16_t DE_ = 0;
+    uint16_t HL_ = 0; // shadow registers
+    uint8_t I = 0;
+    uint8_t R = 0; // Interrupt vector, refresh
+    bool IFF1 = false;
+    bool IFF2 = false;
+    bool IME = false;
+
+private:
+    // Set by EI; becomes effective only after the instruction following
+    // the `EI` instruction completes (deferred IME enable semantics).
+    // When >0, it is decremented each `step()` and when it reaches 0
+    // IME is promoted to true. Initialize to 0 (no pending enable).
+    int imeEnableDelay_ = 0;
+
+    // True if the CPU is in HALT state (waiting for interrupt)
+    bool halted_ = false;
+
+    // Z80 F register flags (canonical bit positions):
+    // S  Z  -  H  -  P/V  N  C
+    // 7  6  5  4  3    2  1  0 (bit indices)
+    static constexpr uint8_t kFlagS = 0x80u;   // Sign (bit 7)
+    static constexpr uint8_t kFlagZ = 0x40u;   // Zero (bit 6)
+    static constexpr uint8_t kFlag5 = 0x20u;   // Undocumented copy bit 5
+    static constexpr uint8_t kFlagH = 0x10u;   // Half-carry (bit 4)
+    static constexpr uint8_t kFlag3 = 0x08u;   // Undocumented copy bit 3
+    static constexpr uint8_t kFlagPV = 0x04u;  // Parity/Overflow (bit 2)
+    static constexpr uint8_t kFlagN = 0x02u;   // Add/Subtract (bit 1)
+    static constexpr uint8_t kFlagC = 0x01u;   // Carry (bit 0)
+
+    MemRead memRead;
+    MemWrite memWrite;
+    IoRead ioRead;
+    IoWrite ioWrite;
+
+    // Internal helpers
+    void requireMemoryInterface() const;
+    uint8_t readIo(uint8_t port) const;
+    void writeIo(uint8_t port, uint8_t value) const;
+    uint8_t fetch8();
+    uint8_t fetchOpcode();
+    uint16_t fetch16();
+    [[nodiscard]] uint8_t regA() const noexcept;
+    void setRegA(uint8_t value) noexcept;
+    [[nodiscard]] uint8_t regF() const noexcept;
+    void setRegF(uint8_t value) noexcept;
+    void setZeroFlag(bool set) noexcept;
+    [[nodiscard]] bool zeroFlag() const noexcept;
+    [[nodiscard]] uint8_t computeIncFlags(uint8_t before, uint8_t result) const noexcept;
+    [[nodiscard]] uint8_t computeDecFlags(uint8_t before, uint8_t result) const noexcept;
+    [[nodiscard]] uint8_t readReg8(int idx) const;
+    void writeReg8(int idx, uint8_t value);
+    [[nodiscard]] static bool parityEven(uint8_t value) noexcept;
+    [[nodiscard]] uint8_t computeAddFlags(uint8_t lhs, uint8_t rhs, uint8_t carryIn, uint8_t result) const noexcept;
+    [[nodiscard]] uint8_t computeSubFlags(uint8_t lhs, uint8_t rhs, uint8_t carryIn, uint8_t result) const noexcept;
+    [[nodiscard]] uint32_t executeOpcode(uint8_t opcode);
+    [[nodiscard]] uint32_t executeCbOpcode(uint8_t opcode, bool indexed, uint16_t indexedAddress, uint8_t* indexedDestination);
+    [[nodiscard]] uint32_t executeEdOpcode(uint8_t opcode);
+    [[nodiscard]] uint32_t executeIndexedOpcode(uint8_t prefix, uint8_t opcode);
+    // Handle any external interrupts. Returns consumed cycles (0 if none).
+    uint32_t handleInterrupts();
+    void push16(uint16_t value);
+    [[nodiscard]] uint16_t pop16();
+    void write16(uint16_t address, uint16_t value);
+    [[nodiscard]] uint16_t read16(uint16_t address) const;
+    [[nodiscard]] uint16_t getReg16ByPair(int pair, bool afForPair3 = false) const noexcept;
+    void setReg16ByPair(int pair, uint16_t value, bool afForPair3 = false) noexcept;
+    [[nodiscard]] uint8_t alu(uint8_t group, uint8_t value);
+    [[nodiscard]] uint8_t rotateShift(uint8_t group, uint8_t value);
+    void setLogicFlags(uint8_t result, bool halfCarry) noexcept;
+    void incRefresh() noexcept;
+    // Interrupt request provider: returns a std::optional<uint8_t>
+    // containing the IRQ byte/vector when a pending external IRQ should be
+    // serviced; an empty optional means no pending IRQ. The provider is
+    // expected to atomically consume the request when returning a non-empty
+    // optional.
+    std::function<std::optional<uint8_t>()> interruptRequestProvider;
+    // Interrupt mode (0,1,2). Defaults to IM1.
+    uint8_t interruptMode_ = 1u;
 };

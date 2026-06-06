@@ -1,12 +1,15 @@
 #ifndef BMMQ_IO_PLUGIN_HPP
 #define BMMQ_IO_PLUGIN_HPP
 
+#include <algorithm>
 #include <cstdint>
+#include <cstddef>
 #include <optional>
 #include <span>
 #include <string_view>
 #include <vector>
 
+#include "../VideoDebugModel.hpp"
 #include "../RuntimeContext.hpp"
 
 namespace BMMQ {
@@ -19,6 +22,8 @@ class VisualOverrideService;
 class TimingService;
 struct CpuFeedback;
 std::optional<uint32_t> queryDigitalInputMask(const Machine& machine);
+std::optional<VideoDebugFrameModel> queryVideoDebugFrameModel(const Machine& machine,
+                                                              const VideoDebugRenderRequest& request);
 AudioService& queryAudioService(Machine& machine);
 const AudioService& queryAudioService(const Machine& machine);
 InputService& queryInputService(Machine& machine);
@@ -29,7 +34,17 @@ VisualOverrideService& queryVisualOverrideService(Machine& machine);
 const VisualOverrideService& queryVisualOverrideService(const Machine& machine);
 std::vector<int16_t> queryRecentAudioSamples(const Machine& machine);
 uint32_t queryAudioSampleRate(const Machine& machine);
+uint8_t queryAudioChannelCount(const Machine& machine);
 uint64_t queryAudioFrameCounter(const Machine& machine);
+struct RealtimeVideoPacket;
+struct RealtimeAudioPacket;
+std::optional<RealtimeVideoPacket> queryRealtimeVideoPacket(const Machine& machine,
+                                                            const VideoDebugRenderRequest& request);
+std::optional<RealtimeAudioPacket> queryRealtimeAudioPacket(const Machine& machine);
+struct SlimVideoPacket;
+struct SlimAudioPacket;
+std::optional<SlimVideoPacket> querySlimVideoPacket(const Machine& machine);
+std::optional<SlimAudioPacket> querySlimAudioPacket(const Machine& machine);
 TimingService& queryTimingService(Machine& machine);
 const TimingService& queryTimingService(const Machine& machine);
 
@@ -66,6 +81,92 @@ enum class MachineEventType : uint8_t {
     FrameCompositionStarted = 18,
     FrameCompositionCompleted = 19,
 };
+
+struct RealtimeVideoPacket {
+    static constexpr std::uint16_t kContractVersion = 1u;
+    std::uint16_t contractVersion = kContractVersion;
+    MachineEventType eventType = MachineEventType::VBlank;
+    int width = 0;
+    int height = 0;
+    bool displayEnabled = false;
+    bool inVBlank = false;
+    std::optional<std::uint16_t> scanlineIndex;
+    std::uint64_t generation = 0;
+    struct VdpRenderBodyTiming {
+        std::uint64_t totalNs = 0;
+        std::uint64_t setupNs = 0;
+        std::uint64_t backgroundNs = 0;
+        std::uint64_t backgroundSimpleNs = 0;
+        std::uint64_t backgroundGeneralNs = 0;
+        std::uint64_t backgroundTmsNs = 0;
+        std::uint64_t spriteProbeNs = 0;
+        std::uint64_t spriteOverlayNs = 0;
+        std::uint64_t otherNs = 0;
+    } vdpRenderBodyTiming{};
+    struct VdpMode4BackgroundAttributeStats {
+        std::uint64_t tileCellsProcessed = 0;
+        std::uint64_t tileCellsFlipH = 0;
+        std::uint64_t tileCellsFlipV = 0;
+        std::uint64_t tileCellsPalette1 = 0;
+        std::uint64_t tileCellsPriority = 0;
+        std::uint64_t tileCellsFixedTopRows = 0;
+        std::uint64_t tileCellsFixedRightColumns = 0;
+        std::uint64_t tileCellsLeftBlankOrFineSkip = 0;
+        std::uint64_t tileCellsCommonCaseEligible = 0;
+        std::uint64_t commonCaseEligiblePixelsWritten = 0;
+    } vdpMode4BackgroundAttributes{};
+    struct VdpMode4SimpleBackgroundStats {
+        std::uint64_t simplePathFrameCount = 0;
+        std::uint64_t simplePathRowsRendered = 0;
+        std::uint64_t simplePathPixelsWritten = 0;
+        std::uint64_t simplePathTileEntriesDecoded = 0;
+        std::uint64_t simplePathPatternRowsDecoded = 0;
+        std::uint64_t simplePathScrollXAlignedCount = 0;
+        std::uint64_t simplePathScrollYValueChanges = 0;
+        std::uint64_t simplePathUniqueTileRowsSeen = 0;
+        std::uint64_t mode4SimplePathUsedCount = 0;
+        std::uint64_t mode4GeneralPathUsedCount = 0;
+        std::uint64_t tmsGraphicsPathUsedCount = 0;
+    } vdpMode4SimpleBackground{};
+    std::vector<std::uint32_t> argbPixels;
+
+    [[nodiscard]] bool empty() const noexcept
+    {
+        return width <= 0 ||
+               height <= 0 ||
+               argbPixels.size() != static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+    }
+
+    [[nodiscard]] std::size_t pixelCount() const noexcept
+    {
+        return argbPixels.size();
+    }
+};
+
+struct RealtimeAudioPacket {
+    static constexpr std::uint16_t kContractVersion = 1u;
+    std::uint16_t contractVersion = kContractVersion;
+    std::uint32_t sampleRate = 48000u;
+    std::uint8_t channelCount = 1u;
+    std::uint64_t frameCounter = 0;
+    std::uint64_t psgChunksEmitted = 0;
+    std::uint64_t psgSamplesGeneratedTotal = 0;
+    std::uint32_t psgChunkSamplesLast = 0;
+    std::uint32_t psgChunkSamplesMin = 0;
+    std::uint32_t psgChunkSamplesMax = 0;
+    std::uint32_t psgPendingSamples = 0;
+    std::vector<std::int16_t> pcmSamples;
+
+    [[nodiscard]] bool empty() const noexcept
+    {
+        return pcmSamples.empty();
+    }
+};
+
+static_assert(offsetof(RealtimeVideoPacket, contractVersion) == 0u,
+              "RealtimeVideoPacket contract header must be first");
+static_assert(offsetof(RealtimeAudioPacket, contractVersion) == 0u,
+              "RealtimeAudioPacket contract header must be first");
 
 struct IoRegionDescriptor {
     PluginCategory category = PluginCategory::System;
@@ -109,6 +210,7 @@ struct AudioStateView {
     std::vector<uint8_t> waveRam;
     std::vector<int16_t> pcmSamples;
     uint32_t sampleRate = 48000;
+    uint8_t channelCount = 1;
     uint64_t frameCounter = 0;
     uint8_t nr10 = 0;
     uint8_t nr11 = 0;
@@ -194,6 +296,50 @@ struct ParallelStateView {
     bool busy = false;
     uint32_t queuedBytes = 0;
     std::string_view detail = "placeholder";
+};
+
+// Compact representation of a memory region for real-time video.
+// Today this can carry full VRAM/OAM snapshots; future writers can narrow it to actual dirty spans.
+struct VideoDirtyRegion {
+    uint16_t start = 0;
+    uint16_t size = 0;
+    std::vector<uint8_t> bytes;
+
+    [[nodiscard]] bool empty() const noexcept {
+        return bytes.empty() || size == 0;
+    }
+};
+
+// Slim video packet: memory-region payload plus minimal LCD state, without an ARGB frame copy.
+// Dirty regions may currently cover full VRAM/OAM until write-span tracking is available.
+struct SlimVideoPacket {
+    static constexpr std::uint16_t kContractVersion = 1u;
+    std::uint16_t contractVersion = kContractVersion;
+    std::vector<VideoDirtyRegion> dirtyRegions;
+    bool displayEnabled = false;
+    bool inVBlank = false;
+    uint8_t lcdc = 0;
+    uint8_t stat = 0;
+    uint8_t ly = 0;
+
+    [[nodiscard]] bool empty() const noexcept {
+        return dirtyRegions.empty();
+    }
+};
+
+// Slim audio packet: contiguous PCM samples with minimal metadata.
+// Avoids re-deriving full AudioStateView when only PCM is needed.
+struct SlimAudioPacket {
+    static constexpr std::uint16_t kContractVersion = 1u;
+    std::uint16_t contractVersion = kContractVersion;
+    std::vector<std::int16_t> pcmSamples;
+    uint32_t sampleRate = 48000;
+    uint8_t channelCount = 1;
+    uint64_t frameCounter = 0;
+
+    [[nodiscard]] bool empty() const noexcept {
+        return pcmSamples.empty();
+    }
 };
 
 struct MachineView {
@@ -288,6 +434,18 @@ struct MachineView {
         return state;
     }
 
+    [[nodiscard]] std::optional<VideoDebugFrameModel> videoDebugFrameModel(
+        const VideoDebugRenderRequest& request) const
+    {
+        return queryVideoDebugFrameModel(machine, request);
+    }
+
+    [[nodiscard]] std::optional<RealtimeVideoPacket> realtimeVideoPacket(
+        const VideoDebugRenderRequest& request) const
+    {
+        return queryRealtimeVideoPacket(machine, request);
+    }
+
     [[nodiscard]] std::optional<AudioStateView> audioState() const {
         const auto registerRegion = findRegion(PluginCategory::Audio, "APU Registers");
         if (!registerRegion.has_value()) {
@@ -300,6 +458,7 @@ struct MachineView {
         state.waveRam = readRegion(0xFF30u, 0x0010u);
         state.pcmSamples = queryRecentAudioSamples(machine);
         state.sampleRate = queryAudioSampleRate(machine);
+        state.channelCount = queryAudioChannelCount(machine);
         state.frameCounter = queryAudioFrameCounter(machine);
         state.nr10 = read8(0xFF10u);
         state.nr11 = read8(0xFF11u);
@@ -323,6 +482,65 @@ struct MachineView {
         state.nr51 = read8(0xFF25u);
         state.nr52 = read8(0xFF26u);
         return state;
+    }
+
+    [[nodiscard]] std::optional<RealtimeAudioPacket> realtimeAudioPacket() const
+    {
+        return queryRealtimeAudioPacket(machine);
+    }
+
+    // Slim video state: returns memory regions with their bytes plus minimal LCD state,
+    // avoiding full VideoStateView construction and ARGB frame copies.
+    // Currently emits full VRAM/OAM spans; future write tracking can narrow these.
+    [[nodiscard]] std::optional<SlimVideoPacket> videoDirtyRegions() const
+    {
+        const auto vramRegion = findRegion(PluginCategory::Video, "VRAM");
+        const auto oamRegion = findRegion(PluginCategory::Video, "OAM");
+
+        SlimVideoPacket packet;
+        packet.displayEnabled = (read8(0xFF40u) & 0x80u) != 0;
+        packet.lcdc = read8(0xFF40u);
+        packet.stat = read8(0xFF41u);
+        packet.ly = read8(0xFF44u);
+        packet.inVBlank = packet.ly >= 144u;
+
+        if (vramRegion.has_value()) {
+            VideoDirtyRegion vramDirty;
+            vramDirty.start = vramRegion->start;
+            const auto byteCount = static_cast<uint16_t>(std::min<uint32_t>(vramRegion->size, 0x2000u));
+            vramDirty.size = byteCount;
+            vramDirty.bytes.reserve(byteCount);
+            for (uint32_t offset = 0; offset < byteCount; ++offset) {
+                vramDirty.bytes.push_back(read8(static_cast<uint16_t>(vramRegion->start + offset)));
+            }
+            packet.dirtyRegions.push_back(std::move(vramDirty));
+        }
+
+        if (oamRegion.has_value()) {
+            VideoDirtyRegion oamDirty;
+            oamDirty.start = oamRegion->start;
+            const auto byteCount = static_cast<uint16_t>(std::min<uint32_t>(oamRegion->size, 0xA0u));
+            oamDirty.size = byteCount;
+            oamDirty.bytes.reserve(byteCount);
+            for (uint32_t offset = 0; offset < byteCount; ++offset) {
+                oamDirty.bytes.push_back(read8(static_cast<uint16_t>(oamRegion->start + offset)));
+            }
+            packet.dirtyRegions.push_back(std::move(oamDirty));
+        }
+
+        return packet;
+    }
+
+    // Slim audio state: returns only contiguous PCM samples with minimal metadata,
+    // avoiding the full register+WAVE+NRxx copy that audioState() performs.
+    [[nodiscard]] std::optional<SlimAudioPacket> realtimeSlimAudioPacket() const
+    {
+        SlimAudioPacket packet;
+        packet.sampleRate = queryAudioSampleRate(machine);
+        packet.channelCount = queryAudioChannelCount(machine);
+        packet.frameCounter = queryAudioFrameCounter(machine);
+        packet.pcmSamples = queryRecentAudioSamples(machine);
+        return packet;
     }
 
     [[nodiscard]] std::optional<SerialStateView> serialState() const {

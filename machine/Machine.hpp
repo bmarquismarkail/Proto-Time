@@ -2,16 +2,21 @@
 #define BMMQ_MACHINE_HPP
 
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <vector>
 
 #include "AudioService.hpp"
 #include "InputService.hpp"
+#include "MachineLifecycleCoordinator.hpp"
 #include "RegisterId.hpp"
 #include "RuntimeContext.hpp"
 #include "VideoService.hpp"
+#include "VisualDebugAdapter.hpp"
+#include "VideoDebugModel.hpp"
 #include "VisualOverrideService.hpp"
 #include "TimingService.hpp"
 #include "plugins/IoPlugin.hpp"
@@ -22,6 +27,18 @@ class IExecutorPolicyPlugin;
 }
 
 namespace BMMQ {
+
+class IExternalBootRomMachine {
+public:
+    virtual ~IExternalBootRomMachine() = default;
+    virtual void loadExternalBootRom(const std::vector<uint8_t>& bytes) = 0;
+};
+
+class IRomPathAwareMachine {
+public:
+    virtual ~IRomPathAwareMachine() = default;
+    virtual void setRomSourcePath(const std::optional<std::filesystem::path>& path) = 0;
+};
 
 class Machine {
 public:
@@ -35,6 +52,7 @@ public:
     {
         videoService_->setVisualOverrideService(visualOverrideService_.get());
         bindVisualOverrideEvents();
+        lifecycleCoordinator_.bindServices(audioService_.get(), videoService_.get());
     }
     Machine(const Machine&) = delete;
     Machine& operator=(const Machine&) = delete;
@@ -77,6 +95,7 @@ public:
             return false;
         }
         audioService_ = std::move(service);
+        lifecycleCoordinator_.bindServices(audioService_.get(), videoService_.get());
         return true;
     }
     [[nodiscard]] bool setVideoService(std::unique_ptr<VideoService> service) {
@@ -88,6 +107,8 @@ public:
         }
         videoService_ = std::move(service);
         videoService_->setVisualOverrideService(visualOverrideService_.get());
+        videoService_->setVisualDebugAdapter(visualDebugAdapter());
+        lifecycleCoordinator_.bindServices(audioService_.get(), videoService_.get());
         return true;
     }
     [[nodiscard]] bool setVisualOverrideService(std::unique_ptr<VisualOverrideService> service) {
@@ -114,6 +135,14 @@ public:
     }
     [[nodiscard]] TimingService& timingService() {
         return *timingService_;
+    }
+
+    [[nodiscard]] MachineLifecycleCoordinator& lifecycleCoordinator() noexcept {
+        return lifecycleCoordinator_;
+    }
+
+    [[nodiscard]] const MachineLifecycleCoordinator& lifecycleCoordinator() const noexcept {
+        return lifecycleCoordinator_;
     }
 
     [[nodiscard]] const TimingService& timingService() const {
@@ -154,8 +183,63 @@ public:
     virtual uint32_t audioSampleRate() const {
         return 48000u;
     }
+    virtual uint8_t audioChannelCount() const {
+        return 1u;
+    }
     virtual uint64_t audioFrameCounter() const {
         return 0u;
+    }
+    virtual std::string_view visualTargetId() const noexcept {
+        return {};
+    }
+    virtual const IVisualDebugAdapter* visualDebugAdapter() const noexcept {
+        return nullptr;
+    }
+    virtual std::optional<VideoDebugFrameModel> videoDebugFrameModel(const VideoDebugRenderRequest& request) const {
+        const auto* adapter = visualDebugAdapter();
+        if (adapter == nullptr) {
+            return std::nullopt;
+        }
+        return adapter->buildFrameModel(*this, request);
+    }
+    virtual std::optional<RealtimeVideoPacket> realtimeVideoPacket(const VideoDebugRenderRequest& request) const {
+        const auto model = videoDebugFrameModel(request);
+        if (!model.has_value()) {
+            return std::nullopt;
+        }
+        RealtimeVideoPacket packet;
+        packet.width = model->width;
+        packet.height = model->height;
+        packet.displayEnabled = model->displayEnabled;
+        packet.inVBlank = model->inVBlank;
+        packet.scanlineIndex = model->scanlineIndex;
+        packet.argbPixels = model->argbPixels;
+        return packet;
+    }
+    virtual std::optional<RealtimeAudioPacket> realtimeAudioPacket() const {
+        RealtimeAudioPacket packet;
+        packet.sampleRate = audioSampleRate();
+        packet.channelCount = audioChannelCount();
+        packet.frameCounter = audioFrameCounter();
+        packet.pcmSamples = recentAudioSamples();
+        return packet;
+    }
+    virtual std::optional<SlimVideoPacket> realtimeSlimVideoPacket() const {
+        return std::nullopt;
+    }
+    virtual std::optional<SlimAudioPacket> realtimeSlimAudioPacket() const {
+        SlimAudioPacket packet;
+        packet.sampleRate = audioSampleRate();
+        packet.channelCount = audioChannelCount();
+        packet.frameCounter = audioFrameCounter();
+        packet.pcmSamples = recentAudioSamples();
+        return packet;
+    }
+    virtual bool supportsVisualPacks() const noexcept {
+        return visualDebugAdapter() != nullptr && !visualTargetId().empty();
+    }
+    virtual bool supportsVisualCapture() const noexcept {
+        return visualDebugAdapter() != nullptr && !visualTargetId().empty();
     }
     virtual uint32_t clockHz() const {
         return runtimeContext().clockHz();
@@ -169,6 +253,9 @@ public:
         runtimeContext().step();
     }
     virtual uint16_t readRegisterPair(std::string_view id) const = 0;
+    virtual std::string stopSummary() const {
+        return {};
+    }
 
 private:
     void bindVisualOverrideEvents()
@@ -184,10 +271,25 @@ private:
     std::unique_ptr<VideoService> videoService_;
     std::unique_ptr<VisualOverrideService> visualOverrideService_;
     std::unique_ptr<TimingService> timingService_;
+    MachineLifecycleCoordinator lifecycleCoordinator_{};
 };
 
 inline std::optional<uint32_t> queryDigitalInputMask(const Machine& machine) {
     return machine.currentDigitalInputMask();
+}
+
+inline std::optional<VideoDebugFrameModel> queryVideoDebugFrameModel(const Machine& machine,
+                                                                     const VideoDebugRenderRequest& request) {
+    return machine.videoDebugFrameModel(request);
+}
+
+inline std::optional<RealtimeVideoPacket> queryRealtimeVideoPacket(const Machine& machine,
+                                                                   const VideoDebugRenderRequest& request) {
+    return machine.realtimeVideoPacket(request);
+}
+
+inline std::optional<RealtimeAudioPacket> queryRealtimeAudioPacket(const Machine& machine) {
+    return machine.realtimeAudioPacket();
 }
 
 inline AudioService& queryAudioService(Machine& machine) {
@@ -238,8 +340,20 @@ inline uint32_t queryAudioSampleRate(const Machine& machine) {
     return machine.audioSampleRate();
 }
 
+inline uint8_t queryAudioChannelCount(const Machine& machine) {
+    return machine.audioChannelCount();
+}
+
 inline uint64_t queryAudioFrameCounter(const Machine& machine) {
     return machine.audioFrameCounter();
+}
+
+inline std::optional<SlimVideoPacket> querySlimVideoPacket(const Machine& machine) {
+    return machine.realtimeSlimVideoPacket();
+}
+
+inline std::optional<SlimAudioPacket> querySlimAudioPacket(const Machine& machine) {
+    return machine.realtimeSlimAudioPacket();
 }
 
 } // namespace BMMQ

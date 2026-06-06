@@ -90,7 +90,7 @@ int main()
     BMMQ::VideoService service(BMMQ::VideoEngineConfig{
         .frameWidth = 4,
         .frameHeight = 4,
-        .queueCapacityFrames = 1,
+        .mailboxDepthFrames = 1,
     });
     auto presenter = std::make_unique<FailingPresenter>();
     auto* presenterPtr = presenter.get();
@@ -104,18 +104,20 @@ int main()
     assert(presenterPtr->lastAttemptGeneration == 9u);
     assert(service.diagnostics().presentFailureCount == 1u);
     assert(service.diagnostics().compatibilityFallbackCount == 1u);
+    assert(service.diagnostics().presentFallbackCount == 0u);
     assert(service.diagnostics().lastPresentedGeneration == 9u);
 
     assert(service.submitFrame(BMMQ::makeBlankVideoFrame(4, 4, 10u)));
     assert(service.submitFrame(BMMQ::makeBlankVideoFrame(4, 4, 11u)));
-    assert(service.diagnostics().droppedFrameCount == 1u);
+    assert(service.diagnostics().overwriteCount == 1u);
     assert(!service.presentOneFrame());
     assert(presenterPtr->lastAttemptGeneration == 11u);
+    assert(service.diagnostics().staleFrameDropCount == 0u);
 
     BMMQ::VideoService blankFallback(BMMQ::VideoEngineConfig{
         .frameWidth = 2,
         .frameHeight = 2,
-        .queueCapacityFrames = 1,
+        .mailboxDepthFrames = 1,
     });
     auto blankPresenter = std::make_unique<FailingPresenter>();
     auto* blankPresenterPtr = blankPresenter.get();
@@ -124,6 +126,7 @@ int main()
     assert(!blankFallback.presentOneFrame());
     assert(blankPresenterPtr->lastAttemptGeneration == 0u);
     assert(blankFallback.diagnostics().presentFailureCount == 1u);
+    assert(blankFallback.diagnostics().presentFallbackCount == 1u);
 
     return 0;
 }

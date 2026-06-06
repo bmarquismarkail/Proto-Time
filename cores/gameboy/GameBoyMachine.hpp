@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iterator>
 #include <optional>
+#include <sstream>
 #include <string_view>
 #include <stdexcept>
 #include <vector>
@@ -18,11 +19,13 @@
 #include "../../machine/RegisterId.hpp"
 #include "../../machine/RomImage.hpp"
 #include "../../machine/RuntimeContext.hpp"
+#include "../../machine/BackgroundTaskService.hpp"
 #include "../../machine/plugins/PluginManager.hpp"
 #include "register_id.hpp"
 #include "hardware_registers.hpp"
 #include "gameboy_plugin_runtime.hpp"
 #include "cartridge/CartridgeSaveManager.hpp"
+#include "video/GameBoyVisualDebugAdapter.hpp"
 
 class GameBoyRuntimeContext final : public BMMQ::RuntimeContext {
 public:
@@ -51,7 +54,7 @@ public:
     }
 
     BMMQ::CpuFeedback step(FetchBlock& fetchBlock) override {
-        if (allowFastPath_ && runtime_.cpu().tryFastExecute(fetchBlock)) {
+        if (fastExecutionAllowed() && runtime_.cpu().tryFastExecute(fetchBlock)) {
             return runtime_.getLastFeedback();
         }
         cachedExecutionBlock_.clear();
@@ -190,6 +193,10 @@ public:
             activePolicy_->guarantee() != BMMQ::ExecutionGuarantee::BaselineFaithful;
     }
 
+    [[nodiscard]] bool fastExecutionAllowed() const noexcept {
+        return allowFastPath_;
+    }
+
 private:
     static AddressType resolveEchoAddress(AddressType address) {
         if (address >= 0xE000 && address <= 0xFDFF) {
@@ -225,7 +232,9 @@ private:
     bool allowFastPath_ = false;
 };
 
-class GameBoyMachine final : public BMMQ::Machine {
+class GameBoyMachine final : public BMMQ::Machine,
+                             public BMMQ::IExternalBootRomMachine,
+                             public BMMQ::IRomPathAwareMachine {
 public:
     GameBoyMachine()
         : activePolicy_(&defaultPolicy_),
@@ -234,6 +243,7 @@ public:
         BMMQ::Plugin::validateExecutorPolicyStartup(defaultPolicy_);
         configureMemoryMap();
         cpu_.attachMemory(memoryMap_.storage());
+        videoService().setVisualDebugAdapter(visualDebugAdapter());
     }
 
     ~GameBoyMachine() override {
@@ -263,13 +273,18 @@ public:
         (void)flushCartridgeSave();
         rom_.load(bytes);
         cartridge_.load(bytes);
-        saveManager_.clearBinding();
+        if (pendingRomSourcePath_.has_value()) {
+            saveManager_.bindRomPath(*pendingRomSourcePath_);
+            saveManager_.load(cartridge_);
+        } else {
+            saveManager_.clearBinding();
+        }
+        pendingRomSourcePath_.reset();
         finalizeRomLoad();
     }
 
     // Returns the number of bytes loaded
     std::size_t loadRomFromPath(const std::filesystem::path& path) {
-        (void)flushCartridgeSave();
         std::ifstream input(path, std::ios::binary);
         if (!input) {
             throw std::runtime_error("Unable to open ROM: " + path.string());
@@ -279,16 +294,29 @@ public:
             throw std::runtime_error("ROM is empty: " + path.string());
         }
 
-        rom_.load(bytes);
-        cartridge_.load(bytes);
-        saveManager_.bindRomPath(path);
-        saveManager_.load(cartridge_);
-        finalizeRomLoad();
+        setRomSourcePath(path);
+        loadRom(bytes);
         return bytes.size();
     }
 
     [[nodiscard]] bool flushCartridgeSave() {
         return saveManager_.flush(cartridge_);
+    }
+
+    [[nodiscard]] BMMQ::CacheStats blockCacheStats() const {
+        return cpu_.cpu().blockCacheStats();
+    }
+
+    void setBlockCacheEnabled(bool enabled) {
+        cpu_.cpu().setBlockCacheEnabled(enabled);
+    }
+
+    [[nodiscard]] bool blockCacheEnabled() const noexcept {
+        return cpu_.cpu().blockCacheEnabled();
+    }
+
+    void setBackgroundTaskService(BMMQ::BackgroundTaskService* service) noexcept {
+        backgroundTaskService_ = service;
     }
 
     [[nodiscard]] const GB::GameBoyCartridge& cartridge() const noexcept {
@@ -312,6 +340,14 @@ public:
         memoryMap_.storage().load(std::span<const uint8_t>(&bootControl, 1), 0xFF50);
     }
 
+    void loadExternalBootRom(const std::vector<uint8_t>& bytes) override {
+        loadBootRom(bytes);
+    }
+
+    void setRomSourcePath(const std::optional<std::filesystem::path>& path) override {
+        pendingRomSourcePath_ = path;
+    }
+
     void setJoypadState(uint8_t pressedMask) {
         lastDigitalInputMask_ = pressedMask;
         lastPolledDigitalInput_ = pressedMask;
@@ -333,7 +369,15 @@ public:
             bootEntryPending_ = false;
             return;
         }
-        context_.step();
+
+        auto& cpu = cpu_.cpu();
+        auto fetchBlock = context_.fetch();
+        if (!context_.fastExecutionAllowed() || !cpu.tryExecuteFromCache(fetchBlock)) {
+            context_.step(fetchBlock);
+            if (context_.fastExecutionAllowed()) {
+                cpu.populateBlockCache(fetchBlock);
+            }
+        }
         ++stepCounter_;
         const auto& feedback = context_.getLastFeedback();
 
@@ -390,7 +434,7 @@ public:
         lastLy_ = ly;
         lastPpuMode_ = ppuMode;
         if ((stepCounter_ % kSaveFlushStepInterval) == 0u) {
-            (void)flushCartridgeSave();
+            flushCartridgeSaveOnSchedule();
         }
     }
 
@@ -437,9 +481,24 @@ public:
         return cpu_.cpu().audioFrameCounter();
     }
 
+    std::string_view visualTargetId() const noexcept override {
+        return "gameboy";
+    }
+
+    const BMMQ::IVisualDebugAdapter* visualDebugAdapter() const noexcept override {
+        return &GB::gameBoyVisualDebugAdapter();
+    }
+
+    std::optional<BMMQ::RealtimeVideoPacket> realtimeVideoPacket(
+        const BMMQ::VideoDebugRenderRequest& request) const override
+    {
+        return GB::gameBoyVisualDebugAdapterTyped().buildRealtimeFrame(*this, request);
+    }
+
     uint32_t clockHz() const override {
         return cpu_.cpu().clockHz();
     }
+
 
     void attachExecutorPolicy(BMMQ::Plugin::IExecutorPolicyPlugin& policy) override {
         BMMQ::Plugin::validateExecutorPolicyStartup(policy);
@@ -449,6 +508,25 @@ public:
 
     const BMMQ::Plugin::IExecutorPolicyPlugin& attachedExecutorPolicy() const override {
         return *activePolicy_;
+    }
+
+    std::string stopSummary() const override {
+        const auto pc = runtimeContext().readRegister16(GB::RegisterId::PC);
+        const auto ly = runtimeContext().read8(0xFF44);
+        const auto lcdc = runtimeContext().read8(0xFF40);
+        const auto stat = runtimeContext().read8(0xFF41);
+        const auto interruptFlags = runtimeContext().read8(0xFF0F);
+        const auto interruptEnable = runtimeContext().read8(0xFFFF);
+
+        std::ostringstream out;
+        out << "PC=0x" << std::hex << std::uppercase << pc << std::dec << '\n'
+            << "I/O state: LY=0x" << std::hex << std::uppercase << static_cast<int>(ly)
+            << " LCDC=0x" << static_cast<int>(lcdc)
+            << " STAT=0x" << static_cast<int>(stat)
+            << " IF=0x" << static_cast<int>(interruptFlags)
+            << " IE=0x" << static_cast<int>(interruptEnable)
+            << std::dec;
+        return out.str();
     }
 
 private:
@@ -464,6 +542,7 @@ private:
         lastPolledDigitalInput_.reset();
         lastLy_ = context_.read8(0xFF44);
         lastPpuMode_ = static_cast<uint8_t>(context_.read8(0xFF41) & 0x03u);
+        cpu_.cpu().invalidateAllBlockCache();
         scanlineVideoCaptureActive_ = false;
         lastScanlineVideoSignature_ = currentScanlineVideoSignature();
         emitMachineEvent(BMMQ::MachineEvent{
@@ -475,6 +554,29 @@ private:
             nullptr,
             "ROM loaded"
         });
+    }
+
+    void flushCartridgeSaveOnSchedule() {
+        if (backgroundTaskService_ == nullptr) {
+            (void)flushCartridgeSave();
+            return;
+        }
+
+        auto extracted = saveManager_.extractDirtySaveSnapshot(cartridge_);
+        if (!extracted.has_value()) {
+            return;
+        }
+
+        auto snapshot = std::move(*extracted);
+        auto fallbackSnapshot = snapshot;
+
+        const bool queued = backgroundTaskService_->submit([
+            snapshot = std::move(snapshot)]() mutable {
+                GB::CartridgeSaveManager::flushSnapshot(snapshot);
+            });
+        if (!queued) {
+            GB::CartridgeSaveManager::flushSnapshot(fallbackSnapshot);
+        }
     }
 
     void pollInputPlugins() {
@@ -786,7 +888,7 @@ private:
 
     void configureMemoryMap() {
         memoryMap_.reset();
-        memoryMap_.mapRom(0x0000, 0x4000);
+        memoryMap_.mapRange(0x0000, 0x4000, BMMQ::memAccess::ReadWrite);
         memoryMap_.mapRom(0x4000, 0x4000);
         memoryMap_.mapRange(0x8000, 0x2000, BMMQ::memAccess::ReadWrite);
         memoryMap_.mapRange(0xa000, 0x2000, BMMQ::memAccess::ReadWrite);
@@ -798,8 +900,7 @@ private:
         memoryMap_.mapRange(0xff4c, 0x0001, BMMQ::memAccess::Unmapped);
         memoryMap_.mapRange(0xff4d, 0x001f, BMMQ::memAccess::ReadWrite);
         memoryMap_.mapRange(0xff6c, 0x0014, BMMQ::memAccess::Unmapped);
-        memoryMap_.mapRange(0xff80, 0x007f, BMMQ::memAccess::ReadWrite);
-        memoryMap_.mapRange(0xffff, 0x0001, BMMQ::memAccess::ReadWrite);
+        memoryMap_.mapRange(0xff80, 0x0080, BMMQ::memAccess::ReadWrite);
         memoryMap_.storage().setAddressTranslator([](uint16_t address) {
             if (address >= 0xE000 && address <= 0xFDFF) {
                 return static_cast<uint16_t>(address - 0x2000);
@@ -835,8 +936,10 @@ private:
     std::array<uint8_t, 0x100> bootRom_ = kDefaultBootRom;
     bool bootRomMapped_ = false;
     bool bootEntryPending_ = false;
+    std::optional<std::filesystem::path> pendingRomSourcePath_{};
     GB::GameBoyCartridge cartridge_;
     GB::CartridgeSaveManager saveManager_;
+    BMMQ::BackgroundTaskService* backgroundTaskService_ = nullptr;
     uint64_t stepCounter_ = 0;
     uint64_t inputGeneration_ = 1;
     uint8_t lastLy_ = 0;

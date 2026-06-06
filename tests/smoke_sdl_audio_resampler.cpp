@@ -35,6 +35,25 @@ int main()
     }
 
     {
+        BMMQ::SdlAudioResampler resampler(48000, 24000, 2u);
+        const std::vector<int16_t> input{
+            10, -10,
+            20, -20,
+            30, -30,
+            40, -40,
+        };
+        std::vector<int16_t> output(4, 0);
+        const auto stats = resampler.render(input, output);
+        (void)stats;
+        assert(stats.outputSamplesProduced == 4u);
+        assert(stats.sourceSamplesConsumed > 0u);
+        assert(output[0] == 10);
+        assert(output[1] == -10);
+        assert(output[2] == 30);
+        assert(output[3] == -30);
+    }
+
+    {
         BMMQ::SdlAudioResampler resampler(48000, 96000);
         const std::vector<int16_t> input{0, 1000, 2000, 3000};
         std::vector<int16_t> output(6, 0);

@@ -41,8 +41,8 @@ public:
             setError(AudioOutputErrorCode::InvalidPath, "File path is required");
             return false;
         }
-        if (config.channels != 1) {
-            setError(AudioOutputErrorCode::UnsupportedConfig, "Only mono output is supported");
+        if (config.channels < 1 || config.channels > 2) {
+            setError(AudioOutputErrorCode::UnsupportedConfig, "Only mono or stereo output is supported");
             return false;
         }
 
@@ -66,10 +66,29 @@ public:
             ? config.testForcedDeviceSampleRate
             : std::max(config.requestedSampleRate, 1);
         deviceInfo_.callbackChunkSamples = std::max<std::size_t>(config.callbackChunkSamples, 1u);
-        deviceInfo_.channels = 1;
+        deviceInfo_.channels = config.channels;
         engine_->setDeviceSampleRate(deviceInfo_.sampleRate);
         if (!service_->configureFixedCallbackCapacity(deviceInfo_.callbackChunkSamples)) {
             setError(AudioOutputErrorCode::InvalidConfig, "Failed to configure callback buffer capacity");
+            engine_ = nullptr;
+            service_ = nullptr;
+            output_.close();
+            return false;
+        }
+        if (!service_->configureOutputTransport({
+                .deviceSampleRate = deviceInfo_.sampleRate,
+                .channelCount = static_cast<uint8_t>(deviceInfo_.channels),
+                .callbackChunkSamples = deviceInfo_.callbackChunkSamples,
+                .readyQueueChunks = std::clamp<std::size_t>(config.readyQueueChunks, 1u, 64u),
+            })) {
+            setError(AudioOutputErrorCode::InvalidConfig, "Failed to configure output transport");
+            engine_ = nullptr;
+            service_ = nullptr;
+            output_.close();
+            return false;
+        }
+        if (!service_->startOutputTransport()) {
+            setError(AudioOutputErrorCode::RuntimeError, "Failed to start output transport");
             engine_ = nullptr;
             service_ = nullptr;
             output_.close();
@@ -79,18 +98,18 @@ public:
         running_.store(true, std::memory_order_release);
         worker_ = std::thread([this]() { run(); });
         ready_.store(true, std::memory_order_release);
-        service_->setBackendPausedOrClosed(false);
         return true;
     }
 
     void close() noexcept
     {
-        if (service_ != nullptr) {
-            service_->setBackendPausedOrClosed(true);
-        }
         running_.store(false, std::memory_order_release);
         if (worker_.joinable()) {
             worker_.join();
+        }
+        if (service_ != nullptr) {
+            service_->stopOutputTransport();
+            service_->setBackendPausedOrClosed(true);
         }
         ready_.store(false, std::memory_order_release);
         if (output_.is_open()) {
@@ -145,14 +164,16 @@ private:
         std::vector<int16_t> buffer(deviceInfo_.callbackChunkSamples, 0);
         auto sleepDuration = std::chrono::milliseconds(5);
         if (deviceInfo_.sampleRate > 0) {
+            const auto channels = std::max(deviceInfo_.channels, 1);
             const auto durationMs = static_cast<long long>(
-                (static_cast<double>(deviceInfo_.callbackChunkSamples) / deviceInfo_.sampleRate) * 1000.0
+                ((static_cast<double>(deviceInfo_.callbackChunkSamples) / static_cast<double>(channels)) /
+                 deviceInfo_.sampleRate) * 1000.0
             );
             sleepDuration = std::chrono::milliseconds(std::max(1LL, durationMs));
         }
         while (running_.load(std::memory_order_acquire)) {
             try {
-                service_->renderForOutput(buffer);
+                service_->drainReadyOutput(buffer);
                 errno = 0;
                 output_.write(reinterpret_cast<const char*>(buffer.data()),
                               static_cast<std::streamsize>(buffer.size() * sizeof(int16_t)));

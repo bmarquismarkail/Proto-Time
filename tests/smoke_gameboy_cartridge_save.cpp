@@ -1,12 +1,15 @@
 #include <cassert>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <thread>
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
 #include "cores/gameboy/cartridge/GameBoyCartridge.hpp"
+#include "machine/BackgroundTaskService.hpp"
 
 namespace {
 
@@ -111,13 +114,45 @@ int main()
     assert(savedRam[0x0000u] == 0x56u);
     assert(savedRam[0x2000u] == 0x78u);
 
+    removeIfExists(savePath);
+    {
+        BMMQ::BackgroundTaskService backgroundTasks;
+        backgroundTasks.start();
+
+        GameBoyMachine machine;
+        machine.setBackgroundTaskService(&backgroundTasks);
+        machine.loadRomFromPath(romPath);
+        machine.runtimeContext().write8(0x0000u, 0x0Au);
+        machine.runtimeContext().write8(0xA000u, 0x44u);
+        machine.runtimeContext().write8(0x4000u, 0x01u);
+        machine.runtimeContext().write8(0xA000u, 0x55u);
+        assert(machine.cartridge().hasDirtySaveData());
+
+        for (std::size_t i = 0; i < 4096u; ++i) {
+            machine.step();
+        }
+
+        for (std::size_t attempt = 0; attempt < 100u && !std::filesystem::exists(savePath); ++attempt) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+
+        const auto stats = backgroundTasks.stats();
+        assert(stats.tasksSubmitted >= 1u);
+        assert(std::filesystem::exists(savePath));
+    }
+
+    const auto scheduledSavedRam = readBinary(savePath);
+    assert(scheduledSavedRam.size() == 0x8000u);
+    assert(scheduledSavedRam[0x0000u] == 0x44u);
+    assert(scheduledSavedRam[0x2000u] == 0x55u);
+
     {
         GameBoyMachine machine;
         machine.loadRomFromPath(romPath);
         machine.runtimeContext().write8(0x0000u, 0x0Au);
-        assert(machine.runtimeContext().read8(0xA000u) == 0x56u);
+        assert(machine.runtimeContext().read8(0xA000u) == 0x44u);
         machine.runtimeContext().write8(0x4000u, 0x01u);
-        assert(machine.runtimeContext().read8(0xA000u) == 0x78u);
+        assert(machine.runtimeContext().read8(0xA000u) == 0x55u);
         assert(!machine.cartridge().hasDirtySaveData());
     }
 

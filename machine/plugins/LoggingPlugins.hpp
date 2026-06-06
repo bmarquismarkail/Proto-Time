@@ -1,3 +1,4 @@
+constexpr struct { int width; int height; } kGameBoyResolution{160, 144};
 #ifndef BMMQ_LOGGING_PLUGINS_HPP
 #define BMMQ_LOGGING_PLUGINS_HPP
 
@@ -190,9 +191,11 @@ public:
         stream << "video: event=" << detail::machineEventTypeName(event.type)
                << " tick=" << event.tick
                << " addr=" << detail::hexWord(event.address);
-        if (const auto state = view.videoState(); state.has_value()) {
-            stream << " lcdc=" << detail::hexByte(state->lcdc)
-                   << " ly=" << static_cast<unsigned>(state->ly);
+        if (const auto model = view.videoDebugFrameModel({kGameBoyResolution.width, kGameBoyResolution.height}); model.has_value()) {
+            stream << " display=" << (model->displayEnabled ? "on" : "off");
+            if (model->scanlineIndex.has_value()) {
+                stream << " scanline=" << static_cast<unsigned>(*model->scanlineIndex);
+            }
         }
         appendLog(stream.str());
     }

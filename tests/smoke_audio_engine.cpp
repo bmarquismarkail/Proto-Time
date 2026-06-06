@@ -7,55 +7,94 @@
 
 int main()
 {
-    BMMQ::AudioEngine engine({
-        .sourceSampleRate = 48000,
-        .deviceSampleRate = 44100,
-        .ringBufferCapacitySamples = 1024,
-        .frameChunkSamples = 256,
-    });
-
-    std::vector<int16_t> recent(512, 0);
-    for (std::size_t i = 0; i < recent.size(); ++i) {
-        recent[i] = static_cast<int16_t>(i);
+    std::vector<int16_t> s512(512, 0);
+    for (std::size_t i = 0; i < s512.size(); ++i) {
+        s512[i] = static_cast<int16_t>(i);
     }
 
-    engine.appendRecentPcm(recent, 1u);
-    assert(engine.bufferedSamples() == 256u);
-    assert(engine.stats().sourceSamplesPushed == 256u);
-
-    engine.appendRecentPcm(recent, 1u);
-    assert(engine.bufferedSamples() == 256u);
-
-    engine.appendRecentPcm(recent, 4u);
+    BMMQ::AudioEngine engine({
+        .sourceSampleRate = 48000,
+        .deviceSampleRate = 48000,
+        .ringBufferCapacitySamples = 4096,
+        .frameChunkSamples = 512,
+    });
+    engine.appendRecentPcm(s512, 1u);
     assert(engine.bufferedSamples() == 512u);
+    assert(engine.stats().sourceSamplesPushed == 512u);
+    assert(engine.stats().appendCallCount == 1u);
+    assert(engine.stats().appendSamplesRequested == 512u);
+    assert(engine.stats().appendSamplesAccepted == 512u);
+    assert(engine.stats().appendSamplesRejected == 0u);
+    assert(engine.stats().appendSamplesTruncated == 0u);
+    assert(engine.stats().appendBufferedSamplesLast == 512u);
 
-    std::vector<int16_t> out(64, 0);
-    engine.render(out);
-    assert(engine.stats().callbackCount == 1u);
-    assert(engine.stats().outputSamplesProduced == 64u);
-    assert(engine.stats().sourceSamplesConsumed >= 1u);
+    std::vector<int16_t> out512(512, -1);
+    engine.render(out512);
+    for (std::size_t i = 0; i < s512.size(); ++i) {
+        assert(out512[i] == s512[i]);
+    }
+
+    engine.appendRecentPcm(s512, 1u);
+    assert(engine.bufferedSamples() == 0u);
+    assert(engine.stats().appendSamplesRejected == 512u);
+
+    engine.appendRecentPcm(s512, 4u);
+    assert(engine.bufferedSamples() == 512u);
+    assert(engine.stats().appendCallCount == 3u);
+    assert(engine.stats().appendSamplesRequested == 1536u);
+    assert(engine.stats().appendSamplesAccepted == 1024u);
+    assert(engine.stats().appendSamplesRejected == 512u);
+    assert(engine.stats().appendSamplesTruncated == 0u);
+
+    std::vector<int16_t> s1024(1024, 0);
+    for (std::size_t i = 0; i < s1024.size(); ++i) {
+        s1024[i] = static_cast<int16_t>(1000 + i);
+    }
+    BMMQ::AudioEngine twoBlockEngine({
+        .sourceSampleRate = 48000,
+        .deviceSampleRate = 48000,
+        .ringBufferCapacitySamples = 4096,
+        .frameChunkSamples = 512,
+    });
+    twoBlockEngine.appendRecentPcm(s1024, 1u);
+    assert(twoBlockEngine.bufferedSamples() == 1024u);
+    std::vector<int16_t> out1024a(512, -1);
+    std::vector<int16_t> out1024b(512, -1);
+    twoBlockEngine.render(out1024a);
+    twoBlockEngine.render(out1024b);
+    for (std::size_t i = 0; i < 512u; ++i) {
+        assert(out1024a[i] == s1024[i]);
+        assert(out1024b[i] == s1024[512u + i]);
+    }
 
     engine.resetStats();
     engine.resetStream();
     assert(engine.bufferedSamples() == 0u);
     assert(engine.stats().callbackCount == 0u);
 
-    engine.appendRecentPcm(recent, 2u);
-    assert(engine.bufferedSamples() == 256u);
-
     BMMQ::AudioEngine unity({
         .sourceSampleRate = 48000,
         .deviceSampleRate = 48000,
         .ringBufferCapacitySamples = 1024,
-        .frameChunkSamples = 256,
+        .frameChunkSamples = 512,
     });
-    unity.appendRecentPcm(recent, 1u);
-    std::vector<int16_t> unityOut(4, 0);
-    unity.render(unityOut);
-    assert(unityOut[0] == recent[256]);
-    assert(unityOut[1] == recent[257]);
-    assert(unityOut[2] == recent[258]);
-    assert(unityOut[3] == recent[259]);
+    std::vector<int16_t> multiBlock(2048, 0);
+    for (std::size_t i = 0; i < multiBlock.size(); ++i) {
+        multiBlock[i] = static_cast<int16_t>(2000 + i);
+    }
+    unity.appendRecentPcm(multiBlock, 1u);
+    const std::size_t usableCapacity = unity.bufferCapacitySamples() - 1u;
+    assert(unity.bufferedSamples() == usableCapacity);
+    assert(unity.stats().appendSamplesAccepted == usableCapacity);
+    assert(unity.stats().appendSamplesTruncated == multiBlock.size() - usableCapacity);
+    assert(unity.stats().droppedSamples == 0u);
+
+    std::vector<int16_t> overflowOut(512, -1);
+    unity.render(overflowOut);
+    const std::size_t expectedStart = multiBlock.size() - usableCapacity;
+    for (std::size_t i = 0; i < overflowOut.size(); ++i) {
+        assert(overflowOut[i] == multiBlock[expectedStart + i]);
+    }
 
     BMMQ::AudioEngine rollbackEngine({
         .sourceSampleRate = 48000,
@@ -69,7 +108,7 @@ int main()
     rollbackEngine.appendRecentPcm(generationB, 4u);
     std::vector<int16_t> rollbackOut(4, -1);
     rollbackEngine.render(rollbackOut);
-    if (rollbackOut[0] != 22 || rollbackOut[1] != 23 || rollbackOut[2] != 24 || rollbackOut[3] != 25) {
+    if (rollbackOut[0] != 20 || rollbackOut[1] != 21 || rollbackOut[2] != 22 || rollbackOut[3] != 23) {
         std::cerr << "rollback seed chunk was not preserved across reset boundary" << '\n';
         return 1;
     }
@@ -88,8 +127,8 @@ int main()
     repeatedRollbackEngine.appendRecentPcm(generationE, 6u);
     std::vector<int16_t> repeatedRollbackOut(4, -1);
     repeatedRollbackEngine.render(repeatedRollbackOut);
-    if (repeatedRollbackOut[0] != 52 || repeatedRollbackOut[1] != 53
-        || repeatedRollbackOut[2] != 54 || repeatedRollbackOut[3] != 55) {
+    if (repeatedRollbackOut[0] != 50 || repeatedRollbackOut[1] != 51
+        || repeatedRollbackOut[2] != 52 || repeatedRollbackOut[3] != 53) {
         std::cerr << "latest rollback seed chunk did not win before callback reset" << '\n';
         return 1;
     }

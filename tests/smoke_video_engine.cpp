@@ -13,12 +13,17 @@
 #include "machine/VisualOverrideService.hpp"
 #include "machine/plugins/AudioEngine.hpp"
 #include "machine/plugins/video/VideoEngine.hpp"
+#include "tests/visual_test_helpers.hpp"
 
 namespace {
 
 [[nodiscard]] long perfTestTimeoutMs() noexcept
 {
+#if defined(BMMQ_TSAN_ENABLED) || defined(__SANITIZE_THREAD__)
+    constexpr long kDefaultPerfTestTimeoutMs = 5000;
+#else
     constexpr long kDefaultPerfTestTimeoutMs = 1000;
+#endif
     if (const char* value = std::getenv("PERF_TEST_TIMEOUT_MS"); value != nullptr) {
         char* end = nullptr;
         const long parsed = std::strtol(value, &end, 10);
@@ -91,18 +96,44 @@ BMMQ::VideoStateView makeDenseVideoState()
     return state;
 }
 
+BMMQ::VideoDebugFrameModel makeGenericDebugModel()
+{
+    BMMQ::VideoDebugFrameModel model;
+    model.width = 4;
+    model.height = 2;
+    model.displayEnabled = true;
+    model.argbPixels = {
+        0xFF112233u, 0xFF445566u, 0xFF778899u, 0xFFAABBCCu,
+        0xFF010203u, 0xFF040506u, 0xFF070809u, 0xFF0A0B0Cu,
+    };
+    model.semantics.resize(model.argbPixels.size());
+    return model;
+}
+
 } // namespace
 
 int main()
 {
+    namespace Visual = BMMQ::Tests::Visual;
+
+    BMMQ::VideoEngine genericEngine({
+        .frameWidth = 4,
+        .frameHeight = 2,
+        .mailboxDepthFrames = 1,
+    });
+    const auto genericModel = makeGenericDebugModel();
+    const auto genericFrame = genericEngine.buildDebugFrame(genericModel, 1u);
+    assert(genericFrame.pixels == genericModel.argbPixels);
+
     BMMQ::VideoEngine engine({
         .frameWidth = 32,
         .frameHeight = 24,
-        .queueCapacityFrames = 2,
+        .mailboxDepthFrames = 1,
     });
 
     const auto state = makeDebugVideoState();
-    auto frame = engine.buildDebugFrame(state, 7u);
+    const auto model = Visual::makeSemanticModelFromState(state, 32, 24);
+    auto frame = engine.buildDebugFrame(model, 7u);
     assert(frame.width == 32);
     assert(frame.height == 24);
     assert(frame.pixelCount() == 32u * 24u);
@@ -126,23 +157,34 @@ int main()
 
     const auto submitA = engine.submitFrame(frameA);
     assert(submitA.accepted);
-    assert(!submitA.droppedOldest);
+    assert(!submitA.overwroteOldFrame);
     const auto submitB = engine.submitFrame(frameB);
     assert(submitB.accepted);
-    assert(!submitB.droppedOldest);
+    assert(submitB.overwroteOldFrame);   // triple-buffer: A was pending, B overwrites it
     const auto submitC = engine.submitFrame(frameC);
     assert(submitC.accepted);
-    assert(submitC.droppedOldest);
-    assert(engine.stats().droppedFrameCount == 1u);
-    assert(engine.stats().frameQueueHighWaterMark == 2u);
+    assert(submitC.overwroteOldFrame);
+    assert(engine.stats().overwriteCount == 2u);           // B overwrote A, C overwrote B
+    assert(engine.stats().overwriteDebugFrameCount == 2u);
+    assert(engine.stats().overwriteRealtimeFrameCount == 0u);
+    assert(engine.stats().mailboxHighWaterMark == 1u);     // triple-buffer depth is always 0 or 1
+    assert(engine.stats().publishedFrameCount == 3u);
+    assert(engine.stats().publishedDebugFrameCount == 3u);
+    assert(engine.stats().publishedRealtimeFrameCount == 0u);
+    assert(engine.stats().publishedPixelBytes ==
+           engine.stats().publishedDebugPixelBytes + engine.stats().publishedRealtimePixelBytes);
+    assert(engine.stats().lastPublishedGeneration == 9u);
 
-    auto consumed = engine.tryConsumeFrame();
-    assert(consumed.has_value());
-    assert(consumed->generation == 8u);
-    consumed = engine.tryConsumeFrame();
+    auto consumed = engine.tryConsumeLatestFrame();
     assert(consumed.has_value());
     assert(consumed->generation == 9u);
-    assert(!engine.tryConsumeFrame().has_value());
+    assert(engine.stats().consumedFrameCount == 1u);
+    assert(engine.stats().staleFrameDropCount == 0u);      // triple-buffer: no stale drain on consume
+    assert(engine.stats().staleDebugFrameDropCount == 0u);
+    assert(engine.stats().staleRealtimeFrameDropCount == 0u);
+    assert(engine.stats().lastConsumedGeneration == 9u);
+    assert(!engine.tryConsumeLatestFrame().has_value());
+    assert(engine.mailboxFrameCount() == 0u);
 
     engine.advanceGeneration();
     assert(engine.currentGeneration() == 1u);
@@ -152,7 +194,7 @@ int main()
     BMMQ::VideoEngine blankEngine({
         .frameWidth = 4,
         .frameHeight = 3,
-        .queueCapacityFrames = 1,
+        .mailboxDepthFrames = 1,
     });
     const auto blank = blankEngine.fallbackFrame();
     assert(blank.width == 4);
@@ -163,7 +205,7 @@ int main()
     BMMQ::VideoEngine fullFrameEngine({
         .frameWidth = 160,
         .frameHeight = 144,
-        .queueCapacityFrames = 2,
+        .mailboxDepthFrames = 1,
     });
     BMMQ::AudioEngine audioEngine({
         .sourceSampleRate = 48000,
@@ -172,6 +214,7 @@ int main()
         .frameChunkSamples = 256,
     });
     const auto denseState = makeDenseVideoState();
+    const auto denseModel = Visual::makeSemanticModelFromState(denseState, 160, 144);
     std::vector<int16_t> audioChunk(256u, 1200);
     std::vector<int16_t> audioOutput(256u, 0);
 
@@ -179,7 +222,7 @@ int main()
     const auto maxPerfTime = std::chrono::milliseconds(perfTestTimeoutMs());
     const auto start = std::chrono::steady_clock::now();
     for (int i = 0; i < kFramesToBuild; ++i) {
-        const auto denseFrame = fullFrameEngine.buildDebugFrame(denseState, static_cast<uint64_t>(i + 1));
+        const auto denseFrame = fullFrameEngine.buildDebugFrame(denseModel, static_cast<uint64_t>(i + 1));
         assert(denseFrame.pixelCount() == 160u * 144u);
         audioEngine.appendRecentPcm(audioChunk, static_cast<uint64_t>(i + 1));
         audioEngine.render(audioOutput);
@@ -193,12 +236,12 @@ int main()
     BMMQ::VideoEngine inactiveVisualEngine({
         .frameWidth = 160,
         .frameHeight = 144,
-        .queueCapacityFrames = 1,
+        .mailboxDepthFrames = 1,
     });
     inactiveVisualEngine.setVisualOverrideService(&inactiveVisualService);
     const auto inactiveStart = std::chrono::steady_clock::now();
     for (int i = 0; i < kFramesToBuild; ++i) {
-        const auto denseFrame = inactiveVisualEngine.buildDebugFrame(denseState, static_cast<uint64_t>(i + 1));
+        const auto denseFrame = inactiveVisualEngine.buildDebugFrame(denseModel, static_cast<uint64_t>(i + 1));
         assert(denseFrame.pixelCount() == 160u * 144u);
     }
     const auto inactiveElapsed = std::chrono::steady_clock::now() - inactiveStart;
@@ -211,12 +254,12 @@ int main()
     BMMQ::VideoEngine captureVisualEngine({
         .frameWidth = 160,
         .frameHeight = 144,
-        .queueCapacityFrames = 1,
+        .mailboxDepthFrames = 1,
     });
     captureVisualEngine.setVisualOverrideService(&captureVisualService);
     const auto captureStart = std::chrono::steady_clock::now();
     for (int i = 0; i < 3; ++i) {
-        const auto denseFrame = captureVisualEngine.buildDebugFrame(denseState, static_cast<uint64_t>(i + 1));
+        const auto denseFrame = captureVisualEngine.buildDebugFrame(denseModel, static_cast<uint64_t>(i + 1));
         assert(denseFrame.pixelCount() == 160u * 144u);
     }
     const auto captureElapsed = std::chrono::steady_clock::now() - captureStart;

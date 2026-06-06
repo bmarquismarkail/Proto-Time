@@ -20,7 +20,7 @@ struct RecordingVideoPlugin final : BMMQ::IVideoPlugin {
     int machineEventCount = 0;
     int videoEventCount = 0;
     uint8_t lastObservedValue = 0;
-    std::optional<BMMQ::VideoStateView> lastVideoState;
+    std::optional<BMMQ::VideoDebugFrameModel> lastVideoDebugModel;
     BMMQ::MachineEvent lastMachineEvent{};
     BMMQ::MachineEvent lastVideoEvent{};
 
@@ -46,7 +46,7 @@ struct RecordingVideoPlugin final : BMMQ::IVideoPlugin {
         ++videoEventCount;
         lastVideoEvent = event;
         lastObservedValue = view.read8(event.address);
-        lastVideoState = view.videoState();
+        lastVideoDebugModel = view.videoDebugFrameModel({160, 144});
     }
 };
 
@@ -257,12 +257,11 @@ int main()
     assert(video->lastVideoEvent.type == BMMQ::MachineEventType::MemoryWriteObserved);
     assert(video->lastVideoEvent.category == BMMQ::PluginCategory::Video);
     assert(video->lastObservedValue == 0x91u);
-    assert(video->lastVideoState.has_value());
-    assert(video->lastVideoState->lcdc == 0x91u);
-    assert(video->lastVideoState->lcdEnabled());
-    assert(video->lastVideoState->vram.size() == 0x2000u);
-    assert(video->lastVideoState->oam.size() == 0x00A0u);
-    assert(video->lastVideoState->vram[0] == 0x42u);
+    assert(video->lastVideoDebugModel.has_value());
+    assert(video->lastVideoDebugModel->displayEnabled);
+    assert(video->lastVideoDebugModel->width == 160);
+    assert(video->lastVideoDebugModel->height == 144);
+    assert(!video->lastVideoDebugModel->resources.empty());
     assert(loggingVideo->entryCount() >= 2);
     assert(!sinkEntries.empty());
 

@@ -11,15 +11,36 @@
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+#include "cores/gameboy/video/GameBoyVisualDebugAdapter.hpp"
 #include "cores/gameboy/video/GameBoyVisualExtractor.hpp"
 #include "machine/VideoService.hpp"
 #include "machine/VisualOverrideService.hpp"
 #include "machine/VisualTypes.hpp"
 #include "tests/visual_test_helpers.hpp"
 
+namespace {
+
+std::unique_ptr<BMMQ::VideoService> makeGameBoyVideoService()
+{
+    auto videoService = std::make_unique<BMMQ::VideoService>(BMMQ::VideoEngineConfig{
+        .frameWidth = 8,
+        .frameHeight = 8,
+        .mailboxDepthFrames = 1,
+    });
+    videoService->setVisualDebugAdapter(&GB::gameBoyVisualDebugAdapter());
+    return videoService;
+}
+
+} // namespace
+
 int main()
 {
     namespace Visual = BMMQ::Tests::Visual;
+    const auto buildFrame = [](BMMQ::VideoService& service,
+                               const BMMQ::VideoStateView& state,
+                               std::uint64_t generation) {
+        return service.engine().buildDebugFrame(Visual::makeSemanticModelFromState(state, 8, 8), generation);
+    };
 
     assert(std::string_view(BMMQ::visualPostEffectKindName(BMMQ::VisualPostEffectKind::Invert)) == "Invert");
     assert(std::string_view(BMMQ::visualPostEffectKindName(BMMQ::VisualPostEffectKind::Grayscale)) == "Grayscale");
@@ -129,21 +150,17 @@ int main()
     assert(&machine.visualOverrideService() == swappedService);
     machine.pluginManager().shutdown(machine.mutableView());
 
-    BMMQ::VideoService videoService(BMMQ::VideoEngineConfig{
-        .frameWidth = 8,
-        .frameHeight = 8,
-        .queueCapacityFrames = 1,
-    });
-    auto originalFrame = videoService.engine().buildDebugFrame(state, 1u);
+    auto videoService = makeGameBoyVideoService();
+    auto originalFrame = buildFrame(*videoService, state, 1u);
     assert(originalFrame.pixels[0] == 0xFF88C070u);
 
-    videoService.setVisualOverrideService(&service);
+    videoService->setVisualOverrideService(&service);
     std::vector<BMMQ::MachineEventType> visualEvents;
     service.setEventSink([&visualEvents](const BMMQ::MachineEvent& event) {
         assert(event.category == BMMQ::PluginCategory::Video);
         visualEvents.push_back(event.type);
     });
-    auto replacedFrame = videoService.engine().buildDebugFrame(state, 2u);
+    auto replacedFrame = buildFrame(*videoService, state, 2u);
     assert(replacedFrame.pixels[0] == 0xFFFF0000u);
     assert(!visualEvents.empty());
     assert(visualEvents.front() == BMMQ::MachineEventType::FrameCompositionStarted);
@@ -178,13 +195,9 @@ int main()
         "  }]\n"
         "}\n");
     assert(paletteReplaceService.loadPackManifest(paletteReplaceDir / "pack.json"));
-    BMMQ::VideoService paletteReplaceVideoService(BMMQ::VideoEngineConfig{
-        .frameWidth = 8,
-        .frameHeight = 8,
-        .queueCapacityFrames = 1,
-    });
-    paletteReplaceVideoService.setVisualOverrideService(&paletteReplaceService);
-    auto paletteReplaceFrame = paletteReplaceVideoService.engine().buildDebugFrame(state, 11u);
+    auto paletteReplaceVideoService = makeGameBoyVideoService();
+    paletteReplaceVideoService->setVisualOverrideService(&paletteReplaceService);
+    auto paletteReplaceFrame = buildFrame(*paletteReplaceVideoService, state, 11u);
     assert(paletteReplaceFrame.pixels[0] == 0xFFDD0000u);
 
     BMMQ::VisualOverrideService imagePrecedenceService;
@@ -209,13 +222,9 @@ int main()
         "  }]\n"
         "}\n");
     assert(imagePrecedenceService.loadPackManifest(imagePrecedenceDir / "pack.json"));
-    BMMQ::VideoService imagePrecedenceVideoService(BMMQ::VideoEngineConfig{
-        .frameWidth = 8,
-        .frameHeight = 8,
-        .queueCapacityFrames = 1,
-    });
-    imagePrecedenceVideoService.setVisualOverrideService(&imagePrecedenceService);
-    auto imagePrecedenceFrame = imagePrecedenceVideoService.engine().buildDebugFrame(state, 12u);
+    auto imagePrecedenceVideoService = makeGameBoyVideoService();
+    imagePrecedenceVideoService->setVisualOverrideService(&imagePrecedenceService);
+    auto imagePrecedenceFrame = buildFrame(*imagePrecedenceVideoService, state, 12u);
     assert(imagePrecedenceFrame.pixels[0] == 0xFF00FFFFu);
 
     BMMQ::VisualOverrideService exactPolicyService;
@@ -240,13 +249,9 @@ int main()
         "  }]\n"
         "}\n");
     assert(exactPolicyService.loadPackManifest(exactPolicyDir / "pack.json"));
-    BMMQ::VideoService exactPolicyVideoService(BMMQ::VideoEngineConfig{
-        .frameWidth = 8,
-        .frameHeight = 8,
-        .queueCapacityFrames = 1,
-    });
-    exactPolicyVideoService.setVisualOverrideService(&exactPolicyService);
-    auto exactPolicyFrame = exactPolicyVideoService.engine().buildDebugFrame(state, 6u);
+    auto exactPolicyVideoService = makeGameBoyVideoService();
+    exactPolicyVideoService->setVisualOverrideService(&exactPolicyService);
+    auto exactPolicyFrame = buildFrame(*exactPolicyVideoService, state, 6u);
     assert(exactPolicyFrame.pixels[0] == 0xFF88C070u);
 
     BMMQ::VisualOverrideService cropAnchorService;
@@ -278,13 +283,9 @@ int main()
         "  }]\n"
         "}\n");
     assert(cropAnchorService.loadPackManifest(cropAnchorDir / "pack.json"));
-    BMMQ::VideoService cropAnchorVideoService(BMMQ::VideoEngineConfig{
-        .frameWidth = 8,
-        .frameHeight = 8,
-        .queueCapacityFrames = 1,
-    });
-    cropAnchorVideoService.setVisualOverrideService(&cropAnchorService);
-    auto cropAnchorFrame = cropAnchorVideoService.engine().buildDebugFrame(state, 7u);
+    auto cropAnchorVideoService = makeGameBoyVideoService();
+    cropAnchorVideoService->setVisualOverrideService(&cropAnchorService);
+    auto cropAnchorFrame = buildFrame(*cropAnchorVideoService, state, 7u);
     assert(cropAnchorFrame.pixels[0] == 0xFF00FF00u);
 
     BMMQ::VisualOverrideService slicingService;
@@ -315,13 +316,9 @@ int main()
         "  }]\n"
         "}\n");
     assert(slicingService.loadPackManifest(slicingDir / "pack.json"));
-    BMMQ::VideoService slicingVideoService(BMMQ::VideoEngineConfig{
-        .frameWidth = 8,
-        .frameHeight = 8,
-        .queueCapacityFrames = 1,
-    });
-    slicingVideoService.setVisualOverrideService(&slicingService);
-    auto slicingFrame = slicingVideoService.engine().buildDebugFrame(state, 13u);
+    auto slicingVideoService = makeGameBoyVideoService();
+    slicingVideoService->setVisualOverrideService(&slicingService);
+    auto slicingFrame = buildFrame(*slicingVideoService, state, 13u);
     assert(slicingFrame.pixels[0] == 0xFF00FF00u);
 
     BMMQ::VisualOverrideService flipTransformService;
@@ -347,13 +344,9 @@ int main()
         "  }]\n"
         "}\n");
     assert(flipTransformService.loadPackManifest(flipTransformDir / "pack.json"));
-    BMMQ::VideoService flipTransformVideoService(BMMQ::VideoEngineConfig{
-        .frameWidth = 8,
-        .frameHeight = 8,
-        .queueCapacityFrames = 1,
-    });
-    flipTransformVideoService.setVisualOverrideService(&flipTransformService);
-    auto flipTransformFrame = flipTransformVideoService.engine().buildDebugFrame(state, 14u);
+    auto flipTransformVideoService = makeGameBoyVideoService();
+    flipTransformVideoService->setVisualOverrideService(&flipTransformService);
+    auto flipTransformFrame = buildFrame(*flipTransformVideoService, state, 14u);
     assert(flipTransformFrame.pixels[0] == 0xFF00FF00u);
 
     BMMQ::VisualOverrideService rotateTransformService;
@@ -382,13 +375,9 @@ int main()
         "  }]\n"
         "}\n");
     assert(rotateTransformService.loadPackManifest(rotateTransformDir / "pack.json"));
-    BMMQ::VideoService rotateTransformVideoService(BMMQ::VideoEngineConfig{
-        .frameWidth = 8,
-        .frameHeight = 8,
-        .queueCapacityFrames = 1,
-    });
-    rotateTransformVideoService.setVisualOverrideService(&rotateTransformService);
-    auto rotateTransformFrame = rotateTransformVideoService.engine().buildDebugFrame(state, 15u);
+    auto rotateTransformVideoService = makeGameBoyVideoService();
+    rotateTransformVideoService->setVisualOverrideService(&rotateTransformService);
+    auto rotateTransformFrame = buildFrame(*rotateTransformVideoService, state, 15u);
     assert(rotateTransformFrame.pixels[0] == 0xFF0000FFu);
 
     BMMQ::VisualOverrideService layeredCompositionService;
@@ -413,13 +402,9 @@ int main()
         "  }]\n"
         "}\n");
     assert(layeredCompositionService.loadPackManifest(layeredCompositionDir / "pack.json"));
-    BMMQ::VideoService layeredCompositionVideoService(BMMQ::VideoEngineConfig{
-        .frameWidth = 8,
-        .frameHeight = 8,
-        .queueCapacityFrames = 1,
-    });
-    layeredCompositionVideoService.setVisualOverrideService(&layeredCompositionService);
-    auto layeredCompositionFrame = layeredCompositionVideoService.engine().buildDebugFrame(state, 16u);
+    auto layeredCompositionVideoService = makeGameBoyVideoService();
+    layeredCompositionVideoService->setVisualOverrideService(&layeredCompositionService);
+    auto layeredCompositionFrame = buildFrame(*layeredCompositionVideoService, state, 16u);
     assert(layeredCompositionFrame.pixels[0] == 0xFF80007Fu);
 
     BMMQ::VisualOverrideService animationGroupService;
@@ -447,16 +432,12 @@ int main()
         "  }]\n"
         "}\n");
     assert(animationGroupService.loadPackManifest(animationGroupDir / "pack.json"));
-    BMMQ::VideoService animationGroupVideoService(BMMQ::VideoEngineConfig{
-        .frameWidth = 8,
-        .frameHeight = 8,
-        .queueCapacityFrames = 1,
-    });
-    animationGroupVideoService.setVisualOverrideService(&animationGroupService);
-    auto animationFrame0 = animationGroupVideoService.engine().buildDebugFrame(state, 20u);
-    auto animationFrame1 = animationGroupVideoService.engine().buildDebugFrame(state, 21u);
-    auto animationFrame2 = animationGroupVideoService.engine().buildDebugFrame(state, 22u);
-    auto animationFrame3 = animationGroupVideoService.engine().buildDebugFrame(state, 23u);
+    auto animationGroupVideoService = makeGameBoyVideoService();
+    animationGroupVideoService->setVisualOverrideService(&animationGroupService);
+    auto animationFrame0 = buildFrame(*animationGroupVideoService, state, 20u);
+    auto animationFrame1 = buildFrame(*animationGroupVideoService, state, 21u);
+    auto animationFrame2 = buildFrame(*animationGroupVideoService, state, 22u);
+    auto animationFrame3 = buildFrame(*animationGroupVideoService, state, 23u);
     assert(animationFrame0.pixels[0] == 0xFFFF0000u);
     assert(animationFrame1.pixels[0] == 0xFFFF0000u);
     assert(animationFrame2.pixels[0] == 0xFF00FF00u);
@@ -484,13 +465,9 @@ int main()
         "  }]\n"
         "}\n");
     assert(postEffectsService.loadPackManifest(postEffectsDir / "pack.json"));
-    BMMQ::VideoService postEffectsVideoService(BMMQ::VideoEngineConfig{
-        .frameWidth = 8,
-        .frameHeight = 8,
-        .queueCapacityFrames = 1,
-    });
-    postEffectsVideoService.setVisualOverrideService(&postEffectsService);
-    auto postEffectsFrame = postEffectsVideoService.engine().buildDebugFrame(state, 24u);
+    auto postEffectsVideoService = makeGameBoyVideoService();
+    postEffectsVideoService->setVisualOverrideService(&postEffectsService);
+    auto postEffectsFrame = buildFrame(*postEffectsVideoService, state, 24u);
     assert(postEffectsFrame.pixels[0] == 0xFFFF0000u);
 
     BMMQ::VisualOverrideService scriptedEffectsService;
@@ -515,13 +492,9 @@ int main()
         "  }]\n"
         "}\n");
     assert(scriptedEffectsService.loadPackManifest(scriptedEffectsDir / "pack.json"));
-    BMMQ::VideoService scriptedEffectsVideoService(BMMQ::VideoEngineConfig{
-        .frameWidth = 8,
-        .frameHeight = 8,
-        .queueCapacityFrames = 1,
-    });
-    scriptedEffectsVideoService.setVisualOverrideService(&scriptedEffectsService);
-    auto scriptedEffectsFrame = scriptedEffectsVideoService.engine().buildDebugFrame(state, 25u);
+    auto scriptedEffectsVideoService = makeGameBoyVideoService();
+    scriptedEffectsVideoService->setVisualOverrideService(&scriptedEffectsService);
+    auto scriptedEffectsFrame = buildFrame(*scriptedEffectsVideoService, state, 25u);
     assert(scriptedEffectsFrame.pixels[0] == 0xFF00FFFFu);
 
     BMMQ::VisualOverrideService linearPolicyService;
@@ -548,13 +521,9 @@ int main()
         "  }]\n"
         "}\n");
     assert(linearPolicyService.loadPackManifest(linearPolicyDir / "pack.json"));
-    BMMQ::VideoService linearPolicyVideoService(BMMQ::VideoEngineConfig{
-        .frameWidth = 8,
-        .frameHeight = 8,
-        .queueCapacityFrames = 1,
-    });
-    linearPolicyVideoService.setVisualOverrideService(&linearPolicyService);
-    auto linearPolicyFrame = linearPolicyVideoService.engine().buildDebugFrame(state, 8u);
+    auto linearPolicyVideoService = makeGameBoyVideoService();
+    linearPolicyVideoService->setVisualOverrideService(&linearPolicyService);
+    auto linearPolicyFrame = buildFrame(*linearPolicyVideoService, state, 8u);
     // A 2x1 replacement from red to green is upscaled across the 8x8 tile; pixel 4 lands between the
     // endpoints in the bilinear sample, producing roughly R=0x6D and G=0x92, so the expected ARGB is 0xFF6D9200.
     assert(linearPolicyFrame.pixels[4] == 0xFF6D9200u);
@@ -575,13 +544,9 @@ int main()
                                 signedTileResource->descriptor.contentHash,
                                 root / "signed-pack" / "signed.png");
     assert(signedTileService.loadPackManifest(root / "signed-pack" / "pack.json"));
-    BMMQ::VideoService signedTileVideoService(BMMQ::VideoEngineConfig{
-        .frameWidth = 8,
-        .frameHeight = 8,
-        .queueCapacityFrames = 1,
-    });
-    signedTileVideoService.setVisualOverrideService(&signedTileService);
-    auto signedTileFrame = signedTileVideoService.engine().buildDebugFrame(signedTileState, 3u);
+    auto signedTileVideoService = makeGameBoyVideoService();
+    signedTileVideoService->setVisualOverrideService(&signedTileService);
+    auto signedTileFrame = buildFrame(*signedTileVideoService, signedTileState, 3u);
     assert(signedTileFrame.pixels[0] == 0xFFFF0000u);
 
     auto transparentSpriteState = Visual::makeTileState(0x00u, 0x00u);
@@ -601,13 +566,9 @@ int main()
                                 transparentSpriteResource->descriptor.contentHash,
                                 root / "transparent-sprite-pack" / "sprite.png");
     assert(transparentSpriteService.loadPackManifest(root / "transparent-sprite-pack" / "pack.json"));
-    BMMQ::VideoService transparentSpriteVideoService(BMMQ::VideoEngineConfig{
-        .frameWidth = 8,
-        .frameHeight = 8,
-        .queueCapacityFrames = 1,
-    });
-    transparentSpriteVideoService.setVisualOverrideService(&transparentSpriteService);
-    auto transparentSpriteFrame = transparentSpriteVideoService.engine().buildDebugFrame(transparentSpriteState, 4u);
+    auto transparentSpriteVideoService = makeGameBoyVideoService();
+    transparentSpriteVideoService->setVisualOverrideService(&transparentSpriteService);
+    auto transparentSpriteFrame = buildFrame(*transparentSpriteVideoService, transparentSpriteState, 4u);
     assert(transparentSpriteFrame.pixels[0] == 0xFFE0F8D0u);
 
     auto prioritySpriteState = Visual::makeTileState(0xFFu, 0x00u);
@@ -630,13 +591,9 @@ int main()
                                 prioritySpriteResource->descriptor.contentHash,
                                 root / "priority-sprite-pack" / "sprite.png");
     assert(prioritySpriteService.loadPackManifest(root / "priority-sprite-pack" / "pack.json"));
-    BMMQ::VideoService prioritySpriteVideoService(BMMQ::VideoEngineConfig{
-        .frameWidth = 8,
-        .frameHeight = 8,
-        .queueCapacityFrames = 1,
-    });
-    prioritySpriteVideoService.setVisualOverrideService(&prioritySpriteService);
-    auto prioritySpriteFrame = prioritySpriteVideoService.engine().buildDebugFrame(prioritySpriteState, 5u);
+    auto prioritySpriteVideoService = makeGameBoyVideoService();
+    prioritySpriteVideoService->setVisualOverrideService(&prioritySpriteService);
+    auto prioritySpriteFrame = buildFrame(*prioritySpriteVideoService, prioritySpriteState, 5u);
     assert(prioritySpriteFrame.pixels[0] == 0xFF88C070u);
 
     BMMQ::VisualOverrideService backgroundSemanticService;
@@ -659,13 +616,9 @@ int main()
         "  }]\n"
         "}\n");
     assert(backgroundSemanticService.loadPackManifest(backgroundSemanticDir / "pack.json"));
-    BMMQ::VideoService backgroundSemanticVideoService(BMMQ::VideoEngineConfig{
-        .frameWidth = 8,
-        .frameHeight = 8,
-        .queueCapacityFrames = 1,
-    });
-    backgroundSemanticVideoService.setVisualOverrideService(&backgroundSemanticService);
-    auto backgroundSemanticFrame = backgroundSemanticVideoService.engine().buildDebugFrame(state, 9u);
+    auto backgroundSemanticVideoService = makeGameBoyVideoService();
+    backgroundSemanticVideoService->setVisualOverrideService(&backgroundSemanticService);
+    auto backgroundSemanticFrame = buildFrame(*backgroundSemanticVideoService, state, 9u);
     assert(backgroundSemanticFrame.pixels[0] == 0xFFFF0000u);
 
     auto windowSignedState = Visual::makeTileState(0x00u, 0x00u);
@@ -699,13 +652,9 @@ int main()
         "  }]\n"
         "}\n");
     assert(windowSemanticService.loadPackManifest(windowSemanticDir / "pack.json"));
-    BMMQ::VideoService windowSemanticVideoService(BMMQ::VideoEngineConfig{
-        .frameWidth = 8,
-        .frameHeight = 8,
-        .queueCapacityFrames = 1,
-    });
-    windowSemanticVideoService.setVisualOverrideService(&windowSemanticService);
-    auto windowSemanticFrame = windowSemanticVideoService.engine().buildDebugFrame(windowSignedState, 10u);
+    auto windowSemanticVideoService = makeGameBoyVideoService();
+    windowSemanticVideoService->setVisualOverrideService(&windowSemanticService);
+    auto windowSemanticFrame = buildFrame(*windowSemanticVideoService, windowSignedState, 10u);
     assert(windowSemanticFrame.pixels[0] == 0xFF00FF00u);
 
     std::filesystem::remove_all(root);

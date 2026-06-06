@@ -16,6 +16,15 @@ namespace GB {
 
 class CartridgeSaveManager {
 public:
+    struct SaveSnapshot {
+        std::filesystem::path savePath;
+        std::filesystem::path saveTempPath;
+        std::vector<uint8_t> saveData;
+        std::optional<std::filesystem::path> rtcPath;
+        std::optional<std::filesystem::path> rtcTempPath;
+        std::optional<std::vector<uint8_t>> rtcData;
+    };
+
     void bindRomPath(const std::filesystem::path& romPath)
     {
         savePath_ = romPath;
@@ -81,6 +90,39 @@ public:
         return true;
     }
 
+    [[nodiscard]] std::optional<SaveSnapshot> extractDirtySaveSnapshot(GameBoyCartridge& cartridge) const
+    {
+        if (!bound_ || !cartridge.supportsBatterySave() || !cartridge.hasDirtySaveData()) {
+            return std::nullopt;
+        }
+
+        const auto save = cartridge.exportSaveData();
+
+        SaveSnapshot snapshot;
+        snapshot.savePath = savePath_;
+        snapshot.saveTempPath = savePath_;
+        snapshot.saveTempPath += ".tmp";
+        snapshot.saveData = save.externalRam;
+        if (cartridge.supportsRtc() && save.rtc.has_value()) {
+            snapshot.rtcPath = rtcPath_;
+            snapshot.rtcTempPath = rtcPath_;
+            *snapshot.rtcTempPath += ".tmp";
+            snapshot.rtcData = encodeRtcSidecar(*save.rtc);
+        }
+
+        // Save ownership transfers to the background task once extracted.
+        cartridge.markSaveClean();
+        return snapshot;
+    }
+
+    static void flushSnapshot(const SaveSnapshot& snapshot)
+    {
+        writeFileAtomic(snapshot.savePath, snapshot.saveTempPath, snapshot.saveData);
+        if (snapshot.rtcPath.has_value() && snapshot.rtcTempPath.has_value() && snapshot.rtcData.has_value()) {
+            writeFileAtomic(*snapshot.rtcPath, *snapshot.rtcTempPath, *snapshot.rtcData);
+        }
+    }
+
 private:
     [[nodiscard]] static std::vector<uint8_t> readFile(const std::filesystem::path& path)
     {
@@ -93,13 +135,20 @@ private:
 
     static void writeFileAtomic(const std::filesystem::path& path, const std::vector<uint8_t>& bytes)
     {
+        auto tempPath = path;
+        tempPath += ".tmp";
+        writeFileAtomic(path, tempPath, bytes);
+    }
+
+    static void writeFileAtomic(
+        const std::filesystem::path& path,
+        const std::filesystem::path& tempPath,
+        const std::vector<uint8_t>& bytes)
+    {
         const auto parent = path.parent_path();
         if (!parent.empty()) {
             std::filesystem::create_directories(parent);
         }
-
-        auto tempPath = path;
-        tempPath += ".tmp";
 
         {
             std::ofstream output(tempPath, std::ios::binary | std::ios::trunc);

@@ -1,9 +1,12 @@
 #include "emulator/EmulatorConfig.hpp"
 
+#include "emulator/MachineFactory.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <fstream>
+#include <limits>
 #include <set>
 #include <stdexcept>
 #include <string_view>
@@ -106,7 +109,9 @@ void applyConfigValue(EmulatorConfig& config,
     const auto label = std::string(section) + "." + std::string(key);
     const auto text = trim(value);
     if (section == "emulator") {
-        if (key == "rom") {
+        if (key == "core") {
+            config.machineKind = lowerAscii(text);
+        } else if (key == "rom") {
             config.romPath = resolveConfigPath(configDirectory, text);
         } else if (key == "boot_rom") {
             config.bootRomPath = resolveConfigPath(configDirectory, text);
@@ -137,6 +142,14 @@ void applyConfigValue(EmulatorConfig& config,
             config.speedMultiplier = parseDouble(text, label);
         } else if (key == "pause") {
             config.startPaused = parseBool(text, label);
+        } else if (key == "profile") {
+            config.timingProfile = lowerAscii(text);
+        } else if (key == "diagnostics_report") {
+            config.diagnosticsReportPath = resolveConfigPath(configDirectory, text);
+        } else if (key == "diagnostics_interval_ms") {
+            const auto parsed = parseUnsigned(text, label);
+            const auto clamped = std::min(parsed, static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max()));
+            config.diagnosticsIntervalMs = static_cast<std::uint32_t>(std::max<std::uint64_t>(1u, clamped));
         } else {
             throw std::invalid_argument("Unknown config key: " + label);
         }
@@ -145,6 +158,16 @@ void applyConfigValue(EmulatorConfig& config,
             config.audioEnabled = parseBool(text, label);
         } else if (key == "backend") {
             config.audioBackend = text;
+        } else if (key == "ready_queue_chunks") {
+            const auto parsed = parseUnsigned(text, label);
+            const auto clamped = std::min<std::uint64_t>(parsed, 64u);
+            config.audioReadyQueueChunks =
+                static_cast<std::uint32_t>(std::max<std::uint64_t>(1u, clamped));
+        } else if (key == "batch_chunks") {
+            const auto parsed = parseUnsigned(text, label);
+            const auto clamped = std::min<std::uint64_t>(parsed, 16u);
+            config.audioBatchChunks =
+                static_cast<std::uint32_t>(std::max<std::uint64_t>(1u, clamped));
         } else {
             throw std::invalid_argument("Unknown config key: " + label);
         }
@@ -227,6 +250,9 @@ EmulatorConfig loadEmulatorConfig(const std::filesystem::path& path)
 
 void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& overrides)
 {
+    if (overrides.machineKind.has_value()) {
+        config.machineKind = lowerAscii(*overrides.machineKind);
+    }
     if (overrides.romPath.has_value()) {
         config.romPath = *overrides.romPath;
     }
@@ -254,11 +280,28 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     if (overrides.startPaused.has_value()) {
         config.startPaused = *overrides.startPaused;
     }
+    if (overrides.timingProfile.has_value()) {
+        config.timingProfile = lowerAscii(*overrides.timingProfile);
+    }
+    if (overrides.diagnosticsReportPath.has_value()) {
+        config.diagnosticsReportPath = *overrides.diagnosticsReportPath;
+    }
+    if (overrides.diagnosticsIntervalMs.has_value()) {
+        config.diagnosticsIntervalMs = *overrides.diagnosticsIntervalMs;
+    }
     if (overrides.audioEnabled.has_value()) {
         config.audioEnabled = *overrides.audioEnabled;
     }
     if (overrides.audioBackend.has_value()) {
         config.audioBackend = *overrides.audioBackend;
+    }
+    if (overrides.audioReadyQueueChunks.has_value()) {
+        config.audioReadyQueueChunks =
+            static_cast<std::uint32_t>(std::clamp<std::uint32_t>(*overrides.audioReadyQueueChunks, 1u, 64u));
+    }
+    if (overrides.audioBatchChunks.has_value()) {
+        config.audioBatchChunks =
+            static_cast<std::uint32_t>(std::clamp<std::uint32_t>(*overrides.audioBatchChunks, 1u, 16u));
     }
     if (overrides.visualPackPaths.has_value()) {
         config.visualPackPaths = *overrides.visualPackPaths;
@@ -273,8 +316,30 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
 
 void validateEmulatorConfig(const EmulatorConfig& config)
 {
+    if (!config.machineKind.has_value()) {
+        throw std::invalid_argument("Missing core selection. Use --core <gameboy|gamegear>.");
+    }
+    const auto kind = parseMachineKind(*config.machineKind);
+    auto instance = createMachine(kind);
+    const auto& descriptor = instance.descriptor;
+
     if (config.romPath.empty()) {
         throw std::invalid_argument("Missing ROM path. Use --rom <file.gb>.");
+    }
+    if (config.bootRomPath.has_value() &&
+        dynamic_cast<IExternalBootRomMachine*>(instance.machine.get()) == nullptr) {
+        throw std::invalid_argument(
+            std::string(descriptor.displayName) + " does not support external boot ROM loading");
+    }
+    if ((!config.visualPackPaths.empty() || config.visualPackReload) &&
+        !instance.machine->supportsVisualPacks()) {
+        throw std::invalid_argument(
+            std::string(descriptor.displayName) + " does not support visual packs");
+    }
+    if (config.visualCapturePath.has_value() &&
+        !instance.machine->supportsVisualCapture()) {
+        throw std::invalid_argument(
+            std::string(descriptor.displayName) + " does not support visual capture");
     }
 }
 
@@ -292,6 +357,11 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
                 throw std::invalid_argument("--config was provided more than once");
             }
             arguments.configPath = std::filesystem::path(argv[++i]);
+        } else if (arg == "--core" || arg == "--machine") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--core requires a value");
+            }
+            arguments.overrides.machineKind = lowerAscii(argv[++i]);
         } else if (arg == "--rom") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--rom requires a path");
@@ -331,6 +401,24 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
             arguments.overrides.speedMultiplier = parseDouble(argv[++i], "--speed");
         } else if (arg == "--pause") {
             arguments.overrides.startPaused = true;
+        } else if (arg == "--timing-profile") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--timing-profile requires a value");
+            }
+            arguments.overrides.timingProfile = lowerAscii(argv[++i]);
+        } else if (arg == "--diagnostics-report") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--diagnostics-report requires a path");
+            }
+            arguments.overrides.diagnosticsReportPath = std::filesystem::path(argv[++i]);
+        } else if (arg == "--diagnostics-interval-ms") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--diagnostics-interval-ms requires a positive integer");
+            }
+            auto parsed = parseUnsigned(argv[++i], "--diagnostics-interval-ms");
+            parsed = std::min(parsed, static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max()));
+            arguments.overrides.diagnosticsIntervalMs =
+                static_cast<std::uint32_t>(std::max<std::uint64_t>(1u, parsed));
         } else if (arg == "--no-audio") {
             arguments.overrides.audioEnabled = false;
         } else if (arg == "--audio-backend") {
@@ -338,6 +426,22 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
                 throw std::invalid_argument("--audio-backend requires a backend name");
             }
             arguments.overrides.audioBackend = argv[++i];
+        } else if (arg == "--audio-ready-queue-chunks") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--audio-ready-queue-chunks requires a positive integer");
+            }
+            auto parsed = parseUnsigned(argv[++i], "--audio-ready-queue-chunks");
+            parsed = std::min(parsed, static_cast<std::uint64_t>(64u));
+            arguments.overrides.audioReadyQueueChunks =
+                static_cast<std::uint32_t>(std::max<std::uint64_t>(1u, parsed));
+        } else if (arg == "--audio-batch-chunks") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--audio-batch-chunks requires a positive integer");
+            }
+            auto parsed = parseUnsigned(argv[++i], "--audio-batch-chunks");
+            parsed = std::min(parsed, static_cast<std::uint64_t>(16u));
+            arguments.overrides.audioBatchChunks =
+                static_cast<std::uint32_t>(std::max<std::uint64_t>(1u, parsed));
         } else if (arg == "--visual-pack" || arg == "--texture-pack") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument(arg + " requires a path");

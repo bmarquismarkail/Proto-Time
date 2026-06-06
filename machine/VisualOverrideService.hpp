@@ -19,6 +19,10 @@
 
 namespace BMMQ {
 
+// Forward declarations
+class BackgroundTaskService;
+class ImageDecoder;
+
 struct VisualCaptureStats {
     std::size_t uniqueResourcesDumped = 0;
     std::size_t duplicateResourcesSkipped = 0;
@@ -38,6 +42,14 @@ struct VisualOverrideDiagnostics {
     std::size_t packReloadsFailed = 0;
     std::size_t suppressedReloadWarnings = 0;
     std::size_t replacementCacheEvictions = 0;
+    // Async visual probe telemetry (Phase 31)
+    std::size_t asyncProbeSubmissions = 0;
+    std::size_t asyncProbeChangesDetected = 0;
+    std::size_t asyncProbeReloadApplies = 0;
+    // Async image decode telemetry (Phase 32)
+    std::size_t asyncDecodeSubmissions = 0;
+    std::size_t asyncDecodePollsReady = 0;
+    std::size_t asyncDecodePollsNotReady = 0;
 };
 
 struct VisualObservedResourceStat {
@@ -73,11 +85,20 @@ public:
     void setEventSink(EventSink sink);
     void clearEventSink() noexcept;
 
+    // Set optional image decoder service for async PNG decode (Phase 32)
+    void setImageDecoder(ImageDecoder* decoder) noexcept;
+
     [[nodiscard]] const VisualCaptureStats& captureStats() const noexcept;
     [[nodiscard]] const VisualOverrideDiagnostics& diagnostics() const noexcept;
     [[nodiscard]] std::string authorDiagnosticsReport(std::size_t maxObservedResources = 5u) const;
+    [[nodiscard]] std::vector<std::filesystem::path> watchedReloadPaths() const;
     [[nodiscard]] std::string lastError() const;
     [[nodiscard]] uint64_t generation() const noexcept;
+
+    // Async probe telemetry recording (Phase 31)
+    void recordAsyncProbeSubmission() noexcept;
+    void recordAsyncProbeChangeDetected() noexcept;
+    void recordAsyncProbeReloadApplied() noexcept;
 
 private:
     struct ResolvedPath {
@@ -150,6 +171,7 @@ private:
     std::string lastReloadWarning_;
     mutable std::string lastError_;
     EventSink eventSink_;
+    ImageDecoder* imageDecoder_ = nullptr;  // Phase 32 async decode
 };
 
 } // namespace BMMQ

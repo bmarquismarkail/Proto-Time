@@ -3,6 +3,7 @@
 #include "../../AudioService.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <limits>
 #include <memory>
@@ -46,12 +47,13 @@ public:
             lastErrorCode_ = AudioOutputErrorCode::InvalidConfig;
             return false;
         }
-        if (config.channels != 1) {
-            lastError_ = "Only mono output is supported";
+        if (config.channels < 1 || config.channels > 2) {
+            lastError_ = "Only mono or stereo output is supported";
             lastErrorCode_ = AudioOutputErrorCode::UnsupportedConfig;
             return false;
         }
         service_ = config.audioService;
+        service_->setBackendPausedOrClosed(true);
         engine_ = &engine;
 
         SDL_AudioSpec desired{};
@@ -59,8 +61,11 @@ public:
         desired.format = AUDIO_S16SYS;
         desired.channels = static_cast<Uint8>(config.channels);
         const auto callbackChunkSamples = std::max<std::size_t>(config.callbackChunkSamples, 1u);
+        const auto callbackChunkFrames = std::max<std::size_t>(
+            1u,
+            callbackChunkSamples / static_cast<std::size_t>(std::max(config.channels, 1)));
         const auto clampedSamples = std::min(
-            callbackChunkSamples,
+            callbackChunkFrames,
             static_cast<std::size_t>(std::numeric_limits<Uint16>::max())
         );
         desired.samples = static_cast<Uint16>(clampedSamples);
@@ -73,10 +78,11 @@ public:
             lastError_ = SDL_GetError();
             lastErrorCode_ = AudioOutputErrorCode::DeviceOpenFailed;
             engine_ = nullptr;
+            service_ = nullptr;
             return false;
         }
 
-        if (obtained.format != AUDIO_S16SYS || obtained.channels != 1) {
+        if (obtained.format != AUDIO_S16SYS || obtained.channels != desired.channels) {
             lastError_ = "SDL audio device format mismatch";
             lastErrorCode_ = AudioOutputErrorCode::UnsupportedConfig;
             close();
@@ -87,13 +93,32 @@ public:
         if (config.testForcedDeviceSampleRate > 0) {
             deviceInfo_.sampleRate = config.testForcedDeviceSampleRate;
         }
-        deviceInfo_.callbackChunkSamples = obtained.samples != 0 ? obtained.samples : desired.samples;
         deviceInfo_.channels = obtained.channels != 0 ? obtained.channels : desired.channels;
+        const auto obtainedFrames = obtained.samples != 0 ? obtained.samples : desired.samples;
+        deviceInfo_.callbackChunkSamples = static_cast<std::size_t>(obtainedFrames) *
+                                           static_cast<std::size_t>(deviceInfo_.channels);
 
         engine_->setDeviceSampleRate(deviceInfo_.sampleRate);
         if (!service_->configureFixedCallbackCapacity(deviceInfo_.callbackChunkSamples)) {
             lastError_ = "Audio callback capacity configuration failed";
             lastErrorCode_ = AudioOutputErrorCode::InvalidConfig;
+            close();
+            return false;
+        }
+        if (!service_->configureOutputTransport({
+                .deviceSampleRate = deviceInfo_.sampleRate,
+                .channelCount = static_cast<uint8_t>(deviceInfo_.channels),
+                .callbackChunkSamples = deviceInfo_.callbackChunkSamples,
+                .readyQueueChunks = std::clamp<std::size_t>(config.readyQueueChunks, 1u, 64u),
+            })) {
+            lastError_ = "Audio output transport configuration failed";
+            lastErrorCode_ = AudioOutputErrorCode::InvalidConfig;
+            close();
+            return false;
+        }
+        if (!service_->startOutputTransport()) {
+            lastError_ = "Audio output transport start failed";
+            lastErrorCode_ = AudioOutputErrorCode::RuntimeError;
             close();
             return false;
         }
@@ -116,6 +141,10 @@ public:
             audioDevice_ = 0;
         }
 #endif
+        if (service_ != nullptr) {
+            service_->stopOutputTransport();
+            service_->setBackendPausedOrClosed(true);
+        }
         engine_ = nullptr;
         service_ = nullptr;
         deviceInfo_ = {};
@@ -163,9 +192,12 @@ private:
             return;
         }
 
+        const auto start = std::chrono::steady_clock::now();
         auto* out = reinterpret_cast<int16_t*>(stream);
         const auto requestedSamples = static_cast<std::size_t>(len / static_cast<int>(sizeof(int16_t)));
-        service_->renderForOutput(std::span<int16_t>(out, requestedSamples));
+        service_->drainReadyOutput(std::span<int16_t>(out, requestedSamples));
+        service_->noteDrainCallbackDuration(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start));
     }
 
     SDL_AudioDeviceID audioDevice_ = 0;

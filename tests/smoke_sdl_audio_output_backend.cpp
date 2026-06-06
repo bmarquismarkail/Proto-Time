@@ -43,11 +43,13 @@ int main()
     for (std::size_t i = 0; i < recent.size(); ++i) {
         recent[i] = static_cast<int16_t>(i);
     }
-    engine.appendRecentPcm(recent, 1u);
+    service.appendRecentPcm(recent, 1u);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(40));
     assert(engine.stats().callbackCount >= 1u);
     assert(engine.stats().outputSamplesProduced >= 1u);
+    assert(service.transportStats().drainCallbackCount >= 1u);
+    assert(service.transportStats().workerProducedBlocks >= 1u);
 
     output.close();
     assert(!output.ready());
@@ -73,6 +75,40 @@ int main()
     }
     assert(resampledEngine.config().deviceSampleRate == 44100);
     assert(resampledEngine.stats().resamplingActive);
+    output.close();
+
+    BMMQ::AudioService stereoService(BMMQ::AudioEngineConfig{
+        .sourceSampleRate = 48000,
+        .deviceSampleRate = 48000,
+        .channelCount = 2,
+        .ringBufferCapacitySamples = 4096,
+        .frameChunkSamples = 512,
+    });
+    auto& stereoEngine = stereoService.engine();
+    const bool openedStereo = output.open(stereoEngine, {
+        .requestedSampleRate = 48000,
+        .callbackChunkSamples = 512,
+        .channels = 2,
+        .filePath = {},
+        .audioService = &stereoService,
+    });
+    if (!openedStereo) {
+        const auto code = output.lastErrorCode();
+        assert(code == BMMQ::AudioOutputErrorCode::BackendUnavailable
+               || code == BMMQ::AudioOutputErrorCode::DeviceOpenFailed
+               || code == BMMQ::AudioOutputErrorCode::UnsupportedConfig);
+        return 0;
+    }
+    assert(output.deviceInfo().channels == 2);
+    std::vector<int16_t> stereoRecent(512, 0);
+    for (std::size_t i = 0; i < stereoRecent.size(); i += 2u) {
+        stereoRecent[i] = 1000;
+        stereoRecent[i + 1u] = -1000;
+    }
+    stereoService.appendRecentPcm(stereoRecent, 1u);
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    assert(stereoEngine.stats().outputSamplesProduced >= 2u);
+    assert(stereoService.transportStats().drainCallbackCount >= 1u);
     output.close();
 
     return 0;

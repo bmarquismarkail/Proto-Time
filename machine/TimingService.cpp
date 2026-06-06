@@ -1,6 +1,9 @@
 #include "machine/TimingService.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <stdexcept>
+#include <string>
 
 namespace BMMQ {
 namespace {
@@ -19,8 +22,94 @@ void sanitizeTimingConfig(TimingConfig& config) noexcept
     if (config.frontendServiceSliceSeconds <= 0.0) {
         config.frontendServiceSliceSeconds = config.executionSliceSeconds;
     }
+    if (config.maxExecutionSlicesPerWake == 0u) {
+        config.maxExecutionSlicesPerWake = 1u;
+    }
+    if (config.maxCyclesPerWake <= 0.0) {
+        config.maxCyclesPerWake = config.minInstructionCycles;
+    }
+    if (config.sleepSpinWindow < std::chrono::nanoseconds::zero()) {
+        config.sleepSpinWindow = std::chrono::nanoseconds::zero();
+    }
+    if (config.sleepSpinCap < std::chrono::nanoseconds::zero()) {
+        config.sleepSpinCap = std::chrono::nanoseconds::zero();
+    }
+    if (config.sleepSpinWindow > config.sleepSpinCap) {
+        config.sleepSpinWindow = config.sleepSpinCap;
+    }
 }
 } // namespace
+
+const char* timingPolicyProfileName(TimingPolicyProfile profile) noexcept
+{
+    switch (profile) {
+    case TimingPolicyProfile::Balanced:
+        return "balanced";
+    case TimingPolicyProfile::LowLatency:
+        return "low_latency";
+    case TimingPolicyProfile::PowerSaver:
+        return "power_saver";
+    case TimingPolicyProfile::DeterministicTest:
+        return "deterministic_test";
+    }
+    return "balanced";
+}
+
+TimingPolicyProfile parseTimingPolicyProfile(std::string_view value)
+{
+    std::string lower(value);
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    if (lower == "balanced") {
+        return TimingPolicyProfile::Balanced;
+    }
+    if (lower == "low_latency" || lower == "low-latency") {
+        return TimingPolicyProfile::LowLatency;
+    }
+    if (lower == "power_saver" || lower == "power-saver") {
+        return TimingPolicyProfile::PowerSaver;
+    }
+    if (lower == "deterministic_test" || lower == "deterministic-test") {
+        return TimingPolicyProfile::DeterministicTest;
+    }
+    throw std::invalid_argument("Unknown timing profile: " + std::string(value));
+}
+
+void applyTimingPolicyProfileDefaults(TimingPolicyProfile profile, TimingConfig& config) noexcept
+{
+    config.profile = profile;
+    switch (profile) {
+    case TimingPolicyProfile::Balanced:
+        config.minSleepQuantum = std::chrono::milliseconds(1);
+        config.maxExecutionSlicesPerWake = 4u;
+        config.adaptiveSleepEnabled = true;
+        config.sleepSpinWindow = std::chrono::microseconds(200);
+        config.sleepSpinCap = std::chrono::microseconds(250);
+        break;
+    case TimingPolicyProfile::LowLatency:
+        config.minSleepQuantum = std::chrono::microseconds(250);
+        config.maxExecutionSlicesPerWake = 3u;
+        config.adaptiveSleepEnabled = true;
+        config.sleepSpinWindow = std::chrono::microseconds(300);
+        config.sleepSpinCap = std::chrono::microseconds(350);
+        break;
+    case TimingPolicyProfile::PowerSaver:
+        config.minSleepQuantum = std::chrono::milliseconds(2);
+        config.maxExecutionSlicesPerWake = 6u;
+        config.adaptiveSleepEnabled = false;
+        config.sleepSpinWindow = std::chrono::nanoseconds::zero();
+        config.sleepSpinCap = std::chrono::nanoseconds::zero();
+        break;
+    case TimingPolicyProfile::DeterministicTest:
+        config.minSleepQuantum = std::chrono::microseconds(1);
+        config.maxExecutionSlicesPerWake = 2u;
+        config.adaptiveSleepEnabled = false;
+        config.sleepSpinWindow = std::chrono::nanoseconds::zero();
+        config.sleepSpinCap = std::chrono::nanoseconds::zero();
+        break;
+    }
+}
 
 TimingEngine::TimingEngine(const TimingConfig& config) noexcept
 {
@@ -36,6 +125,7 @@ void TimingEngine::configure(const TimingConfig& config) noexcept
     stats_.throttled = control_.throttled;
     stats_.speedMultiplier = control_.speedMultiplier;
     stats_.effectiveClockHz = config_.baseClockHz * control_.speedMultiplier;
+    stats_.activeProfile = config_.profile;
     updateCycleDebt(stats_);
 }
 
@@ -51,6 +141,7 @@ void TimingEngine::applyControl(const TimingControlState& control) noexcept
     stats_.throttled = control_.throttled;
     stats_.speedMultiplier = control_.speedMultiplier;
     stats_.effectiveClockHz = config_.baseClockHz * control_.speedMultiplier;
+    stats_.activeProfile = config_.profile;
     updateCycleDebt(stats_);
 }
 
@@ -343,6 +434,77 @@ TimingStats TimingService::stats() const noexcept
 {
     std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
     return stats_;
+}
+
+void TimingService::recordWakeBurst(double burstCycles, std::uint32_t burstSlices) noexcept
+{
+    std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
+    const auto sanitizedCycles = std::max(0.0, burstCycles);
+    stats_.wakeBurstCyclesLast = sanitizedCycles;
+    stats_.wakeBurstSlicesLast = burstSlices;
+    stats_.wakeBurstCyclesHighWater = std::max(stats_.wakeBurstCyclesHighWater, sanitizedCycles);
+    stats_.wakeBurstSlicesHighWater = std::max(stats_.wakeBurstSlicesHighWater, burstSlices);
+    ++stats_.wakeBurstSamples;
+}
+
+void TimingService::noteWakeBurstSliceLimitHit() noexcept
+{
+    std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
+    ++stats_.wakeBurstSliceLimitHitCount;
+}
+
+void TimingService::noteWakeBurstCycleLimitHit() noexcept
+{
+    std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
+    ++stats_.wakeBurstCycleLimitHitCount;
+}
+
+void TimingService::noteHostSleep(std::chrono::nanoseconds requested, std::chrono::nanoseconds actual) noexcept
+{
+    std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
+    ++stats_.sleepCalls;
+    const auto delta = actual - requested;
+    const auto absDelta = delta >= std::chrono::nanoseconds::zero() ? delta : -delta;
+
+    if (absDelta < std::chrono::microseconds(100)) {
+        ++stats_.sleepWakeJitterUnder100usCount;
+    } else if (absDelta < std::chrono::microseconds(500)) {
+        ++stats_.sleepWakeJitter100To500usCount;
+    } else if (absDelta < std::chrono::milliseconds(2)) {
+        ++stats_.sleepWakeJitter500usTo2msCount;
+    } else {
+        ++stats_.sleepWakeJitterOver2msCount;
+    }
+
+    if (delta < std::chrono::nanoseconds::zero()) {
+        ++stats_.sleepWakeEarlyCount;
+        stats_.sleepWakeLateStreakCurrent = 0;
+        stats_.sleepOvershootLast = std::chrono::nanoseconds::zero();
+        return;
+    }
+
+    ++stats_.sleepWakeLateCount;
+    ++stats_.sleepWakeLateStreakCurrent;
+    stats_.sleepWakeLateStreakHighWater =
+        std::max(stats_.sleepWakeLateStreakHighWater, stats_.sleepWakeLateStreakCurrent);
+    stats_.sleepOvershootLast = delta;
+    if (delta > std::chrono::nanoseconds::zero()) {
+        ++stats_.sleepOvershootCount;
+        stats_.sleepOvershootHighWater = std::max(stats_.sleepOvershootHighWater, delta);
+    }
+}
+
+void TimingService::noteFrontendServiceTick(std::uint32_t scheduledTicks,
+                                            std::uint32_t executedTicks,
+                                            std::chrono::nanoseconds delay) noexcept
+{
+    std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
+    const auto sanitizedExecuted = std::min(executedTicks, scheduledTicks);
+    stats_.frontendTicksScheduled += scheduledTicks;
+    stats_.frontendTicksExecuted += sanitizedExecuted;
+    stats_.frontendTicksMerged += (scheduledTicks - sanitizedExecuted);
+    stats_.frontendTickDelayLast = std::max(delay, std::chrono::nanoseconds::zero());
+    stats_.frontendTickDelayHighWater = std::max(stats_.frontendTickDelayHighWater, stats_.frontendTickDelayLast);
 }
 
 } // namespace BMMQ

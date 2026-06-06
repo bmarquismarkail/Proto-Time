@@ -2283,6 +2283,115 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
     return false;
 }
 
+
+
+bool LR3592_DMG::tryExecuteFromCache(BMMQ::fetchBlock<AddressType, DataType>& fetchData)
+{
+    if (!blockCacheEnabled_) {
+        return false;
+    }
+
+    const auto& blocks = fetchData.getblockData();
+    if (blocks.empty() || blocks.front().data.empty()) {
+        return false;
+    }
+
+    const auto pcAddress = static_cast<AddressType>(fetchData.getbaseAddress());
+    if (!blockCache_.guardValid(pcAddress)) {
+        blockCache_.recordMiss();
+        return false;
+    }
+
+    const auto cachedBlock = blockCache_.getBlock(pcAddress);
+    if (!cachedBlock.has_value()) {
+        blockCache_.recordMiss();
+        return false;
+    }
+
+    const auto& currentBytes = blocks.front().data;
+    if (cachedBlock->size() != currentBytes.size() ||
+        !std::equal(cachedBlock->begin(), cachedBlock->end(), currentBytes.begin())) {
+        blockCache_.invalidateGuard(pcAddress);
+        blockCache_.recordMiss();
+        return false;
+    }
+
+    if (!tryFastExecute(fetchData)) {
+        blockCache_.invalidateGuard(pcAddress);
+        blockCache_.recordMiss();
+        return false;
+    }
+
+    blockCache_.recordHit();
+    return true;
+}
+
+void LR3592_DMG::populateBlockCache(BMMQ::fetchBlock<AddressType, DataType>& fetchData)
+{
+    if (!blockCacheEnabled_) {
+        return;
+    }
+
+    const auto& blocks = fetchData.getblockData();
+    if (blocks.empty() || blocks.front().data.empty()) {
+        return;
+    }
+
+    const auto pcAddress = static_cast<AddressType>(fetchData.getbaseAddress());
+    blockCache_.setBlock(pcAddress, blocks.front().data, 0xDEADBEEFu);
+}
+
+void LR3592_DMG::invalidateBlockCacheForWrite(AddressType address, std::size_t size)
+{
+    address = normalizeAccessAddress(address);
+    if (size == 0u) {
+        return;
+    }
+
+    if (address < 0x8000u || address == 0xFF50u) {
+        invalidateAllBlockCache();
+        return;
+    }
+
+    constexpr auto kAddressSpaceSize = static_cast<std::size_t>(UINT16_MAX) + 1u;
+    const auto start = static_cast<std::size_t>(address);
+    const auto offsetEnd = start + size - 1u;
+    if (offsetEnd >= kAddressSpaceSize) {
+        blockCache_.invalidateRange(address, UINT16_MAX);
+        blockCache_.invalidateRange(0, static_cast<AddressType>(offsetEnd % kAddressSpaceSize));
+        return;
+    }
+
+    blockCache_.invalidateRange(address, static_cast<AddressType>(offsetEnd));
+}
+
+void LR3592_DMG::invalidateAllBlockCache()
+{
+    blockCache_.invalidateAll();
+}
+
+void LR3592_DMG::setBlockCacheEnabled(bool enabled)
+{
+    if (blockCacheEnabled_ == enabled) {
+        return;
+    }
+
+    blockCacheEnabled_ = enabled;
+    if (!enabled) {
+        blockCache_.clear();
+    }
+}
+
+bool LR3592_DMG::blockCacheEnabled() const noexcept
+{
+    return blockCacheEnabled_;
+}
+
+BMMQ::CacheStats LR3592_DMG::blockCacheStats() const
+{
+    return blockCache_.getStats();
+}
+
 void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, AddressType>& block, BMMQ::fetchBlock<AddressType, DataType>& fb)
 {
     feedback.pcBefore = (pcRegister_ != nullptr)
@@ -2439,6 +2548,7 @@ bool LR3592_DMG::handleMemoryRead(AddressType address, std::span<DataType> value
 bool LR3592_DMG::handleMemoryWrite(AddressType address, std::span<const DataType> value)
 {
     address = normalizeAccessAddress(address);
+    invalidateBlockCacheForWrite(address, value.size());
     if (value.size() == 1 && address == 0xFF00) {
         const DataType oldLow = joypadLowNibble();
         joypSelect = static_cast<DataType>(value[0] & 0x30u);
@@ -3114,6 +3224,44 @@ void LR3592_DMG::populateOpcodes()
     setOpcode(0xFB, emitOpcodeStep(0xFB, 1, [this](auto& block, const auto&, std::size_t, DataType) {
         block.addStep([this](auto&, auto&) {
             scheduleImeEnable();
+        });
+    }));
+
+    // Undefined opcodes - treat as NOP to handle Z80-specific or invalid instructions gracefully
+    // 0xED, 0xDD, 0xFD, 0xF4, 0xFC, 0xEB, 0xEC are base opcodes requiring extended handling
+    setOpcode(0xED, emitOpcodeStep(0xED, 1, [](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([](auto& snapshot, auto&) {
+            // NOP - extended opcode without proper handling
+        });
+    }));
+    setOpcode(0xDD, emitOpcodeStep(0xDD, 1, [](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([](auto& snapshot, auto&) {
+            // NOP - extended opcode without proper handling
+        });
+    }));
+    setOpcode(0xFD, emitOpcodeStep(0xFD, 1, [](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([](auto& snapshot, auto&) {
+            // NOP - extended opcode without proper handling
+        });
+    }));
+    setOpcode(0xF4, emitOpcodeStep(0xF4, 1, [](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([](auto& snapshot, auto&) {
+            // NOP - BCF f (Bit Clear Flag) - Z80 instruction, not supported by Game Boy
+        });
+    }));
+    setOpcode(0xFC, emitOpcodeStep(0xFC, 1, [](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([](auto& snapshot, auto&) {
+            // NOP - CCF (Complement Carry Flag) - Z80 instruction, not supported by Game Boy
+        });
+    }));
+    setOpcode(0xEB, emitOpcodeStep(0xEB, 1, [](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([](auto& snapshot, auto&) {
+            // NOP - XOR HL,HL - Z80 instruction, not supported by Game Boy
+        });
+    }));
+    setOpcode(0xEC, emitOpcodeStep(0xEC, 1, [](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([](auto& snapshot, auto&) {
+            // NOP - RRCA - Z80 instruction, not supported by Game Boy
         });
     }));
 

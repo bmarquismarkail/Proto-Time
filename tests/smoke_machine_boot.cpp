@@ -362,5 +362,25 @@ int main() {
     static_assert(!HasStepBaseline<GameBoyMachine>::value);
     static_assert(!HasHasCpu<GameBoyMachine>::value);
     static_assert(!HasHasMemoryMap<GameBoyMachine>::value);
+
+    // Phase 24: realtimeVideoPacket() slim path — no semantics allocation
+    host.loadRom(cartridgeRom);
+    {
+        constexpr int kW = 160;
+        constexpr int kH = 144;
+        const auto pkt = machine.realtimeVideoPacket({kW, kH});
+        assert(pkt.has_value());
+        assert(pkt->contractVersion == BMMQ::RealtimeVideoPacket::kContractVersion);
+        assert(pkt->width == kW);
+        assert(pkt->height == kH);
+        assert(pkt->argbPixels.size() == static_cast<std::size_t>(kW) * static_cast<std::size_t>(kH));
+        // pixel data must match the full videoDebugFrameModel path
+        const auto full = machine.videoDebugFrameModel({kW, kH});
+        assert(full.has_value());
+        assert(full->argbPixels == pkt->argbPixels);
+        assert(pkt->displayEnabled == full->displayEnabled);
+        assert(pkt->inVBlank == full->inVBlank);
+    }
+
     return 0;
 }

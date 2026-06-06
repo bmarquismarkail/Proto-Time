@@ -33,8 +33,8 @@ public:
             setError(AudioOutputErrorCode::InvalidConfig, "Audio service is required");
             return false;
         }
-        if (config.channels != 1) {
-            setError(AudioOutputErrorCode::UnsupportedConfig, "Only mono output is supported");
+        if (config.channels < 1 || config.channels > 2) {
+            setError(AudioOutputErrorCode::UnsupportedConfig, "Only mono or stereo output is supported");
             return false;
         }
         service_ = config.audioService;
@@ -45,7 +45,7 @@ public:
             ? config.testForcedDeviceSampleRate
             : std::max(config.requestedSampleRate, 1);
         deviceInfo.callbackChunkSamples = std::max<std::size_t>(config.callbackChunkSamples, 1u);
-        deviceInfo.channels = 1;
+        deviceInfo.channels = config.channels;
         {
             std::lock_guard<std::mutex> lock(deviceInfoMutex_);
             deviceInfo_ = deviceInfo;
@@ -57,23 +57,40 @@ public:
             service_ = nullptr;
             return false;
         }
+        if (!service_->configureOutputTransport({
+                .deviceSampleRate = deviceInfo.sampleRate,
+                .channelCount = static_cast<uint8_t>(deviceInfo.channels),
+                .callbackChunkSamples = deviceInfo.callbackChunkSamples,
+                .readyQueueChunks = std::clamp<std::size_t>(config.readyQueueChunks, 1u, 64u),
+            })) {
+            setError(AudioOutputErrorCode::InvalidConfig, "Failed to configure output transport");
+            engine_ = nullptr;
+            service_ = nullptr;
+            return false;
+        }
+        if (!service_->startOutputTransport()) {
+            setError(AudioOutputErrorCode::RuntimeError, "Failed to start output transport");
+            engine_ = nullptr;
+            service_ = nullptr;
+            return false;
+        }
 
         running_.store(true, std::memory_order_release);
         worker_ = std::thread([this]() { run(); });
         ready_.store(true, std::memory_order_release);
-        service_->setBackendPausedOrClosed(false);
         return true;
     }
 
     void close() noexcept
     {
         ready_.store(false, std::memory_order_release);
-        if (service_ != nullptr) {
-            service_->setBackendPausedOrClosed(true);
-        }
         running_.store(false, std::memory_order_release);
         if (worker_.joinable()) {
             worker_.join();
+        }
+        if (service_ != nullptr) {
+            service_->stopOutputTransport();
+            service_->setBackendPausedOrClosed(true);
         }
         engine_ = nullptr;
         service_ = nullptr;
@@ -125,14 +142,16 @@ private:
         std::vector<int16_t> buffer(deviceInfo_.callbackChunkSamples, 0);
         auto sleepDuration = std::chrono::milliseconds(5);
         if (deviceInfo_.sampleRate > 0) {
+            const auto channels = std::max(deviceInfo_.channels, 1);
             const auto durationMs = static_cast<long long>(
-                (static_cast<double>(deviceInfo_.callbackChunkSamples) / deviceInfo_.sampleRate) * 1000.0
+                ((static_cast<double>(deviceInfo_.callbackChunkSamples) / static_cast<double>(channels)) /
+                 deviceInfo_.sampleRate) * 1000.0
             );
             sleepDuration = std::chrono::milliseconds(std::max(1LL, durationMs));
         }
         while (running_.load(std::memory_order_acquire)) {
             try {
-                service_->renderForOutput(buffer);
+                service_->drainReadyOutput(buffer);
                 std::this_thread::sleep_for(sleepDuration);
             } catch (const std::exception& ex) {
                 setError(AudioOutputErrorCode::RuntimeError, ex.what());

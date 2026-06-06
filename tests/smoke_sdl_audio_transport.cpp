@@ -35,6 +35,19 @@ bool stepUntilAudioFrames(GameBoyMachine& machine, uint64_t targetFrameCounter)
     return false;
 }
 
+template <typename Predicate>
+bool waitUntil(Predicate&& predicate, std::chrono::milliseconds timeout, std::chrono::milliseconds pollInterval)
+{
+    const auto start = std::chrono::steady_clock::now();
+    while (std::chrono::steady_clock::now() - start < timeout) {
+        if (predicate()) {
+            return true;
+        }
+        std::this_thread::sleep_for(pollInterval);
+    }
+    return predicate();
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -84,7 +97,13 @@ int main(int argc, char** argv)
             return 1;
         }
         assert(frontend->stats().audioBufferedHighWaterSamples >= 256u);
-        assert(frontend->bufferedAudioSamples() > 0u);
+        const bool primed = waitUntil([frontend]() {
+            const auto stats = frontend->stats();
+            return stats.audioTransportPrimedForDrain ||
+                   stats.audioTransportWorkerProducedBlocks > 0u ||
+                   frontend->bufferedAudioSamples() > 0u;
+        }, std::chrono::milliseconds(150), std::chrono::milliseconds(5));
+        assert(primed);
 
         std::this_thread::sleep_for(std::chrono::milliseconds(40));
         const auto bufferedAfterDrain = frontend->bufferedAudioSamples();
@@ -96,8 +115,31 @@ int main(int argc, char** argv)
         assert(frontend->stats().audioResampleSourceSamplesConsumed >= 1u);
 
         std::this_thread::sleep_for(std::chrono::milliseconds(80));
-        assert(frontend->stats().audioUnderrunCount >= 1u);
-        assert(frontend->stats().audioSilenceSamplesFilled >= 1u);
+        assert(frontend->stats().audioTransportUnderrunCount >= 1u);
+        assert(frontend->stats().audioTransportSilenceSamplesFilled >= 1u);
+
+        const auto durationStats = frontend->stats();
+        const auto durationSampleCount = durationStats.audioTransportDrainDurationSampleCount;
+        assert(durationSampleCount >= durationStats.audioTransportDrainCallbackCount);
+        assert(durationStats.audioTransportDrainDurationHighWaterNanos >=
+            durationStats.audioTransportDrainDurationLastNanos);
+        assert(durationStats.audioTransportDrainDurationP95Nanos >=
+            durationStats.audioTransportDrainDurationP50Nanos);
+        assert(durationStats.audioTransportDrainDurationP99Nanos >=
+            durationStats.audioTransportDrainDurationP95Nanos);
+        assert(durationStats.audioTransportDrainDurationP999Nanos >=
+            durationStats.audioTransportDrainDurationP99Nanos);
+        const auto durationBucketTotal =
+            durationStats.audioTransportDrainDurationUnder50usCount +
+            durationStats.audioTransportDrainDuration50To100usCount +
+            durationStats.audioTransportDrainDuration100To250usCount +
+            durationStats.audioTransportDrainDuration250To500usCount +
+            durationStats.audioTransportDrainDuration500usTo1msCount +
+            durationStats.audioTransportDrainDuration1To2msCount +
+            durationStats.audioTransportDrainDuration2To5msCount +
+            durationStats.audioTransportDrainDuration5To10msCount +
+            durationStats.audioTransportDrainDurationOver10msCount;
+        assert(durationBucketTotal == durationSampleCount);
 
         if (!stepUntilAudioFrames(machine, 20u)) {
             std::cerr << "smoke_sdl_audio_transport: audio frame counter did not reach 20" << '\n';
@@ -160,6 +202,9 @@ int main(int argc, char** argv)
             assert(resampleStressFrontend->stats().audioDeviceSampleRate == 44100);
             assert(resampleStressFrontend->stats().audioResamplingActive);
             assert(resampleStressFrontend->stats().audioPipelineCapacitySkipCount == 0u);
+            const auto resampleDurationStats = resampleStressFrontend->stats();
+            assert(resampleDurationStats.audioTransportDrainDurationSampleCount >=
+                resampleDurationStats.audioTransportDrainCallbackCount);
 
             const auto startFrameCounter = resampleStressMachine.audioFrameCounter();
             if (!stepUntilAudioFrames(resampleStressMachine, startFrameCounter + 1u)) {

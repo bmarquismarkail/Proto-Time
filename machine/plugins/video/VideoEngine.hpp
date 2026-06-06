@@ -2,21 +2,23 @@
 #define BMMQ_VIDEO_ENGINE_HPP
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <deque>
+#include <cstring>
 #include <optional>
-#include <span>
 #include <string>
-#include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
-#include "../../../cores/gameboy/video/GameBoyVisualExtractor.hpp"
+#include "../../VideoDebugModel.hpp"
 #include "../../VisualOverrideService.hpp"
-#include "../IoPlugin.hpp"
+#include "SimdPixelOps.hpp"
 #include "VideoFrame.hpp"
 
 namespace BMMQ {
@@ -24,23 +26,62 @@ namespace BMMQ {
 struct VideoEngineConfig {
     int frameWidth = 160;
     int frameHeight = 144;
-    std::size_t queueCapacityFrames = 3;
+    std::size_t mailboxDepthFrames = 1;
 };
 
 struct VideoEngineStats {
-    std::size_t droppedFrameCount = 0;
-    std::size_t frameQueueHighWaterMark = 0;
-    std::size_t framesSubmitted = 0;
-    std::size_t framesConsumed = 0;
+    std::size_t publishedFrameCount = 0;
+    std::size_t publishedDebugFrameCount = 0;
+    std::size_t publishedRealtimeFrameCount = 0;
+    std::size_t publishedDebugPixelBytes = 0;
+    std::size_t publishedRealtimePixelBytes = 0;
+    std::size_t consumedFrameCount = 0;
+    std::size_t staleFrameDropCount = 0;
+    std::size_t staleDebugFrameDropCount = 0;
+    std::size_t staleRealtimeFrameDropCount = 0;
+    std::size_t overwriteCount = 0;
+    std::size_t overwriteDebugFrameCount = 0;
+    std::size_t overwriteRealtimeFrameCount = 0;
+    std::size_t mailboxHighWaterMark = 0;
+    std::size_t mailboxDepth = 0;
+    std::size_t publishedPixelBytes = 0;
+    std::uint64_t lastPublishedGeneration = 0;
+    std::uint64_t lastConsumedGeneration = 0;
+    std::uint64_t frameAgeLastNs = 0;
+    std::uint64_t frameAgeHighWaterNs = 0;
+    std::size_t frameAgeUnder50usCount = 0;
+    std::size_t frameAge50To100usCount = 0;
+    std::size_t frameAge100To250usCount = 0;
+    std::size_t frameAge250To500usCount = 0;
+    std::size_t frameAge500usTo1msCount = 0;
+    std::size_t frameAge1To2msCount = 0;
+    std::size_t frameAge2To5msCount = 0;
+    std::size_t frameAge5To10msCount = 0;
+    std::size_t frameAgeOver10msCount = 0;
+    std::size_t buildDebugFrameCallCount = 0;
+    std::uint64_t buildDebugFrameTotalNs = 0;
+    std::size_t buildDebugFrameRealtimeReasonCount = 0;
+    std::size_t buildDebugFrameDebugReasonCount = 0;
+    std::size_t buildDebugFrameFallbackReasonCount = 0;
+    std::size_t buildDebugFrameUnknownReasonCount = 0;
+    std::size_t buildDebugFrameDebugConsumerActiveCount = 0;
+    std::size_t buildDebugFrameDebugConsumerInactiveCount = 0;
 };
 
 struct VideoSubmitResult {
     bool accepted = false;
-    bool droppedOldest = false;
+    bool overwroteOldFrame = false;
 };
 
 class VideoEngine {
 public:
+    enum class BuildDebugFrameReason : std::uint8_t {
+        Unknown = 0,
+        Realtime = 1,
+        Debug = 2,
+        Fallback = 3,
+    };
+
     explicit VideoEngine(const VideoEngineConfig& config = {})
         : config_(normalizedConfig(config))
     {
@@ -61,7 +102,7 @@ public:
         return config_;
     }
 
-    [[nodiscard]] uint64_t currentGeneration() const noexcept
+    [[nodiscard]] std::uint64_t currentGeneration() const noexcept
     {
         return currentGeneration_;
     }
@@ -71,19 +112,41 @@ public:
         visualOverrideService_ = service;
     }
 
-    uint64_t advanceGeneration() noexcept
+    [[nodiscard]] VideoFramePacket buildDebugFrame(const VideoDebugFrameModel& model,
+                                                   std::uint64_t generation,
+                                                   BuildDebugFrameReason reason = BuildDebugFrameReason::Unknown,
+                                                   bool debugConsumerActive = false) const
     {
-        clearQueue();
-        return ++currentGeneration_;
-    }
+        using Clock = std::chrono::steady_clock;
+        const auto startedAt = Clock::now();
+        ++stats_.buildDebugFrameCallCount;
+        switch (reason) {
+        case BuildDebugFrameReason::Realtime:
+            ++stats_.buildDebugFrameRealtimeReasonCount;
+            break;
+        case BuildDebugFrameReason::Debug:
+            ++stats_.buildDebugFrameDebugReasonCount;
+            break;
+        case BuildDebugFrameReason::Fallback:
+            ++stats_.buildDebugFrameFallbackReasonCount;
+            break;
+        case BuildDebugFrameReason::Unknown:
+        default:
+            ++stats_.buildDebugFrameUnknownReasonCount;
+            break;
+        }
+        if (debugConsumerActive) {
+            ++stats_.buildDebugFrameDebugConsumerActiveCount;
+        } else {
+            ++stats_.buildDebugFrameDebugConsumerInactiveCount;
+        }
 
-    [[nodiscard]] VideoFramePacket buildDebugFrame(const VideoStateView& state, uint64_t generation) const
-    {
         VideoFramePacket frame;
         frame.width = config_.frameWidth;
         frame.height = config_.frameHeight;
         frame.generation = generation;
         frame.source = VideoFrameSource::MachineSnapshot;
+
         const bool notifyVisualComposition =
             visualOverrideService_ != nullptr && visualOverrideService_->hasActiveWork();
         if (notifyVisualComposition) {
@@ -91,349 +154,290 @@ public:
         }
 
         const auto pixelCount = static_cast<std::size_t>(frame.width) * static_cast<std::size_t>(frame.height);
-        frame.pixels.assign(pixelCount, paletteColor(0));
-        if (state.vram.empty()) {
+        frame.pixels.resize(pixelCount);
+        // Phase 8: SIMD-accelerated fill for black background
+        SimdPixelOps::fill_pixels(frame.pixels.data(), 0xFF000000u, pixelCount);
+        if (model.empty()) {
             if (notifyVisualComposition) {
                 visualOverrideService_->notifyFrameCompositionCompleted(generation);
             }
+            stats_.buildDebugFrameTotalNs += static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - startedAt).count());
             return frame;
         }
 
-        resetVisualTileCache();
-        std::vector<uint8_t> backgroundColorIndices(static_cast<std::size_t>(frame.width), 0u);
-        for (int y = 0; y < frame.height; ++y) {
-            renderScanline(frame, state, y, backgroundColorIndices);
+        resetVisualResourceCache();
+        const auto copyCount = std::min(frame.pixels.size(), model.argbPixels.size());
+
+        std::memcpy(frame.pixels.data(), model.argbPixels.data(),
+                    copyCount * sizeof(std::uint32_t));
+        if (notifyVisualComposition) {
+            std::vector<std::uint8_t> replacementMask(copyCount, 0u);
+            std::vector<std::uint32_t> replacementPixels(copyCount, 0u);
+            bool hasReplacement = false;
+            for (std::size_t i = 0; i < copyCount && i < model.semantics.size(); ++i) {
+                const auto& semantic = model.semantics[i];
+                if (!semantic.hasResource() || semantic.resourceIndex >= model.resources.size()) {
+                    continue;
+                }
+                if (const auto replacement = replacementPixelForResource(model.resources[semantic.resourceIndex],
+                                                                          semantic.sampleX,
+                                                                          semantic.sampleY,
+                                                                          generation);
+                    replacement.has_value()) {
+                    replacementMask[i] = 1u;
+                    replacementPixels[i] = *replacement;
+                    hasReplacement = true;
+                }
+            }
+
+            if (hasReplacement) {
+                SimdPixelOps::replace_pixels_with_mask(model.argbPixels.data(),
+                                                       replacementMask.data(),
+                                                       replacementPixels.data(),
+                                                       frame.pixels.data(),
+                                                       copyCount);
+            }
         }
+
         if (notifyVisualComposition) {
             visualOverrideService_->notifyFrameCompositionCompleted(generation);
         }
+        stats_.buildDebugFrameTotalNs += static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - startedAt).count());
         return frame;
     }
 
-    void renderScanline(VideoFramePacket& frame, const VideoStateView& state, int screenY) const
-    {
-        std::vector<uint8_t> backgroundColorIndices(static_cast<std::size_t>(std::max(frame.width, 0)), 0u);
-        renderScanline(frame, state, screenY, backgroundColorIndices);
-    }
-
-    void renderScanline(VideoFramePacket& frame,
-                        const VideoStateView& state,
-                        int screenY,
-                        std::vector<uint8_t>& backgroundColorIndices) const
-    {
-        if (screenY < 0 || screenY >= frame.height || frame.width <= 0 || frame.empty()) {
-            return;
-        }
-
-        const bool lcdEnabled = state.lcdEnabled();
-        const bool backgroundEnabled = (state.lcdc & 0x01u) != 0u;
-        const auto lineWidth = static_cast<std::size_t>(frame.width);
-        if (backgroundColorIndices.size() != lineWidth) {
-            backgroundColorIndices.resize(lineWidth);
-        }
-        std::fill(backgroundColorIndices.begin(), backgroundColorIndices.end(), 0u);
-
-        for (int x = 0; x < frame.width; ++x) {
-            const auto pixelIndex = static_cast<std::size_t>(screenY) * static_cast<std::size_t>(frame.width)
-                                  + static_cast<std::size_t>(x);
-            if (pixelIndex >= frame.pixels.size()) {
-                return;
-            }
-            if (!lcdEnabled) {
-                frame.pixels[pixelIndex] = paletteColor(0);
-                continue;
-            }
-
-            uint8_t shade = 0;
-            bool usedVisualOverride = false;
-            if (backgroundEnabled) {
-                const auto sample = backgroundSample(state, x, screenY);
-                const auto colorIndex = sample.colorIndex;
-                backgroundColorIndices[static_cast<std::size_t>(x)] = colorIndex;
-                if (auto replacementPixel = replacementPixelForTile(state, sample.tileIndex, sample.tileAddress,
-                                                                     sample.tileX, sample.tileY,
-                                                                     VisualResourceKind::Tile,
-                                                                     state.bgp,
-                                                                     "BGP",
-                                                                     frame.generation,
-                                                                     GB::GameBoyVisualSemanticContext{
-                                                                         .fromWindow = sample.useWindow,
-                                                                         .hasTileDataMode = true,
-                                                                         .unsignedTileData = sample.unsignedTileData,
-                                                                     });
-                    replacementPixel.has_value()) {
-                    frame.pixels[pixelIndex] = *replacementPixel;
-                    usedVisualOverride = true;
-                } else {
-                    shade = mapPaletteShade(state.bgp, colorIndex);
-                }
-            }
-            if (usedVisualOverride) {
-                continue;
-            }
-            frame.pixels[pixelIndex] = paletteColor(shade);
-        }
-
-        if (lcdEnabled) {
-            compositeSpritesForScanline(frame,
-                                        state,
-                                        std::span<const uint8_t>(backgroundColorIndices.data(),
-                                                                 backgroundColorIndices.size()),
-                                        screenY);
-        }
-    }
-
-    // Queue policy: queuedFrames_ always keeps the newest config_.queueCapacityFrames frames.
-    // When the queue is full, the oldest frame is evicted, stats_.droppedFrameCount still
-    // increments, the new frame is accepted, stats_.framesSubmitted still increments, and
-    // stats_.frameQueueHighWaterMark reflects the capped queue size. A successful submission
-    // therefore means the newest frame was queued, not that no drop occurred.
     [[nodiscard]] VideoSubmitResult submitFrame(const VideoFramePacket& frame)
+    {
+        return submitPresentPacket(makePresentPacket(VideoFramePacket(frame)));
+    }
+
+    [[nodiscard]] VideoSubmitResult submitPresentPacket(const VideoPresentPacket& frame)
     {
         if (frame.empty()) {
             return {};
         }
 
-        bool droppedOldest = false;
-        lastValidFrame_ = frame;
-        if (queuedFrames_.size() >= config_.queueCapacityFrames) {
-            ++stats_.droppedFrameCount;
-            queuedFrames_.pop_front();
-            droppedOldest = true;
+        auto stamped = frame;
+        stamped.publishedAtNs = steadyClockNs();
+        lastValidFrame_ = stamped;
+
+        // Write frame to the producer's private slot (never touched by consumer).
+        mailboxSlots_[mailboxProducerSlot_] = std::move(stamped);
+
+        // Atomically publish: set dirty flag and our slot index.
+        // Swap with the shared slot; the old shared slot becomes the new producer slot.
+        const auto toShare = static_cast<std::uint8_t>(kMailboxDirty | static_cast<std::uint8_t>(mailboxProducerSlot_));
+        const auto old = mailboxShared_.exchange(toShare, std::memory_order_acq_rel);
+        const bool overwroteOldFrame = (old & kMailboxDirty) != 0u;
+        const int oldSlot = static_cast<int>(old & kMailboxSlotMask);
+
+        // The old shared slot is now exclusively ours; recycle it for the next write.
+        mailboxProducerSlot_ = oldSlot;
+
+        // Stats
+        ++stats_.publishedFrameCount;
+        if (frame.source == VideoFrameSource::RealtimeSnapshot) {
+            ++stats_.publishedRealtimeFrameCount;
+            stats_.publishedRealtimePixelBytes += frame.pixelCount() * sizeof(std::uint32_t);
+        } else {
+            ++stats_.publishedDebugFrameCount;
+            stats_.publishedDebugPixelBytes += frame.pixelCount() * sizeof(std::uint32_t);
         }
-        queuedFrames_.push_back(frame);
-        ++stats_.framesSubmitted;
-        stats_.frameQueueHighWaterMark = std::max(stats_.frameQueueHighWaterMark, queuedFrames_.size());
-        return VideoSubmitResult{.accepted = true, .droppedOldest = droppedOldest};
+        stats_.publishedPixelBytes += frame.pixelCount() * sizeof(std::uint32_t);
+
+        if (overwroteOldFrame) {
+            ++stats_.overwriteCount;
+            // Read the overwritten frame's source from the recycled slot.
+            if (mailboxSlots_[oldSlot].source == VideoFrameSource::RealtimeSnapshot) {
+                ++stats_.overwriteRealtimeFrameCount;
+            } else {
+                ++stats_.overwriteDebugFrameCount;
+            }
+        }
+
+        stats_.mailboxDepth = overwroteOldFrame ? 1u : 1u;
+        stats_.mailboxHighWaterMark = std::max(stats_.mailboxHighWaterMark, static_cast<std::size_t>(1u));
+        stats_.lastPublishedGeneration = frame.generation;
+        return VideoSubmitResult{.accepted = true, .overwroteOldFrame = overwroteOldFrame};
     }
 
-    [[nodiscard]] std::optional<VideoFramePacket> tryConsumeFrame()
+    [[nodiscard]] std::optional<VideoPresentPacket> tryConsumeLatestFrame()
     {
-        if (queuedFrames_.empty()) {
+        // Check if a new frame is available.  The dirty flag is set by the producer.
+        const auto current = mailboxShared_.load(std::memory_order_acquire);
+        if ((current & kMailboxDirty) == 0u) {
             return std::nullopt;
         }
-        auto frame = queuedFrames_.front();
-        queuedFrames_.pop_front();
-        ++stats_.framesConsumed;
+
+        // Atomically take the latest slot; give the consumer's current slot back as
+        // the new shared slot (clean, no dirty flag).  Any concurrent producer write
+        // will simply replace our clean slot with a new dirty one.
+        const auto toGiveBack = static_cast<std::uint8_t>(mailboxConsumerSlot_);
+        const auto taken = mailboxShared_.exchange(toGiveBack, std::memory_order_acq_rel);
+
+        if ((taken & kMailboxDirty) == 0u) {
+            // No dirty frame (cannot happen in SPSC, but be defensive).
+            return std::nullopt;
+        }
+
+        mailboxConsumerSlot_ = static_cast<int>(taken & kMailboxSlotMask);
+        auto frame = mailboxSlots_[mailboxConsumerSlot_];
+
+        ++stats_.consumedFrameCount;
+        stats_.mailboxDepth = 0u;
+        stats_.lastConsumedGeneration = frame.generation;
+        if (frame.publishedAtNs != 0u) {
+            const auto nowNs = steadyClockNs();
+            const auto ageNs = nowNs >= frame.publishedAtNs ? nowNs - frame.publishedAtNs : 0u;
+            stats_.frameAgeLastNs = ageNs;
+            stats_.frameAgeHighWaterNs = std::max(stats_.frameAgeHighWaterNs, ageNs);
+            recordFrameAgeBucket(ageNs);
+        }
         return frame;
     }
 
-    [[nodiscard]] VideoFramePacket fallbackFrame() const
+    [[nodiscard]] VideoPresentPacket fallbackFrame() const
     {
         if (lastValidFrame_.has_value()) {
             auto frame = *lastValidFrame_;
             frame.source = VideoFrameSource::LastValidFallback;
             return frame;
         }
-        return makeBlankVideoFrame(config_.frameWidth, config_.frameHeight, currentGeneration_);
+        return makePresentPacket(makeBlankVideoFrame(config_.frameWidth, config_.frameHeight, currentGeneration_));
     }
 
-    [[nodiscard]] const std::optional<VideoFramePacket>& lastValidFrame() const noexcept
+    [[nodiscard]] const std::optional<VideoPresentPacket>& lastValidFrame() const noexcept
     {
         return lastValidFrame_;
     }
 
+    // Returns a live diagnostics structure. Callers should externally
+    // serialize access if producer/consumer activity can run concurrently.
     [[nodiscard]] const VideoEngineStats& stats() const noexcept
     {
         return stats_;
     }
 
-    [[nodiscard]] std::size_t queuedFrameCount() const noexcept
+    [[nodiscard]] std::size_t mailboxFrameCount() const noexcept
     {
-        return queuedFrames_.size();
+        const auto shared = mailboxShared_.load(std::memory_order_acquire);
+        return (shared & kMailboxDirty) != 0u ? 1u : 0u;
+    }
+
+    std::uint64_t advanceGeneration() noexcept
+    {
+        clearQueue();
+        return ++currentGeneration_;
     }
 
 private:
+    struct VisualResourceCacheEntry {
+        const DecodedVisualResource* resource = nullptr;
+        std::optional<ResolvedVisualOverride> resolved;
+        bool observed = false;
+        bool resolveAttempted = false;
+    };
+
+    [[nodiscard]] static std::uint64_t steadyClockNs() noexcept
+    {
+        return static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+    }
+
+    void recordFrameAgeBucket(std::uint64_t ageNs) noexcept
+    {
+        constexpr std::uint64_t k50us  =    50'000u;
+        constexpr std::uint64_t k100us =   100'000u;
+        constexpr std::uint64_t k250us =   250'000u;
+        constexpr std::uint64_t k500us =   500'000u;
+        constexpr std::uint64_t k1ms   = 1'000'000u;
+        constexpr std::uint64_t k2ms   = 2'000'000u;
+        constexpr std::uint64_t k5ms   = 5'000'000u;
+        constexpr std::uint64_t k10ms  = 10'000'000u;
+        if (ageNs < k50us)       { ++stats_.frameAgeUnder50usCount; }
+        else if (ageNs < k100us) { ++stats_.frameAge50To100usCount; }
+        else if (ageNs < k250us) { ++stats_.frameAge100To250usCount; }
+        else if (ageNs < k500us) { ++stats_.frameAge250To500usCount; }
+        else if (ageNs < k1ms)   { ++stats_.frameAge500usTo1msCount; }
+        else if (ageNs < k2ms)   { ++stats_.frameAge1To2msCount; }
+        else if (ageNs < k5ms)   { ++stats_.frameAge2To5msCount; }
+        else if (ageNs < k10ms)  { ++stats_.frameAge5To10msCount; }
+        else                     { ++stats_.frameAgeOver10msCount; }
+    }
+
     [[nodiscard]] static VideoEngineConfig normalizedConfig(VideoEngineConfig config) noexcept
     {
         config.frameWidth = std::max(config.frameWidth, 1);
         config.frameHeight = std::max(config.frameHeight, 1);
-        config.queueCapacityFrames = std::max<std::size_t>(config.queueCapacityFrames, 1u);
+        config.mailboxDepthFrames = 1u;
         return config;
     }
 
-    void initializeQueue()
+    void initializeQueue() noexcept
     {
-        queuedFrames_.clear();
+        mailboxShared_.store(0x00u, std::memory_order_release);
+        mailboxProducerSlot_ = 1;
+        mailboxConsumerSlot_ = 2;
+        stats_.mailboxDepth = 0u;
     }
 
     void clearQueue() noexcept
     {
-        queuedFrames_.clear();
+        // Drop any pending frame by clearing the dirty flag.
+        const auto current = mailboxShared_.load(std::memory_order_acquire);
+        const auto clean = static_cast<std::uint8_t>(current & kMailboxSlotMask);
+        mailboxShared_.store(clean, std::memory_order_release);
+        stats_.mailboxDepth = 0u;
     }
 
-    [[nodiscard]] static uint32_t paletteColor(uint8_t shade) noexcept
+    void resetVisualResourceCache() const
     {
-        switch (shade & 0x03u) {
-        case 0:
-            return 0xFFE0F8D0u;
-        case 1:
-            return 0xFF88C070u;
-        case 2:
-            return 0xFF346856u;
-        default:
-            return 0xFF081820u;
-        }
+        visualResourceCache_.clear();
     }
 
-    [[nodiscard]] static uint8_t mapPaletteShade(uint8_t palette, uint8_t colorIndex) noexcept
+    [[nodiscard]] static std::string resourceCacheKey(const VisualResourceDescriptor& descriptor)
     {
-        return static_cast<uint8_t>((palette >> (colorIndex * 2u)) & 0x03u);
+        std::string key;
+        key.reserve(128);
+        key.append(descriptor.machineId);
+        key.push_back('|');
+        key.append(std::to_string(static_cast<std::uint32_t>(descriptor.kind)));
+        key.push_back('|');
+        key.append(std::to_string(descriptor.source.address));
+        key.push_back('|');
+        key.append(std::to_string(descriptor.source.index));
+        key.push_back('|');
+        key.append(std::to_string(descriptor.source.paletteValue));
+        key.push_back('|');
+        key.append(descriptor.source.paletteRegister);
+        key.push_back('|');
+        key.append(descriptor.source.label);
+        key.push_back('|');
+        key.append(std::to_string(descriptor.contentHash));
+        key.push_back('|');
+        key.append(std::to_string(descriptor.paletteAwareHash));
+        return key;
     }
 
-    [[nodiscard]] static uint8_t readVramByte(const VideoStateView& state, uint16_t address) noexcept
-    {
-        if (address < 0x8000u || address >= 0xA000u) {
-            return 0xFFu;
-        }
-        const auto index = static_cast<std::size_t>(address - 0x8000u);
-        if (index >= state.vram.size()) {
-            return 0xFFu;
-        }
-        return state.vram[index];
-    }
-
-    [[nodiscard]] static uint8_t readOamByte(const VideoStateView& state, std::size_t index) noexcept
-    {
-        if (index >= state.oam.size()) {
-            return 0xFFu;
-        }
-        return state.oam[index];
-    }
-
-    [[nodiscard]] static uint8_t sampleTileColorIndex(const VideoStateView& state,
-                                                      uint8_t tileIndex,
-                                                      bool unsignedTileData,
-                                                      uint8_t tileX,
-                                                      uint8_t tileY) noexcept
-    {
-        const auto tileAddress = tileDataAddress(tileIndex, unsignedTileData);
-        const auto rowAddress = static_cast<uint16_t>(tileAddress + static_cast<uint16_t>(tileY) * 2u);
-        const auto low = readVramByte(state, rowAddress);
-        const auto high = readVramByte(state, static_cast<uint16_t>(rowAddress + 1u));
-        const auto bit = static_cast<uint8_t>(7u - (tileX & 0x07u));
-        return static_cast<uint8_t>((((high >> bit) & 0x01u) << 1u) | ((low >> bit) & 0x01u));
-    }
-
-    [[nodiscard]] static uint16_t tileDataAddress(uint8_t tileIndex, bool unsignedTileData) noexcept
-    {
-        if (unsignedTileData) {
-            return static_cast<uint16_t>(0x8000u + static_cast<uint16_t>(tileIndex) * 16u);
-        }
-        return static_cast<uint16_t>(0x9000 + static_cast<int16_t>(static_cast<int8_t>(tileIndex)) * 16);
-    }
-
-    [[nodiscard]] static uint8_t backgroundColorIndex(const VideoStateView& state, int screenX, int screenY) noexcept
-    {
-        return backgroundSample(state, screenX, screenY).colorIndex;
-    }
-
-    struct BackgroundSample {
-        uint8_t tileIndex = 0;
-        uint16_t tileAddress = 0x8000u;
-        uint8_t tileX = 0;
-        uint8_t tileY = 0;
-        uint8_t colorIndex = 0;
-        bool useWindow = false;
-        bool unsignedTileData = true;
-    };
-
-    [[nodiscard]] static BackgroundSample backgroundSample(const VideoStateView& state, int screenX, int screenY) noexcept
-    {
-        const bool windowEnabled = (state.lcdc & 0x20u) != 0u;
-        const int windowLeft = static_cast<int>(state.wx) - 7;
-        const bool useWindow = windowEnabled && screenY >= static_cast<int>(state.wy) && screenX >= windowLeft;
-
-        int mapX = (screenX + static_cast<int>(state.scx)) & 0xFF;
-        int mapY = (screenY + static_cast<int>(state.scy)) & 0xFF;
-        uint16_t mapBase = (state.lcdc & 0x08u) != 0u ? 0x9C00u : 0x9800u;
-
-        if (useWindow) {
-            mapBase = (state.lcdc & 0x40u) != 0u ? 0x9C00u : 0x9800u;
-            mapX = std::max(0, screenX - windowLeft);
-            mapY = std::max(0, screenY - static_cast<int>(state.wy));
-        }
-
-        const auto tileMapAddress = static_cast<uint16_t>(
-            mapBase + static_cast<uint16_t>(((mapY >> 3) & 0x1Fu) * 32 + ((mapX >> 3) & 0x1Fu)));
-        const auto tileIndex = readVramByte(state, tileMapAddress);
-        const bool unsignedTileData = (state.lcdc & 0x10u) != 0u;
-        const auto tileX = static_cast<uint8_t>(mapX & 0x07);
-        const auto tileY = static_cast<uint8_t>(mapY & 0x07);
-        return BackgroundSample{
-            .tileIndex = tileIndex,
-            .tileAddress = tileDataAddress(tileIndex, unsignedTileData),
-            .tileX = tileX,
-            .tileY = tileY,
-            .colorIndex = sampleTileColorIndex(state, tileIndex, unsignedTileData, tileX, tileY),
-            .useWindow = useWindow,
-            .unsignedTileData = unsignedTileData,
-        };
-    }
-
-    struct VisualTileCacheEntry {
-        std::optional<DecodedVisualResource> resource;
-        std::optional<ResolvedVisualOverride> resolved;
-        bool decodeAttempted = false;
-        bool resolveAttempted = false;
-    };
-
-    void resetVisualTileCache() const
-    {
-        visualTileCache_.clear();
-    }
-
-    [[nodiscard]] static std::string visualTileCacheKey(uint16_t tileAddress,
-                                                        VisualResourceKind kind,
-                                                        uint8_t paletteValue,
-                                                        std::string_view semanticLabel)
-    {
-        return std::to_string(tileAddress) + "|" +
-               std::to_string(static_cast<uint32_t>(kind)) + "|" +
-               std::to_string(paletteValue) + "|" +
-               std::string(semanticLabel);
-    }
-
-    [[nodiscard]] std::optional<uint32_t> replacementPixelForTile(const VideoStateView& state,
-                                                                  uint8_t tileIndex,
-                                                                  uint16_t tileAddress,
-                                                                  uint8_t tileX,
-                                                                  uint8_t tileY,
-                                                                  VisualResourceKind kind,
-                                                                  uint8_t paletteValue,
-                                                                  std::string_view paletteRegister,
-                                                                  uint64_t generation,
-                                                                  const GB::GameBoyVisualSemanticContext& semanticContext = {}) const
+    [[nodiscard]] std::optional<std::uint32_t> replacementPixelForResource(const DecodedVisualResource& resource,
+                                                                           std::uint8_t sampleX,
+                                                                           std::uint8_t sampleY,
+                                                                           std::uint64_t generation) const
     {
         if (visualOverrideService_ == nullptr || !visualOverrideService_->hasActiveWork()) {
             return std::nullopt;
         }
-        if (tileAddress < 0x8000u) {
-            return std::nullopt;
-        }
-        const auto semanticLabel = GB::gameBoySemanticLabel(kind, semanticContext);
-        const auto cacheKey = visualTileCacheKey(tileAddress, kind, paletteValue, semanticLabel);
-        auto& entry = visualTileCache_[cacheKey];
 
-        if (!entry.decodeAttempted) {
-            entry.decodeAttempted = true;
-            auto resource = GB::decodeGameBoyTileResourceAtVramOffset(state,
-                                                                      static_cast<std::size_t>(tileAddress - 0x8000u),
-                                                                      tileIndex,
-                                                                      kind,
-                                                                      paletteValue,
-                                                                      paletteRegister,
-                                                                      semanticContext);
-            if (!resource.has_value()) {
-                return std::nullopt;
-            }
-            visualOverrideService_->notifyResourceDecoded(resource->descriptor);
-            (void)visualOverrideService_->observe(*resource);
-            entry.resource = std::move(*resource);
-        }
-
-        if (!entry.resource.has_value()) {
-            return std::nullopt;
+        auto& entry = visualResourceCache_[resourceCacheKey(resource.descriptor)];
+        if (!entry.observed) {
+            entry.observed = true;
+            entry.resource = &resource;
+            visualOverrideService_->notifyResourceDecoded(resource.descriptor);
+            (void)visualOverrideService_->observe(resource);
         }
 
         if (!visualOverrideService_->hasLoadedPacks()) {
@@ -464,32 +468,31 @@ private:
 
         if (!entry.resolveAttempted) {
             entry.resolveAttempted = true;
-            auto resolved = visualOverrideService_->resolve(entry.resource->descriptor);
+            auto resolved = visualOverrideService_->resolve(resource.descriptor);
             if ((!resolved.has_value() || !hasResolvedPayload(*resolved)) &&
-                kind != VisualResourceKind::Tile) {
-                auto fallbackDescriptor = entry.resource->descriptor;
+                resource.descriptor.kind != VisualResourceKind::Tile) {
+                auto fallbackDescriptor = resource.descriptor;
                 fallbackDescriptor.kind = VisualResourceKind::Tile;
                 resolved = visualOverrideService_->resolve(fallbackDescriptor);
             }
-            if (!resolved.has_value() || !hasResolvedPayload(*resolved)) {
-                return std::nullopt;
+            if (resolved.has_value() && hasResolvedPayload(*resolved)) {
+                entry.resolved = std::move(*resolved);
             }
-            entry.resolved = std::move(*resolved);
         }
 
         if (!entry.resolved.has_value()) {
             return std::nullopt;
         }
-        return sampleReplacementPixel(*entry.resolved, *entry.resource, tileX, tileY, generation);
+        return sampleReplacementPixel(*entry.resolved, resource, sampleX, sampleY, generation);
     }
 
-    [[nodiscard]] static std::optional<uint32_t> sampleReplacementPixel(const ResolvedVisualOverride& resolved,
-                                                                        const DecodedVisualResource& resource,
-                                                                        uint8_t tileX,
-                                                                        uint8_t tileY,
-                                                                        uint64_t generation) noexcept
+    [[nodiscard]] static std::optional<std::uint32_t> sampleReplacementPixel(const ResolvedVisualOverride& resolved,
+                                                                              const DecodedVisualResource& resource,
+                                                                              std::uint8_t sampleX,
+                                                                              std::uint8_t sampleY,
+                                                                              std::uint64_t generation) noexcept
     {
-        const auto applyPostEffects = [&resolved](uint32_t pixel) noexcept {
+        const auto applyPostEffects = [&resolved](std::uint32_t pixel) noexcept {
             auto result = pixel;
             for (const auto& effect : resolved.effects) {
                 switch (effect.kind) {
@@ -503,7 +506,7 @@ private:
                     const auto red = (result >> 16u) & 0xFFu;
                     const auto green = (result >> 8u) & 0xFFu;
                     const auto blue = result & 0xFFu;
-                    const auto gray = static_cast<uint32_t>(std::lround(
+                    const auto gray = static_cast<std::uint32_t>(std::lround(
                         0.299 * static_cast<double>(red) +
                         0.587 * static_cast<double>(green) +
                         0.114 * static_cast<double>(blue)));
@@ -512,7 +515,7 @@ private:
                 }
                 case VisualPostEffectKind::Multiply: {
                     const auto multiplyChannel = [result, &effect](int shift) noexcept {
-                        return static_cast<uint32_t>(
+                        return static_cast<std::uint32_t>(
                             (((result >> shift) & 0xFFu) * ((effect.argb >> shift) & 0xFFu) + 127u) / 255u);
                     };
                     result = (multiplyChannel(24) << 24u) |
@@ -523,7 +526,7 @@ private:
                 }
                 case VisualPostEffectKind::AlphaScale: {
                     const auto alpha = ((result >> 24u) & 0xFFu);
-                    const auto scaledAlpha = static_cast<uint32_t>((alpha * effect.amount + 127u) / 255u);
+                    const auto scaledAlpha = static_cast<std::uint32_t>((alpha * effect.amount + 127u) / 255u);
                     result = (scaledAlpha << 24u) | (result & 0x00FFFFFFu);
                     break;
                 }
@@ -540,17 +543,18 @@ private:
             if (palette == nullptr) {
                 return std::nullopt;
             }
-            if (tileX >= resource.descriptor.width || tileY >= resource.descriptor.height || resource.stride == 0u) {
+            if (sampleX >= resource.descriptor.width || sampleY >= resource.descriptor.height || resource.stride == 0u) {
                 return std::nullopt;
             }
-            const auto index = static_cast<std::size_t>(tileY) * resource.stride + tileX;
+            const auto index = static_cast<std::size_t>(sampleY) * resource.stride + sampleX;
             if (index >= resource.pixels.size()) {
                 return std::nullopt;
             }
             return applyPostEffects((*palette)[resource.pixels[index] & 0x03u]);
         }
-        const auto sampleImagePixel = [&resolved, &resource, tileX, tileY](const VisualReplacementImage& image)
-            -> std::optional<uint32_t> {
+
+        const auto sampleImagePixel = [&resolved, &resource, sampleX, sampleY](const VisualReplacementImage& image)
+            -> std::optional<std::uint32_t> {
             if (image.empty()) {
                 return std::nullopt;
             }
@@ -595,32 +599,30 @@ private:
                 };
 
             if (resolved.scalePolicy == "crop") {
-                const auto [sampleX, sampleY] = applyTransform(
-                    cropCoordinate(tileX, static_cast<uint32_t>(sampleWidth), resource.descriptor.width, resolved.anchor),
-                    cropCoordinate(tileY, static_cast<uint32_t>(sampleHeight), resource.descriptor.height, resolved.anchor),
+                const auto [x, y] = applyTransform(
+                    cropCoordinate(sampleX, static_cast<std::uint32_t>(sampleWidth), resource.descriptor.width, resolved.anchor),
+                    cropCoordinate(sampleY, static_cast<std::uint32_t>(sampleHeight), resource.descriptor.height, resolved.anchor),
                     sampleWidth,
                     sampleHeight);
-                return sampleNearest(image, sliceX + sampleX, sliceY + sampleY);
+                return sampleNearest(image, sliceX + x, sliceY + y);
             }
 
-            const auto x = scaledCoordinate(tileX, static_cast<uint32_t>(sampleWidth), resource.descriptor.width);
-            const auto y = scaledCoordinate(tileY, static_cast<uint32_t>(sampleHeight), resource.descriptor.height);
-            const auto [sampleX, sampleY] = applyTransform(static_cast<std::size_t>(x),
-                                                           static_cast<std::size_t>(y),
-                                                           sampleWidth,
-                                                           sampleHeight);
+            const auto x = scaledCoordinate(sampleX, static_cast<std::uint32_t>(sampleWidth), resource.descriptor.width);
+            const auto y = scaledCoordinate(sampleY, static_cast<std::uint32_t>(sampleHeight), resource.descriptor.height);
+            const auto [tx, ty] = applyTransform(static_cast<std::size_t>(x),
+                                                 static_cast<std::size_t>(y),
+                                                 sampleWidth,
+                                                 sampleHeight);
             if (resolved.filterPolicy == "linear" && resolved.transform.rotateDegrees == 0u &&
                 !resolved.transform.flipX && !resolved.transform.flipY) {
                 return sampleLinear(image,
                                     static_cast<double>(sliceX) + x,
                                     static_cast<double>(sliceY) + y);
             }
-            return sampleNearest(image,
-                                 sliceX + sampleX,
-                                 sliceY + sampleY);
+            return sampleNearest(image, sliceX + tx, sliceY + ty);
         };
 
-        const auto alphaOver = [](uint32_t dst, uint32_t src) noexcept {
+        const auto alphaOver = [](std::uint32_t dst, std::uint32_t src) noexcept {
             const double srcA = static_cast<double>((src >> 24u) & 0xFFu) / 255.0;
             const double dstA = static_cast<double>((dst >> 24u) & 0xFFu) / 255.0;
             const double outA = srcA + dstA * (1.0 - srcA);
@@ -630,9 +632,9 @@ private:
             const auto blendChannel = [dst, src, srcA, dstA, outA](int shift) noexcept {
                 const double srcC = static_cast<double>((src >> shift) & 0xFFu);
                 const double dstC = static_cast<double>((dst >> shift) & 0xFFu);
-                return static_cast<uint32_t>(std::lround((srcC * srcA + dstC * dstA * (1.0 - srcA)) / outA));
+                return static_cast<std::uint32_t>(std::lround((srcC * srcA + dstC * dstA * (1.0 - srcA)) / outA));
             };
-            const auto outAlpha = static_cast<uint32_t>(std::lround(outA * 255.0));
+            const auto outAlpha = static_cast<std::uint32_t>(std::lround(outA * 255.0));
             const auto outRed = blendChannel(16);
             const auto outGreen = blendChannel(8);
             const auto outBlue = blendChannel(0);
@@ -645,7 +647,7 @@ private:
                 return std::nullopt;
             }
             const auto sampled = sampleImagePixel(*image);
-            return sampled.has_value() ? std::optional<uint32_t>(applyPostEffects(*sampled)) : std::nullopt;
+            return sampled.has_value() ? std::optional<std::uint32_t>(applyPostEffects(*sampled)) : std::nullopt;
         }
         if (resolved.mode == VisualOverrideMode::AnimationGroup) {
             const auto* animation = std::get_if<VisualAnimationGroup>(&resolved.payload);
@@ -653,16 +655,16 @@ private:
                 return std::nullopt;
             }
             const auto frameIndex = static_cast<std::size_t>(
-                (generation / static_cast<uint64_t>(animation->frameDuration)) % animation->frames.size());
+                (generation / static_cast<std::uint64_t>(animation->frameDuration)) % animation->frames.size());
             const auto sampled = sampleImagePixel(animation->frames[frameIndex]);
-            return sampled.has_value() ? std::optional<uint32_t>(applyPostEffects(*sampled)) : std::nullopt;
+            return sampled.has_value() ? std::optional<std::uint32_t>(applyPostEffects(*sampled)) : std::nullopt;
         }
         const auto* layers = std::get_if<std::vector<VisualReplacementImage>>(&resolved.payload);
         if (resolved.mode != VisualOverrideMode::CompositeLayers || layers == nullptr || layers->empty()) {
             return std::nullopt;
         }
 
-        uint32_t composed = 0u;
+        std::uint32_t composed = 0u;
         bool sampledAnyLayer = false;
         for (const auto& layer : *layers) {
             const auto sampled = sampleImagePixel(layer);
@@ -678,9 +680,9 @@ private:
         return applyPostEffects(composed);
     }
 
-    [[nodiscard]] static double scaledCoordinate(uint8_t sourceCoordinate,
-                                                 uint32_t replacementSize,
-                                                 uint32_t sourceSize) noexcept
+    [[nodiscard]] static double scaledCoordinate(std::uint8_t sourceCoordinate,
+                                                 std::uint32_t replacementSize,
+                                                 std::uint32_t sourceSize) noexcept
     {
         if (sourceSize <= 1u || replacementSize <= 1u) {
             return 0.0;
@@ -689,9 +691,9 @@ private:
                static_cast<double>(sourceSize - 1u);
     }
 
-    [[nodiscard]] static std::size_t cropCoordinate(uint8_t sourceCoordinate,
-                                                    uint32_t replacementSize,
-                                                    uint32_t sourceSize,
+    [[nodiscard]] static std::size_t cropCoordinate(std::uint8_t sourceCoordinate,
+                                                    std::uint32_t replacementSize,
+                                                    std::uint32_t sourceSize,
                                                     const std::string& anchor) noexcept
     {
         std::size_t offset = 0;
@@ -706,10 +708,13 @@ private:
                         static_cast<std::size_t>(replacementSize - 1u));
     }
 
-    [[nodiscard]] static std::optional<uint32_t> sampleNearest(const VisualReplacementImage& image,
-                                                               std::size_t x,
-                                                               std::size_t y) noexcept
+    [[nodiscard]] static std::optional<std::uint32_t> sampleNearest(const VisualReplacementImage& image,
+                                                                    std::size_t x,
+                                                                    std::size_t y) noexcept
     {
+        if (image.width == 0 || image.height == 0 || image.argbPixels.empty()) {
+            return std::nullopt;
+        }
         const auto clampedX = std::min(x, static_cast<std::size_t>(image.width - 1u));
         const auto clampedY = std::min(y, static_cast<std::size_t>(image.height - 1u));
         const auto index = clampedY * static_cast<std::size_t>(image.width) + clampedX;
@@ -719,10 +724,13 @@ private:
         return image.argbPixels[index];
     }
 
-    [[nodiscard]] static std::optional<uint32_t> sampleLinear(const VisualReplacementImage& image,
-                                                              double x,
-                                                              double y) noexcept
+    [[nodiscard]] static std::optional<std::uint32_t> sampleLinear(const VisualReplacementImage& image,
+                                                                   double x,
+                                                                   double y) noexcept
     {
+        if (image.width == 0 || image.height == 0 || image.argbPixels.empty()) {
+            return std::nullopt;
+        }
         const auto x0 = static_cast<std::size_t>(std::floor(x));
         const auto y0 = static_cast<std::size_t>(std::floor(y));
         const auto x1 = std::min(x0 + 1u, static_cast<std::size_t>(image.width - 1u));
@@ -736,7 +744,10 @@ private:
         if (!c00.has_value() || !c10.has_value() || !c01.has_value() || !c11.has_value()) {
             return std::nullopt;
         }
-        const auto blend = [tx, ty](uint32_t c00Value, uint32_t c10Value, uint32_t c01Value, uint32_t c11Value,
+        const auto blend = [tx, ty](std::uint32_t c00Value,
+                                    std::uint32_t c10Value,
+                                    std::uint32_t c01Value,
+                                    std::uint32_t c11Value,
                                     int shift) {
             const auto p00 = static_cast<double>((c00Value >> shift) & 0xFFu);
             const auto p10 = static_cast<double>((c10Value >> shift) & 0xFFu);
@@ -744,7 +755,7 @@ private:
             const auto p11 = static_cast<double>((c11Value >> shift) & 0xFFu);
             const auto top = p00 + (p10 - p00) * tx;
             const auto bottom = p01 + (p11 - p01) * tx;
-            return static_cast<uint32_t>(std::lround(top + (bottom - top) * ty));
+            return static_cast<std::uint32_t>(std::lround(top + (bottom - top) * ty));
         };
         const auto a = blend(*c00, *c10, *c01, *c11, 24);
         const auto r = blend(*c00, *c10, *c01, *c11, 16);
@@ -753,98 +764,27 @@ private:
         return (a << 24u) | (r << 16u) | (g << 8u) | b;
     }
 
-    void compositeSpritesForScanline(VideoFramePacket& frame,
-                                     const VideoStateView& state,
-                                     std::span<const uint8_t> backgroundColorIndices,
-                                     int screenY) const
-    {
-        if ((state.lcdc & 0x02u) == 0u || state.oam.empty()) {
-            return;
-        }
+    // Triple-buffer SPSC mailbox:
+    // - 3 slots: one private to producer, one private to consumer, one shared (latest frame).
+    // - mailboxShared_: bits [2]=dirty (new frame available), bits [1:0]=slot index.
+    // - Producer writes to mailboxProducerSlot_, then atomically swaps with mailboxShared_.
+    // - Consumer atomically swaps mailboxConsumerSlot_ into mailboxShared_ to take the latest.
+    // - No two threads ever access the same slot concurrently.
+    static constexpr std::uint8_t kMailboxDirty    = 0x04u;
+    static constexpr std::uint8_t kMailboxSlotMask = 0x03u;
+    static constexpr int kMailboxSlotCount         = 3;
 
-        const bool tallSprites = (state.lcdc & 0x04u) != 0u;
-        const int spriteHeight = tallSprites ? 16 : 8;
-        for (int spriteIndex = 39; spriteIndex >= 0; --spriteIndex) {
-            const auto base = static_cast<std::size_t>(spriteIndex) * 4u;
-            if (base + 3u >= state.oam.size()) {
-                continue;
-            }
-
-            const int spriteY = static_cast<int>(readOamByte(state, base)) - 16;
-            const int spriteX = static_cast<int>(readOamByte(state, base + 1u)) - 8;
-            uint8_t tileIndex = readOamByte(state, base + 2u);
-            const uint8_t attributes = readOamByte(state, base + 3u);
-            if (spriteX <= -8 || spriteX >= frame.width || spriteY <= -spriteHeight || spriteY >= frame.height) {
-                continue;
-            }
-            if (screenY < spriteY || screenY >= spriteY + spriteHeight) {
-                continue;
-            }
-
-            if (tallSprites) {
-                tileIndex = static_cast<uint8_t>(tileIndex & 0xFEu);
-            }
-
-            const bool xFlip = (attributes & 0x20u) != 0u;
-            const bool yFlip = (attributes & 0x40u) != 0u;
-            const bool behindBackground = (attributes & 0x80u) != 0u;
-            const uint8_t palette = (attributes & 0x10u) != 0u ? state.obp1 : state.obp0;
-            const int localY = screenY - spriteY;
-            int spriteRow = yFlip ? (spriteHeight - 1 - localY) : localY;
-            uint8_t effectiveTile = tileIndex;
-            if (tallSprites && spriteRow >= 8) {
-                effectiveTile = static_cast<uint8_t>(tileIndex + 1u);
-                spriteRow -= 8;
-            }
-
-            for (int localX = 0; localX < 8; ++localX) {
-                const int screenX = spriteX + localX;
-                if (screenX < 0 || screenX >= frame.width) {
-                    continue;
-                }
-
-                const auto pixelIndex = static_cast<std::size_t>(screenY) * static_cast<std::size_t>(frame.width)
-                                      + static_cast<std::size_t>(screenX);
-                const uint8_t spriteColumn = static_cast<uint8_t>(xFlip ? (7 - localX) : localX);
-                const uint8_t colorIndex = sampleTileColorIndex(state,
-                                                                effectiveTile,
-                                                                true,
-                                                                spriteColumn,
-                                                                static_cast<uint8_t>(spriteRow));
-                if (colorIndex == 0u) {
-                    continue;
-                }
-                if (behindBackground && backgroundColorIndices[static_cast<std::size_t>(screenX)] != 0u) {
-                    continue;
-                }
-
-                const uint8_t shade = mapPaletteShade(palette, colorIndex);
-                const auto spriteTileAddress = tileDataAddress(effectiveTile, true);
-                if (const auto replacementPixel = replacementPixelForTile(state,
-                                                                           effectiveTile,
-                                                                           spriteTileAddress,
-                                                                           spriteColumn,
-                                                                           static_cast<uint8_t>(spriteRow),
-                                                                           VisualResourceKind::Sprite,
-                                                                           palette,
-                                                                           (attributes & 0x10u) != 0u ? "OBP1" : "OBP0",
-                                                                           frame.generation);
-                    replacementPixel.has_value()) {
-                    frame.pixels[pixelIndex] = *replacementPixel;
-                    continue;
-                }
-                frame.pixels[pixelIndex] = paletteColor(shade);
-            }
-        }
-    }
+    std::array<VideoPresentPacket, kMailboxSlotCount> mailboxSlots_{};
+    std::atomic<std::uint8_t> mailboxShared_{0x00u}; // (dirty:1 | slotIdx:2)
+    int mailboxProducerSlot_{1};  // emulation-thread-private
+    int mailboxConsumerSlot_{2};  // render-thread-private
 
     VideoEngineConfig config_{};
     VisualOverrideService* visualOverrideService_ = nullptr;
-    mutable std::unordered_map<std::string, VisualTileCacheEntry> visualTileCache_;
-    std::deque<VideoFramePacket> queuedFrames_{};
-    std::optional<VideoFramePacket> lastValidFrame_{};
-    VideoEngineStats stats_{};
-    uint64_t currentGeneration_ = 0;
+    mutable std::unordered_map<std::string, VisualResourceCacheEntry> visualResourceCache_{};
+    std::optional<VideoPresentPacket> lastValidFrame_{};
+    mutable VideoEngineStats stats_{};
+    std::uint64_t currentGeneration_ = 0;
 };
 
 } // namespace BMMQ

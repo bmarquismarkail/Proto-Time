@@ -35,6 +35,59 @@ Run tests:
 ctest --test-dir build-working --output-on-failure
 ```
 
+## Runtime Diagnostics + Perf Baseline (Phase 42)
+
+`timeEmulator` supports periodic runtime diagnostics snapshots without changing
+emulation behavior:
+
+```bash
+timeEmulator \
+	--core gameboy \
+	--rom path/to/rom.gb \
+	--timing-profile balanced \
+	--diagnostics-report diagnostics-balanced.jsonl \
+	--diagnostics-interval-ms 1000
+```
+
+Timing profile examples:
+
+```bash
+# balanced
+timeEmulator --core gameboy --rom path/to/rom.gb --timing-profile balanced \
+	--diagnostics-report diagnostics-balanced.jsonl --diagnostics-interval-ms 1000
+
+# low_latency
+timeEmulator --core gameboy --rom path/to/rom.gb --timing-profile low_latency \
+	--diagnostics-report diagnostics-low-latency.jsonl --diagnostics-interval-ms 1000
+
+# deterministic_test
+timeEmulator --core gameboy --rom path/to/rom.gb --timing-profile deterministic_test \
+	--diagnostics-report diagnostics-deterministic.jsonl --diagnostics-interval-ms 1000
+```
+
+The diagnostics report is JSON-lines (one object per interval) and includes host
+elapsed time, emulated cycles, effective speed, frame submit/present counts,
+fresh/fallback presents, mailbox overwrites, publish-to-present age stats,
+presenter duration stats, audio underrun/silence counters, audio worker wake
+latency stats, frontend tick scheduled/executed/merged, wake jitter buckets,
+and active timing profile.
+
+Perf baseline workflow (RelWithDebInfo):
+
+```bash
+cmake -S . -B build-working -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build-working -j4
+
+perf record -F 999 -g -- ./build-working/timeEmulator \
+	--core gameboy \
+	--rom path/to/rom.gb \
+	--timing-profile balanced \
+	--diagnostics-report diagnostics-balanced.jsonl \
+	--diagnostics-interval-ms 1000
+
+perf report
+```
+
 ## Architecture Overview
 
 ### 1. Native Machine Host

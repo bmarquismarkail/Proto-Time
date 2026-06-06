@@ -13,6 +13,7 @@ namespace BMMQ {
 struct AudioBufferView {
     std::span<const int16_t> samples;
     int sampleRate = 48000;
+    uint8_t channelCount = 1;
 };
 
 struct AudioProcessorCapabilities {
@@ -98,7 +99,7 @@ public:
                 return false;
             }
 
-            current = {std::span<const int16_t>(scratch.data(), stageProduced), current.sampleRate};
+            current = {std::span<const int16_t>(scratch.data(), stageProduced), current.sampleRate, current.channelCount};
             useA = !useA;
         }
 
@@ -116,7 +117,7 @@ public:
     {
         if (fixedCapacitySamples_ == 0u && !processors_.empty()) {
             output.clear();
-            return {std::span<const int16_t>{}, input.sampleRate};
+            return {std::span<const int16_t>{}, input.sampleRate, input.channelCount};
         }
 
         const auto boundedSize = fixedCapacitySamples_ != 0u
@@ -129,11 +130,11 @@ public:
                      std::span<int16_t>(output.data(), output.size()),
                      producedSamples)) {
             output.clear();
-            return {std::span<const int16_t>{}, input.sampleRate};
+            return {std::span<const int16_t>{}, input.sampleRate, input.channelCount};
         }
 
         output.resize(producedSamples);
-        return {std::span<const int16_t>(output.data(), output.size()), input.sampleRate};
+        return {std::span<const int16_t>(output.data(), output.size()), input.sampleRate, input.channelCount};
     }
 
 private:
