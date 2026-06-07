@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+using GameBoyMachine = GB::GameBoyMachine;
 #include "machine/Machine.hpp"
 #include "machine/plugins/IoPlugin.hpp"
 

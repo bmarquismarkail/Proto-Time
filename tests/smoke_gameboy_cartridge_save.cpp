@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+using GameBoyMachine = GB::GameBoyMachine;
 #include "cores/gameboy/cartridge/GameBoyCartridge.hpp"
 #include "machine/BackgroundTaskService.hpp"
 

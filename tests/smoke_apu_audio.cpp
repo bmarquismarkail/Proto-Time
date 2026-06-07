@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+using GameBoyMachine = GB::GameBoyMachine;
 
 namespace {
 

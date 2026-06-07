@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+using GameBoyMachine = GB::GameBoyMachine;
 #include "machine/plugins/SdlFrontendPlugin.hpp"
 #include "machine/plugins/SdlFrontendPluginLoader.hpp"
 

@@ -30,12 +30,13 @@ class MemoryStorage {
 public:
     using starting_address_t = AddressType;
     using ending_address_t = AddressType;
+    virtual ~MemoryStorage() = default;
     void addMemBlock(std::tuple<AddressType, AddressType, memAccess> memBlock);
     void addReadOnlyMem(std::pair<AddressType, AddressType> romBlock);
     void addWriteOnlyMem(std::pair<AddressType, AddressType> womBlock);
     void addReadWriteMem(std::pair<AddressType, AddressType> block);
-    void read(std::span<DataType> stream, AddressType address) const;
-    void write(std::span<const DataType> value, AddressType address);
+    virtual void read(std::span<DataType> stream, AddressType address) const;
+    virtual void write(std::span<const DataType> value, AddressType address);
     void load(std::span<const DataType> value, AddressType address);
     void setReadInterceptor(std::function<bool(AddressType, std::span<DataType>)> interceptor)
     {

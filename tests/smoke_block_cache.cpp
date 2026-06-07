@@ -5,6 +5,7 @@
 #include <chrono>
 #include <vector>
 #include "cores/gameboy/GameBoyMachine.hpp"
+using GameBoyMachine = GB::GameBoyMachine;
 #include "inst_cycle/BlockCache.hpp"
 #include "inst_cycle/BlockTranslator.hpp"
 

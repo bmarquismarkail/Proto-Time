@@ -5,6 +5,7 @@
 #include <type_traits>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+using GameBoyMachine = GB::GameBoyMachine;
 #include "inst_cycle/executor/PluginContract.hpp"
 #include "machine/RegisterId.hpp"
 

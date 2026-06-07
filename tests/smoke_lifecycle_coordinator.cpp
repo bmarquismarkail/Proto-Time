@@ -2,6 +2,7 @@
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+using GameBoyMachine = GB::GameBoyMachine;
 #include "machine/MachineLifecycleCoordinator.hpp"
 
 int main()

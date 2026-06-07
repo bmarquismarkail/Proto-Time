@@ -14,6 +14,7 @@
 #include <zlib.h>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+using GameBoyMachine = GB::GameBoyMachine;
 #include "cores/gameboy/video/GameBoyVisualExtractor.hpp"
 #include "machine/VideoDebugModel.hpp"
 #include "machine/VisualTypes.hpp"

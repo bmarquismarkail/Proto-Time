@@ -57,6 +57,12 @@ add_library(time-gameboy-interpreter-core
 	cores/gameboy/decode/gb_decoder.cpp
 	cores/gameboy/decode/gb_interpreter.cpp
     cores/gameboy/gameboy.cpp
+    cores/gameboy/GameBoyMachine.cpp
+    cores/gameboy/GameBoyMemoryMap.cpp
+    cores/gameboy/GameBoyPPU.cpp
+    cores/gameboy/GameBoyAPU.cpp
+    cores/gameboy/GameBoyInput.cpp
+    cores/gameboy/GameBoyMapper.cpp
 )
 
 

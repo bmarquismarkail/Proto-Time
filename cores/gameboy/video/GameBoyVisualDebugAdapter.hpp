@@ -484,10 +484,11 @@ public:
     }
 };
 
+[[nodiscard]] inline const GameBoyVisualDebugAdapter& gameBoyVisualDebugAdapterTyped() noexcept;
+
 [[nodiscard]] inline const BMMQ::IVisualDebugAdapter& gameBoyVisualDebugAdapter()
 {
-    static const GameBoyVisualDebugAdapter adapter;
-    return adapter;
+    return gameBoyVisualDebugAdapterTyped();
 }
 
 [[nodiscard]] inline const GameBoyVisualDebugAdapter& gameBoyVisualDebugAdapterTyped() noexcept
