@@ -14,6 +14,9 @@ void GameBoyPPU::reset() {
     scanlineReadyPending_ = false;
     vblankPending_ = false;
     lastReadyScanline_ = 0;
+    framePixels_.fill(paletteColor(0));
+    capturedScanlines_.fill(false);
+    hasCapturedScanlines_ = false;
     lastLy_ = 0;
 }
 
@@ -207,6 +210,27 @@ void GameBoyPPU::renderScanline(BMMQ::VideoDebugFrameModel& model, int screenY,
     compositeSprites(model, screenY, bgColors);
 }
 
+void GameBoyPPU::captureScanline(int screenY) {
+    if (screenY < 0 || screenY >= kDisplayHeight) {
+        return;
+    }
+
+    BMMQ::VideoDebugFrameModel model;
+    model.width = kDisplayWidth;
+    model.height = kDisplayHeight;
+    model.argbPixels.assign(kFramePixelCount, paletteColor(0));
+
+    std::vector<uint8_t> bgColors;
+    renderScanline(model, screenY, bgColors);
+
+    const auto rowOffset = static_cast<std::size_t>(screenY) * static_cast<std::size_t>(kDisplayWidth);
+    std::copy_n(model.argbPixels.begin() + static_cast<std::ptrdiff_t>(rowOffset),
+                static_cast<std::size_t>(kDisplayWidth),
+                framePixels_.begin() + static_cast<std::ptrdiff_t>(rowOffset));
+    capturedScanlines_[static_cast<std::size_t>(screenY)] = true;
+    hasCapturedScanlines_ = true;
+}
+
 BMMQ::VideoDebugFrameModel GameBoyPPU::buildFrameModel(const BMMQ::VideoDebugRenderRequest& request) const {
     BMMQ::VideoDebugFrameModel model;
     model.width = std::max(request.frameWidth, 1);
@@ -222,8 +246,26 @@ BMMQ::VideoDebugFrameModel GameBoyPPU::buildFrameModel(const BMMQ::VideoDebugRen
     model.argbPixels.assign(static_cast<std::size_t>(model.width) * static_cast<std::size_t>(model.height),
                             paletteColor(0));
 
+    if (hasCapturedScanlines_) {
+        for (int y = 0; y < model.height && y < kDisplayHeight; ++y) {
+            if (!capturedScanlines_[static_cast<std::size_t>(y)]) {
+                continue;
+            }
+            for (int x = 0; x < model.width && x < kDisplayWidth; ++x) {
+                const auto sourceIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(kDisplayWidth)
+                                       + static_cast<std::size_t>(x);
+                const auto targetIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(model.width)
+                                       + static_cast<std::size_t>(x);
+                model.argbPixels[targetIndex] = framePixels_[sourceIndex];
+            }
+        }
+    }
+
     std::vector<uint8_t> bgColors;
     for (int y = 0; y < model.height; ++y) {
+        if (y < kDisplayHeight && capturedScanlines_[static_cast<std::size_t>(y)]) {
+            continue;
+        }
         renderScanline(model, y, bgColors);
     }
 
@@ -252,12 +294,25 @@ void GameBoyPPU::step(uint32_t cpuCycles) {
         // LCD disabled resets LY.
         ly_ = 0;
         ppuMode_ = kModeDMATransfer;
+        framePixels_.fill(paletteColor(0));
+        capturedScanlines_.fill(false);
+        hasCapturedScanlines_ = false;
         return;
     }
 
     dotCounter_ += cpuCycles;
 
-    while (dotCounter_ >= kCyclesPerScanline) {
+    while (true) {
+        if (ly_ < 144u &&
+            !capturedScanlines_[static_cast<std::size_t>(ly_)] &&
+            dotCounter_ >= kScanlineCaptureCycle) {
+            captureScanline(ly_);
+        }
+
+        if (dotCounter_ < kCyclesPerScanline) {
+            break;
+        }
+
         dotCounter_ -= kCyclesPerScanline;
 
         // Emit scanline ready event for visible scanlines
@@ -276,6 +331,8 @@ void GameBoyPPU::step(uint32_t cpuCycles) {
         if (ly_ >= static_cast<uint8_t>(kTotalScanlines)) {
             ly_ = 0;
             ppuMode_ = kModeDMATransfer;
+            capturedScanlines_.fill(false);
+            hasCapturedScanlines_ = false;
         } else if (ly_ < 144u) {
             ppuMode_ = kModeDMATransfer; // Will transition through modes during scanline
         } else {
@@ -286,15 +343,15 @@ void GameBoyPPU::step(uint32_t cpuCycles) {
     }
 
     // Sub-scanline mode transitions (simplified)
-    // Mode 3: cycles 0-79 (sprite search + pixel processing)
-    // Mode 2: cycles 80-167 (OAM search)
-    // Mode 0: cycles 172-455 (HBlank)
-    // Mode 1: entire VBlank scanlines (144-152)
+    // Mode 2: cycles 0-79 (OAM search)
+    // Mode 3: cycles 80-251 (pixel transfer, simplified fixed length)
+    // Mode 0: cycles 252-455 (HBlank)
+    // Mode 1: entire VBlank scanlines (144-153)
     if (ly_ < 144u && dotCounter_ < kCyclesPerScanline) {
         uint32_t dotPos = dotCounter_;
         if (dotPos < 80u) {
             ppuMode_ = kModeSpriteSearch;
-        } else if (dotPos < 168u) {
+        } else if (dotPos < 252u) {
             ppuMode_ = kModeDMATransfer;
         } else {
             ppuMode_ = kModeHBlank;

@@ -59,9 +59,12 @@ private:
     // Display dimensions
     static constexpr int kDisplayWidth = 160;
     static constexpr int kDisplayHeight = 144;
-    static constexpr int kTotalScanlines = 153; // 144 visible + 9 VBlank
+    static constexpr int kTotalScanlines = 154; // 144 visible + 10 VBlank (LY 144-153)
     static constexpr uint32_t kCyclesPerScanline = 456u;
+    static constexpr uint32_t kScanlineCaptureCycle = 80u; // End of mode 2 sprite search/start of pixel transfer.
     static constexpr uint32_t kCyclesPerDot = 4u;
+    static constexpr std::size_t kFramePixelCount =
+        static_cast<std::size_t>(kDisplayWidth) * static_cast<std::size_t>(kDisplayHeight);
 
     // Palette color lookup (DMG 4-shade grayscale)
     [[nodiscard]] static uint32_t paletteColor(uint8_t shade) noexcept;
@@ -94,6 +97,7 @@ private:
     // Render a single scanline
     void renderScanline(BMMQ::VideoDebugFrameModel& model, int screenY,
                         std::vector<uint8_t>& bgColors) const;
+    void captureScanline(int screenY);
 
     // Timing state
     uint32_t dotCounter_ = 0;
@@ -104,6 +108,9 @@ private:
     bool scanlineReadyPending_ = false;
     bool vblankPending_ = false;
     uint8_t lastReadyScanline_ = 0;
+    std::array<uint32_t, kFramePixelCount> framePixels_{};
+    std::array<bool, kDisplayHeight> capturedScanlines_{};
+    bool hasCapturedScanlines_ = false;
 
     // Previous LY for transition detection
     uint8_t lastLy_ = 0;
