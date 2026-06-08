@@ -14,13 +14,14 @@
 #include <zlib.h>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
-using GameBoyMachine = GB::GameBoyMachine;
 #include "cores/gameboy/video/GameBoyVisualExtractor.hpp"
 #include "machine/VideoDebugModel.hpp"
 #include "machine/VisualTypes.hpp"
 #include "machine/plugins/IoPlugin.hpp"
 
 namespace BMMQ::Tests::Visual {
+
+using GameBoyMachine = GB::GameBoyMachine;
 
 inline void writeTextFile(const std::filesystem::path& path, const std::string& contents)
 {
