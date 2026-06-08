@@ -328,7 +328,11 @@ GameBoyMachine::GameBoyMachine() : impl_(std::make_unique<Impl>()) {
     });
 
     // Create runtime context
-    impl_->context = new GameBoyRuntimeContext(impl_->cpu, impl_->memoryMap, impl_->romLoaded, impl_->activePolicy);
+    impl_->context = std::make_unique<GameBoyRuntimeContext>(
+        impl_->cpu,
+        impl_->memoryMap,
+        impl_->romLoaded,
+        impl_->activePolicy);
 
     // Configure audio engine
     (void)audioService().configureEngine({
@@ -526,7 +530,6 @@ void GameBoyMachine::step() {
     if (impl_->bootEntryPending) {
         impl_->bootEntryPending = false;
         impl_->context->writeRegister16(GB::RegisterId::PC, 0x0100u);
-        return;
     }
     // Handle boot entry pending (FF50 write during boot ROM)
     // In the new architecture, boot ROM is handled by memory map intercept
@@ -589,7 +592,7 @@ void GameBoyMachine::step() {
             auto extracted = impl_->saveManager.extractDirtySaveSnapshot(impl_->cartridge_);
             if (extracted.has_value()) {
                 auto snapshot = std::move(*extracted);
-                const bool queued = impl_->backgroundTaskService->submit([&snapshot]() mutable {
+                const bool queued = impl_->backgroundTaskService->submit([snapshot = std::move(snapshot)]() mutable {
                     GB::CartridgeSaveManager::flushSnapshot(std::move(snapshot));
                 });
                 if (!queued) {
@@ -640,14 +643,16 @@ void GameBoyMachine::serviceInput() {
             const auto pressedMask = static_cast<uint8_t>(*committedInput & 0x00FFu);
             impl_->input.setLogicalButtons(pressedMask);
             impl_->lastDigitalInputMask = pressedMask;
-            impl_->memoryMap.setIoRegisterRaw(0xFF00u, impl_->input.readRegister());
+            const auto joypad = impl_->input.readRegister();
+            impl_->cpu.cpu().syncCachedIoRegisterWrite(0xFF00u, joypad);
+            impl_->memoryMap.setIoRegisterRaw(0xFF00u, joypad);
             if (impl_->pluginManager.initialized()) {
                 impl_->pluginManager.emit(view(), BMMQ::MachineEvent{
                     BMMQ::MachineEventType::DigitalInputChanged,
                     BMMQ::PluginCategory::DigitalInput,
                     impl_->stepCounter,
                     0xFF00u,
-                    impl_->input.readRegister(),
+                    joypad,
                     nullptr,
                     "input service sample"
                 });
@@ -664,7 +669,18 @@ void GameBoyMachine::serviceInput() {
         const auto pressedMask = static_cast<uint8_t>(*sampledInput & 0x00FFu);
         impl_->input.setLogicalButtons(pressedMask);
         impl_->lastDigitalInputMask = pressedMask;
-        impl_->memoryMap.setIoRegisterRaw(0xFF00u, impl_->input.readRegister());
+        const auto joypad = impl_->input.readRegister();
+        impl_->cpu.cpu().syncCachedIoRegisterWrite(0xFF00u, joypad);
+        impl_->memoryMap.setIoRegisterRaw(0xFF00u, joypad);
+        impl_->pluginManager.emit(view(), BMMQ::MachineEvent{
+            BMMQ::MachineEventType::DigitalInputChanged,
+            BMMQ::PluginCategory::DigitalInput,
+            impl_->stepCounter,
+            0xFF00u,
+            joypad,
+            nullptr,
+            "plugin input sample"
+        });
     }
 }
 

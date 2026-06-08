@@ -201,6 +201,10 @@ void GameBoyMapper::copyRomBankWindow(std::size_t bankIndex, std::span<uint8_t> 
         return;
     }
     std::size_t start = bankIndex * 0x4000u;
+    if (start >= romData_.size()) {
+        std::fill(window.begin(), window.end(), 0xFF);
+        return;
+    }
     std::size_t count = std::min<std::size_t>(window.size(), romData_.size() - start);
     std::memcpy(window.data(), romData_.data() + start, count);
     // Fill remaining with 0xFF

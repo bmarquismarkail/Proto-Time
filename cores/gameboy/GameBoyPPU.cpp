@@ -121,8 +121,19 @@ void GameBoyPPU::compositeSprites(BMMQ::VideoDebugFrameModel& model, int screenY
     bool tallSprites = (lcdc & 0x04u) != 0u;
     int spriteHeight = tallSprites ? 16 : 8;
 
-    for (int spriteIndex = 39; spriteIndex >= 0; --spriteIndex) {
-        uint16_t base = static_cast<uint16_t>(0xFE00u + static_cast<uint16_t>(spriteIndex) * 4u);
+    // Collect candidate sprites that intersect the current scanline (up to 10)
+    struct SpriteCandidate {
+        int oamIndex;
+        int spriteX;
+        uint8_t tileIndex;
+        uint8_t attributes;
+    };
+    std::vector<SpriteCandidate> candidates;
+
+    for (int spriteIndex = 0; spriteIndex < 40; ++spriteIndex) {
+        if (static_cast<int>(candidates.size()) >= 10) break;
+
+        auto base = static_cast<uint16_t>(0xFE00u + static_cast<uint16_t>(spriteIndex) * 4u);
         int spriteY = static_cast<int>(readOam(base)) - 16;
         int spriteX = static_cast<int>(readOam(static_cast<uint16_t>(base + 1u))) - 8;
         uint8_t tileIndex = readOam(static_cast<uint16_t>(base + 2u));
@@ -136,6 +147,24 @@ void GameBoyPPU::compositeSprites(BMMQ::VideoDebugFrameModel& model, int screenY
             continue;
         }
 
+        candidates.push_back({spriteIndex, spriteX, tileIndex, attributes});
+    }
+
+    // Sort candidates by priority: X descending, then OAM index descending
+    // This ensures lower priority sprites (higher X or higher OAM index) are drawn first
+    std::sort(candidates.begin(), candidates.end(),
+              [](const SpriteCandidate& a, const SpriteCandidate& b) {
+                  if (a.spriteX != b.spriteX) return a.spriteX > b.spriteX;
+                  return a.oamIndex > b.oamIndex;
+              });
+
+    // Render candidate sprites in sorted order
+    for (const auto& candidate : candidates) {
+        int spriteIndex = candidate.oamIndex;
+        int spriteX = candidate.spriteX;
+        uint8_t tileIndex = candidate.tileIndex;
+        uint8_t attributes = candidate.attributes;
+
         if (tallSprites) {
             tileIndex = static_cast<uint8_t>(tileIndex & 0xFEu);
         }
@@ -147,6 +176,8 @@ void GameBoyPPU::compositeSprites(BMMQ::VideoDebugFrameModel& model, int screenY
             ? memoryMap->read(0xFF49) // OBP1
             : memoryMap->read(0xFF48); // OBP0
 
+        auto base = static_cast<uint16_t>(0xFE00u + static_cast<uint16_t>(spriteIndex) * 4u);
+        int spriteY = static_cast<int>(readOam(base)) - 16;
         int localY = screenY - spriteY;
         int spriteRow = yFlip ? (spriteHeight - 1 - localY) : localY;
         uint8_t effectiveTile = tileIndex;
@@ -157,7 +188,9 @@ void GameBoyPPU::compositeSprites(BMMQ::VideoDebugFrameModel& model, int screenY
 
         for (int localX = 0; localX < 8; ++localX) {
             int screenX = spriteX + localX;
-            if (screenX < 0 || screenX >= static_cast<int>(bgColors.size())) continue;
+            if (screenX < 0 || screenX >= static_cast<int>(bgColors.size())) {
+                continue;
+            }
 
             uint8_t spriteColumn = static_cast<uint8_t>(xFlip ? (7u - static_cast<uint8_t>(localX)) : static_cast<uint8_t>(localX));
             uint8_t colorIndex = sampleTileColor(effectiveTile, true, spriteColumn, static_cast<uint8_t>(spriteRow));

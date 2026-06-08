@@ -157,7 +157,7 @@ private:
         // Interrupt request raised by PPU (VBlank). Consumed atomically by CPU.
         bool interruptRequested = false;
         // Runtime context wrapping CPU + memory map
-        GameBoyRuntimeContext* context = nullptr;
+        std::unique_ptr<GameBoyRuntimeContext> context;
     };
 
     std::unique_ptr<Impl> impl_;
