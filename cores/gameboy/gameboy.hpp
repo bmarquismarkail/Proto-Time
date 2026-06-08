@@ -299,6 +299,7 @@ public:
   [[nodiscard]] uint64_t audioFrameCounter() const noexcept { return apu_.frameCounter; }
   [[nodiscard]] std::vector<int16_t> copyRecentAudioSamples() const;
   void setJoypadState(DataType pressedMask);
+  void syncCachedIoRegisterWrite(AddressType address, DataType value);
   bool handleMemoryRead(AddressType address, std::span<DataType> value) const;
   bool handleMemoryWrite(AddressType address, std::span<const DataType> value);
   void setStopFlag(bool f);

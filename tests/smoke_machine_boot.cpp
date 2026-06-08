@@ -190,6 +190,33 @@ int main() {
     assert(host.runtimeContext().read8(0xFF40) == 0x00);
     assert(host.runtimeContext().read8(0xFF44) == 0x00);
 
+    std::vector<uint8_t> interruptRom(0x8000, 0x00);
+    interruptRom[0x0040] = 0x3E; // LD A,$99
+    interruptRom[0x0041] = 0x99;
+    interruptRom[0x0042] = 0xEA; // LD ($C123),A
+    interruptRom[0x0043] = 0x23;
+    interruptRom[0x0044] = 0xC1;
+    interruptRom[0x0045] = 0xD9; // RETI
+    interruptRom[0x0100] = 0x3E; // LD A,$01
+    interruptRom[0x0101] = 0x01;
+    interruptRom[0x0102] = 0xE0; // LDH ($FF),A ; IE = VBlank
+    interruptRom[0x0103] = 0xFF;
+    interruptRom[0x0104] = 0xFB; // EI
+    interruptRom[0x0105] = 0x76; // HALT
+    interruptRom[0x0106] = 0x18; // JR -2
+    interruptRom[0x0107] = 0xFE;
+    host.loadRom(interruptRom);
+    assert(host.runtimeContext().read8(0xC123u) == 0xFFu);
+    bool vblankInterruptServiced = false;
+    for (int i = 0; i < 20000; ++i) {
+        host.step();
+        if (host.runtimeContext().read8(0xC123u) == 0x99u) {
+            vblankInterruptServiced = true;
+            break;
+        }
+    }
+    assert(vblankInterruptServiced);
+
     std::vector<uint8_t> mappedIoRom(0x8000, 0x00);
     mappedIoRom[0x0000] = 0x99;
     mappedIoRom[0x0042] = 0x77;
@@ -322,6 +349,22 @@ int main() {
     assert(host.runtimeContext().read8(0xA000) == 0x34);
     host.runtimeContext().write8(0x4000, 0x00);
     assert(host.runtimeContext().read8(0xA000) == 0x12);
+    mbc3Rom[0x21u * 0x4000u] = 0x77;
+    host.loadRom(mbc3Rom);
+    assert(host.runtimeContext().read8(0x4000) == 0x55);
+    host.runtimeContext().write8(0x4000, 0x01);
+    host.runtimeContext().write8(0x2000, 0x01);
+    assert(host.runtimeContext().read8(0x4000) == 0x55);
+
+    host.loadRom(cartridgeRom);
+    for (std::size_t i = 0; i < 0xA0u; ++i) {
+        host.runtimeContext().write8(static_cast<uint16_t>(0xC200u + i),
+                                     static_cast<uint8_t>(0x80u + (i & 0x3Fu)));
+    }
+    host.runtimeContext().write8(0xFF46u, 0xC2u);
+    assert(host.runtimeContext().read8(0xFE00u) == 0x80u);
+    assert(host.runtimeContext().read8(0xFE01u) == 0x81u);
+    assert(host.runtimeContext().read8(0xFE9Fu) == static_cast<uint8_t>(0x80u + (0x9Fu & 0x3Fu)));
 
     std::vector<uint8_t> dmaWaitRom(0x8000, 0x00);
     dmaWaitRom[0x0100] = 0xCD;

@@ -32,6 +32,7 @@ public:
 
     // Output queries
     [[nodiscard]] std::vector<int16_t> copyRecentSamples() const;
+    [[nodiscard]] std::vector<int16_t> takePendingSamples() const;
     [[nodiscard]] uint64_t frameCounter() const noexcept { return frameCounter_; }
     [[nodiscard]] uint32_t sampleRate() const noexcept { return kSampleRate; }
     [[nodiscard]] uint8_t outputChannelCount() const noexcept { return 2u; }
@@ -105,6 +106,8 @@ private:
         std::array<int16_t, kHistorySamples> recentSamples{};
         std::size_t recentWriteCursor = 0;
         std::size_t recentSampleCount = 0;
+        mutable std::size_t pendingReadCursor = 0;
+        mutable std::size_t pendingSampleCount = 0;
         PulseChannel pulse1{};
         PulseChannel pulse2{};
         WaveChannel wave{};

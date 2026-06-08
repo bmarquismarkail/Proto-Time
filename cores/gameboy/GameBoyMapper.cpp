@@ -103,7 +103,10 @@ GameBoyMapper::WriteResult GameBoyMapper::write(uint16_t address, uint8_t value)
         } else if (address < 0x4000u) {
             romBankLow_ = value & 0x7Fu;
             if (romBankLow_ == 0u) romBankLow_ = 1u;
-            updateMbc1Banking();
+            effectiveRomBank_ = romBankLow_;
+            if (effectiveRomBank_ >= romBankCount_) {
+                effectiveRomBank_ = static_cast<uint8_t>(romBankCount_ - 1u);
+            }
             result.romBankChanged = true;
             result.handled = true;
         } else if (address < 0x6000u) {

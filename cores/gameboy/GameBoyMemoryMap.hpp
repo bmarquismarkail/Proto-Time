@@ -71,6 +71,7 @@ private:
     // Internal read/write without echo resolution
     [[nodiscard]] uint8_t readRaw(uint16_t addr) const;
     void writeRaw(uint16_t addr, uint8_t value);
+    void performOamDma(uint8_t sourceHighByte);
 
     // Boot ROM read interceptor
     [[nodiscard]] bool handleBootRomRead(uint16_t addr, std::span<uint8_t> out) const;
@@ -98,7 +99,6 @@ private:
     // Boot ROM
     std::vector<uint8_t> bootRom_{};
     bool bootRomActive_ = false;
-    mutable bool dmaActive_ = false;
 
     // ROM windows (banked ROM visible at 0x0000 or 0x4000)
     RomWindow romWindow0x0000_{};

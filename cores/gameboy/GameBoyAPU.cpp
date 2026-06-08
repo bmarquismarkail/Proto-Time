@@ -197,6 +197,11 @@ void GameBoyAPU::pushSample(int16_t sample) {
     if (apu_.recentSampleCount < kHistorySamples) {
         apu_.recentSampleCount++;
     }
+    if (apu_.pendingSampleCount < kHistorySamples) {
+        apu_.pendingSampleCount++;
+    } else {
+        apu_.pendingReadCursor = (apu_.pendingReadCursor + 1u) % kHistorySamples;
+    }
 }
 
 void GameBoyAPU::writeRegister(uint16_t address, uint8_t value) {
@@ -342,6 +347,21 @@ std::vector<int16_t> GameBoyAPU::copyRecentSamples() const {
     for (std::size_t i = 0; i < apu_.recentSampleCount; ++i) {
         samples.push_back(apu_.recentSamples[(start + i) % kHistorySamples]);
     }
+    return samples;
+}
+
+std::vector<int16_t> GameBoyAPU::takePendingSamples() const {
+    std::vector<int16_t> samples;
+    if (apu_.pendingSampleCount == 0u) {
+        return samples;
+    }
+
+    samples.reserve(apu_.pendingSampleCount);
+    for (std::size_t i = 0; i < apu_.pendingSampleCount; ++i) {
+        samples.push_back(apu_.recentSamples[(apu_.pendingReadCursor + i) % kHistorySamples]);
+    }
+    apu_.pendingReadCursor = apu_.recentWriteCursor;
+    apu_.pendingSampleCount = 0u;
     return samples;
 }
 

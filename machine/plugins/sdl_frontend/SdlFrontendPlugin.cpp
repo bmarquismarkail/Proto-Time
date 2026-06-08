@@ -806,8 +806,8 @@ public:
             const bool shouldSampleVideoState =
                 carriesVideoState &&
                 (event.type == BMMQ::MachineEventType::VBlank ||
-                 event.type == BMMQ::MachineEventType::VideoScanlineReady ||
-                 !lastFrame_.has_value());
+                 (event.type == BMMQ::MachineEventType::VideoScanlineReady && needsDebugModel) ||
+                 (event.type == BMMQ::MachineEventType::MemoryWriteObserved && !lastFrame_.has_value()));
 
             if (shouldSampleVideoState) {
                 const bool deferPresentForAudioLowWater =
@@ -927,6 +927,12 @@ public:
 
     void onAudioEvent(const BMMQ::MachineEvent& event, const BMMQ::MachineView& view) override
     {
+        if (!config_.enableAudio) {
+            (void)event;
+            (void)view;
+            return;
+        }
+
         // Pre-build audio sources OUTSIDE the lock.
         // Machine state is owned by the emulation thread (the caller), so reading
         // view.realtimeAudioPacket() / view.audioState() before acquiring
@@ -969,9 +975,6 @@ public:
         }
 
         std::scoped_lock<std::mutex> lock(sharedStateMutex_);
-        if (!config_.enableAudio) {
-            return;
-        }
         ++stats_.audioEvents;
         if (realtimePacketValid) {
             ++stats_.audioRealtimePacketsAccepted;
@@ -1485,9 +1488,7 @@ private:
 
     [[nodiscard]] std::size_t computeAudioSafetyMarginSamples() const noexcept
     {
-        const auto callbackChunk =
-            static_cast<std::size_t>(std::max(config_.audioCallbackChunkSamples, 1));
-        return std::max<std::size_t>(callbackChunk * 2u, kApuFrameSamples);
+        return static_cast<std::size_t>(std::max(config_.audioCallbackChunkSamples, 1));
     }
 
     [[nodiscard]] static constexpr uint8_t buttonMask(BMMQ::InputButton button) noexcept
@@ -1867,7 +1868,8 @@ private:
         }
 
         const auto safetyMarginSamples = computeAudioSafetyMarginSamples();
-        return audioService_->engine().bufferedSamples() < safetyMarginSamples;
+        const auto bufferedSamples = audioService_->engine().bufferedSamples();
+        return bufferedSamples != 0u && bufferedSamples < safetyMarginSamples;
     }
 
     std::optional<BMMQ::VideoDebugFrameModel> snapshotVideoDebugModel(const BMMQ::MachineView& view)

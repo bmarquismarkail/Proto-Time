@@ -35,7 +35,6 @@ void GameBoyMemoryMap::reset() {
     ioRegs_.fill(0xFF);
     hram_.fill(0xFF);
     bootRomActive_ = false;
-    dmaActive_ = false;
     clearBootRom();
     clearRomWindow(0x0000);
     clearRomWindow(0x4000);
@@ -63,11 +62,6 @@ uint16_t GameBoyMemoryMap::resolveEchoAddress(uint16_t address) noexcept {
 }
 
 uint8_t GameBoyMemoryMap::readRaw(uint16_t addr) const {
-    if (dmaActive_ && addr < 0xFF80u) {
-        dmaActive_ = false;
-        return 0xFFu;
-    }
-
     // Boot ROM overlay (0x0000-0x00FF)
     if (bootRomActive_ && addr < bootRom_.size()) {
         return bootRom_[addr];
@@ -231,7 +225,9 @@ void GameBoyMemoryMap::writeRaw(uint16_t addr, uint8_t value) {
     // I/O registers (0xFF00-0xFF7F)
     if (addr >= 0xFF00u && addr < 0xFF80u) {
         if (addr == 0xFF46u && value != 0xFFu) {
-            dmaActive_ = true;
+            ioRegs_[addr - 0xFF00u] = value;
+            performOamDma(value);
+            return;
         }
         if (addr == 0xFF41u) {
             ioRegs_[addr - 0xFF00u] = static_cast<uint8_t>((ioRegs_[addr - 0xFF00u] & 0x07u) |
@@ -252,6 +248,13 @@ void GameBoyMemoryMap::writeRaw(uint16_t addr, uint8_t value) {
         return;
     }
 
+}
+
+void GameBoyMemoryMap::performOamDma(uint8_t sourceHighByte) {
+    const auto sourceBase = static_cast<uint16_t>(static_cast<uint16_t>(sourceHighByte) << 8u);
+    for (std::size_t i = 0; i < oam_.size(); ++i) {
+        oam_[i] = readRaw(static_cast<uint16_t>(sourceBase + i));
+    }
 }
 
 bool GameBoyMemoryMap::handleSpecialWrite(uint16_t addr, std::span<const uint8_t> value) {

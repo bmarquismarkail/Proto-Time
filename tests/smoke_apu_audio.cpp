@@ -13,6 +13,7 @@ namespace {
 struct RecordingAudioPlugin final : BMMQ::IAudioPlugin {
     int audioEventCount = 0;
     std::optional<BMMQ::AudioStateView> lastAudioState;
+    std::vector<std::size_t> realtimePacketSampleSizes;
 
     std::string_view id() const override {
         return "test.audio.apu";
@@ -21,6 +22,9 @@ struct RecordingAudioPlugin final : BMMQ::IAudioPlugin {
     void onAudioEvent(const BMMQ::MachineEvent&, const BMMQ::MachineView& view) override {
         ++audioEventCount;
         lastAudioState = view.audioState();
+        if (const auto packet = view.realtimeAudioPacket(); packet.has_value()) {
+            realtimePacketSampleSizes.push_back(packet->pcmSamples.size());
+        }
     }
 };
 
@@ -115,6 +119,17 @@ int main()
     assert(recorder->lastAudioState->frameCounter >= 1u);
     assert(!recorder->lastAudioState->pcmSamples.empty());
     assert(hasNonZeroSample(recorder->lastAudioState->pcmSamples));
+    assert(!recorder->realtimePacketSampleSizes.empty());
+    assert(std::any_of(recorder->realtimePacketSampleSizes.begin(),
+                       recorder->realtimePacketSampleSizes.end(),
+                       [](std::size_t sampleCount) {
+                           return sampleCount > 0u;
+                       }));
+    assert(std::all_of(recorder->realtimePacketSampleSizes.begin(),
+                       recorder->realtimePacketSampleSizes.end(),
+                       [](std::size_t sampleCount) {
+                           return sampleCount <= 512u;
+                       }));
 
     machine.pluginManager().shutdown(machine.mutableView());
     return 0;

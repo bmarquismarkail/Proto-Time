@@ -1465,6 +1465,14 @@ void LR3592_DMG::requestInterrupt(DataType mask)
     writeCachedRegister(hardwareRegisters_.interruptFlags, static_cast<DataType>((current | mask) & kInterruptMask));
 }
 
+void LR3592_DMG::syncCachedIoRegisterWrite(AddressType address, DataType value)
+{
+    address = normalizeAccessAddress(address);
+    if (const auto* slot = cachedIoRegisterForAddress(address); slot != nullptr) {
+        writeCachedRegister(*slot, value);
+    }
+}
+
 bool LR3592_DMG::serviceInterruptIfPending()
 {
     const DataType enabled = readCachedRegister(hardwareRegisters_.ie);
@@ -2608,6 +2616,12 @@ bool LR3592_DMG::handleMemoryWrite(AddressType address, std::span<const DataType
     if (value.size() == 1 && ((address >= 0xFF10u && address <= 0xFF26u) || (address >= 0xFF30u && address <= 0xFF3Fu))) {
         handleApuRegisterWrite(address, value[0]);
         return true;
+    }
+    if (value.size() == 1) {
+        if (const auto* slot = cachedIoRegisterForAddress(address); slot != nullptr) {
+            writeCachedRegister(*slot, value[0]);
+            return true;
+        }
     }
     if (address >= 0xFEA0 && static_cast<std::size_t>(address - 0xFEA0u) + value.size() <= 0x60u) {
         return true;

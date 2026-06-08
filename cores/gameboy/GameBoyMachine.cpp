@@ -269,6 +269,7 @@ GameBoyMachine::GameBoyMachine() : impl_(std::make_unique<Impl>()) {
     impl_->memoryMap.setMapper(&impl_->mapper);
     impl_->memoryMap.setCartridge(&impl_->cartridge_);
     impl_->memoryMap.setWriteObserver([this](uint16_t address, uint8_t value) {
+        impl_->cpu.cpu().syncCachedIoRegisterWrite(address, value);
         if (address == 0xFF00u) {
             impl_->input.writeRegister(value);
             impl_->memoryMap.setIoRegisterRaw(0xFF00u, impl_->input.readRegister());
@@ -705,7 +706,7 @@ std::optional<BMMQ::VideoDebugFrameModel> GameBoyMachine::videoDebugFrameModel(
 std::optional<BMMQ::RealtimeVideoPacket> GameBoyMachine::realtimeVideoPacket(
     const BMMQ::VideoDebugRenderRequest& request) const
 {
-    return gameBoyVisualDebugAdapterTyped().buildRealtimeFrame(*this, request);
+    return impl_->ppu.buildRealtimeFrame(request);
 }
 
 std::optional<BMMQ::RealtimeAudioPacket> GameBoyMachine::realtimeAudioPacket() const {
@@ -713,7 +714,7 @@ std::optional<BMMQ::RealtimeAudioPacket> GameBoyMachine::realtimeAudioPacket() c
     packet.sampleRate = impl_->apu.sampleRate();
     packet.channelCount = 1u;
     packet.frameCounter = impl_->apu.frameCounter();
-    packet.pcmSamples = impl_->apu.copyRecentSamples();
+    packet.pcmSamples = impl_->apu.takePendingSamples();
     return packet;
 }
 
