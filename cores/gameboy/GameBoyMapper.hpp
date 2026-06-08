@@ -57,6 +57,7 @@ public:
 private:
     // MBC1 banking logic
     void updateMbc1Banking();
+    void updateMbc5Banking();
 
     // Check if address is in RAM range
     [[nodiscard]] bool isRamAddress(uint16_t addr) const noexcept;
@@ -69,8 +70,8 @@ private:
     std::vector<uint8_t> externalRam_{};
 
     // Banking state
-    uint8_t romBankLow_ = 1u;  // Bits 0-4 of ROM bank number
-    uint8_t effectiveRomBank_ = 1u;
+    uint16_t romBankLow_ = 1U;
+    std::size_t effectiveRomBank_ = 1U;
     uint8_t ramBankSelect_ = 0u;
     uint8_t ramBankMode_ = 0u; // 0 = bank select, 1 = ROM bank bits 5-6
     bool ramEnabled_ = false;

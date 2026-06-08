@@ -325,8 +325,12 @@ void GameBoyPPU::step(uint32_t cpuCycles) {
     uint8_t lcdc = memoryMap->read(0xFF40);
     if ((lcdc & 0x80u) == 0u) {
         // LCD disabled resets LY.
+        dotCounter_ = 0;
         ly_ = 0;
-        ppuMode_ = kModeDMATransfer;
+        ppuMode_ = kModeHBlank;
+        scanlineReadyPending_ = false;
+        vblankPending_ = false;
+        lastReadyScanline_ = 0;
         framePixels_.fill(paletteColor(0));
         capturedScanlines_.fill(false);
         hasCapturedScanlines_ = false;

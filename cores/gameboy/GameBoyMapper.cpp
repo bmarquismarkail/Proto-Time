@@ -7,8 +7,8 @@ namespace GB {
 GameBoyMapper::GameBoyMapper() {}
 
 void GameBoyMapper::reset() {
-    romBankLow_ = 1u;
-    effectiveRomBank_ = 1u;
+    romBankLow_ = 1U;
+    effectiveRomBank_ = 1U;
     ramBankSelect_ = 0u;
     ramBankMode_ = 0u;
     ramEnabled_ = false;
@@ -34,8 +34,8 @@ void GameBoyMapper::load(const std::vector<uint8_t>& romData) {
     }
 
     // Default: ROM bank 1 (bank 0 is fixed at $0000-$3FFF)
-    romBankLow_ = 1u;
-    effectiveRomBank_ = 1u;
+    romBankLow_ = 1U;
+    effectiveRomBank_ = 1U;
     ramBankSelect_ = 0u;
     ramBankMode_ = 0u;
     ramEnabled_ = false;
@@ -105,7 +105,7 @@ GameBoyMapper::WriteResult GameBoyMapper::write(uint16_t address, uint8_t value)
             if (romBankLow_ == 0u) romBankLow_ = 1u;
             effectiveRomBank_ = romBankLow_;
             if (effectiveRomBank_ >= romBankCount_) {
-                effectiveRomBank_ = static_cast<uint8_t>(romBankCount_ - 1u);
+                effectiveRomBank_ = romBankCount_ - 1u;
             }
             result.romBankChanged = true;
             result.handled = true;
@@ -124,19 +124,20 @@ GameBoyMapper::WriteResult GameBoyMapper::write(uint16_t address, uint8_t value)
             result.handled = true;
         } else if (address < 0x3000u) {
             // ROM bank low byte (bits 0-7)
-            romBankLow_ = value;
+            romBankLow_ = static_cast<uint16_t>((romBankLow_ & 0x0100u) | value);
             updateMbc5Banking();
             result.romBankChanged = true;
             result.handled = true;
         } else if (address < 0x4000u) {
             // ROM bank high bit (bit 8)
-            ramBankSelect_ = value & 0x01u;
+            romBankLow_ = static_cast<uint16_t>((romBankLow_ & 0x00FFu)
+                                                | (static_cast<uint16_t>(value & 0x01u) << 8u));
             updateMbc5Banking();
             result.romBankChanged = true;
             result.handled = true;
         } else if (address < 0x6000u) {
             // RAM bank select (MBC5 supports up to 16 RAM banks)
-            ramBankSelect_ = (ramBankSelect_ & 0x01u) | ((value & 0x0Fu) << 1u);
+            ramBankSelect_ = value & 0x0Fu;
             result.handled = true;
         } else if (address < 0x8000u) {
             result.handled = true;
@@ -155,12 +156,20 @@ void GameBoyMapper::updateMbc1Banking() {
     // - Low 5 bits from $4000-$5FFF write
     // - High 2 bits from $6000-$7FFF write (when in bank mode 1)
     // Bit 5 of the result is always set to 1
-    uint8_t bank = romBankLow_;
-    bank |= (ramBankSelect_ & 0x03u) << 5u;
+    std::size_t bank = romBankLow_;
+    bank |= static_cast<std::size_t>(ramBankSelect_ & 0x03u) << 5u;
     bank |= 0x20u;  // Ensure bit 5 is always set
     // Clamp to valid range
-    if (bank >= static_cast<uint8_t>(romBankCount_)) {
-        bank = static_cast<uint8_t>(romBankCount_ - 1u);
+    if (bank >= romBankCount_) {
+        bank = romBankCount_ - 1u;
+    }
+    effectiveRomBank_ = bank;
+}
+
+void GameBoyMapper::updateMbc5Banking() {
+    std::size_t bank = static_cast<std::size_t>(romBankLow_ & 0x01FFu);
+    if (bank >= romBankCount_) {
+        bank = romBankCount_ - 1u;
     }
     effectiveRomBank_ = bank;
 }
@@ -175,6 +184,7 @@ bool GameBoyMapper::ramRead(uint16_t addr, std::span<uint8_t> out) const {
     if (externalRam_.empty()) return false;
 
     std::size_t offset = addr - 0xA000u;
+    if (offset >= externalRamSize_) return false;
     std::size_t count = std::min<std::size_t>(out.size(), externalRamSize_ - offset);
     if (count == 0) return false;
 
@@ -187,6 +197,7 @@ bool GameBoyMapper::ramWrite(uint16_t addr, std::span<const uint8_t> value) {
     if (externalRam_.empty()) return false;
 
     std::size_t offset = addr - 0xA000u;
+    if (offset >= externalRamSize_) return false;
     std::size_t count = std::min<std::size_t>(value.size(), externalRamSize_ - offset);
     if (count == 0) return false;
 
@@ -206,7 +217,9 @@ void GameBoyMapper::copyRomBankWindow(std::size_t bankIndex, std::span<uint8_t> 
         return;
     }
     std::size_t count = std::min<std::size_t>(window.size(), romData_.size() - start);
-    std::memcpy(window.data(), romData_.data() + start, count);
+        if (count > 0u) {
+            std::memcpy(window.data(), romData_.data() + start, count);
+        }
     // Fill remaining with 0xFF
     if (count < window.size()) {
         std::fill(window.begin() + count, window.end(), 0xFF);
