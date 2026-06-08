@@ -589,8 +589,8 @@ void GameBoyMachine::step() {
             auto extracted = impl_->saveManager.extractDirtySaveSnapshot(impl_->cartridge_);
             if (extracted.has_value()) {
                 auto snapshot = std::move(*extracted);
-                const bool queued = impl_->backgroundTaskService->submit([snapshot = std::move(snapshot)]() mutable {
-                    GB::CartridgeSaveManager::flushSnapshot(snapshot);
+                const bool queued = impl_->backgroundTaskService->submit([&snapshot]() mutable {
+                    GB::CartridgeSaveManager::flushSnapshot(std::move(snapshot));
                 });
                 if (!queued) {
                     GB::CartridgeSaveManager::flushSnapshot(std::move(snapshot));
@@ -622,8 +622,8 @@ void GameBoyMachine::step() {
             auto extracted = impl_->saveManager.extractDirtySaveSnapshot(impl_->cartridge_);
             if (extracted.has_value()) {
                 auto snapshot = std::move(*extracted);
-                const bool queued = impl_->backgroundTaskService->submit([snapshot = std::move(snapshot)]() mutable {
-                    GB::CartridgeSaveManager::flushSnapshot(snapshot);
+                const bool queued = impl_->backgroundTaskService->submit([&snapshot]() mutable {
+                    GB::CartridgeSaveManager::flushSnapshot(std::move(snapshot));
                 });
                 if (!queued) {
                     GB::CartridgeSaveManager::flushSnapshot(std::move(snapshot));
@@ -664,6 +664,7 @@ void GameBoyMachine::serviceInput() {
         const auto pressedMask = static_cast<uint8_t>(*sampledInput & 0x00FFu);
         impl_->input.setLogicalButtons(pressedMask);
         impl_->lastDigitalInputMask = pressedMask;
+        impl_->memoryMap.setIoRegisterRaw(0xFF00u, impl_->input.readRegister());
     }
 }
 

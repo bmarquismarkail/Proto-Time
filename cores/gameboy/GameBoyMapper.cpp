@@ -122,15 +122,21 @@ GameBoyMapper::WriteResult GameBoyMapper::write(uint16_t address, uint8_t value)
         if (address < 0x2000u) {
             ramEnabled_ = ((value & 0x0Fu) == 0x0Au);
             result.handled = true;
-        } else if (address < 0x4000u) {
-            // ROM bank low byte (8 bits)
+        } else if (address < 0x3000u) {
+            // ROM bank low byte (bits 0-7)
             romBankLow_ = value;
-            updateMbc1Banking();
+            updateMbc5Banking();
+            result.romBankChanged = true;
+            result.handled = true;
+        } else if (address < 0x4000u) {
+            // ROM bank high bit (bit 8)
+            ramBankSelect_ = value & 0x01u;
+            updateMbc5Banking();
             result.romBankChanged = true;
             result.handled = true;
         } else if (address < 0x6000u) {
-            // RAM bank select (MBC5 supports up to 4 RAM banks)
-            ramBankSelect_ = value & 0x0Fu;
+            // RAM bank select (MBC5 supports up to 16 RAM banks)
+            ramBankSelect_ = (ramBankSelect_ & 0x01u) | ((value & 0x0Fu) << 1u);
             result.handled = true;
         } else if (address < 0x8000u) {
             result.handled = true;
@@ -151,6 +157,7 @@ void GameBoyMapper::updateMbc1Banking() {
     // Bit 5 of the result is always set to 1
     uint8_t bank = romBankLow_;
     bank |= (ramBankSelect_ & 0x03u) << 5u;
+    bank |= 0x20u;  // Ensure bit 5 is always set
     // Clamp to valid range
     if (bank >= static_cast<uint8_t>(romBankCount_)) {
         bank = static_cast<uint8_t>(romBankCount_ - 1u);
