@@ -941,11 +941,16 @@ public:
         // Phase 38A: view.audioState() is lazy — only called when the realtime
         // packet is absent or has a stale contract version, i.e. the fallback path.
         // This avoids a PCM vector copy on every frame in production mode.
+        const bool audioFrameReadyEvent = event.type == BMMQ::MachineEventType::AudioFrameReady;
         const auto audioT0 = std::chrono::steady_clock::now();
-        const auto prebuiltRealtimePacket = view.realtimeAudioPacket();
+        const auto prebuiltRealtimePacket = audioFrameReadyEvent
+            ? view.realtimeAudioPacket()
+            : std::optional<BMMQ::RealtimeAudioPacket>{};
         const bool realtimePacketValid = prebuiltRealtimePacket.has_value() &&
             prebuiltRealtimePacket->contractVersion == BMMQ::RealtimeAudioPacket::kContractVersion;
-        const auto prebuiltAudioState = realtimePacketValid ? std::optional<BMMQ::AudioStateView>{} : view.audioState();
+        const auto prebuiltAudioState = (audioFrameReadyEvent && !realtimePacketValid)
+            ? view.audioState()
+            : std::optional<BMMQ::AudioStateView>{};
         const auto audioElapsedNs = static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now() - audioT0).count());
@@ -1000,11 +1005,11 @@ public:
             ++audioPreviewGeneration_;
             // appendRecentPcm already dispatched above, outside the lock.
             lastAudioState_.reset();
-        } else if (prebuiltRealtimePacket.has_value()) {
+        } else if (audioFrameReadyEvent && prebuiltRealtimePacket.has_value()) {
             flushAudioPacketBatch(AudioBatchFlushReason::FormatChange);
             ++stats_.audioRealtimePacketsSkipped;
             lastAudioPreview_.reset();
-        } else if (prebuiltAudioState.has_value()) {
+        } else if (audioFrameReadyEvent && prebuiltAudioState.has_value()) {
             // Use the pre-built audio state (built outside the lock).
             ++stats_.audioStateSnapshotsBuilt;
             stats_.audioStateSnapshotDurationLastNs = audioElapsedNs;
@@ -1018,7 +1023,7 @@ public:
             if (debugSnapshotService_ != nullptr) {
                 (void)debugSnapshotService_->submitAudioState(lastAudioState_);
             }
-        } else {
+        } else if (audioFrameReadyEvent) {
             flushAudioPacketBatch(AudioBatchFlushReason::Lifecycle);
             ++stats_.audioRealtimePacketsSkipped;
             lastAudioPreview_.reset();

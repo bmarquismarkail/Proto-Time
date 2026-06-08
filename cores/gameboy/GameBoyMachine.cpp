@@ -551,6 +551,7 @@ void GameBoyMachine::step() {
 
     // Advance APU by retired cycles
     impl_->apu.step(feedback.retiredCycles);
+    impl_->memoryMap.setIoRegisterRaw(0xFF26u, impl_->apu.readRegister(0xFF26u));
 
     // Check PPU scanline ready events
     if (impl_->ppu.takeScanlineReady()) {

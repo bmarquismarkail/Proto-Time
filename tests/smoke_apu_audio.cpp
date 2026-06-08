@@ -12,18 +12,27 @@ namespace {
 
 struct RecordingAudioPlugin final : BMMQ::IAudioPlugin {
     int audioEventCount = 0;
+    int audioFrameReadyEventCount = 0;
     std::optional<BMMQ::AudioStateView> lastAudioState;
     std::vector<std::size_t> realtimePacketSampleSizes;
+    std::vector<uint8_t> realtimePacketChannelCounts;
 
     std::string_view id() const override {
         return "test.audio.apu";
     }
 
-    void onAudioEvent(const BMMQ::MachineEvent&, const BMMQ::MachineView& view) override {
+    void onAudioEvent(const BMMQ::MachineEvent& event, const BMMQ::MachineView& view) override {
         ++audioEventCount;
         lastAudioState = view.audioState();
-        if (const auto packet = view.realtimeAudioPacket(); packet.has_value()) {
+        if (event.type == BMMQ::MachineEventType::AudioFrameReady) {
+            ++audioFrameReadyEventCount;
+        }
+        const auto packet = event.type == BMMQ::MachineEventType::AudioFrameReady
+            ? view.realtimeAudioPacket()
+            : std::optional<BMMQ::RealtimeAudioPacket>{};
+        if (packet.has_value()) {
             realtimePacketSampleSizes.push_back(packet->pcmSamples.size());
+            realtimePacketChannelCounts.push_back(packet->channelCount);
         }
     }
 };
@@ -44,6 +53,54 @@ bool hasPositiveAndNegativeSample(const std::vector<int16_t>& samples)
         return sample < 0;
     });
     return hasPositive && hasNegative;
+}
+
+std::size_t countSignTransitions(const std::vector<int16_t>& samples)
+{
+    std::size_t transitions = 0u;
+    int lastSign = 0;
+    for (const auto sample : samples) {
+        if (sample == 0) {
+            continue;
+        }
+        const int sign = sample > 0 ? 1 : -1;
+        if (lastSign != 0 && sign != lastSign) {
+            ++transitions;
+        }
+        lastSign = sign;
+    }
+    return transitions;
+}
+
+std::vector<int16_t> collectPulseToneSamples(uint16_t frequency)
+{
+    GameBoyMachine machine;
+    std::vector<uint8_t> cartridgeRom(0x8000, 0x00);
+    machine.loadRom(cartridgeRom);
+
+    machine.runtimeContext().write8(0xFF26, 0x80u);
+    machine.runtimeContext().write8(0xFF24, 0x77u);
+    machine.runtimeContext().write8(0xFF25, 0x11u);
+    machine.runtimeContext().write8(0xFF10, 0x00u);
+    machine.runtimeContext().write8(0xFF11, 0x80u);
+    machine.runtimeContext().write8(0xFF12, 0xF0u);
+    machine.runtimeContext().write8(0xFF13, static_cast<uint8_t>(frequency & 0x00FFu));
+    machine.runtimeContext().write8(
+        0xFF14,
+        static_cast<uint8_t>(0x80u | ((frequency >> 8u) & 0x07u)));
+
+    for (int i = 0; i < 250000; ++i) {
+        machine.step();
+        if (machine.audioFrameCounter() >= 6u && machine.recentAudioSamples().size() >= 1024u) {
+            break;
+        }
+    }
+
+    auto samples = machine.recentAudioSamples();
+    if (samples.size() > 1024u) {
+        samples.erase(samples.begin(), samples.end() - static_cast<std::ptrdiff_t>(1024u));
+    }
+    return samples;
 }
 
 } // namespace
@@ -108,9 +165,11 @@ int main()
     assert(hasNonZeroSample(recentSamples));
     assert(hasPositiveAndNegativeSample(recentSamples));
     assert(machine.audioSampleRate() == 48000u);
+    assert(machine.audioChannelCount() == 1u);
     assert(machine.audioFrameCounter() > frameCounterAfterWarmup);
 
     assert(recorder->audioEventCount >= 3);
+    assert(recorder->audioFrameReadyEventCount >= 3);
     assert(recorder->lastAudioState.has_value());
     assert(recorder->lastAudioState->soundEnabled());
     assert((recorder->lastAudioState->nr52 & 0x0Fu) != 0u);
@@ -120,6 +179,11 @@ int main()
     assert(!recorder->lastAudioState->pcmSamples.empty());
     assert(hasNonZeroSample(recorder->lastAudioState->pcmSamples));
     assert(!recorder->realtimePacketSampleSizes.empty());
+    assert(std::all_of(recorder->realtimePacketChannelCounts.begin(),
+                       recorder->realtimePacketChannelCounts.end(),
+                       [](uint8_t channelCount) {
+                           return channelCount == 1u;
+                       }));
     assert(std::any_of(recorder->realtimePacketSampleSizes.begin(),
                        recorder->realtimePacketSampleSizes.end(),
                        [](std::size_t sampleCount) {
@@ -128,8 +192,17 @@ int main()
     assert(std::all_of(recorder->realtimePacketSampleSizes.begin(),
                        recorder->realtimePacketSampleSizes.end(),
                        [](std::size_t sampleCount) {
-                           return sampleCount <= 512u;
+                           return sampleCount != 0u && (sampleCount % 256u) == 0u;
                        }));
+
+    const auto lowToneSamples = collectPulseToneSamples(0x0300u);
+    const auto highToneSamples = collectPulseToneSamples(0x0700u);
+    assert(!lowToneSamples.empty());
+    assert(!highToneSamples.empty());
+    const auto lowToneTransitions = countSignTransitions(lowToneSamples);
+    const auto highToneTransitions = countSignTransitions(highToneSamples);
+    assert(lowToneTransitions > 0u);
+    assert(highToneTransitions > (lowToneTransitions * 2u));
 
     machine.pluginManager().shutdown(machine.mutableView());
     return 0;

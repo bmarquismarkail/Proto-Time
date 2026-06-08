@@ -33,9 +33,9 @@ public:
     // Output queries
     [[nodiscard]] std::vector<int16_t> copyRecentSamples() const;
     [[nodiscard]] std::vector<int16_t> takePendingSamples() const;
-    [[nodiscard]] uint64_t frameCounter() const noexcept { return frameCounter_; }
+    [[nodiscard]] uint64_t frameCounter() const noexcept { return apu_.frameCounter; }
     [[nodiscard]] uint32_t sampleRate() const noexcept { return kSampleRate; }
-    [[nodiscard]] uint8_t outputChannelCount() const noexcept { return 2u; }
+    [[nodiscard]] uint8_t outputChannelCount() const noexcept { return 1u; }
 
     // Status
     [[nodiscard]] bool masterEnabled() const noexcept { return apu_.masterEnabled; }
@@ -44,6 +44,7 @@ private:
     static constexpr uint32_t kMasterClockHz = 4194304u;
     static constexpr uint32_t kSampleRate = 48000u;
     static constexpr std::size_t kHistorySamples = 4096u;
+    static constexpr std::size_t kFrameChunkSamples = 256u;
     static constexpr uint32_t kCyclesPerFrameStep = 8192u; // 512Hz frame sequencer
 
     struct PulseChannel {
@@ -77,7 +78,7 @@ private:
         uint16_t frequency = 0;
         uint16_t timer = 0;
         uint8_t sampleIndex = 0;
-        uint8_t sampleVolume = 0; // 0=off, 1=1/4, 2=1/2, 3=full
+        uint8_t outputLevel = 0;
     };
 
     struct NoiseChannel {
@@ -101,6 +102,7 @@ private:
         bool masterEnabled = true;
         uint32_t frameSequencerCounter = 0;
         uint8_t frameSequencerStep = 0;
+        uint32_t sampleAccumulator = 0;
         uint64_t sampleCounter = 0;
         uint64_t frameCounter = 0;
         std::array<int16_t, kHistorySamples> recentSamples{};
@@ -108,35 +110,38 @@ private:
         std::size_t recentSampleCount = 0;
         mutable std::size_t pendingReadCursor = 0;
         mutable std::size_t pendingSampleCount = 0;
+        std::array<uint8_t, 0x10> waveRam{};
+        uint8_t nr50 = 0;
+        uint8_t nr51 = 0;
         PulseChannel pulse1{};
         PulseChannel pulse2{};
         WaveChannel wave{};
         NoiseChannel noise{};
     };
 
-    // Generate one sample from all channels
-    [[nodiscard]] int16_t generateSample();
+    [[nodiscard]] uint16_t pulseTimerPeriod(uint16_t frequency) const noexcept;
+    [[nodiscard]] uint16_t waveTimerPeriod(uint16_t frequency) const noexcept;
+    [[nodiscard]] uint16_t noiseTimerPeriod() const noexcept;
 
-    // Tick length counters
+    void stepOneCycle();
     void tickLengthCounters();
-
-    // Tick sweep logic
-    void tickSweep(PulseChannel& channel);
-
-    // Tick envelope
+    void tickSweep();
     void tickEnvelope(PulseChannel& channel);
     void tickEnvelope(NoiseChannel& channel);
-
-    // Frame sequencer step
     void stepFrameSequencer();
 
-    // Push generated sample to history buffer
+    void triggerPulse(PulseChannel& channel, bool withSweep);
+    void triggerWave();
+    void triggerNoise();
+
+    [[nodiscard]] int currentPulseSample(const PulseChannel& channel) const noexcept;
+    [[nodiscard]] int currentWaveSample() const noexcept;
+    [[nodiscard]] int currentNoiseSample() const noexcept;
+    [[nodiscard]] int16_t mixCurrentSample() const noexcept;
     void pushSample(int16_t sample);
+    [[nodiscard]] uint8_t statusRegister() const noexcept;
 
     ApuState apu_{};
-    uint32_t frameStepCounter_ = 0;
-    uint64_t frameCounter_ = 0;
-    uint32_t lastSampleAccumulator_ = 0;
 };
 
 } // namespace GB
