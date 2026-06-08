@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+using GameBoyMachine = GB::GameBoyMachine;
 #include "machine/BackgroundTaskService.hpp"
 #include "machine/VideoService.hpp"
 #include "tests/visual_test_helpers.hpp"

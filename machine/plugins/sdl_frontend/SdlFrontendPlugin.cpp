@@ -806,8 +806,8 @@ public:
             const bool shouldSampleVideoState =
                 carriesVideoState &&
                 (event.type == BMMQ::MachineEventType::VBlank ||
-                 event.type == BMMQ::MachineEventType::VideoScanlineReady ||
-                 !lastFrame_.has_value());
+                 (event.type == BMMQ::MachineEventType::VideoScanlineReady && needsDebugModel) ||
+                 (event.type == BMMQ::MachineEventType::MemoryWriteObserved && !lastFrame_.has_value()));
 
             if (shouldSampleVideoState) {
                 const bool deferPresentForAudioLowWater =
@@ -927,6 +927,12 @@ public:
 
     void onAudioEvent(const BMMQ::MachineEvent& event, const BMMQ::MachineView& view) override
     {
+        if (!config_.enableAudio) {
+            (void)event;
+            (void)view;
+            return;
+        }
+
         // Pre-build audio sources OUTSIDE the lock.
         // Machine state is owned by the emulation thread (the caller), so reading
         // view.realtimeAudioPacket() / view.audioState() before acquiring
@@ -935,11 +941,16 @@ public:
         // Phase 38A: view.audioState() is lazy — only called when the realtime
         // packet is absent or has a stale contract version, i.e. the fallback path.
         // This avoids a PCM vector copy on every frame in production mode.
+        const bool audioFrameReadyEvent = event.type == BMMQ::MachineEventType::AudioFrameReady;
         const auto audioT0 = std::chrono::steady_clock::now();
-        const auto prebuiltRealtimePacket = view.realtimeAudioPacket();
+        const auto prebuiltRealtimePacket = audioFrameReadyEvent
+            ? view.realtimeAudioPacket()
+            : std::optional<BMMQ::RealtimeAudioPacket>{};
         const bool realtimePacketValid = prebuiltRealtimePacket.has_value() &&
             prebuiltRealtimePacket->contractVersion == BMMQ::RealtimeAudioPacket::kContractVersion;
-        const auto prebuiltAudioState = realtimePacketValid ? std::optional<BMMQ::AudioStateView>{} : view.audioState();
+        const auto prebuiltAudioState = (audioFrameReadyEvent && !realtimePacketValid)
+            ? view.audioState()
+            : std::optional<BMMQ::AudioStateView>{};
         const auto audioElapsedNs = static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now() - audioT0).count());
@@ -969,9 +980,6 @@ public:
         }
 
         std::scoped_lock<std::mutex> lock(sharedStateMutex_);
-        if (!config_.enableAudio) {
-            return;
-        }
         ++stats_.audioEvents;
         if (realtimePacketValid) {
             ++stats_.audioRealtimePacketsAccepted;
@@ -997,11 +1005,11 @@ public:
             ++audioPreviewGeneration_;
             // appendRecentPcm already dispatched above, outside the lock.
             lastAudioState_.reset();
-        } else if (prebuiltRealtimePacket.has_value()) {
+        } else if (audioFrameReadyEvent && prebuiltRealtimePacket.has_value()) {
             flushAudioPacketBatch(AudioBatchFlushReason::FormatChange);
             ++stats_.audioRealtimePacketsSkipped;
             lastAudioPreview_.reset();
-        } else if (prebuiltAudioState.has_value()) {
+        } else if (audioFrameReadyEvent && prebuiltAudioState.has_value()) {
             // Use the pre-built audio state (built outside the lock).
             ++stats_.audioStateSnapshotsBuilt;
             stats_.audioStateSnapshotDurationLastNs = audioElapsedNs;
@@ -1015,7 +1023,7 @@ public:
             if (debugSnapshotService_ != nullptr) {
                 (void)debugSnapshotService_->submitAudioState(lastAudioState_);
             }
-        } else {
+        } else if (audioFrameReadyEvent) {
             flushAudioPacketBatch(AudioBatchFlushReason::Lifecycle);
             ++stats_.audioRealtimePacketsSkipped;
             lastAudioPreview_.reset();
@@ -1485,9 +1493,7 @@ private:
 
     [[nodiscard]] std::size_t computeAudioSafetyMarginSamples() const noexcept
     {
-        const auto callbackChunk =
-            static_cast<std::size_t>(std::max(config_.audioCallbackChunkSamples, 1));
-        return std::max<std::size_t>(callbackChunk * 2u, kApuFrameSamples);
+        return static_cast<std::size_t>(std::max(config_.audioCallbackChunkSamples, 1));
     }
 
     [[nodiscard]] static constexpr uint8_t buttonMask(BMMQ::InputButton button) noexcept
@@ -1867,7 +1873,8 @@ private:
         }
 
         const auto safetyMarginSamples = computeAudioSafetyMarginSamples();
-        return audioService_->engine().bufferedSamples() < safetyMarginSamples;
+        const auto bufferedSamples = audioService_->engine().bufferedSamples();
+        return bufferedSamples != 0u && bufferedSamples < safetyMarginSamples;
     }
 
     std::optional<BMMQ::VideoDebugFrameModel> snapshotVideoDebugModel(const BMMQ::MachineView& view)

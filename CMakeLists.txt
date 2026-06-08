@@ -16,6 +16,7 @@ endif()
 set (CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_EXTENSIONS ON)
 set (CMAKE_CXX_STANDARD_REQUIRED True)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include_directories(. templ memory cores)
 add_compile_options(-Wall -Wextra )
 
@@ -57,6 +58,12 @@ add_library(time-gameboy-interpreter-core
 	cores/gameboy/decode/gb_decoder.cpp
 	cores/gameboy/decode/gb_interpreter.cpp
     cores/gameboy/gameboy.cpp
+    cores/gameboy/GameBoyMachine.cpp
+    cores/gameboy/GameBoyMemoryMap.cpp
+    cores/gameboy/GameBoyPPU.cpp
+    cores/gameboy/GameBoyAPU.cpp
+    cores/gameboy/GameBoyInput.cpp
+    cores/gameboy/GameBoyMapper.cpp
 )
 
 
@@ -424,6 +431,12 @@ add_test(NAME smoke_machine_boot COMMAND time-smoke-machine-boot)
 add_executable(time-smoke-gameboy-cartridge-save tests/smoke_gameboy_cartridge_save.cpp)
 target_link_libraries(time-smoke-gameboy-cartridge-save time-gameboy-interpreter-core)
 add_test(NAME smoke_gameboy_cartridge_save COMMAND time-smoke-gameboy-cartridge-save)
+add_executable(time-smoke-gameboy-mapper tests/smoke_gameboy_mapper.cpp)
+target_link_libraries(time-smoke-gameboy-mapper time-gameboy-interpreter-core)
+add_test(NAME smoke_gameboy_mapper COMMAND time-smoke-gameboy-mapper)
+add_executable(time-smoke-gameboy-ppu tests/smoke_gameboy_ppu.cpp)
+target_link_libraries(time-smoke-gameboy-ppu time-gameboy-interpreter-core)
+add_test(NAME smoke_gameboy_ppu COMMAND time-smoke-gameboy-ppu)
 add_executable(time-smoke-background-task-service tests/smoke_background_task_service.cpp)
 target_link_libraries(time-smoke-background-task-service time-machine-runtime-common)
 add_test(NAME smoke_background_task_service COMMAND time-smoke-background-task-service)

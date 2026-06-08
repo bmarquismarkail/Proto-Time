@@ -800,11 +800,8 @@ private:
     {
         while (!outputTransportStopRequested_.load(std::memory_order_acquire)) {
             std::unique_lock<std::mutex> lock(outputTransportWaitMutex_);
-            const bool predicateMet = outputTransportCv_.wait_for(
-                lock, outputTransportWakePeriod(), [this]() noexcept {
-                    return outputTransportStopRequested_.load(std::memory_order_acquire) ||
-                           (readyQueueHasSpace() && engine_.bufferedSamples() != 0u);
-                });
+            const bool notified = outputTransportCv_.wait_for(lock, outputTransportWakePeriod()) !=
+                                  std::cv_status::timeout;
             lock.unlock();
 
             if (outputTransportStopRequested_.load(std::memory_order_acquire)) {
@@ -834,7 +831,7 @@ private:
                        std::memory_order_relaxed,
                        std::memory_order_relaxed)) {
             }
-            if (!predicateMet) {
+            if (!notified) {
                 transportWorkerTimeoutWakeCount_.fetch_add(1u, std::memory_order_relaxed);
             } else {
                 transportWorkerEmulationWakeCount_.fetch_add(1u, std::memory_order_relaxed);

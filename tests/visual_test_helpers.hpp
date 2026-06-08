@@ -21,6 +21,8 @@
 
 namespace BMMQ::Tests::Visual {
 
+using GameBoyMachine = GB::GameBoyMachine;
+
 inline void writeTextFile(const std::filesystem::path& path, const std::string& contents)
 {
     std::filesystem::create_directories(path.parent_path());

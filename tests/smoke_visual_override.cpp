@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+using GameBoyMachine = GB::GameBoyMachine;
 #include "cores/gameboy/video/GameBoyVisualDebugAdapter.hpp"
 #include "cores/gameboy/video/GameBoyVisualExtractor.hpp"
 #include "machine/VideoService.hpp"

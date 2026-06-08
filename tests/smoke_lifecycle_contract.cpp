@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+using GameBoyMachine = GB::GameBoyMachine;
 #include "machine/MachineLifecycleCoordinator.hpp"
 #include "machine/plugins/video/adapters/HeadlessFrameDumper.hpp"
 

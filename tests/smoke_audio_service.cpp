@@ -7,6 +7,7 @@
 #include <span>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+using GameBoyMachine = GB::GameBoyMachine;
 #include "machine/AudioService.hpp"
 
 namespace {

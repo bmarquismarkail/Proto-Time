@@ -9,6 +9,7 @@
 #include <string>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+using GameBoyMachine = GB::GameBoyMachine;
 #include "cores/gamegear/GameGearMachine.hpp"
 
 namespace BMMQ {

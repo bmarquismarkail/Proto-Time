@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+using GameBoyMachine = GB::GameBoyMachine;
 #include "cores/gameboy/gameboy.hpp"
 #include "inst_cycle/executor/Executor.hpp"
 #include "inst_cycle/executor/PluginContract.hpp"
