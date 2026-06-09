@@ -102,6 +102,17 @@ struct RealtimeVideoPacket {
         std::uint64_t spriteProbeNs = 0;
         std::uint64_t spriteOverlayNs = 0;
         std::uint64_t otherNs = 0;
+        // --- Phase 81B: simple-background sub-path breakdown (diagnostics only) ---
+        // Measured as cumulative nanoseconds within the simple-mode pixel loop.
+        // Approximation: bitplane_decode_ns measures VRAM-plane reads plus unmask
+        // arithmetic inside each cell row-col loop (lines ~670-706). The remaining
+        // time is split between palette lookup+framebuffer write and miscellaneous
+        // loop control / name-table read overhead; exact separation depends on
+        // branch-prediction effects so report them as coarse buckets rather than
+        // precise boundaries.
+        std::uint64_t simple_bitplaneDecodeNs = 0;
+        std::uint64_t simple_paletteFbWriteNs = 0;
+        std::uint64_t simple_loopOtherNs = 0;
     } vdpRenderBodyTiming{};
     struct VdpMode4BackgroundAttributeStats {
         std::uint64_t tileCellsProcessed = 0;

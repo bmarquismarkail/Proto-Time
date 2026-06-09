@@ -177,6 +177,10 @@ struct SdlFrontendStats {
     std::uint64_t videoVdpRenderBodySpriteProbeNs = 0;
     std::uint64_t videoVdpRenderBodySpriteOverlayNs = 0;
     std::uint64_t videoVdpRenderBodyOtherNs = 0;
+    // --- Phase 81B: simple-background sub-path breakdown accumulators ---
+    std::uint64_t videoVdpSimpleBitplaneDecodeNs = 0;
+    std::uint64_t videoVdpSimplePaletteFbWriteNs = 0;
+    std::uint64_t videoVdpSimpleLoopOtherNs = 0;
     std::uint64_t videoVdpMode4AttrTileCellsProcessed = 0;
     std::uint64_t videoVdpMode4AttrTileCellsFlipH = 0;
     std::uint64_t videoVdpMode4AttrTileCellsFlipV = 0;

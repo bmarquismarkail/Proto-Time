@@ -629,6 +629,11 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
     }
     Mode4SimpleBackgroundDiagScratch<kEnableMode4SimpleBackgroundDiagnostics> simpleDiagScratch{};
     if (useSimpleBackgroundPath) {
+#if defined(BMMQ_PROFILE_VDP_RENDER)
+        std::uint64_t simpleBitplaneDecodeNs = 0u;
+        std::uint64_t simplePaletteFramebufferWriteNs = 0u;
+        const auto simpleLoopStart = Clock::now();
+#endif
         const auto backgroundSimpleStart = Clock::now();
         for (int y = 0; y < out.height; ++y) {
             const int vdpY = y + viewportY;
@@ -665,6 +670,9 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                 }
 
                 const auto sampleY = flipV ? (7u - pixelY) : pixelY;
+#if defined(BMMQ_PROFILE_VDP_RENDER)
+                const auto bitplaneDecodeStart = Clock::now();
+#endif
                 const auto tileBase = wrapVram(static_cast<std::size_t>(tileIndex) * 32u);
                 const auto rowBase = wrapVram(tileBase + static_cast<std::size_t>(sampleY) * 4u);
                 const auto plane0 = vram_[rowBase];
@@ -704,10 +712,16 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                                                     ((plane2 & 0x01u) << 2u) |
                                                     ((plane1 & 0x01u) << 1u) |
                                                     (plane0 & 0x01u));
+#if defined(BMMQ_PROFILE_VDP_RENDER)
+                addNs(simpleBitplaneDecodeNs, bitplaneDecodeStart, Clock::now());
+#endif
                 if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
                     ++out.mode4SimpleBackground.simplePathPatternRowsDecoded;
                 }
 
+#if defined(BMMQ_PROFILE_VDP_RENDER)
+                const auto paletteFramebufferWriteStart = Clock::now();
+#endif
                 for (int run = 0; run < runLength; ++run) {
                     const auto tilePixelX = static_cast<std::size_t>(static_cast<int>(pixelX) + run);
                     const auto sampleX = flipH ? (7u - tilePixelX) : tilePixelX;
@@ -723,10 +737,23 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                             : 0u;
                     }
                 }
+#if defined(BMMQ_PROFILE_VDP_RENDER)
+                addNs(simplePaletteFramebufferWriteNs, paletteFramebufferWriteStart, Clock::now());
+#endif
                 x += runLength;
             }
         }
         addNs(backgroundSimpleNs, backgroundSimpleStart, Clock::now());
+#if defined(BMMQ_PROFILE_VDP_RENDER)
+        const auto simpleLoopTotalNs = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - simpleLoopStart).count());
+        const auto simpleLoopAccountedNs = simpleBitplaneDecodeNs + simplePaletteFramebufferWriteNs;
+        out.renderBodyTiming.simple_bitplaneDecodeNs = simpleBitplaneDecodeNs;
+        out.renderBodyTiming.simple_paletteFbWriteNs = simplePaletteFramebufferWriteNs;
+        out.renderBodyTiming.simple_loopOtherNs = simpleLoopTotalNs >= simpleLoopAccountedNs
+            ? (simpleLoopTotalNs - simpleLoopAccountedNs)
+            : 0u;
+#endif
     } else {
         const auto backgroundGeneralStart = Clock::now();
         for (int y = 0; y < out.height; ++y) {

@@ -81,6 +81,7 @@ add_library(time-gamegear-core STATIC
 set_target_properties(time-gamegear-core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(time-gamegear-core PUBLIC time-machine-runtime-common)
 if (BMMQ_PROFILE_VDP_RENDER)
+    target_compile_definitions(time-gamegear-core PRIVATE BMMQ_PROFILE_VDP_RENDER=1)
     if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         set_source_files_properties(
             cores/gamegear/GameGearVDP.cpp
