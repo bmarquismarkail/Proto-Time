@@ -97,8 +97,6 @@ void GameGearVDP::reset() {
     dataAddress_ = 0u;
     commandLow_ = 0u;
     readBuffer_ = 0u;
-    cramLatch_ = 0u;
-    cramLatchValid_ = false;
     lineCounter_ = 0u;
     verticalScrollLatch_ = 0u;
     accessMode_ = AccessMode::VramRead;
@@ -305,22 +303,10 @@ void GameGearVDP::writeDataPort(uint8_t value) {
             dataAddress_ = static_cast<uint16_t>((dataAddress_ + 1u) & 0x3FFFu);
             return;
         }
-        if ((cramIndex & 0x01u) == 0u) {
-            // Even byte: latch only, do not update decoded cache yet
-            cramLatch_ = value;
-            cramLatchValid_ = true;
-        } else {
-            // Odd byte: commit even (if latched) and odd; update decoded cache for color
-            const auto evenIndex = cramIndex - 1u;
-            if (cramLatchValid_ && evenIndex < cram_.size()) {
-                cram_[evenIndex] = cramLatch_;
-            }
-            cram_[cramIndex] = value;
-            // Compute color index (word pairs) and update decoded cache entry
-            const auto colorIdx = static_cast<std::size_t>(evenIndex / 2u);
-            if (colorIdx < decodedCram_.size()) {
-                updateDecodedCramEntry(colorIdx);
-            }
+        cram_[cramIndex] = value;
+        const auto colorIdx = static_cast<std::size_t>(cramIndex / 2u);
+        if (colorIdx < decodedCram_.size()) {
+            updateDecodedCramEntry(colorIdx);
         }
         dataAddress_ = static_cast<uint16_t>((dataAddress_ + 1u) & 0x3FFFu);
         return;

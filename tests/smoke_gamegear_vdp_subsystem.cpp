@@ -162,9 +162,9 @@ int main()
     assert(std::all_of(before.argbPixels.begin(), before.argbPixels.end(), [backdrop](uint32_t pixel) {
         return pixel == backdrop;
     }));
-    memory.writeIoPort(0xBEu, 0x00u); // even write only latches
+    memory.writeIoPort(0xBEu, 0x00u); // even write updates CRAM immediately
     const auto afterEvenWrite = vdp.buildFrameModel({160, 144});
-    assert(afterEvenWrite.argbPixels == before.argbPixels);
+    assert(afterEvenWrite.argbPixels != before.argbPixels);
     memory.writeIoPort(0xBFu, 0x23u);
     memory.writeIoPort(0xBFu, 0xC0u); // odd byte for same palette entry
     memory.writeIoPort(0xBEu, 0x0Fu);
