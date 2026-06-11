@@ -560,6 +560,13 @@ int main()
         if (smsTopLockModel.argbPixels[24u * 256u] != expected(2u, 0u, 0u)) {
             return fail("Game Gear SMS fixed top row incorrectly locked lower scanlines too");
         }
+        const auto smsCroppedTopLockModel = scrollVdp.buildFrameModel({160, 144});
+        if (smsCroppedTopLockModel.argbPixels.empty()) {
+            return fail("Game Gear SMS cropped top-row-lock model unexpectedly empty");
+        }
+        if (smsCroppedTopLockModel.argbPixels[0] != expected(5u, 0u, 0u)) {
+            return fail("Game Gear SMS cropped viewport incorrectly locked post-crop top rows");
+        }
     }
 
     {
