@@ -1274,6 +1274,9 @@ int main(int argc, char** argv) {
                                              currentInstructionPc);
             }
             const auto value = mem.readIoPort(port);
+            if (isVdpControlPort(port) && !vdp.isIrqAsserted()) {
+                interruptRequested = false;
+            }
             observeIoAccess('R', port, value);
             record('R', port, value);
             if (isVdpControlPort(port)) {
@@ -1302,13 +1305,14 @@ int main(int argc, char** argv) {
         });
     cpu.setInterruptRequestProvider([&]() -> std::optional<uint8_t> {
         ++interruptProviderCalls;
-        if (interruptRequested) {
+        if (vdp.isIrqAsserted()) {
             interruptRequested = false;
             ++interruptProviderServed;
             interruptServedThisStep = true;
             interruptVectorThisStep = 0u;
             return static_cast<uint8_t>(0u);
         }
+        interruptRequested = false;
         return std::nullopt;
     });
 

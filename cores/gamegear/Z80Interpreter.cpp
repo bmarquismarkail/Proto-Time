@@ -437,64 +437,63 @@ uint32_t Z80Interpreter::executeEdOpcode(uint8_t opcode) {
     }
 
     auto blockTransfer = [&](int direction, bool repeat) -> uint32_t {
-        uint32_t cycles = 0u;
-        do {
-            memWrite(DE, memRead(HL));
-            HL = static_cast<uint16_t>(HL + direction);
-            DE = static_cast<uint16_t>(DE + direction);
-            BC = static_cast<uint16_t>(BC - 1u);
-            uint8_t flags = static_cast<uint8_t>(regF() & (kFlagS | kFlagZ | kFlagC));
-            if (BC != 0u) flags = static_cast<uint8_t>(flags | kFlagPV);
-            setRegF(flags);
-            cycles += (repeat && BC != 0u) ? 21u : 16u;
-        } while (repeat && BC != 0u);
-        return cycles;
+        memWrite(DE, memRead(HL));
+        HL = static_cast<uint16_t>(HL + direction);
+        DE = static_cast<uint16_t>(DE + direction);
+        BC = static_cast<uint16_t>(BC - 1u);
+        uint8_t flags = static_cast<uint8_t>(regF() & (kFlagS | kFlagZ | kFlagC));
+        if (BC != 0u) flags = static_cast<uint8_t>(flags | kFlagPV);
+        setRegF(flags);
+        if (repeat && BC != 0u) {
+            PC = static_cast<uint16_t>(PC - 2u);
+            return 21u;
+        }
+        return 16u;
     };
     auto blockCompare = [&](int direction, bool repeat) -> uint32_t {
-        uint32_t cycles = 0u;
-        do {
-            const uint8_t value = memRead(HL);
-            const uint8_t a = regA();
-            const uint8_t result = static_cast<uint8_t>(a - value);
-            HL = static_cast<uint16_t>(HL + direction);
-            BC = static_cast<uint16_t>(BC - 1u);
-            uint8_t flags = computeSubFlags(a, value, 0u, result);
-            flags = static_cast<uint8_t>(flags & ~kFlagC);
-            flags = static_cast<uint8_t>(flags | (regF() & kFlagC));
-            if (BC != 0u && result != 0u) flags = static_cast<uint8_t>(flags | kFlagPV);
-            else flags = static_cast<uint8_t>(flags & ~kFlagPV);
-            setRegF(flags);
-            cycles += (repeat && BC != 0u && result != 0u) ? 21u : 16u;
-            if (result == 0u) break;
-        } while (repeat && BC != 0u);
-        return cycles;
+        const uint8_t value = memRead(HL);
+        const uint8_t a = regA();
+        const uint8_t result = static_cast<uint8_t>(a - value);
+        HL = static_cast<uint16_t>(HL + direction);
+        BC = static_cast<uint16_t>(BC - 1u);
+        uint8_t flags = computeSubFlags(a, value, 0u, result);
+        flags = static_cast<uint8_t>(flags & ~kFlagC);
+        flags = static_cast<uint8_t>(flags | (regF() & kFlagC));
+        if (BC != 0u && result != 0u) flags = static_cast<uint8_t>(flags | kFlagPV);
+        else flags = static_cast<uint8_t>(flags & ~kFlagPV);
+        setRegF(flags);
+        if (repeat && BC != 0u && result != 0u) {
+            PC = static_cast<uint16_t>(PC - 2u);
+            return 21u;
+        }
+        return 16u;
     };
     auto blockIn = [&](int direction, bool repeat) -> uint32_t {
-        uint32_t cycles = 0u;
-        do {
-            memWrite(HL, readIo(lo(BC)));
-            HL = static_cast<uint16_t>(HL + direction);
-            const uint8_t b = static_cast<uint8_t>(hi(BC) - 1u);
-            BC = word(lo(BC), b);
-            uint8_t flags = static_cast<uint8_t>(sz35(b) | kFlagN);
-            setRegF(flags);
-            cycles += (repeat && b != 0u) ? 21u : 16u;
-        } while (repeat && hi(BC) != 0u);
-        return cycles;
+        memWrite(HL, readIo(lo(BC)));
+        HL = static_cast<uint16_t>(HL + direction);
+        const uint8_t b = static_cast<uint8_t>(hi(BC) - 1u);
+        BC = word(lo(BC), b);
+        uint8_t flags = static_cast<uint8_t>(sz35(b) | kFlagN);
+        setRegF(flags);
+        if (repeat && b != 0u) {
+            PC = static_cast<uint16_t>(PC - 2u);
+            return 21u;
+        }
+        return 16u;
     };
     auto blockOut = [&](int direction, bool repeat) -> uint32_t {
-        uint32_t cycles = 0u;
-        do {
-            const uint8_t value = memRead(HL);
-            HL = static_cast<uint16_t>(HL + direction);
-            const uint8_t b = static_cast<uint8_t>(hi(BC) - 1u);
-            BC = word(lo(BC), b);
-            writeIo(lo(BC), value);
-            uint8_t flags = static_cast<uint8_t>(sz35(b) | kFlagN);
-            setRegF(flags);
-            cycles += (repeat && b != 0u) ? 21u : 16u;
-        } while (repeat && hi(BC) != 0u);
-        return cycles;
+        const uint8_t value = memRead(HL);
+        HL = static_cast<uint16_t>(HL + direction);
+        const uint8_t b = static_cast<uint8_t>(hi(BC) - 1u);
+        BC = word(lo(BC), b);
+        writeIo(lo(BC), value);
+        uint8_t flags = static_cast<uint8_t>(sz35(b) | kFlagN);
+        setRegF(flags);
+        if (repeat && b != 0u) {
+            PC = static_cast<uint16_t>(PC - 2u);
+            return 21u;
+        }
+        return 16u;
     };
 
     switch (opcode) {
