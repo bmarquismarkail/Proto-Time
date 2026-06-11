@@ -40,7 +40,7 @@ int main() {
         std::array<uint8_t, 32> solid{};
         solid.fill(0xFFu);
         writePattern(2u, solid);
-        writeNameEntry(6u, 3u, static_cast<uint16_t>(2u));
+        writeNameEntry(6u, 0u, static_cast<uint16_t>(2u));
         const auto model = vdp.buildFrameModel({160, 144});
         const uint32_t expected = vdp.debugDecodedCramColor(15u); // colorCode 0x0F -> CRAM index 15
         if (model.argbPixels.empty() || model.argbPixels[0] != expected) {
@@ -63,7 +63,7 @@ int main() {
         }
         writePattern(3u, leftCol);
         // No flip: top-left should show the single-column pixel
-        writeNameEntry(6u, 3u, static_cast<uint16_t>(3u));
+        writeNameEntry(6u, 0u, static_cast<uint16_t>(3u));
         auto model = vdp.buildFrameModel({160, 144});
         const uint32_t expectedOn = vdp.debugDecodedCramColor(1u);
         if (model.argbPixels.empty() || model.argbPixels[0] != expectedOn) {
@@ -73,7 +73,7 @@ int main() {
         }
 
         // With horizontal flip set, the highlighted column moves to the far right -> top-left should be background (CRAM idx 0)
-        writeNameEntry(6u, 3u, static_cast<uint16_t>(3u | 0x0200u));
+        writeNameEntry(6u, 0u, static_cast<uint16_t>(3u | 0x0200u));
         model = vdp.buildFrameModel({160, 144});
         const uint32_t expectedOff = vdp.debugDecodedCramColor(0u);
         if (model.argbPixels.empty() || model.argbPixels[0] != expectedOff) {
@@ -95,7 +95,7 @@ int main() {
         // Remaining rows are zero
         writePattern(4u, topRow);
         // No flip: top-left should show the top-row pixel
-        writeNameEntry(6u, 3u, static_cast<uint16_t>(4u));
+        writeNameEntry(6u, 0u, static_cast<uint16_t>(4u));
         auto model = vdp.buildFrameModel({160, 144});
         const uint32_t expectedOn = vdp.debugDecodedCramColor(15u & 0x0Fu); // row uses full planes -> colorCode 0x0F
         if (model.argbPixels.empty() || model.argbPixels[0] != expectedOn) {
@@ -105,7 +105,7 @@ int main() {
         }
 
         // With vertical flip set, the top row moves to bottom -> top-left should be background (CRAM idx 0)
-        writeNameEntry(6u, 3u, static_cast<uint16_t>(4u | 0x0400u));
+        writeNameEntry(6u, 0u, static_cast<uint16_t>(4u | 0x0400u));
         model = vdp.buildFrameModel({160, 144});
         const uint32_t expectedOff = vdp.debugDecodedCramColor(0u);
         if (model.argbPixels.empty() || model.argbPixels[0] != expectedOff) {
@@ -121,7 +121,7 @@ int main() {
         solid.fill(0xFFu);
         writePattern(5u, solid);
         // Palette 0
-        writeNameEntry(6u, 3u, static_cast<uint16_t>(5u));
+        writeNameEntry(6u, 0u, static_cast<uint16_t>(5u));
         auto model = vdp.buildFrameModel({160, 144});
         const uint32_t expectedPal0 = vdp.debugDecodedCramColor(15u);
         if (model.argbPixels.empty() || model.argbPixels[0] != expectedPal0) {
@@ -130,7 +130,7 @@ int main() {
             return 1;
         }
         // Palette 1
-        writeNameEntry(6u, 3u, static_cast<uint16_t>(5u | 0x0800u));
+        writeNameEntry(6u, 0u, static_cast<uint16_t>(5u | 0x0800u));
         model = vdp.buildFrameModel({160, 144});
         const uint32_t expectedPal1 = vdp.debugDecodedCramColor(31u);
         if (model.argbPixels.empty() || model.argbPixels[0] != expectedPal1) {

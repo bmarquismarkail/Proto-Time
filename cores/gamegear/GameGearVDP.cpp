@@ -622,7 +622,7 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
 #endif
         const auto backgroundSimpleStart = Clock::now();
         for (int y = 0; y < out.height; ++y) {
-            const int vdpY = y + viewportY;
+            const int vdpY = y;
             const auto rowOffset = static_cast<std::size_t>(y) * static_cast<std::size_t>(out.width);
             const auto scrolledY = static_cast<std::size_t>((vdpY + scrollY) & 0xFF);
             const auto pixelY = scrolledY % 8u;
@@ -743,7 +743,7 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
     } else {
         const auto backgroundGeneralStart = Clock::now();
         for (int y = 0; y < out.height; ++y) {
-            const int vdpY = y + viewportY;
+            const int vdpY = smsMode_ ? y + viewportY : y;
             const auto rowOffset = static_cast<std::size_t>(y) * static_cast<std::size_t>(out.width);
 
             // Small per-row cache for decoded background tile entries. Decoding the

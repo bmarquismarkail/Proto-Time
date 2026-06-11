@@ -58,7 +58,7 @@ int main() {
     // leave other rows zero
 
     writePattern(7u, tile);
-    writeNameEntry(6u, 3u, static_cast<uint16_t>(7u));
+    writeNameEntry(6u, 0u, static_cast<uint16_t>(7u));
 
     const auto model = vdp.buildFrameModel({160, 144});
     if (model.argbPixels.empty()) {
@@ -78,7 +78,7 @@ int main() {
     }
 
     // Horizontal flip: set H flip in name entry, expect reversed order
-    writeNameEntry(6u, 3u, static_cast<uint16_t>(7u | 0x0200u));
+    writeNameEntry(6u, 0u, static_cast<uint16_t>(7u | 0x0200u));
     const auto modelH = vdp.buildFrameModel({160, 144});
     for (std::size_t px = 0; px < 8u; ++px) {
         const auto expected = vdp.debugDecodedCramColor(static_cast<std::size_t>(codes[7u - px]));
@@ -109,7 +109,7 @@ int main() {
     tile2[7*4 + 2] = p2;
     tile2[7*4 + 3] = p3;
     writePattern(8u, tile2);
-    writeNameEntry(6u, 3u, static_cast<uint16_t>(8u | 0x0400u)); // V flip set
+    writeNameEntry(6u, 0u, static_cast<uint16_t>(8u | 0x0400u)); // V flip set
     const auto modelV = vdp.buildFrameModel({160, 144});
     for (std::size_t px = 0; px < 8u; ++px) {
         const auto expected = vdp.debugDecodedCramColor(static_cast<std::size_t>(codes7[px]));
