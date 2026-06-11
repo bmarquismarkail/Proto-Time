@@ -2,7 +2,6 @@
 #include "cores/gamegear/GameGearVDP.hpp"
 
 #include <cassert>
-#include <cstddef>
 #include <cstdint>
 #include <iostream>
 
@@ -57,48 +56,6 @@ int main() {
         vdp.step(228u * 193u);
         assert(vdp.takeVBlankEntered());
         assert(vdp.readVCounter() == 193u);
-    }
-
-    // Native Game Gear background rendering samples vertical scroll in LCD-space.
-    // The 24-line viewport crop should not be added to the background row before
-    // scroll is applied, otherwise LCD line 0 samples name-table row 3.
-    {
-        GameGearVDP vdp;
-        GameGearMemoryMap memory;
-        memory.setVdp(&vdp);
-        vdp.reset();
-
-        memory.writeIoPort(0xBFu, 0x40u);
-        memory.writeIoPort(0xBFu, 0x81u); // display on
-
-        auto writeSolidTile = [&](std::size_t tileIndex, uint8_t colorCode) {
-            const auto base = static_cast<uint16_t>(0x8000u + tileIndex * 32u);
-            for (std::size_t row = 0u; row < 8u; ++row) {
-                const auto rowBase = static_cast<uint16_t>(base + row * 4u);
-                vdp.writeVram(rowBase, (colorCode & 0x01u) != 0u ? 0xFFu : 0x00u);
-                vdp.writeVram(static_cast<uint16_t>(rowBase + 1u), (colorCode & 0x02u) != 0u ? 0xFFu : 0x00u);
-                vdp.writeVram(static_cast<uint16_t>(rowBase + 2u), (colorCode & 0x04u) != 0u ? 0xFFu : 0x00u);
-                vdp.writeVram(static_cast<uint16_t>(rowBase + 3u), (colorCode & 0x08u) != 0u ? 0xFFu : 0x00u);
-            }
-        };
-
-        auto writeNameEntry = [&](std::size_t tileX, std::size_t tileY, uint16_t entry) {
-            const auto entryAddr = static_cast<uint16_t>(0x8000u + 0x3800u + (tileY * 32u + tileX) * 2u);
-            vdp.writeVram(entryAddr, static_cast<uint8_t>(entry & 0x00FFu));
-            vdp.writeVram(static_cast<uint16_t>(entryAddr + 1u), static_cast<uint8_t>((entry >> 8u) & 0x00FFu));
-        };
-
-        writeSolidTile(1u, 1u);
-        writeSolidTile(2u, 2u);
-        writeNameEntry(6u, 0u, 1u);
-        writeNameEntry(6u, 3u, 2u);
-
-        const auto model = vdp.buildFrameModel({160, 144});
-        assert(!model.argbPixels.empty());
-        if (model.argbPixels[0] != vdp.debugDecodedCramColor(1u)) {
-            std::cerr << "Game Gear LCD top-left background sampled the wrong vertical name-table row\n";
-            return 1;
-        }
     }
 
     // SMS compatibility mode still honors Mode4 vertical mapping (224 and 240 line modes).

@@ -83,7 +83,7 @@ uint32_t expectedSimplePixel(const GameGearVDP& vdp,
                              bool palette1 = false)
 {
     const auto vdpX = static_cast<std::size_t>(screenX + 48);
-    const auto vdpY = static_cast<std::size_t>(screenY);
+    const auto vdpY = static_cast<std::size_t>(screenY + 24);
     const auto startingColumn = static_cast<std::size_t>((32u - (scrollX >> 3u)) & 0x1Fu);
     const auto scrolledX = vdpX & 0xFFu;
     const auto tileX = (startingColumn + (scrolledX / 8u)) & 0x1Fu;
@@ -135,7 +135,7 @@ int main()
         return fail("simple tile-run tile boundary did not advance to next tile");
     }
     if (baseModel.argbPixels[8u * 160u] != expectedSimplePixel(vdp, 0, 8, 0u, 0u)) {
-        return fail("simple tile-run LCD-space Y did not sample expected tile row");
+        return fail("simple tile-run viewport Y offset did not sample expected tile row");
     }
 
     writeRegister(memory, 8u, 0x08u);
@@ -157,14 +157,40 @@ int main()
         return fail("simple tile-run scrollY did not sample expected pattern row");
     }
 
+    writeScrollY(vdp, memory, 0xD8u);
+    if (!vdp.debugMode4SimpleBackgroundPathEligible()) {
+        return fail("simple tile-run path should remain eligible before 192-line vertical wrap");
+    }
+    const auto verticalWrapModel = vdp.buildFrameModel({256, 192});
+    if (verticalWrapModel.argbPixels.empty()) {
+        return fail("simple tile-run 192-line vertical wrap model unexpectedly empty");
+    }
+    const auto wrappedTile = tileIndexFor(0u, 0u);
+    const auto wrappedColor = tileColorCode(wrappedTile, 0u, 0u);
+    if (verticalWrapModel.argbPixels[8u * 256u] != vdp.debugDecodedCramColor(wrappedColor)) {
+        return fail("simple tile-run 192-line vertical wrap did not return to name-table row 0");
+    }
+
+    writeRegister(memory, 8u, 0x01u);
+    const auto generalWrapModel = vdp.buildFrameModel({256, 192});
+    if (generalWrapModel.argbPixels.empty()) {
+        return fail("general background 192-line vertical wrap model unexpectedly empty");
+    }
+    const auto generalWrappedTile = tileIndexFor(0u, 9u);
+    const auto generalWrappedColor = tileColorCode(generalWrappedTile, 0u, 0u);
+    if (generalWrapModel.argbPixels[80u * 256u + 1u] != vdp.debugDecodedCramColor(generalWrappedColor)) {
+        return fail("general background 192-line vertical wrap did not wrap total line beyond 255 correctly");
+    }
+    writeRegister(memory, 8u, 0x00u);
+
     writeScrollY(vdp, memory, 0x00u);
-    const auto paletteTile = tileIndexFor(6u, 0u);
-    writeNameEntry(vdp, 6u, 0u, static_cast<uint16_t>(paletteTile | 0x0800u));
+    const auto paletteTile = tileIndexFor(6u, 3u);
+    writeNameEntry(vdp, 6u, 3u, static_cast<uint16_t>(paletteTile | 0x0800u));
     const auto paletteModel = vdp.buildFrameModel({160, 144});
     if (paletteModel.argbPixels[0] != expectedSimplePixel(vdp, 0, 0, 0u, 0u, true)) {
         return fail("simple tile-run palette select did not use sprite/background palette bank");
     }
-    writeNameEntry(vdp, 6u, 0u, static_cast<uint16_t>(paletteTile));
+    writeNameEntry(vdp, 6u, 3u, static_cast<uint16_t>(paletteTile));
 
     std::array<uint8_t, 32u> spritePattern{};
     spritePattern[0] = 0x80u;
@@ -180,7 +206,7 @@ int main()
     for (std::size_t i = 0u; i < priorityPattern.size(); ++i) {
         vdp.writeVram(static_cast<uint16_t>(0x8000u + 120u * 32u + i), priorityPattern[i]);
     }
-    writeNameEntry(vdp, 6u, 0u, static_cast<uint16_t>(120u | 0x1000u));
+    writeNameEntry(vdp, 6u, 3u, static_cast<uint16_t>(120u | 0x1000u));
     const auto priorityModel = vdp.buildFrameModel({160, 144});
     if (priorityModel.argbPixels[0] != vdp.debugDecodedCramColor(1u)) {
         return fail("simple tile-run background priority did not mask sprite pixel");
@@ -189,12 +215,12 @@ int main()
     for (std::size_t i = 0u; i < transparentPriority.size(); ++i) {
         vdp.writeVram(static_cast<uint16_t>(0x8000u + 121u * 32u + i), transparentPriority[i]);
     }
-    writeNameEntry(vdp, 6u, 0u, static_cast<uint16_t>(121u | 0x1000u));
+    writeNameEntry(vdp, 6u, 3u, static_cast<uint16_t>(121u | 0x1000u));
     const auto transparentPriorityModel = vdp.buildFrameModel({160, 144});
     if (transparentPriorityModel.argbPixels[0] != vdp.debugDecodedCramColor(17u)) {
         return fail("simple tile-run transparent priority pixel incorrectly masked sprite");
     }
-    writeNameEntry(vdp, 6u, 0u, static_cast<uint16_t>(paletteTile));
+    writeNameEntry(vdp, 6u, 3u, static_cast<uint16_t>(paletteTile));
     vdp.writeVram(0xBF00u, 0xD0u);
 
     const auto modelFrame = vdp.buildFrameModel({160, 144});

@@ -406,7 +406,6 @@ int main()
         for (std::size_t tile = 0; tile < 32u; ++tile) {
             writePatternTile(tile);
             writeNameEntry(tile, 1u, static_cast<uint16_t>(tile));
-            writeNameEntry(tile, 0u, static_cast<uint16_t>(tile));
             writeNameEntry(tile, 3u, static_cast<uint16_t>(tile));
         }
         for (std::size_t row = 0; row < 28u; ++row) {
@@ -437,8 +436,8 @@ int main()
         if (onePixelFullModel.argbPixels.empty()) {
             return fail("Full VDP one-pixel scroll model unexpectedly empty");
         }
-        if (onePixelModel.argbPixels[0] != onePixelFullModel.argbPixels[48u]) {
-            return fail("Game Gear viewport crop affected native vertical background sampling");
+        if (onePixelModel.argbPixels[0] != onePixelFullModel.argbPixels[24u * 256u + 48u]) {
+            return fail("Game Gear viewport crop was applied before horizontal scroll sampling");
         }
 
         writeScrollX(0x07u);
@@ -500,7 +499,7 @@ int main()
         if (verticalOnePixelModel.argbPixels.empty()) {
             return fail("Game Gear vertical one-pixel scroll model unexpectedly empty");
         }
-        if (verticalOnePixelModel.argbPixels[32u] != expected(32u, 0u, 1u)) {
+        if (verticalOnePixelModel.argbPixels[32u] != expected(35u, 0u, 1u)) {
             return fail("Game Gear vertical scroll by 1 pixel did not sample the next tile row pixel");
         }
 
@@ -509,7 +508,7 @@ int main()
         if (verticalWrapModel.argbPixels.empty()) {
             return fail("Game Gear vertical wrap model unexpectedly empty");
         }
-        if (verticalWrapModel.argbPixels[32u] != expected(35u, 0u, 7u)) {
+        if (verticalWrapModel.argbPixels[32u] != expected(38u, 0u, 7u)) {
             return fail("Game Gear 192-line vertical scroll did not wrap through the 32-line overflow window");
         }
 
@@ -520,7 +519,7 @@ int main()
         if (verticalLockModel.argbPixels.empty()) {
             return fail("Game Gear vertical-lock model unexpectedly empty");
         }
-        if (verticalLockModel.argbPixels[32u] != expected(32u, 0u, 1u)) {
+        if (verticalLockModel.argbPixels[32u] != expected(35u, 0u, 1u)) {
             return fail("Game Gear vertical scroll lock incorrectly affected left columns");
         }
         if (verticalLockModel.argbPixels[144u] != expected(24u, 0u, 0u)) {

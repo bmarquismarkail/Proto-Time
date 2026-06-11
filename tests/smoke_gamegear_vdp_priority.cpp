@@ -63,7 +63,7 @@ int main() {
         bgTile[0] = static_cast<uint8_t>(1u << 7u);
         writeBgPattern(20u, bgTile);
         // set name entry with priority bit
-        writeNameEntry(6u, 0u, static_cast<uint16_t>(20u | 0x1000u));
+        writeNameEntry(6u, 3u, static_cast<uint16_t>(20u | 0x1000u));
 
         // sprite pattern: left-most pixel colorCode=1
         std::array<uint8_t, 32> sTile{};
@@ -89,7 +89,7 @@ int main() {
     {
         std::array<uint8_t, 32> tileZero{}; // all zeros -> colorCode==0
         writeBgPattern(21u, tileZero);
-        writeNameEntry(6u, 0u, static_cast<uint16_t>(21u | 0x1000u));
+        writeNameEntry(6u, 3u, static_cast<uint16_t>(21u | 0x1000u));
 
         const auto model = vdp.buildFrameModel({160, 144});
         const auto got = model.argbPixels[0u];

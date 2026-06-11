@@ -587,6 +587,16 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
     }
     const bool useSimpleBackgroundPath =
         mode4SimpleBackgroundPathEligible(scrollX, scrollY, activeLines);
+    const auto mode4ScrolledY = [activeLines](int vdpY, uint8_t effectiveScrollY) noexcept -> std::size_t {
+        if (activeLines == 192u) {
+            const auto scrollBase = effectiveScrollY > 223u
+                ? static_cast<std::size_t>(effectiveScrollY & 0x1Fu)
+                : static_cast<std::size_t>(effectiveScrollY);
+            const auto wrapHeight = effectiveScrollY > 223u ? 256u : 224u;
+            return (static_cast<std::size_t>(vdpY) + scrollBase) % wrapHeight;
+        }
+        return (static_cast<std::size_t>(vdpY) + static_cast<std::size_t>(effectiveScrollY)) & 0xFFu;
+    };
     if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
         if (useSimpleBackgroundPath) {
             out.mode4SimpleBackground.mode4SimplePathUsedCount = 1u;
@@ -622,12 +632,12 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
 #endif
         const auto backgroundSimpleStart = Clock::now();
         for (int y = 0; y < out.height; ++y) {
-            const int vdpY = y;
+            const int vdpY = y + viewportY;
             const auto rowOffset = static_cast<std::size_t>(y) * static_cast<std::size_t>(out.width);
-            const auto scrolledY = static_cast<std::size_t>((vdpY + scrollY) & 0xFF);
+            const auto scrolledY = mode4ScrolledY(vdpY, scrollY);
             const auto pixelY = scrolledY % 8u;
             const auto tileY = scrolledY / 8u;
-            const auto wrappedTileY = tileY % 32u;
+            const auto wrappedTileY = tileY % (activeLines == 192u ? 28u : 32u);
             const auto rowNameBase = nameBasePre + wrappedTileY * kTilesPerRow * 2u;
             if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
                 simpleDiagScratch.markTileRowSeen(wrappedTileY);
@@ -743,7 +753,7 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
     } else {
         const auto backgroundGeneralStart = Clock::now();
         for (int y = 0; y < out.height; ++y) {
-            const int vdpY = smsMode_ ? y + viewportY : y;
+            const int vdpY = y + viewportY;
             const auto rowOffset = static_cast<std::size_t>(y) * static_cast<std::size_t>(out.width);
 
             // Small per-row cache for decoded background tile entries. Decoding the
@@ -769,8 +779,7 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
 
             const bool fixedTopRows = smsMode_ && (registers_[0u] & 0x40u) != 0u && vdpY < 16;
             const auto effectiveScrollX = static_cast<uint8_t>(fixedTopRows ? 0u : scrollX);
-            const auto effectiveScrollYMain = static_cast<uint8_t>(
-                activeLines == 192u && scrollY > 223u ? (scrollY & 0x1Fu) : scrollY);
+            const auto effectiveScrollYMain = scrollY;
             const bool useFixedRightColumns = (registers_[0u] & 0x80u) != 0u;
             const bool leftColumnBlanking = (registers_[0u] & 0x20u) != 0u;
             const auto fineScrollX = static_cast<std::size_t>(effectiveScrollX & 0x07u);
@@ -784,7 +793,7 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                 return;
             }
 
-            const auto scrolledY = static_cast<std::size_t>((vdpY + effectiveScrollY) & 0xFF);
+            const auto scrolledY = mode4ScrolledY(vdpY, effectiveScrollY);
             const auto tileY = scrolledY / 8u;
             const auto pixelY = scrolledY % 8u;
             const auto wrappedTileY = tileY % (activeLines == 192u ? 28u : 32u);

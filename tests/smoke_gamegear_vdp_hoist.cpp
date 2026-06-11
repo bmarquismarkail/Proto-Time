@@ -23,12 +23,11 @@ int main() {
         memory.writeIoPort(0xBEu, 0xFFu);
     }
 
-    // Place that tile into the name table at LCD-space background coordinate
-    // (48,0). Game Gear horizontal cropping still starts at VDP X=48, but
-    // native Mode 4 vertical background sampling is not pre-offset by the
-    // 24-line LCD viewport crop.
+    // Place that tile into the name table at VDP coordinate (48,24) which maps
+    // to LCD (0,0) for a 160x144 frame (viewport X=48, Y=24). Tile coords:
+    // tileX = 48/8 = 6, tileY = 24/8 = 3
     const std::size_t tileX = 6u;
-    const std::size_t tileY = 0u;
+    const std::size_t tileY = 3u;
     // Default name table base after reset is 0x3800 -> VRAM address = 0x8000 + 0x3800 = 0xB800
     const uint16_t nameBaseAddr = static_cast<uint16_t>(0x8000u + 0x3800u);
     const uint16_t entryOffset = static_cast<uint16_t>((tileY * 32u + tileX) * 2u);
