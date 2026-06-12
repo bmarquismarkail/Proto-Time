@@ -281,12 +281,13 @@ GameGearMachine::GameGearMachine() : impl(std::make_unique<Impl>()) {
     // Provide a callback for the CPU to atomically consume pending IRQs.
     // Return an optional data byte: present => interrupt pending; empty => none.
     impl->cpu.setInterruptRequestProvider([this]() -> std::optional<uint8_t> {
-        if (impl->interruptRequested) {
+        if (impl->vdp.isIrqAsserted()) {
             impl->interruptRequested = false;
             // No device-supplied vector byte available; return 0 as a
             // harmless placeholder. IM1 ignores the byte.
             return static_cast<uint8_t>(0u);
         }
+        impl->interruptRequested = false;
         return std::nullopt;
     });
     Plugin::validateExecutorPolicyStartup(impl->defaultPolicy);

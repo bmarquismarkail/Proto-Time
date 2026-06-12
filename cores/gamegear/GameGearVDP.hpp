@@ -132,8 +132,6 @@ private:
     uint16_t dataAddress_ = 0u;
     uint8_t commandLow_ = 0u;
     uint8_t readBuffer_ = 0u;
-    uint8_t cramLatch_ = 0u;
-    bool cramLatchValid_ = false;
     uint8_t lineCounter_ = 0u;
     uint8_t verticalScrollLatch_ = 0u;
     enum class AccessMode : uint8_t {

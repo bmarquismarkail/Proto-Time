@@ -157,6 +157,32 @@ int main()
         return fail("simple tile-run scrollY did not sample expected pattern row");
     }
 
+    writeScrollY(vdp, memory, 0xD8u);
+    if (!vdp.debugMode4SimpleBackgroundPathEligible()) {
+        return fail("simple tile-run path should remain eligible before 192-line vertical wrap");
+    }
+    const auto verticalWrapModel = vdp.buildFrameModel({256, 192});
+    if (verticalWrapModel.argbPixels.empty()) {
+        return fail("simple tile-run 192-line vertical wrap model unexpectedly empty");
+    }
+    const auto wrappedTile = tileIndexFor(0u, 0u);
+    const auto wrappedColor = tileColorCode(wrappedTile, 0u, 0u);
+    if (verticalWrapModel.argbPixels[8u * 256u] != vdp.debugDecodedCramColor(wrappedColor)) {
+        return fail("simple tile-run 192-line vertical wrap did not return to name-table row 0");
+    }
+
+    writeRegister(memory, 8u, 0x01u);
+    const auto generalWrapModel = vdp.buildFrameModel({256, 192});
+    if (generalWrapModel.argbPixels.empty()) {
+        return fail("general background 192-line vertical wrap model unexpectedly empty");
+    }
+    const auto generalWrappedTile = tileIndexFor(0u, 9u);
+    const auto generalWrappedColor = tileColorCode(generalWrappedTile, 0u, 0u);
+    if (generalWrapModel.argbPixels[80u * 256u + 1u] != vdp.debugDecodedCramColor(generalWrappedColor)) {
+        return fail("general background 192-line vertical wrap did not wrap total line beyond 255 correctly");
+    }
+    writeRegister(memory, 8u, 0x00u);
+
     writeScrollY(vdp, memory, 0x00u);
     const auto paletteTile = tileIndexFor(6u, 3u);
     writeNameEntry(vdp, 6u, 3u, static_cast<uint16_t>(paletteTile | 0x0800u));

@@ -22,22 +22,37 @@ int main() {
     memory.writeIoPort(0xBFu, 0x3Eu);
     memory.writeIoPort(0xBFu, 0xC0u); // CRAM write, addr 0x003E
 
-    // Even write: latch only (should not modify CRAM bytes yet)
+    // Game Gear CRAM is byte-addressed: even writes update the stored byte
+    // and decoded palette entry immediately.
     memory.writeIoPort(0xBEu, 0x12u);
-    assert(vdp.debugCram()[0x3Eu] == before[0x3Eu]);
+    assert(vdp.debugCram()[0x3Eu] == 0x12u);
     assert(vdp.debugCram()[0x3Fu] == before[0x3Fu]);
 
-    // Odd write: commits the latched even byte and the odd byte
+    // Odd writes update only the addressed odd byte.
     memory.writeIoPort(0xBEu, 0x34u);
     assert(vdp.debugCram()[0x3Eu] == 0x12u);
     assert(vdp.debugCram()[0x3Fu] == 0x34u);
 
     // Next writes wrap past 0x3F -> 0x00
-    memory.writeIoPort(0xBEu, 0x56u); // even for addr 0x00 (latched)
-    assert(vdp.debugCram()[0x00u] == before[0x00u]);
-    memory.writeIoPort(0xBEu, 0x78u); // odd commit to 0x00/0x01
+    memory.writeIoPort(0xBEu, 0x56u); // even for addr 0x00
+    assert(vdp.debugCram()[0x00u] == 0x56u);
+    assert(vdp.debugCram()[0x01u] == before[0x01u]);
+    memory.writeIoPort(0xBEu, 0x78u); // odd for addr 0x01
     assert(vdp.debugCram()[0x00u] == 0x56u);
     assert(vdp.debugCram()[0x01u] == 0x78u);
+
+    // A later odd-address write must not reuse stale even-byte state from a
+    // previous CRAM write sequence.
+    memory.writeIoPort(0xBFu, 0x02u);
+    memory.writeIoPort(0xBFu, 0xC0u);
+    memory.writeIoPort(0xBEu, 0x9Au);
+    assert(vdp.debugCram()[0x02u] == 0x9Au);
+    memory.writeIoPort(0xBFu, 0x05u);
+    memory.writeIoPort(0xBFu, 0xC0u);
+    const auto unrelatedEvenBeforeOddWrite = vdp.debugCram()[0x04u];
+    memory.writeIoPort(0xBEu, 0xBCu);
+    assert(vdp.debugCram()[0x04u] == unrelatedEvenBeforeOddWrite);
+    assert(vdp.debugCram()[0x05u] == 0xBCu);
 
     // Verify 12-bit color word composition: bits 0-3 red, 4-7 green, 8-11 blue
     const auto even = vdp.debugCram()[0x00u];

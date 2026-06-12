@@ -221,6 +221,9 @@ void writeDiagnosticsSample(std::ostream& output,
     output << ",\"sprite_probe_ns\":" << stats.videoVdpRenderBodySpriteProbeNs;
     output << ",\"sprite_overlay_ns\":" << stats.videoVdpRenderBodySpriteOverlayNs;
     output << ",\"other_ns\":" << stats.videoVdpRenderBodyOtherNs;
+    output << ",\"simple_bitplane_decode_ns\":" << stats.videoVdpSimpleBitplaneDecodeNs;
+    output << ",\"palette_framebuffer_write_ns\":" << stats.videoVdpSimplePaletteFbWriteNs;
+    output << ",\"simple_loop_other_ns\":" << stats.videoVdpSimpleLoopOtherNs;
     output << "}";
     output << ",\"vdp_mode4_background_attributes\":{";
     output << "\"tile_cells_processed\":" << stats.videoVdpMode4AttrTileCellsProcessed;

@@ -2025,6 +2025,11 @@ private:
         stats_.videoVdpRenderBodySpriteProbeNs += timing.spriteProbeNs;
         stats_.videoVdpRenderBodySpriteOverlayNs += timing.spriteOverlayNs;
         stats_.videoVdpRenderBodyOtherNs += timing.otherNs;
+
+        // Phase 81B: simple-background coarse sub-path attribution
+        stats_.videoVdpSimpleBitplaneDecodeNs += timing.simple_bitplaneDecodeNs;
+        stats_.videoVdpSimplePaletteFbWriteNs += timing.simple_paletteFbWriteNs;
+        stats_.videoVdpSimpleLoopOtherNs += timing.simple_loopOtherNs;
     }
 
     void accumulateVdpMode4BackgroundAttributes(
@@ -2723,7 +2728,7 @@ const BMMQ::SdlFrontendPluginApiV1 kSdlFrontendPluginApi{
 
 } // namespace
 
-extern "C" const BMMQ::SdlFrontendPluginApiV1* bmmq_get_sdl_frontend_plugin_api_v1()
+extern "C" const BMMQ::SdlFrontendPluginApiV1* bmmq_get_sdl_frontend_plugin_api_v2()
 {
     return &kSdlFrontendPluginApi;
 }

@@ -248,14 +248,27 @@ int main() {
         CHECK_OR_FAIL(cpu.step() == 20u && cpu.SP == 0xD000u, "LD SP,(nn) missing");
         CHECK_OR_FAIL(cpu.step() == 10u, "OTIR setup failed at LD BC");
         CHECK_OR_FAIL(cpu.step() == 10u, "OTIR setup failed at LD HL");
-        CHECK_OR_FAIL(cpu.step() == 58u, "OTIR missing");
-        CHECK_OR_FAIL(cpu.BC == 0x00BEu, "OTIR should decrement B to zero and preserve port");
-        CHECK_OR_FAIL(cpu.HL == 0x4033u, "OTIR should advance HL across copied bytes");
-        CHECK_OR_FAIL(portWrites.size() == 7u, "OTIR should emit three port writes");
+        CHECK_OR_FAIL(cpu.step() == 21u, "OTIR first repeat should retire one iteration");
+        CHECK_OR_FAIL(cpu.PC == 0x003Fu, "OTIR first repeat should keep PC on instruction");
+        CHECK_OR_FAIL(cpu.BC == 0x02BEu, "OTIR first repeat should decrement B once and preserve port");
+        CHECK_OR_FAIL(cpu.HL == 0x4031u, "OTIR first repeat should advance HL once");
+        CHECK_OR_FAIL(portWrites.size() == 5u, "OTIR first repeat should emit one port write");
         CHECK_OR_FAIL(portWrites[4] == std::make_pair(static_cast<uint8_t>(0xBEu), static_cast<uint8_t>(0x11u)),
                       "OTIR wrote wrong first byte");
+
+        CHECK_OR_FAIL(cpu.step() == 21u, "OTIR second repeat should retire one iteration");
+        CHECK_OR_FAIL(cpu.PC == 0x003Fu, "OTIR second repeat should keep PC on instruction");
+        CHECK_OR_FAIL(cpu.BC == 0x01BEu, "OTIR second repeat should decrement B once and preserve port");
+        CHECK_OR_FAIL(cpu.HL == 0x4032u, "OTIR second repeat should advance HL once");
+        CHECK_OR_FAIL(portWrites.size() == 6u, "OTIR second repeat should emit one additional port write");
         CHECK_OR_FAIL(portWrites[5] == std::make_pair(static_cast<uint8_t>(0xBEu), static_cast<uint8_t>(0x22u)),
                       "OTIR wrote wrong second byte");
+
+        CHECK_OR_FAIL(cpu.step() == 16u, "OTIR final repeat should use final-cycle timing");
+        CHECK_OR_FAIL(cpu.PC == 0x0041u, "OTIR final repeat should advance past instruction");
+        CHECK_OR_FAIL(cpu.BC == 0x00BEu, "OTIR final repeat should finish B at zero and preserve port");
+        CHECK_OR_FAIL(cpu.HL == 0x4033u, "OTIR final repeat should advance HL across copied bytes");
+        CHECK_OR_FAIL(portWrites.size() == 7u, "OTIR final repeat should emit the final port write");
         CHECK_OR_FAIL(portWrites[6] == std::make_pair(static_cast<uint8_t>(0xBEu), static_cast<uint8_t>(0x33u)),
                       "OTIR wrote wrong third byte");
     }
@@ -478,7 +491,20 @@ int main() {
         CHECK_OR_FAIL(cpu.step() == 10u, "LD HL setup for LDIR failed");
         CHECK_OR_FAIL(cpu.step() == 10u, "LD DE setup for LDIR failed");
         CHECK_OR_FAIL(cpu.step() == 10u, "LD BC setup for LDIR failed");
-        CHECK_OR_FAIL(cpu.step() == 58u, "LDIR should transfer all bytes in one interpreter step");
+        CHECK_OR_FAIL(cpu.step() == 21u, "LDIR first repeat should retire one iteration");
+        CHECK_OR_FAIL(cpu.PC == 0x0009u, "LDIR first repeat should keep PC on instruction");
+        CHECK_OR_FAIL(cpu.BC == 0x0002u && cpu.HL == 0x4001u && cpu.DE == 0x5001u,
+                      "LDIR first repeat did not update BC/HL/DE once");
+        CHECK_OR_FAIL(memory[0x5000u] == 0x11u && memory[0x5001u] == 0x00u && memory[0x5002u] == 0x00u,
+                      "LDIR first repeat copied too many or wrong bytes");
+        CHECK_OR_FAIL(cpu.step() == 21u, "LDIR second repeat should retire one iteration");
+        CHECK_OR_FAIL(cpu.PC == 0x0009u, "LDIR second repeat should keep PC on instruction");
+        CHECK_OR_FAIL(cpu.BC == 0x0001u && cpu.HL == 0x4002u && cpu.DE == 0x5002u,
+                      "LDIR second repeat did not update BC/HL/DE once");
+        CHECK_OR_FAIL(memory[0x5000u] == 0x11u && memory[0x5001u] == 0x22u && memory[0x5002u] == 0x00u,
+                      "LDIR second repeat copied too many or wrong bytes");
+        CHECK_OR_FAIL(cpu.step() == 16u, "LDIR final repeat should use final-cycle timing");
+        CHECK_OR_FAIL(cpu.PC == 0x000Bu, "LDIR final repeat should advance past instruction");
         CHECK_OR_FAIL(memory[0x5000u] == 0x11u && memory[0x5001u] == 0x22u && memory[0x5002u] == 0x33u,
                       "LDIR did not copy the full range");
         CHECK_OR_FAIL(cpu.BC == 0u && cpu.HL == 0x4003u && cpu.DE == 0x5003u,
@@ -506,7 +532,16 @@ int main() {
         CHECK_OR_FAIL(cpu.step() == 10u, "CPIR setup LD HL failed");
         CHECK_OR_FAIL(cpu.step() == 10u, "CPIR setup LD BC failed");
         CHECK_OR_FAIL(cpu.step() == 7u, "CPIR setup LD A failed");
-        CHECK_OR_FAIL(cpu.step() == 58u, "CPIR should search until match in one interpreter step");
+        CHECK_OR_FAIL(cpu.step() == 21u, "CPIR first repeat should retire one iteration");
+        CHECK_OR_FAIL(cpu.PC == 0x002Bu, "CPIR first repeat should keep PC on instruction");
+        CHECK_OR_FAIL(cpu.BC == 2u && cpu.HL == 0x5001u && (cpu.AF & kFlagZ) == 0u,
+                      "CPIR first repeat should advance one byte without finding the match");
+        CHECK_OR_FAIL(cpu.step() == 21u, "CPIR second repeat should retire one iteration");
+        CHECK_OR_FAIL(cpu.PC == 0x002Bu, "CPIR second repeat should keep PC on instruction");
+        CHECK_OR_FAIL(cpu.BC == 1u && cpu.HL == 0x5002u && (cpu.AF & kFlagZ) == 0u,
+                      "CPIR second repeat should advance one byte without finding the match");
+        CHECK_OR_FAIL(cpu.step() == 16u, "CPIR final repeat should use final-cycle timing");
+        CHECK_OR_FAIL(cpu.PC == 0x002Du, "CPIR final repeat should advance past instruction");
         CHECK_OR_FAIL(cpu.BC == 0u && cpu.HL == 0x5003u && (cpu.AF & kFlagZ) != 0u,
                       "CPIR did not stop with the expected match state");
     }

@@ -162,9 +162,9 @@ int main()
     assert(std::all_of(before.argbPixels.begin(), before.argbPixels.end(), [backdrop](uint32_t pixel) {
         return pixel == backdrop;
     }));
-    memory.writeIoPort(0xBEu, 0x00u); // even write only latches
+    memory.writeIoPort(0xBEu, 0x00u); // even write updates CRAM immediately
     const auto afterEvenWrite = vdp.buildFrameModel({160, 144});
-    assert(afterEvenWrite.argbPixels == before.argbPixels);
+    assert(afterEvenWrite.argbPixels != before.argbPixels);
     memory.writeIoPort(0xBFu, 0x23u);
     memory.writeIoPort(0xBFu, 0xC0u); // odd byte for same palette entry
     memory.writeIoPort(0xBEu, 0x0Fu);
@@ -559,6 +559,13 @@ int main()
         }
         if (smsTopLockModel.argbPixels[24u * 256u] != expected(2u, 0u, 0u)) {
             return fail("Game Gear SMS fixed top row incorrectly locked lower scanlines too");
+        }
+        const auto smsCroppedTopLockModel = scrollVdp.buildFrameModel({160, 144});
+        if (smsCroppedTopLockModel.argbPixels.empty()) {
+            return fail("Game Gear SMS cropped top-row-lock model unexpectedly empty");
+        }
+        if (smsCroppedTopLockModel.argbPixels[0] != expected(5u, 0u, 0u)) {
+            return fail("Game Gear SMS cropped viewport incorrectly locked post-crop top rows");
         }
     }
 

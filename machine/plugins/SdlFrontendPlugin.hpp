@@ -177,6 +177,10 @@ struct SdlFrontendStats {
     std::uint64_t videoVdpRenderBodySpriteProbeNs = 0;
     std::uint64_t videoVdpRenderBodySpriteOverlayNs = 0;
     std::uint64_t videoVdpRenderBodyOtherNs = 0;
+    // --- Phase 81B: simple-background sub-path breakdown accumulators ---
+    std::uint64_t videoVdpSimpleBitplaneDecodeNs = 0;
+    std::uint64_t videoVdpSimplePaletteFbWriteNs = 0;
+    std::uint64_t videoVdpSimpleLoopOtherNs = 0;
     std::uint64_t videoVdpMode4AttrTileCellsProcessed = 0;
     std::uint64_t videoVdpMode4AttrTileCellsFlipH = 0;
     std::uint64_t videoVdpMode4AttrTileCellsFlipV = 0;
@@ -509,8 +513,8 @@ struct SdlAudioPreviewBuffer {
 
 inline constexpr std::string_view kSdlFrontendPluginId = "bmmq.frontend.sdl";
 inline constexpr std::string_view kSdlFrontendPluginDisplayName = "SDL Frontend Plugin";
-inline constexpr std::uint32_t kSdlFrontendPluginApiVersion = 1u;
-inline constexpr const char* kSdlFrontendPluginApiEntryPoint = "bmmq_get_sdl_frontend_plugin_api_v1";
+inline constexpr std::uint32_t kSdlFrontendPluginApiVersion = 2u;
+inline constexpr const char* kSdlFrontendPluginApiEntryPoint = "bmmq_get_sdl_frontend_plugin_api_v2";
 
 class ISdlFrontendPlugin : public IVideoPlugin,
                            public IAudioPlugin,

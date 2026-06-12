@@ -81,6 +81,7 @@ add_library(time-gamegear-core STATIC
 set_target_properties(time-gamegear-core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(time-gamegear-core PUBLIC time-machine-runtime-common)
 if (BMMQ_PROFILE_VDP_RENDER)
+    target_compile_definitions(time-gamegear-core PRIVATE BMMQ_PROFILE_VDP_RENDER=1)
     if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         set_source_files_properties(
             cores/gamegear/GameGearVDP.cpp
@@ -329,6 +330,9 @@ add_test(NAME smoke_plugin_abi COMMAND time-smoke-plugin-abi)
 add_executable(time-smoke-plugin-io tests/smoke_plugin_io.cpp)
 target_link_libraries(time-smoke-plugin-io time-gameboy-interpreter-core)
 add_test(NAME smoke_plugin_io COMMAND time-smoke-plugin-io)
+add_executable(time-smoke-sdl-frontend-plugin-api tests/smoke_sdl_frontend_plugin_api.cpp)
+target_link_libraries(time-smoke-sdl-frontend-plugin-api time-sdl-frontend-loader)
+add_test(NAME smoke_sdl_frontend_plugin_api COMMAND time-smoke-sdl-frontend-plugin-api)
 add_executable(time-smoke-sdl-frontend-plugin tests/smoke_sdl_frontend_plugin.cpp)
 target_link_libraries(time-smoke-sdl-frontend-plugin time-gameboy-interpreter-core time-sdl-frontend-loader time-simd-pixel-ops)
 add_test(NAME smoke_sdl_frontend_plugin COMMAND time-smoke-sdl-frontend-plugin)
