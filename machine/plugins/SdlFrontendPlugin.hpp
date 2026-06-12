@@ -513,8 +513,8 @@ struct SdlAudioPreviewBuffer {
 
 inline constexpr std::string_view kSdlFrontendPluginId = "bmmq.frontend.sdl";
 inline constexpr std::string_view kSdlFrontendPluginDisplayName = "SDL Frontend Plugin";
-inline constexpr std::uint32_t kSdlFrontendPluginApiVersion = 1u;
-inline constexpr const char* kSdlFrontendPluginApiEntryPoint = "bmmq_get_sdl_frontend_plugin_api_v1";
+inline constexpr std::uint32_t kSdlFrontendPluginApiVersion = 2u;
+inline constexpr const char* kSdlFrontendPluginApiEntryPoint = "bmmq_get_sdl_frontend_plugin_api_v2";
 
 class ISdlFrontendPlugin : public IVideoPlugin,
                            public IAudioPlugin,

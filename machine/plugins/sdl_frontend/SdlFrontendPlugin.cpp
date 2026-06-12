@@ -2728,7 +2728,7 @@ const BMMQ::SdlFrontendPluginApiV1 kSdlFrontendPluginApi{
 
 } // namespace
 
-extern "C" const BMMQ::SdlFrontendPluginApiV1* bmmq_get_sdl_frontend_plugin_api_v1()
+extern "C" const BMMQ::SdlFrontendPluginApiV1* bmmq_get_sdl_frontend_plugin_api_v2()
 {
     return &kSdlFrontendPluginApi;
 }
