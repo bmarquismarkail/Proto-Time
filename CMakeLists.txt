@@ -64,6 +64,7 @@ add_library(time-gameboy-interpreter-core
     cores/gameboy/GameBoyAPU.cpp
     cores/gameboy/GameBoyInput.cpp
     cores/gameboy/GameBoyMapper.cpp
+    cores/gameboy/dma_controller.cpp
 )
 
 
@@ -506,3 +507,7 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         endif()
     endforeach()
 endif()
+
+add_executable(time-smoke-dma-tests tests/dma_tests.cpp)
+target_link_libraries(time-smoke-dma-tests time-gameboy-interpreter-core)
+add_test(NAME dma_completion_notification COMMAND time-smoke-dma-tests)

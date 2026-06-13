@@ -20,6 +20,7 @@
 #include "../../memory/MemorySnapshot/MemorySnapshot.hpp"
 #include "../../memory/templ/reg_uint16.impl.hpp"
 #include "register_id.hpp"
+#include "dma_controller.hpp"
 
 using AddressType = uint16_t;
 using DataType = uint8_t;
@@ -150,6 +151,7 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   bool haltBugPcAdjustPending = false;
   uint16_t dividerCounter = 0;
   bool dmaActive = false;
+  DmaController dma_controller_;
   AddressType dmaSourceBase = 0;
   uint16_t dmaCycleProgress = 0;
   std::size_t pendingCycleCharge_ = 0;
