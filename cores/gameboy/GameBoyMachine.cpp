@@ -543,6 +543,7 @@ void GameBoyMachine::step() {
     if (impl_->bootEntryPending) {
         impl_->bootEntryPending = false;
         impl_->context->writeRegister16(GB::RegisterId::PC, 0x0100u);
+        return;
     }
     // Handle boot entry pending (FF50 write during boot ROM)
     // In the new architecture, boot ROM is handled by memory map intercept
