@@ -43,6 +43,19 @@ constexpr std::array<BMMQ::IoRegionDescriptor, 7> kIoRegions{{
     return extension != ".sms"; // Game Boy ROMs allow saves, SMS typically doesn't
 }
 
+inline void flushSaveSnapshotViaBackground(
+    BMMQ::BackgroundTaskService& backgroundTaskService,
+    CartridgeSaveManager::SaveSnapshot snapshot)
+{
+    auto queuedSnapshot = snapshot;
+    const bool queued = backgroundTaskService.submit([snapshot = std::move(queuedSnapshot)]() {
+        CartridgeSaveManager::flushSnapshot(snapshot);
+    });
+    if (!queued) {
+        CartridgeSaveManager::flushSnapshot(snapshot);
+    }
+}
+
 // Game Boy runtime context — mirrors GameGearRuntimeContext pattern.
 class GameBoyRuntimeContext final : public BMMQ::RuntimeContext {
 public:
@@ -591,13 +604,7 @@ void GameBoyMachine::step() {
         } else {
             auto extracted = impl_->saveManager.extractDirtySaveSnapshot(impl_->cartridge_);
             if (extracted.has_value()) {
-                auto snapshot = std::move(*extracted);
-                const bool queued = impl_->backgroundTaskService->submit([snapshot = std::move(snapshot)]() mutable {
-                    GB::CartridgeSaveManager::flushSnapshot(std::move(snapshot));
-                });
-                if (!queued) {
-                    GB::CartridgeSaveManager::flushSnapshot(std::move(snapshot));
-                }
+                flushSaveSnapshotViaBackground(*impl_->backgroundTaskService, std::move(*extracted));
             }
         }
     }
@@ -624,13 +631,7 @@ void GameBoyMachine::step() {
         if (impl_->backgroundTaskService != nullptr) {
             auto extracted = impl_->saveManager.extractDirtySaveSnapshot(impl_->cartridge_);
             if (extracted.has_value()) {
-                auto snapshot = std::move(*extracted);
-                const bool queued = impl_->backgroundTaskService->submit([&snapshot]() mutable {
-                    GB::CartridgeSaveManager::flushSnapshot(std::move(snapshot));
-                });
-                if (!queued) {
-                    GB::CartridgeSaveManager::flushSnapshot(std::move(snapshot));
-                }
+                flushSaveSnapshotViaBackground(*impl_->backgroundTaskService, std::move(*extracted));
             }
         }
     }

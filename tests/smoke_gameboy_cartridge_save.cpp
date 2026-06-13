@@ -118,6 +118,31 @@ int main()
     removeIfExists(savePath);
     {
         BMMQ::BackgroundTaskService backgroundTasks;
+
+        GameBoyMachine machine;
+        machine.setBackgroundTaskService(&backgroundTasks);
+        machine.loadRomFromPath(romPath);
+        machine.runtimeContext().write8(0x0000u, 0x0Au);
+        machine.runtimeContext().write8(0xA000u, 0x66u);
+        machine.runtimeContext().write8(0x4000u, 0x01u);
+        machine.runtimeContext().write8(0xA000u, 0x77u);
+        assert(machine.cartridge().hasDirtySaveData());
+
+        for (std::size_t i = 0; i < 4096u; ++i) {
+            machine.step();
+        }
+
+        assert(std::filesystem::exists(savePath));
+    }
+
+    const auto fallbackSavedRam = readBinary(savePath);
+    assert(fallbackSavedRam.size() == 0x8000u);
+    assert(fallbackSavedRam[0x0000u] == 0x66u);
+    assert(fallbackSavedRam[0x2000u] == 0x77u);
+
+    removeIfExists(savePath);
+    {
+        BMMQ::BackgroundTaskService backgroundTasks;
         backgroundTasks.start();
 
         GameBoyMachine machine;
