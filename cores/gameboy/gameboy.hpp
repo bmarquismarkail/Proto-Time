@@ -290,6 +290,8 @@ public:
           BMMQ::fetchBlock<AddressType, DataType> &fb) override;
   const BMMQ::CpuFeedback &getLastFeedback() const override;
   uint32_t clockHz() const override { return kCpuClockHz; }
+  DmaController& getDmaController() { return dma_controller_; }
+  const DmaController& getDmaController() const { return dma_controller_; }
 
   BMMQ::MemoryPool<AddressType, DataType, AddressType> &getMemory();
   const BMMQ::MemoryPool<AddressType, DataType, AddressType> &getMemory() const;

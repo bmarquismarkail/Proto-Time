@@ -1574,6 +1574,7 @@ void LR3592_DMG::retireInstruction(std::size_t executedCycles)
             if (dmaCycleProgress >= 0xA0u * 4u) {
                 dmaActive = false;
                 dmaCycleProgress = 0;
+                dma_controller_.push_event(0x8000, 0xFF);
             }
         }
 

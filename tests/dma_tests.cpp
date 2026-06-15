@@ -1,31 +1,56 @@
 #include <cassert>
 #include <cstdint>
-#include <vector>
 #include <iostream>
 
 #include "cores/gameboy/gameboy.hpp"
-#include "cores/gameboy/dma_controller.hpp"
 
-int main() {
-    // Test DmaController class logic directly
-    DmaController dma_controller;
+namespace {
 
-    // Assert that the DMA completion queue is initially empty
-    assert(dma_controller.is_queue_empty());
+BMMQ::CpuFeedback step(LR3592_DMG& dmg)
+{
+    auto fetchBlock = dmg.fetch();
+    auto execBlock = dmg.decode(fetchBlock);
+    dmg.execute(execBlock, fetchBlock);
+    return dmg.getLastFeedback();
+}
 
-    // Simulate a DMA transfer completion event
-    dma_controller.push_event(0x8000, 0xFF);
+void startDma(LR3592_DMG& dmg, uint8_t sourceHighByte)
+{
+    const DataType value[] = {sourceHighByte};
+    const bool handled = dmg.handleMemoryWrite(0xFF46, std::span<const DataType>{value, 1});
+    assert(handled);
+    (void)handled;
+}
 
-    // Assert that the DMA completion queue now contains the expected event
-    assert(!dma_controller.is_queue_empty());
-    auto events = dma_controller.get_completed_events();
+void test_dma_completion_notification()
+{
+    LR3592_DMG dmg;
+
+    assert(dmg.getDmaController().is_queue_empty());
+
+    startDma(dmg, 0xC0);
+
+    uint32_t retiredCycles = 0;
+    while (retiredCycles < 0xA0u * 4u) {
+        retiredCycles += step(dmg).retiredCycles;
+    }
+
+    assert(!dmg.getDmaController().is_queue_empty());
+    auto events = dmg.getDmaController().get_completed_events();
     assert(events.size() == 1);
     assert(events[0].address == 0x8000);
     assert(events[0].data == 0xFF);
-
-    // Assert that the queue is empty after retrieval
-    assert(dma_controller.is_queue_empty());
+    assert(dmg.getDmaController().is_queue_empty());
 
     std::cout << "DMA completion notification test passed!" << std::endl;
+}
+
+} // namespace
+
+int main()
+{
+    std::cout << "Running DMA completion notification test..." << std::endl;
+    test_dma_completion_notification();
+    std::cout << "All tests passed!" << std::endl;
     return 0;
 }
