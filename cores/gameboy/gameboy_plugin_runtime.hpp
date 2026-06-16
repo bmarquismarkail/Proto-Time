@@ -1,8 +1,8 @@
 #ifndef GAMEBOY_PLUGIN_RUNTIME_HPP
 #define GAMEBOY_PLUGIN_RUNTIME_HPP
 
-#include "gameboy.hpp"
 #include "../../inst_cycle/executor/PluginContract.hpp"
+#include "gameboy.hpp"
 #include "../../memory/MemoryStorage.hpp"
 
 class LR3592_PluginRuntime final : public BMMQ::Plugin::ICpuCoreRuntime {
@@ -10,8 +10,8 @@ public:
     const BMMQ::Plugin::PluginMetadata& metadata() const override {
         static const BMMQ::Plugin::PluginMetadata meta{
             sizeof(BMMQ::Plugin::PluginMetadata),
-            "bmmq.core.lr3592",
-            "LR3592 DMG Core",
+            \"bmmq.core.lr3592\",
+            \"LR3592 DMG Core\",
             BMMQ::Plugin::PluginKind::CpuCore,
             BMMQ::Plugin::kHostAbiVersion
         };

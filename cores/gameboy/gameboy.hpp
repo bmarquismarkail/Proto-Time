@@ -1,6 +1,7 @@
 #ifndef DMG_CPU
 #define DMG_CPU
 
+#include <cstdint>
 #include <array>
 #include <cstddef>
 #include <cstdio>
@@ -21,6 +22,7 @@
 #include "../../memory/templ/reg_uint16.impl.hpp"
 #include "register_id.hpp"
 #include "dma_controller.hpp"
+#include "vram_manager.hpp"
 
 using AddressType = uint16_t;
 using DataType = uint8_t;
@@ -163,6 +165,11 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   uint32_t ppuDotCounter = 0;
   bool lcdEnabledLastTick = false;
   bool statInterruptLatched = false;
+
+  uint16_t current_vram_bank = 0;
+  uint8_t sprite_context = 0;
+  bool bank_switching_enabled = true;
+  VramManager vram_manager_;
 
   // Gameboy-specific Decode Helper Functions
   LR3592_Register &GetRegister(BMMQ::RegisterInfo<AddressType> &Reg,
@@ -309,5 +316,15 @@ public:
   void setStopFlag(bool f);
   void setHaltFlag(bool f);
   void clearHaltFlag();
+
+  // VRAM Banking Methods
+  void update_vram_bank(uint16_t bank) { vram_manager_.update_bank(bank); }
+  uint8_t read_vram(uint16_t address) { return vram_manager_.read_memory(address); }
+
+public:
+  static constexpr uint16_t kBankA = 0;
+  static constexpr uint16_t kBankB = 1;
 };
 #endif // DMG_CPU
+"
+,path:
