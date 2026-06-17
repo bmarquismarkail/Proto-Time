@@ -171,6 +171,12 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   bool bank_switching_enabled = true;
   VramManager vram_manager_;
 
+  void set_sprite_context(uint8_t context) {
+    sprite_context = context;
+    vram_manager_.set_sprite_context(context);
+  }
+  [[nodiscard]] uint8_t get_sprite_context() const { return sprite_context; }
+
   // Gameboy-specific Decode Helper Functions
   LR3592_Register &GetRegister(BMMQ::RegisterInfo<AddressType> &Reg,
                                LR3592_RegisterFile *file);
@@ -326,5 +332,3 @@ public:
   static constexpr uint16_t kBankB = 1;
 };
 #endif // DMG_CPU
-"
-,path:

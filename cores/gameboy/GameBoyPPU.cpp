@@ -1,5 +1,6 @@
 #include "GameBoyPPU.hpp"
 #include "GameBoyMemoryMap.hpp"
+#include "gameboy.hpp"
 #include <algorithm>
 #include <cstring>
 
@@ -34,6 +35,7 @@ uint8_t GameBoyPPU::mapPaletteShade(uint8_t paletteReg, uint8_t colorIndex) noex
 }
 
 uint8_t GameBoyPPU::readVram(uint16_t address) const {
+    if (cpu) return cpu->read_vram(address);
     if (!memoryMap) return 0xFFu;
     return memoryMap->read(address);
 }
