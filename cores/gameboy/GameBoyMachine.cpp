@@ -282,10 +282,15 @@ GameBoyMachine::GameBoyMachine() : impl_(std::make_unique<Impl>()) {
     impl_->memoryMap.setMapper(&impl_->mapper);
     impl_->memoryMap.setCartridge(&impl_->cartridge_);
     impl_->memoryMap.setWriteObserver([this](uint16_t address, uint8_t value) {
-        impl_->cpu.cpu().syncCachedIoRegisterWrite(address, value);
+        const auto observedValue = static_cast<uint8_t>(
+            ((address >= 0xFF00u && address < 0xFF80u) || address == 0xFFFFu)
+                ? impl_->memoryMap.read(address)
+                : value);
+        impl_->cpu.cpu().syncCachedIoRegisterWrite(address, observedValue);
         if (address == 0xFF00u) {
             impl_->input.writeRegister(value);
             impl_->memoryMap.setIoRegisterRaw(0xFF00u, impl_->input.readRegister());
+            impl_->cpu.cpu().syncCachedIoRegisterWrite(0xFF00u, impl_->input.readRegister());
         }
         if ((address >= 0xFF10u && address <= 0xFF26u) ||
             (address >= 0xFF30u && address <= 0xFF3Fu)) {
