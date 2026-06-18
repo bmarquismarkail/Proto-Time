@@ -11,6 +11,7 @@ public:
     void set_sprite_context(uint8_t context);
     void set_vram_source(uint8_t* ptr);
     uint8_t read_memory(uint16_t addr);
+    uint8_t write_memory(uint16_t addr, uint8_t value);
     uint16_t get_current_bank() const;
 
 private:
