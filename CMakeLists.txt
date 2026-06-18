@@ -180,7 +180,7 @@ enable_testing()
 add_test(NAME smoke_run_emulated_corpus COMMAND bash ${CMAKE_SOURCE_DIR}/tests/smoke_run_emulated_corpus.sh)
 add_executable(time-smoke-gamegear-core tests/smoke_gamegear_core.cpp)
 target_link_libraries(time-smoke-gamegear-core time-gamegear-core)
-add_test(NAME smoke_gamegear-core COMMAND time-smoke-gamegear-core)
+add_test(NAME smoke-gamegear-core COMMAND time-smoke-gamegear-core)
 add_executable(time-smoke-gamegear-cartridge
     tests/smoke_gamegear_cartridge.cpp
     cores/gamegear/GameGearCartridge.cpp
@@ -280,7 +280,7 @@ set_tests_properties(perf_gamegear_vdp_bench PROPERTIES TIMEOUT 120)
 
 add_executable(time-smoke-gamegear-vdp-cram tests/smoke_gamegear_vdp_cram.cpp)
 target_link_libraries(time-smoke-gamegear-vdp-cram time-gamegear-core)
-add_test(NAME smoke_gamegear-vdp-cram COMMAND time-smoke-gamegear-vdp-cram)
+add_test(NAME smoke-gamegear-vdp-cram COMMAND time-smoke-gamegear-vdp-cram)
 
 add_executable(time-smoke-gamegear-vdp-sprites tests/smoke_gamegear_vdp_sprites.cpp)
 target_link_libraries(time-smoke-gamegear-vdp-sprites time-gamegear-core)
@@ -510,8 +510,8 @@ endif()
 
 add_executable(time-smoke-dma-tests tests/dma_tests.cpp)
 target_link_libraries(time-smoke-dma-tests time-gameboy-interpreter-core)
-add_test(NAME dma_completion_notification COMMAND time-smoke-dma-tests)
+add_test(NAME dma-completion-notification COMMAND time-smoke-dma-tests)
 
 add_executable(time-smoke-vram-tests tests/vram_tests.cpp)
 target_link_libraries(time-smoke-vram-tests time-gameboy-interpreter-core)
-add_test(NAME auto_bank_switch_on_sprite_access COMMAND time-smoke-vram-tests)
+add_test(NAME auto-bank-switch-on-sprite-access COMMAND time-smoke-vram-tests)
