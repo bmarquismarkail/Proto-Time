@@ -43,6 +43,18 @@ constexpr std::array<BMMQ::IoRegionDescriptor, 7> kIoRegions{{
     return extension != ".sms"; // Game Boy ROMs allow saves, SMS typically doesn't
 }
 
+inline void flushSaveSnapshotViaBackground(
+    BMMQ::BackgroundTaskService& backgroundTaskService,
+    CartridgeSaveManager::SaveSnapshot snapshot)
+{
+    const bool queued = backgroundTaskService.submit([snapshot = std::move(snapshot)]() {
+        CartridgeSaveManager::flushSnapshot(snapshot);
+    });
+    if (!queued) {
+        CartridgeSaveManager::flushSnapshot(snapshot);
+    }
+}
+
 // Game Boy runtime context — mirrors GameGearRuntimeContext pattern.
 class GameBoyRuntimeContext final : public BMMQ::RuntimeContext {
 public:
@@ -269,10 +281,15 @@ GameBoyMachine::GameBoyMachine() : impl_(std::make_unique<Impl>()) {
     impl_->memoryMap.setMapper(&impl_->mapper);
     impl_->memoryMap.setCartridge(&impl_->cartridge_);
     impl_->memoryMap.setWriteObserver([this](uint16_t address, uint8_t value) {
-        impl_->cpu.cpu().syncCachedIoRegisterWrite(address, value);
+        const auto observedValue = static_cast<uint8_t>(
+            ((address >= 0xFF00u && address < 0xFF80u) || address == 0xFFFFu)
+                ? impl_->memoryMap.read(address)
+                : value);
+        impl_->cpu.cpu().syncCachedIoRegisterWrite(address, observedValue);
         if (address == 0xFF00u) {
             impl_->input.writeRegister(value);
             impl_->memoryMap.setIoRegisterRaw(0xFF00u, impl_->input.readRegister());
+            impl_->cpu.cpu().syncCachedIoRegisterWrite(0xFF00u, impl_->input.readRegister());
         }
         if ((address >= 0xFF10u && address <= 0xFF26u) ||
             (address >= 0xFF30u && address <= 0xFF3Fu)) {
@@ -530,6 +547,7 @@ void GameBoyMachine::step() {
     if (impl_->bootEntryPending) {
         impl_->bootEntryPending = false;
         impl_->context->writeRegister16(GB::RegisterId::PC, 0x0100u);
+        return;
     }
     // Handle boot entry pending (FF50 write during boot ROM)
     // In the new architecture, boot ROM is handled by memory map intercept
@@ -591,13 +609,7 @@ void GameBoyMachine::step() {
         } else {
             auto extracted = impl_->saveManager.extractDirtySaveSnapshot(impl_->cartridge_);
             if (extracted.has_value()) {
-                auto snapshot = std::move(*extracted);
-                const bool queued = impl_->backgroundTaskService->submit([snapshot = std::move(snapshot)]() mutable {
-                    GB::CartridgeSaveManager::flushSnapshot(std::move(snapshot));
-                });
-                if (!queued) {
-                    GB::CartridgeSaveManager::flushSnapshot(std::move(snapshot));
-                }
+                flushSaveSnapshotViaBackground(*impl_->backgroundTaskService, std::move(*extracted));
             }
         }
     }
@@ -624,13 +636,7 @@ void GameBoyMachine::step() {
         if (impl_->backgroundTaskService != nullptr) {
             auto extracted = impl_->saveManager.extractDirtySaveSnapshot(impl_->cartridge_);
             if (extracted.has_value()) {
-                auto snapshot = std::move(*extracted);
-                const bool queued = impl_->backgroundTaskService->submit([&snapshot]() mutable {
-                    GB::CartridgeSaveManager::flushSnapshot(std::move(snapshot));
-                });
-                if (!queued) {
-                    GB::CartridgeSaveManager::flushSnapshot(std::move(snapshot));
-                }
+                flushSaveSnapshotViaBackground(*impl_->backgroundTaskService, std::move(*extracted));
             }
         }
     }

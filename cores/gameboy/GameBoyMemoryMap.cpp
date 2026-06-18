@@ -25,6 +25,7 @@ GameBoyMemoryMap::GameBoyMemoryMap() {
     addMemBlock(std::make_tuple(uint16_t(0xFE00), uint16_t(0x00A0), BMMQ::memAccess::ReadWrite));
     addMemBlock(std::make_tuple(uint16_t(0xFEA0), uint16_t(0x0060), BMMQ::memAccess::Unmapped));
     addMemBlock(std::make_tuple(uint16_t(0xFF00), uint16_t(0x0080), BMMQ::memAccess::ReadWrite));
+    addMemBlock(std::make_tuple(uint16_t(0xFF80), uint16_t(0x007F), BMMQ::memAccess::ReadWrite));
     addMemBlock(std::make_tuple(uint16_t(0xFFFF), uint16_t(0x0001), BMMQ::memAccess::ReadWrite));
 }
 

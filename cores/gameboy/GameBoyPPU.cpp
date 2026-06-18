@@ -1,7 +1,10 @@
 #include "GameBoyPPU.hpp"
 #include "GameBoyMemoryMap.hpp"
+#include "gameboy.hpp"
 #include <algorithm>
 #include <cstring>
+#include <cstdint>
+#include <vector>
 
 namespace GB {
 
@@ -34,6 +37,7 @@ uint8_t GameBoyPPU::mapPaletteShade(uint8_t paletteReg, uint8_t colorIndex) noex
 }
 
 uint8_t GameBoyPPU::readVram(uint16_t address) const {
+    if (cpu) return cpu->read_vram(address);
     if (!memoryMap) return 0xFFu;
     return memoryMap->read(address);
 }
@@ -46,7 +50,6 @@ uint8_t GameBoyPPU::readOam(uint16_t address) const {
 GameBoyPPU::BackgroundSample GameBoyPPU::sampleBackground(int screenX, int screenY) const {
     if (!memoryMap) return {};
 
-    // Read LCDC and STAT from memory map
     uint8_t lcdc = memoryMap->read(0xFF40);
     uint8_t scy = memoryMap->read(0xFF42);
     uint8_t scx = memoryMap->read(0xFF43);
@@ -121,7 +124,6 @@ void GameBoyPPU::compositeSprites(BMMQ::VideoDebugFrameModel& model, int screenY
     bool tallSprites = (lcdc & 0x04u) != 0u;
     int spriteHeight = tallSprites ? 16 : 8;
 
-    // Collect candidate sprites that intersect the current scanline (up to 10)
     struct SpriteCandidate {
         int oamIndex;
         int spriteX;
@@ -150,15 +152,12 @@ void GameBoyPPU::compositeSprites(BMMQ::VideoDebugFrameModel& model, int screenY
         candidates.push_back({spriteIndex, spriteX, tileIndex, attributes});
     }
 
-    // Sort candidates by priority: X descending, then OAM index descending
-    // This ensures lower priority sprites (higher X or higher OAM index) are drawn first
     std::sort(candidates.begin(), candidates.end(),
               [](const SpriteCandidate& a, const SpriteCandidate& b) {
                   if (a.spriteX != b.spriteX) return a.spriteX > b.spriteX;
                   return a.oamIndex > b.oamIndex;
               });
 
-    // Render candidate sprites in sorted order
     for (const auto& candidate : candidates) {
         int spriteIndex = candidate.oamIndex;
         int spriteX = candidate.spriteX;
@@ -198,7 +197,6 @@ void GameBoyPPU::compositeSprites(BMMQ::VideoDebugFrameModel& model, int screenY
             if (colorIndex == 0u) continue;
             if (behindBackground && bgColors[static_cast<std::size_t>(screenX)] != 0u) continue;
 
-            // Overwrite background pixel
             int pixelIndex = screenY * static_cast<int>(model.width) + screenX;
             if (pixelIndex < 0 || pixelIndex >= static_cast<int>(model.argbPixels.size())) {
                 continue;
@@ -210,9 +208,8 @@ void GameBoyPPU::compositeSprites(BMMQ::VideoDebugFrameModel& model, int screenY
 }
 
 void GameBoyPPU::renderScanline(BMMQ::VideoDebugFrameModel& model, int screenY,
-                                 std::vector<uint8_t>& bgColors) const {
+                                  std::vector<uint8_t>& bgColors) const {
     if (!memoryMap) return;
-
     if (screenY < 0 || screenY >= kDisplayHeight || model.width <= 0) return;
 
     uint8_t lcdc = memoryMap->read(0xFF40);
@@ -240,7 +237,9 @@ void GameBoyPPU::renderScanline(BMMQ::VideoDebugFrameModel& model, int screenY,
         model.argbPixels[static_cast<std::size_t>(pixelIndex)] = paletteColor(shade);
     }
 
+    if (cpu) cpu->set_sprite_context(1);
     compositeSprites(model, screenY, bgColors);
+    if (cpu) cpu->set_sprite_context(0);
 }
 
 void GameBoyPPU::captureScanline(int screenY) {
@@ -334,6 +333,7 @@ void GameBoyPPU::step(uint32_t cpuCycles) {
         framePixels_.fill(paletteColor(0));
         capturedScanlines_.fill(false);
         hasCapturedScanlines_ = false;
+        lastLy_ = 0;
         return;
     }
 

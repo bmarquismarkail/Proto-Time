@@ -1,6 +1,7 @@
 #include "gameboy.hpp"
 
 #include "decode/gb_opcode_decode.hpp"
+#include "GameBoyMemoryMap.hpp"
 #include "hardware_registers.hpp"
 
 #include <algorithm>
@@ -816,6 +817,12 @@ void LR3592_DMG::writeCachedRegister(const CachedRegisterRef& slot, DataType val
     }
 
     slot.reg->value = value;
+    if (auto* gameBoyMemory = dynamic_cast<GB::GameBoyMemoryMap*>(&mem.backingStore());
+        gameBoyMemory != nullptr) {
+        gameBoyMemory->setIoRegisterRaw(slot.address, value);
+        return;
+    }
+
     mem.backingStore().load(std::span<const DataType>(&value, 1), slot.address);
 }
 
@@ -1574,6 +1581,7 @@ void LR3592_DMG::retireInstruction(std::size_t executedCycles)
             if (dmaCycleProgress >= 0xA0u * 4u) {
                 dmaActive = false;
                 dmaCycleProgress = 0;
+                dma_controller_.push_event(0x8000, 0xFF);
             }
         }
 

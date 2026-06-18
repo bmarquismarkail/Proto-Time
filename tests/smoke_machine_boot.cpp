@@ -217,6 +217,22 @@ int main() {
     }
     assert(vblankInterruptServiced);
 
+    std::vector<uint8_t> visibleIfRom(0x8000, 0x00);
+    visibleIfRom[0x0100] = 0x18; // JR -2 idle loop
+    visibleIfRom[0x0101] = 0xFE;
+    host.loadRom(visibleIfRom);
+    host.runtimeContext().write8(0xFF0Fu, 0x00u);
+    host.runtimeContext().write8(0xFFFFu, 0x00u);
+    bool vblankIfVisible = false;
+    for (int i = 0; i < 20000; ++i) {
+        host.step();
+        if ((host.runtimeContext().read8(0xFF0Fu) & 0x01u) != 0u) {
+            vblankIfVisible = true;
+            break;
+        }
+    }
+    assert(vblankIfVisible);
+
     std::vector<uint8_t> mappedIoRom(0x8000, 0x00);
     mappedIoRom[0x0000] = 0x99;
     mappedIoRom[0x0042] = 0x77;

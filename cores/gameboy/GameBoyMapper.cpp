@@ -152,18 +152,14 @@ GameBoyMapper::WriteResult GameBoyMapper::write(uint16_t address, uint8_t value)
 }
 
 void GameBoyMapper::updateMbc1Banking() {
-    // In MBC1, the effective ROM bank number is constructed from:
-    // - Low 5 bits from $4000-$5FFF write
-    // - High 2 bits from $6000-$7FFF write (when in bank mode 1)
-    // Bit 5 of the result is always set to 1
-    std::size_t bank = romBankLow_;
-    bank |= static_cast<std::size_t>(ramBankSelect_ & 0x03u) << 5u;
-    bank |= 0x20u;  // Ensure bit 5 is always set
-    // Clamp to valid range
-    if (bank >= romBankCount_) {
-        bank = romBankCount_ - 1u;
+    std::size_t bank = (static_cast<std::size_t>(ramBankSelect_ & 0x03u) << 5u) |
+                       static_cast<std::size_t>(romBankLow_ & 0x1Fu);
+    bank &= 0x7Fu;
+    bank %= romBankCount_;
+    if ((bank & 0x1Fu) == 0u) {
+        bank = (bank + 1u) % romBankCount_;
     }
-    effectiveRomBank_ = bank;
+    effectiveRomBank_ = bank == 0u ? 1u % romBankCount_ : bank;
 }
 
 void GameBoyMapper::updateMbc5Banking() {

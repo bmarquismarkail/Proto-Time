@@ -1,8 +1,8 @@
 #ifndef GAMEBOY_PLUGIN_RUNTIME_HPP
 #define GAMEBOY_PLUGIN_RUNTIME_HPP
 
-#include "gameboy.hpp"
 #include "../../inst_cycle/executor/PluginContract.hpp"
+#include "gameboy.hpp"
 #include "../../memory/MemoryStorage.hpp"
 
 class LR3592_PluginRuntime final : public BMMQ::Plugin::ICpuCoreRuntime {

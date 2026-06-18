@@ -17,6 +17,8 @@
 #include "../../machine/VideoDebugModel.hpp"
 #include "../../machine/plugins/IoPlugin.hpp"
 
+class LR3592_DMG;
+
 namespace GB {
 
 class GameBoyMemoryMap;
@@ -24,6 +26,7 @@ class GameBoyMemoryMap;
 class GameBoyPPU {
 public:
     GameBoyMemoryMap* memoryMap = nullptr;
+    LR3592_DMG* cpu = nullptr;
 
     GameBoyPPU();
     ~GameBoyPPU() = default;
