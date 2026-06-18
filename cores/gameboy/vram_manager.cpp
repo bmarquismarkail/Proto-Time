@@ -13,14 +13,12 @@ uint8_t VramManager::read_memory(uint16_t address) {
         return 0xFFu;
     }
 
+    uint16_t active_bank = current_bank;
     if (sprite_context != 0) {
-        if (current_bank != 1) {
-            current_bank = 1;
-            std::cout << "[VramManager] Switching bank to 1 due to sprite context" << std::endl;
-        }
+        active_bank = 1;
     }
 
-    uint16_t bank_offset = (current_bank == 1) ? 0x1000u : 0x0000u;
+    uint16_t bank_offset = (active_bank == 1) ? 0x1000u : 0x0000u;
     
     return vram_ptr[bank_offset + (address & 0x0FFFu)];
 }
