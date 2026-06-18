@@ -31,8 +31,13 @@ void test_dma_completion_notification()
     startDma(dmg, 0xC0);
 
     uint32_t retiredCycles = 0;
+    uint32_t iterations = 0;
+    const uint32_t MAX_ITERATIONS = 10000;
     while (retiredCycles < 0xA0u * 4u) {
         retiredCycles += step(dmg).retiredCycles;
+        if (++iterations > MAX_ITERATIONS) {
+            assert(false && "DMA loop timed out");
+        }
     }
 
     assert(!dmg.getDmaController().is_queue_empty());
