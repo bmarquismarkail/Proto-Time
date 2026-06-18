@@ -47,8 +47,7 @@ inline void flushSaveSnapshotViaBackground(
     BMMQ::BackgroundTaskService& backgroundTaskService,
     CartridgeSaveManager::SaveSnapshot snapshot)
 {
-    auto queuedSnapshot = snapshot;
-    const bool queued = backgroundTaskService.submit([snapshot = std::move(queuedSnapshot)]() {
+    const bool queued = backgroundTaskService.submit([snapshot = std::move(snapshot)]() {
         CartridgeSaveManager::flushSnapshot(snapshot);
     });
     if (!queued) {
