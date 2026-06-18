@@ -7,32 +7,7 @@ constexpr uint16_t kBankB = 1;
 constexpr uint8_t kSpriteContextActive = 1;
 constexpr uint8_t kExpectedBankBData = 0xAA;
 
-// Mock classes for testing
-class VramManager {
-public:
-    VramManager() : current_bank(kBankA), sprite_context(0), vram_ptr(nullptr) {}
-
-    void set_vram_source(uint8_t* ptr) { vram_ptr = ptr; }
-    void update_bank(uint16_t bank) { current_bank = bank; }
-    uint8_t read_memory(uint16_t address) {
-        if (!vram_ptr) return 0xFF;
-        if (sprite_context != 0) {
-            if (current_bank != kBankB) {
-                current_bank = kBankB;
-                std::cout << "[VramManager] Switching bank to 1 due to sprite context" << std::endl;
-            }
-        }
-        uint16_t bank_offset = (current_bank == kBankB) ? 0x1000 : 0x0000;
-        return vram_ptr[bank_offset + (address & 0x0FFFu)];
-    }
-    uint16_t get_current_bank() const { return current_bank; }
-    void set_sprite_context(uint8_t context) { sprite_context = context; }
-
-private:
-    uint16_t current_bank;
-    uint8_t sprite_context;
-    uint8_t* vram_ptr;
-};
+#include "cores/gameboy/vram_manager.hpp"
 
 void test_auto_bank_switch_on_sprite_access() {
     VramManager vramManager;
