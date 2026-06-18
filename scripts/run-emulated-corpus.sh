@@ -17,7 +17,7 @@ DIAGNOSTICS_INTERVAL_MS="${DIAGNOSTICS_INTERVAL_MS:-1000}"
 mkdir -p "$LOG_DIR"
 
 # Archive previous logs
-ARCHIVE_DIR="$LOG_DIR/previous"
+ARCHIVE_DIR="$LOG_DIR/previous_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$ARCHIVE_DIR"
 mv "$LOG_DIR"/*.log "$ARCHIVE_DIR/" 2>/dev/null || true
 mv "$LOG_DIR"/*.err "$ARCHIVE_DIR/" 2>/dev/null || true
