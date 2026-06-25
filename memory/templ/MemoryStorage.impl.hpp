@@ -1,8 +1,11 @@
 #include "../MemoryStorage.hpp"
 
 #include <algorithm>
+#include <cstdint>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
+#include <type_traits>
 
 namespace BMMQ {
 
@@ -212,6 +215,61 @@ void MemoryStorage<AddressType, DataType>::load(std::span<const DataType> value,
     }
 
     throw std::out_of_range(foundStart ? "load extends past mapped range" : "address is not mapped");
+}
+
+template<typename AddressType, typename DataType>
+memAccess MemoryStorage<AddressType, DataType>::accessAt(AddressType address) const
+{
+    for (const auto& block : map) {
+        const auto& [base, length, access] = block;
+        if (base <= address && static_cast<AddressType>(address - base) < length) {
+            return access;
+        }
+    }
+    return memAccess::Unmapped;
+}
+
+template<typename AddressType, typename DataType>
+void MemoryStorage<AddressType, DataType>::rehydrate(
+    std::vector<DataType> newMem,
+    std::vector<std::tuple<AddressType, AddressType, memAccess>> newMap)
+{
+    std::size_t mappedSize = 0;
+    for (const auto& entry : newMap) {
+        const auto base = std::get<0>(entry);
+        const auto length = std::get<1>(entry);
+        const auto access = std::get<2>(entry);
+        if (!isValidMemoryAccess(access)) {
+            throw std::invalid_argument("rehydrate received an invalid access flag");
+        }
+        if constexpr (std::is_signed_v<AddressType>) {
+            if (base < 0 || length <= 0) {
+                throw std::invalid_argument("rehydrate received an invalid memory block");
+            }
+        } else if (length == 0) {
+            throw std::invalid_argument("rehydrate received an invalid memory block");
+        }
+
+        const auto lengthAsSize = static_cast<std::size_t>(length);
+        if (mappedSize > std::numeric_limits<std::size_t>::max() - lengthAsSize) {
+            throw std::overflow_error("rehydrate mapped size overflow");
+        }
+        mappedSize += lengthAsSize;
+
+        const auto maxAddress = static_cast<std::uintmax_t>(std::numeric_limits<AddressType>::max());
+        const auto baseAsWide = static_cast<std::uintmax_t>(base);
+        const auto lengthAsWide = static_cast<std::uintmax_t>(length);
+        if (lengthAsWide - 1u > maxAddress - baseAsWide) {
+            throw std::invalid_argument("rehydrate memory block overflows address space");
+        }
+    }
+
+    if (mappedSize != newMem.size()) {
+        throw std::invalid_argument("rehydrate memory data does not match memory map");
+    }
+
+    mem = std::move(newMem);
+    map = std::move(newMap);
 }
 
 } // namespace BMMQ

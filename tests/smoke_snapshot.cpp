@@ -1,9 +1,14 @@
 #include <cassert>
+#include <chrono>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <span>
 #include <stdexcept>
+#include <string>
 
+#include "DebugSnapshotManager.hpp"
 #include "MemoryStorage.hpp"
 #include "MemorySnapshot/SnapshotStorage/SnapshotStorage.h"
 
@@ -89,6 +94,90 @@ int main()
             rangeThrew = true;
         }
         assert(rangeThrew);
+    }
+
+    {
+        BMMQ::MemoryStorage<AddressType, DataType> invalidStorage;
+        bool mismatchThrew = false;
+        try {
+            invalidStorage.rehydrate(
+                std::vector<DataType>{0x01u, 0x02u},
+                std::vector<std::tuple<AddressType, AddressType, BMMQ::memAccess>>{
+                    {static_cast<AddressType>(0x0000u), static_cast<AddressType>(0x0001u), BMMQ::memAccess::ReadWrite}
+                });
+        } catch (const std::invalid_argument&) {
+            mismatchThrew = true;
+        }
+        assert(mismatchThrew);
+
+        bool invalidAccessThrew = false;
+        try {
+            invalidStorage.rehydrate(
+                std::vector<DataType>{0x01u},
+                std::vector<std::tuple<AddressType, AddressType, BMMQ::memAccess>>{
+                    {static_cast<AddressType>(0x0000u),
+                     static_cast<AddressType>(0x0001u),
+                     static_cast<BMMQ::memAccess>(99)}
+                });
+        } catch (const std::invalid_argument&) {
+            invalidAccessThrew = true;
+        }
+        assert(invalidAccessThrew);
+    }
+
+    {
+        BMMQ::MemoryStorage<AddressType, DataType> readOnlyStore;
+        readOnlyStore.addReadOnlyMem({
+            static_cast<AddressType>(0x0040u),
+            static_cast<AddressType>(0x0010u)
+        });
+
+        BMMQ::MemorySnapshot<AddressType, DataType, uint16_t> readonlySnapshot(readOnlyStore);
+        const DataType savedValue = 0x7Du;
+        readonlySnapshot.write(std::span<const DataType>(&savedValue, 1), static_cast<AddressType>(0x0042u));
+
+        const auto accessPath = std::filesystem::temp_directory_path() /
+            ("proto-time-access-snapshot-" +
+             std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+             ".snap");
+        BMMQ::DebugSnapshotManager<AddressType, DataType, uint16_t>::save_to_disk(readonlySnapshot, accessPath);
+        auto loaded = BMMQ::DebugSnapshotManager<AddressType, DataType, uint16_t>::load_snapshot(accessPath);
+
+        std::error_code ec;
+        std::filesystem::remove(accessPath, ec);
+        assert(loaded.storage.accessAt(static_cast<AddressType>(0x0042u)) == BMMQ::memAccess::Read);
+    }
+
+    {
+        const auto malformedPath = std::filesystem::temp_directory_path() /
+            ("proto-time-malformed-snapshot-" +
+             std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+             ".snap");
+        {
+            std::ofstream output(malformedPath, std::ios::binary | std::ios::trunc);
+            assert(output);
+            output.write("SNAP", 4);
+            const uint32_t version = 1;
+            const uint32_t coreId = BMMQ::DebugSnapshotManager<AddressType, uint16_t, uint16_t>::CORE_GAMEBOY;
+            const uint64_t regCount = 0;
+            const uint64_t poolCount = 0;
+            const uint64_t malformedMemSize = 1;
+            output.write(reinterpret_cast<const char*>(&version), sizeof(version));
+            output.write(reinterpret_cast<const char*>(&coreId), sizeof(coreId));
+            output.write(reinterpret_cast<const char*>(&regCount), sizeof(regCount));
+            output.write(reinterpret_cast<const char*>(&poolCount), sizeof(poolCount));
+            output.write(reinterpret_cast<const char*>(&malformedMemSize), sizeof(malformedMemSize));
+        }
+
+        bool malformedThrew = false;
+        try {
+            (void)BMMQ::DebugSnapshotManager<AddressType, uint16_t, uint16_t>::load_from_disk(malformedPath);
+        } catch (const std::runtime_error&) {
+            malformedThrew = true;
+        }
+        std::error_code ec;
+        std::filesystem::remove(malformedPath, ec);
+        assert(malformedThrew);
     }
 
     return 0;

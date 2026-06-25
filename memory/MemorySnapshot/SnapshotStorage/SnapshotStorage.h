@@ -41,6 +41,9 @@ namespace BMMQ {
 		SnapshotStorage(MemoryStorage<AddressType, DataType>& m);
 		void read(std::span<DataType> stream, AddressType address);
 		void write(std::span<const DataType> stream, AddressType address);
+		[[nodiscard]] const std::vector<std::pair<AddressType, std::size_t>>& pools() const noexcept { return pool; }
+		[[nodiscard]] const std::vector<DataType>& data() const noexcept { return mem; }
+		[[nodiscard]] memAccess accessAt(AddressType address) const { return store.accessAt(address); }
 		void read(DataType* stream, AddressType address, AddressType count)
 		{
 			read(std::span<DataType>(stream, count), address);

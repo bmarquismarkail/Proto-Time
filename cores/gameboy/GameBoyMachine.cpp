@@ -37,6 +37,7 @@ constexpr std::array<BMMQ::IoRegionDescriptor, 7> kIoRegions{{
 
 [[nodiscard]] inline bool romPathAllowsSaveBinding(const std::optional<std::filesystem::path>& path) {
     if (!path.has_value()) return false;
+    if (!path->has_filename()) return false;
     auto extension = path->extension().string();
     std::transform(extension.begin(), extension.end(), extension.begin(),
                    [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
@@ -47,11 +48,12 @@ inline void flushSaveSnapshotViaBackground(
     BMMQ::BackgroundTaskService& backgroundTaskService,
     CartridgeSaveManager::SaveSnapshot snapshot)
 {
-    const bool queued = backgroundTaskService.submit([snapshot = std::move(snapshot)]() {
-        CartridgeSaveManager::flushSnapshot(snapshot);
+    auto sharedSnapshot = std::make_shared<CartridgeSaveManager::SaveSnapshot>(std::move(snapshot));
+    const bool queued = backgroundTaskService.submit([sharedSnapshot]() {
+        CartridgeSaveManager::flushSnapshot(*sharedSnapshot);
     });
     if (!queued) {
-        CartridgeSaveManager::flushSnapshot(snapshot);
+        CartridgeSaveManager::flushSnapshot(*sharedSnapshot);
     }
 }
 
@@ -809,4 +811,11 @@ void GameBoyMachine::setBlockCacheEnabled(bool enabled) {
     impl_->cpu.cpu().setBlockCacheEnabled(enabled);
 }
 
+void GameBoyMachine::save_state(const std::filesystem::path&) {
+    throw std::runtime_error("Game Boy save states require full CPU/PPU/APU/cartridge serialization");
+}
+
+void GameBoyMachine::load_state(const std::filesystem::path&) {
+    throw std::runtime_error("Game Boy save states require full CPU/PPU/APU/cartridge rehydration");
+}
 } // namespace GB

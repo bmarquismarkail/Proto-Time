@@ -6,6 +6,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -63,6 +64,12 @@ public:
     virtual const RuntimeContext& runtimeContext() const = 0;
     virtual PluginManager& pluginManager() = 0;
     virtual const PluginManager& pluginManager() const = 0;
+    virtual void save_state(const std::filesystem::path&) {
+        throw std::runtime_error("save_state is not implemented for this machine");
+    }
+    virtual void load_state(const std::filesystem::path&) {
+        throw std::runtime_error("load_state is not implemented for this machine");
+    }
     [[nodiscard]] AudioService& audioService() {
         return *audioService_;
     }

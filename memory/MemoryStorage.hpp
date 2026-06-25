@@ -8,6 +8,7 @@
 #include <span>
 #include <tuple>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace BMMQ {
@@ -22,6 +23,18 @@ enum class memAccess {
 constexpr bool hasAccess(memAccess value, memAccess flag) noexcept
 {
     return (static_cast<unsigned>(value) & static_cast<unsigned>(flag)) != 0;
+}
+
+constexpr bool isValidMemoryAccess(memAccess value) noexcept
+{
+    switch (value) {
+    case memAccess::Unmapped:
+    case memAccess::Read:
+    case memAccess::Write:
+    case memAccess::ReadWrite:
+        return true;
+    }
+    return false;
 }
 
 // The Memory Map
@@ -68,6 +81,8 @@ public:
     }
     [[nodiscard]] std::span<DataType> writableSpan(AddressType address, std::size_t count);
     [[nodiscard]] std::span<const DataType> readableSpan(AddressType address, std::size_t count) const;
+    [[nodiscard]] memAccess accessAt(AddressType address) const;
+    void rehydrate(std::vector<DataType> newMem, std::vector<std::tuple<AddressType, AddressType, memAccess>> newMap);
 private:
     std::vector<std::tuple<starting_address_t, ending_address_t, memAccess>> map;
     std::vector<DataType> mem;
@@ -75,7 +90,7 @@ private:
     std::function<bool(AddressType, std::span<const DataType>)> writeInterceptor_;
     std::function<AddressType(AddressType)> addressTranslator_;
 };
-//////////////////////////////////////////////////////////
+
 }
 #include "templ/MemoryStorage.impl.hpp"
 #endif

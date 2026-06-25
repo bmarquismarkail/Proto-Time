@@ -6,6 +6,7 @@ constexpr uint16_t kBankA = 0;
 constexpr uint16_t kBankB = 1;
 constexpr uint8_t kSpriteContextActive = 1;
 constexpr uint8_t kExpectedBankBData = 0xAA;
+constexpr uint8_t kBankAWriteData = 0x55;
 
 #include "cores/gameboy/vram_manager.hpp"
 
@@ -24,11 +25,19 @@ void test_auto_bank_switch_on_sprite_access() {
     std::cout << "Current Bank after read: " << (int)vramManager.get_current_bank() << std::endl;
     std::cout << "Data read: " << (int)data << std::endl;
 
-    if (vramManager.get_current_bank() != kBankB) {
-        throw std::runtime_error("VRAM manager did not switch to bank B for sprite access");
+    if (vramManager.get_current_bank() != kBankA) {
+        throw std::runtime_error("VRAM manager persisted the sprite read bank override");
     }
     if (data != kExpectedBankBData) {
         throw std::runtime_error("VramManager returned unexpected bank B data");
+    }
+
+    vramManager.write_memory(0xA100u, kBankAWriteData);
+    if (dummyVram[0x0000 + (0xA100u & 0x0FFFu)] != kBankAWriteData) {
+        throw std::runtime_error("VramManager wrote to the wrong bank after sprite access");
+    }
+    if (dummyVram[0x1000 + (0xA100u & 0x0FFFu)] != kExpectedBankBData) {
+        throw std::runtime_error("VramManager overwrote bank B after sprite access");
     }
 
     delete[] dummyVram;

@@ -57,6 +57,8 @@ public:
     const BMMQ::RuntimeContext& runtimeContext() const override;
     BMMQ::PluginManager& pluginManager() override;
     const BMMQ::PluginManager& pluginManager() const override;
+    void save_state(const std::filesystem::path& path) override;
+    void load_state(const std::filesystem::path& path) override;
 
     // IExternalBootRomMachine
     void loadExternalBootRom(const std::vector<uint8_t>& bytes) override;
