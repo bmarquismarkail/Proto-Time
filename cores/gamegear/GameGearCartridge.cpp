@@ -1,6 +1,44 @@
 #include "GameGearCartridge.hpp"
 
 #include <algorithm>
+#include <stdexcept>
+
+namespace {
+
+void appendU32(std::vector<uint8_t>& out, std::uint32_t value)
+{
+    out.push_back(static_cast<uint8_t>(value & 0xFFu));
+    out.push_back(static_cast<uint8_t>((value >> 8u) & 0xFFu));
+    out.push_back(static_cast<uint8_t>((value >> 16u) & 0xFFu));
+    out.push_back(static_cast<uint8_t>((value >> 24u) & 0xFFu));
+}
+
+std::uint32_t readU32(const std::vector<uint8_t>& bytes, std::size_t& pos)
+{
+    if (pos > bytes.size() || bytes.size() - pos < 4u) {
+        throw std::invalid_argument("Game Gear cartridge state truncated");
+    }
+    const auto value = static_cast<std::uint32_t>(bytes[pos]) |
+        (static_cast<std::uint32_t>(bytes[pos + 1u]) << 8u) |
+        (static_cast<std::uint32_t>(bytes[pos + 2u]) << 16u) |
+        (static_cast<std::uint32_t>(bytes[pos + 3u]) << 24u);
+    pos += 4u;
+    return value;
+}
+
+std::vector<uint8_t> readBytes(const std::vector<uint8_t>& bytes, std::size_t& pos, std::size_t maxSize)
+{
+    const auto size = static_cast<std::size_t>(readU32(bytes, pos));
+    if (size > maxSize || pos > bytes.size() || bytes.size() - pos < size) {
+        throw std::invalid_argument("Game Gear cartridge state vector invalid");
+    }
+    std::vector<uint8_t> out(bytes.begin() + static_cast<std::ptrdiff_t>(pos),
+                             bytes.begin() + static_cast<std::ptrdiff_t>(pos + size));
+    pos += size;
+    return out;
+}
+
+}
 
 GameGearCartridge::GameGearCartridge() {}
 GameGearCartridge::~GameGearCartridge() {}
@@ -66,7 +104,7 @@ uint8_t GameGearCartridge::read(uint16_t addr) const {
 
 void GameGearCartridge::write(uint16_t addr, uint8_t value) {
     // Mapper registers $FFFC-$FFFF
-    if (addr >= 0xFFFCu && addr <= 0xFFFFu) {
+    if (addr >= 0xFFFCu) {
         if (addr == 0xFFFCu) {
             controlRegister_ = value;
         } else {
@@ -111,6 +149,47 @@ void GameGearCartridge::importSaveData(const std::vector<uint8_t>& saveData) {
     const auto count = std::min(sram.size(), saveData.size());
     std::copy_n(saveData.begin(), count, sram.begin());
     saveDirty_ = false;
+}
+
+std::vector<uint8_t> GameGearCartridge::exportState() const {
+    std::vector<uint8_t> state;
+    appendU32(state, static_cast<std::uint32_t>(rom.size()));
+    appendU32(state, static_cast<std::uint32_t>(numBanks()));
+    state.push_back(controlRegister_);
+    state.insert(state.end(), bankRegisters_.begin(), bankRegisters_.end());
+    state.push_back(saveDirty_ ? 1u : 0u);
+    appendU32(state, static_cast<std::uint32_t>(sram.size()));
+    state.insert(state.end(), sram.begin(), sram.end());
+    return state;
+}
+
+void GameGearCartridge::importState(const std::vector<uint8_t>& state) {
+    std::size_t pos = 0;
+    const auto romSize = static_cast<std::size_t>(readU32(state, pos));
+    const auto bankCount = static_cast<std::size_t>(readU32(state, pos));
+    if (romSize != rom.size() || bankCount != numBanks()) {
+        throw std::invalid_argument("Game Gear cartridge state does not match loaded ROM");
+    }
+    if (pos > state.size() || state.size() - pos < 5u) {
+        throw std::invalid_argument("Game Gear cartridge state truncated");
+    }
+    const auto control = state[pos++];
+    std::array<uint8_t, 3> banks{};
+    std::copy_n(state.begin() + static_cast<std::ptrdiff_t>(pos), banks.size(), banks.begin());
+    pos += banks.size();
+    const auto dirty = state[pos++];
+    if (dirty > 1u) {
+        throw std::invalid_argument("Game Gear cartridge state dirty flag invalid");
+    }
+    auto nextSram = readBytes(state, pos, kSramSize);
+    if (nextSram.size() != sram.size() || pos != state.size()) {
+        throw std::invalid_argument("Game Gear cartridge state SRAM size mismatch");
+    }
+
+    controlRegister_ = control;
+    bankRegisters_ = banks;
+    saveDirty_ = dirty != 0u;
+    sram = std::move(nextSram);
 }
 
 std::size_t GameGearCartridge::numBanks() const noexcept {

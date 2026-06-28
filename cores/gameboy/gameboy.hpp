@@ -254,6 +254,40 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   static AddressType normalizeAccessAddress(AddressType address);
 
 public:
+  struct SaveState {
+    AddressType af = 0;
+    AddressType bc = 0;
+    AddressType de = 0;
+    AddressType hl = 0;
+    AddressType sp = 0;
+    AddressType pc = 0;
+    uint16_t flagset = 0;
+    BMMQ::CpuFeedback feedback{};
+    DataType cip = 0;
+    bool ime = false;
+    bool imeEnablePending = false;
+    DataType imeEnableDelay = 0;
+    bool stopFlag = false;
+    bool haltFlag = false;
+    bool haltBugActive = false;
+    bool haltBugPcAdjustPending = false;
+    uint16_t dividerCounter = 0;
+    bool dmaActive = false;
+    AddressType dmaSourceBase = 0;
+    uint16_t dmaCycleProgress = 0;
+    std::size_t pendingCycleCharge = 0;
+    bool serialTransferActive = false;
+    uint16_t serialCycleProgress = 0;
+    DataType joypSelect = 0x30;
+    DataType joypadPressedMask = 0;
+    uint32_t ppuDotCounter = 0;
+    bool lcdEnabledLastTick = false;
+    bool statInterruptLatched = false;
+    uint16_t currentVramBank = 0;
+    uint8_t spriteContext = 0;
+    bool bankSwitchingEnabled = true;
+  };
+
   BMMQ::RegisterInfo<AddressType> AF{GB::RegisterId::AF};
   BMMQ::RegisterInfo<AddressType> BC{GB::RegisterId::BC};
   BMMQ::RegisterInfo<AddressType> DE{GB::RegisterId::DE};
@@ -316,6 +350,8 @@ public:
   void setStopFlag(bool f);
   void setHaltFlag(bool f);
   void clearHaltFlag();
+  [[nodiscard]] SaveState exportState() const;
+  void importState(const SaveState& state);
 
   // VRAM Banking Methods
   void update_vram_bank(uint16_t bank) { vram_manager_.update_bank(bank); }

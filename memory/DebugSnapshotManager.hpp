@@ -121,6 +121,9 @@ public:
 
         const auto readOrThrow = [&ifs, &path](char* data, std::streamsize size) {
             ifs.read(data, size);
+            if (ifs.eof()) {
+                throw std::runtime_error("Failed to read snapshot: " + path.string());
+            }
             if (!ifs) {
                 throw std::runtime_error("Failed to read snapshot: " + path.string());
             }
@@ -193,7 +196,7 @@ public:
             if (!pools.empty() && offset < pools.back().offset) {
                 throw std::runtime_error("Snapshot pool offsets are not monotonic.");
             }
-            if (!isValidMemoryAccess(static_cast<memAccess>(access))) {
+            if (!isValidRehydrateAccess(static_cast<memAccess>(access))) {
                 throw std::runtime_error("Snapshot pool access is invalid.");
             }
             pools.push_back(PoolSnapshot{

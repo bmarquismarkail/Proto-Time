@@ -37,6 +37,19 @@ constexpr bool isValidMemoryAccess(memAccess value) noexcept
     return false;
 }
 
+// For rehydration: Unmapped blocks must be rejected; only Read/Write/ReadWrite are valid.
+constexpr bool isValidRehydrateAccess(memAccess value) noexcept
+{
+    switch (value) {
+    case memAccess::Read:
+    case memAccess::Write:
+    case memAccess::ReadWrite:
+        return true;
+    default:
+        return false;
+    }
+}
+
 // The Memory Map
 template<typename AddressType, typename DataType>
 class MemoryStorage {

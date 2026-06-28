@@ -68,6 +68,31 @@ int main()
     assert(save.externalRam.size() == metadata.externalRamSize);
     assert(save.externalRam[0x07FFu] == 0x5Au);
 
+    const auto state = mapper.exportState();
+    assert(state.romSize == rom.size());
+    assert(state.romBankCount == mapper.romBankCount());
+    assert(state.ramEnabled);
+    assert(state.dirty);
+    assert(state.externalRam.size() == metadata.externalRamSize);
+    assert(state.externalRam[0x07FFu] == 0x5Au);
+
+    GB::GameBoyMapper restoredMapper;
+    restoredMapper.load(rom);
+    restoredMapper.importState(state);
+    readByte[0] = 0x00u;
+    assert(restoredMapper.ramRead(0xA7FFu, std::span<uint8_t>(readByte.data(), readByte.size())));
+    assert(readByte[0] == 0x5Au);
+
+    auto invalidState = state;
+    invalidState.romSize += 1u;
+    bool rejected = false;
+    try {
+        restoredMapper.importState(invalidState);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    assert(rejected);
+
     GB::GameBoyMapper truncatedMapper;
     truncatedMapper.load(makeTruncatedRom(0x2000u, 0x00u));
 

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -1307,4 +1308,160 @@ void GameGearVDP::seedDefaultCram() {
     setWord(18u, 0u, 15u, 0u);
     setWord(19u, 0u, 0u, 15u);
     setWord(20u, 15u, 15u, 15u);
+}
+
+std::vector<uint8_t> GameGearVDP::exportState() const {
+    std::vector<uint8_t> state;
+    const auto appendU8 = [&state](uint8_t value) { state.push_back(value); };
+    const auto appendBool = [&appendU8](bool value) { appendU8(value ? 1u : 0u); };
+    const auto appendU16 = [&appendU8](uint16_t value) {
+        appendU8(static_cast<uint8_t>(value & 0xFFu));
+        appendU8(static_cast<uint8_t>((value >> 8u) & 0xFFu));
+    };
+    const auto appendU32 = [&appendU8](uint32_t value) {
+        appendU8(static_cast<uint8_t>(value & 0xFFu));
+        appendU8(static_cast<uint8_t>((value >> 8u) & 0xFFu));
+        appendU8(static_cast<uint8_t>((value >> 16u) & 0xFFu));
+        appendU8(static_cast<uint8_t>((value >> 24u) & 0xFFu));
+    };
+    const auto appendBytes = [&appendU32, &state](const auto& bytes) {
+        appendU32(static_cast<uint32_t>(bytes.size()));
+        state.insert(state.end(), bytes.begin(), bytes.end());
+    };
+
+    appendBytes(vram_);
+    appendBytes(oam_);
+    appendBytes(registers_);
+    appendBytes(cram_);
+    appendU32(pendingCycles_);
+    appendU16(scanline_);
+    appendU8(lastReadyScanline_);
+    appendU8(hCounter_);
+    appendU8(latchedHCounter_);
+    appendBool(hCounterLatched_);
+    appendBool(scanlineReadyPending_);
+    appendBool(vblankPending_);
+    appendBool(frameInterruptPending_);
+    appendBool(lineInterruptPending_);
+    appendBool(irqAsserted_);
+    appendBool(spriteOverflowPending_);
+    appendBool(spriteCollisionPending_);
+    appendU8(lastStatusScanline_);
+    appendBool(statusScanlineConsumed_);
+    appendU16(dataAddress_);
+    appendU8(commandLow_);
+    appendU8(readBuffer_);
+    appendU8(lineCounter_);
+    appendU8(verticalScrollLatch_);
+    appendU8(static_cast<uint8_t>(accessMode_));
+    appendBool(commandLatchPending_);
+    appendBool(smsMode_);
+    return state;
+}
+
+void GameGearVDP::importState(const std::vector<uint8_t>& state) {
+    std::size_t pos = 0;
+    const auto require = [&state, &pos](std::size_t count) {
+        if (pos > state.size() || count > state.size() - pos) {
+            throw std::invalid_argument("Game Gear VDP state truncated");
+        }
+    };
+    const auto readU8 = [&state, &pos, &require]() {
+        require(1u);
+        return state[pos++];
+    };
+    const auto readBool = [&readU8]() {
+        const auto value = readU8();
+        if (value > 1u) {
+            throw std::invalid_argument("Game Gear VDP state boolean invalid");
+        }
+        return value != 0u;
+    };
+    const auto readU16 = [&readU8]() {
+        const auto lo = static_cast<uint16_t>(readU8());
+        const auto hi = static_cast<uint16_t>(readU8());
+        return static_cast<uint16_t>(lo | (hi << 8u));
+    };
+    const auto readU32 = [&readU8]() {
+        const auto b0 = static_cast<uint32_t>(readU8());
+        const auto b1 = static_cast<uint32_t>(readU8());
+        const auto b2 = static_cast<uint32_t>(readU8());
+        const auto b3 = static_cast<uint32_t>(readU8());
+        return b0 | (b1 << 8u) | (b2 << 16u) | (b3 << 24u);
+    };
+    const auto readBytes = [&state, &pos, &require, &readU32](auto& out) {
+        const auto count = static_cast<std::size_t>(readU32());
+        if (count != out.size()) {
+            throw std::invalid_argument("Game Gear VDP state array size mismatch");
+        }
+        require(count);
+        std::copy_n(state.begin() + static_cast<std::ptrdiff_t>(pos), out.size(), out.begin());
+        pos += out.size();
+    };
+
+    decltype(vram_) nextVram{};
+    decltype(oam_) nextOam{};
+    decltype(registers_) nextRegisters{};
+    decltype(cram_) nextCram{};
+    readBytes(nextVram);
+    readBytes(nextOam);
+    readBytes(nextRegisters);
+    readBytes(nextCram);
+    const auto nextPendingCycles = readU32();
+    const auto nextScanline = readU16();
+    const auto nextLastReady = readU8();
+    const auto nextHCounter = readU8();
+    const auto nextLatchedHCounter = readU8();
+    const auto nextHCounterLatched = readBool();
+    const auto nextScanlineReady = readBool();
+    const auto nextVblank = readBool();
+    const auto nextFrameInterrupt = readBool();
+    const auto nextLineInterrupt = readBool();
+    const auto nextIrqAsserted = readBool();
+    const auto nextSpriteOverflow = readBool();
+    const auto nextSpriteCollision = readBool();
+    const auto nextLastStatusScanline = readU8();
+    const auto nextStatusConsumed = readBool();
+    const auto nextDataAddress = readU16();
+    const auto nextCommandLow = readU8();
+    const auto nextReadBuffer = readU8();
+    const auto nextLineCounter = readU8();
+    const auto nextVerticalScrollLatch = readU8();
+    const auto nextAccessMode = readU8();
+    const auto nextCommandLatchPending = readBool();
+    const auto nextSmsMode = readBool();
+    if (nextScanline >= kTotalScanlines || nextLastReady >= kTotalScanlines ||
+        nextAccessMode > static_cast<uint8_t>(AccessMode::CramWrite) || pos != state.size()) {
+        throw std::invalid_argument("Game Gear VDP state invalid");
+    }
+
+    vram_ = nextVram;
+    oam_ = nextOam;
+    registers_ = nextRegisters;
+    cram_ = nextCram;
+    pendingCycles_ = nextPendingCycles;
+    scanline_ = nextScanline;
+    lastReadyScanline_ = nextLastReady;
+    hCounter_ = nextHCounter;
+    latchedHCounter_ = nextLatchedHCounter;
+    hCounterLatched_ = nextHCounterLatched;
+    scanlineReadyPending_ = nextScanlineReady;
+    vblankPending_ = nextVblank;
+    frameInterruptPending_ = nextFrameInterrupt;
+    lineInterruptPending_ = nextLineInterrupt;
+    irqAsserted_ = nextIrqAsserted;
+    spriteOverflowPending_ = nextSpriteOverflow;
+    spriteCollisionPending_ = nextSpriteCollision;
+    lastStatusScanline_ = nextLastStatusScanline;
+    statusScanlineConsumed_ = nextStatusConsumed;
+    dataAddress_ = nextDataAddress;
+    commandLow_ = nextCommandLow;
+    readBuffer_ = nextReadBuffer;
+    lineCounter_ = nextLineCounter;
+    verticalScrollLatch_ = nextVerticalScrollLatch;
+    accessMode_ = static_cast<AccessMode>(nextAccessMode);
+    commandLatchPending_ = nextCommandLatchPending;
+    smsMode_ = nextSmsMode;
+    recomputeDecodedCramCache();
+    recomputeIrqAsserted();
 }

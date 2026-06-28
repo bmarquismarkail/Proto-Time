@@ -34,6 +34,8 @@ public:
     [[nodiscard]] std::uint64_t chunksEmitted() const noexcept;
     [[nodiscard]] std::uint64_t samplesGeneratedTotal() const noexcept;
     [[nodiscard]] std::size_t pendingSamples() const noexcept;
+    [[nodiscard]] std::vector<uint8_t> exportState() const;
+    void importState(const std::vector<uint8_t>& state);
 
 private:
     struct ToneChannel {

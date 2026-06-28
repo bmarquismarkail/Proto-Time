@@ -1,5 +1,6 @@
 #pragma once
 #include "../GameGearCartridge.hpp"
+#include <stdexcept>
 #include <vector>
 
 // Codemasters-style mapper
@@ -105,6 +106,50 @@ public:
         } else {
             GameGearCartridge::importSaveData(saveData);
         }
+    }
+
+    std::vector<uint8_t> exportState() const override {
+        auto state = GameGearCartridge::exportState();
+        const auto appendU32 = [&state](std::uint32_t value) {
+            state.push_back(static_cast<uint8_t>(value & 0xFFu));
+            state.push_back(static_cast<uint8_t>((value >> 8u) & 0xFFu));
+            state.push_back(static_cast<uint8_t>((value >> 16u) & 0xFFu));
+            state.push_back(static_cast<uint8_t>((value >> 24u) & 0xFFu));
+        };
+        appendU32(static_cast<std::uint32_t>(extraRam_.size()));
+        state.insert(state.end(), extraRam_.begin(), extraRam_.end());
+        state.push_back(extraRamMapped_ ? 1u : 0u);
+        state.push_back(extraRamDirty_ ? 1u : 0u);
+        return state;
+    }
+
+    void importState(const std::vector<uint8_t>& state) override {
+        const auto baseSize = GameGearCartridge::exportState().size();
+        if (state.size() < baseSize + 6u) {
+            throw std::invalid_argument("Codemasters mapper state truncated");
+        }
+        GameGearCartridge::importState(std::vector<uint8_t>(state.begin(), state.begin() + static_cast<std::ptrdiff_t>(baseSize)));
+        std::size_t pos = baseSize;
+        const auto readU32 = [&state, &pos]() {
+            if (state.size() - pos < 4u) {
+                throw std::invalid_argument("Codemasters mapper state truncated");
+            }
+            const auto value = static_cast<std::uint32_t>(state[pos]) |
+                (static_cast<std::uint32_t>(state[pos + 1u]) << 8u) |
+                (static_cast<std::uint32_t>(state[pos + 2u]) << 16u) |
+                (static_cast<std::uint32_t>(state[pos + 3u]) << 24u);
+            pos += 4u;
+            return value;
+        };
+        const auto extraSize = static_cast<std::size_t>(readU32());
+        if (extraSize > 0x2000u || state.size() - pos != extraSize + 2u) {
+            throw std::invalid_argument("Codemasters mapper state extra RAM invalid");
+        }
+        extraRam_.assign(state.begin() + static_cast<std::ptrdiff_t>(pos),
+                         state.begin() + static_cast<std::ptrdiff_t>(pos + extraSize));
+        pos += extraSize;
+        extraRamMapped_ = state[pos++] != 0u;
+        extraRamDirty_ = state[pos++] != 0u;
     }
 
 private:

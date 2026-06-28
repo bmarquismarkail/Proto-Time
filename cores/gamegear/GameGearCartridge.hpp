@@ -26,6 +26,8 @@ public:
     void markSaveClean() noexcept;
     [[nodiscard]] std::vector<uint8_t> exportSaveData() const;
     void importSaveData(const std::vector<uint8_t>& saveData);
+    [[nodiscard]] std::vector<uint8_t> exportState() const override;
+    void importState(const std::vector<uint8_t>& state) override;
 
 private:
     static constexpr std::size_t kPageSize = 0x4000u;

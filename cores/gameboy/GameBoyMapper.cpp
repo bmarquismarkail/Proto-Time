@@ -1,6 +1,7 @@
 #include "GameBoyMapper.hpp"
 #include <algorithm>
 #include <cstring>
+#include <stdexcept>
 
 namespace GB {
 
@@ -232,6 +233,54 @@ GameBoyMapper::SaveSnapshot GameBoyMapper::extractDirtySaveSnapshot() const {
 void GameBoyMapper::flushSnapshot(const SaveSnapshot& snapshot) {
     // No-op; caller handles file I/O
     (void)snapshot;
+}
+
+// ── Serialization ──────────────────────────────────────────────────────────────
+
+GameBoyMapper::SaveState GameBoyMapper::exportState() const {
+    SaveState state;
+    state.romSize = romSize_;
+    state.romBankCount = romBankCount_;
+    state.romBankLow = romBankLow_;
+    state.effectiveRomBank = effectiveRomBank_;
+    state.ramBankSelect = ramBankSelect_;
+    state.ramBankMode = ramBankMode_;
+    state.ramEnabled = ramEnabled_;
+    state.dirty = dirty_;
+    state.hasBattery = hasBattery_;
+    state.externalRamValid = dirty_ && !externalRam_.empty();
+    state.externalRam = externalRam_;
+    return state;
+}
+
+void GameBoyMapper::importState(const SaveState& state) {
+    if (state.romSize != romSize_ || state.romBankCount != romBankCount_) {
+        throw std::invalid_argument("mapper save state does not match loaded ROM");
+    }
+    if (state.effectiveRomBank >= romBankCount_) {
+        throw std::invalid_argument("mapper save state ROM bank out of range");
+    }
+    if (state.ramBankMode > 1u) {
+        throw std::invalid_argument("mapper save state banking mode invalid");
+    }
+    if (!externalRam_.empty() && state.externalRam.size() != externalRam_.size()) {
+        throw std::invalid_argument("mapper save state external RAM size mismatch");
+    }
+    if (externalRam_.empty() && !state.externalRam.empty()) {
+        throw std::invalid_argument("mapper save state unexpectedly contains external RAM");
+    }
+    romBankLow_ = state.romBankLow;
+    if (romBankLow_ == 0u) romBankLow_ = 1u;
+    effectiveRomBank_ = state.effectiveRomBank;
+    ramBankSelect_ = state.ramBankSelect;
+    ramBankMode_ = state.ramBankMode;
+    ramEnabled_ = state.ramEnabled;
+    dirty_ = state.dirty;
+    hasBattery_ = state.hasBattery;
+
+    if (!state.externalRam.empty()) {
+        externalRam_ = state.externalRam;
+    }
 }
 
 } // namespace GB

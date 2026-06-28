@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cstring>
+#include <stdexcept>
 
 namespace {
 constexpr std::array<int, 16> kAttenuationTable{{
@@ -331,4 +333,186 @@ bool GameGearPSG::channelRoutedRight(std::size_t channel) const noexcept {
         return false;
     }
     return (stereoControl_ & static_cast<uint8_t>(0x01u << channel)) != 0u;
+}
+
+std::vector<uint8_t> GameGearPSG::exportState() const {
+    std::vector<uint8_t> state;
+    const auto appendU8 = [&state](uint8_t value) { state.push_back(value); };
+    const auto appendBool = [&appendU8](bool value) { appendU8(value ? 1u : 0u); };
+    const auto appendU16 = [&appendU8](uint16_t value) {
+        appendU8(static_cast<uint8_t>(value & 0xFFu));
+        appendU8(static_cast<uint8_t>((value >> 8u) & 0xFFu));
+    };
+    const auto appendU32 = [&appendU8](uint32_t value) {
+        appendU8(static_cast<uint8_t>(value & 0xFFu));
+        appendU8(static_cast<uint8_t>((value >> 8u) & 0xFFu));
+        appendU8(static_cast<uint8_t>((value >> 16u) & 0xFFu));
+        appendU8(static_cast<uint8_t>((value >> 24u) & 0xFFu));
+    };
+    const auto appendU64 = [&appendU32](uint64_t value) {
+        appendU32(static_cast<uint32_t>(value & 0xFFFFFFFFull));
+        appendU32(static_cast<uint32_t>((value >> 32u) & 0xFFFFFFFFull));
+    };
+    const auto appendDouble = [&appendU64](double value) {
+        static_assert(sizeof(double) == sizeof(uint64_t));
+        uint64_t bits = 0;
+        std::memcpy(&bits, &value, sizeof(bits));
+        appendU64(bits);
+    };
+    const auto appendBytes = [&appendU32, &state](const auto& bytes) {
+        appendU32(static_cast<uint32_t>(bytes.size()));
+        state.insert(state.end(), bytes.begin(), bytes.end());
+    };
+    const auto appendSamples = [&appendU32, &appendU16](const std::vector<int16_t>& samples) {
+        appendU32(static_cast<uint32_t>(samples.size()));
+        for (const auto sample : samples) {
+            appendU16(static_cast<uint16_t>(sample));
+        }
+    };
+
+    for (const auto& tone : tones_) {
+        appendU16(tone.period);
+        appendU8(tone.attenuation);
+        appendDouble(tone.counter);
+        appendBool(tone.outputHigh);
+        appendBool(tone.enabled);
+    }
+    appendU8(noiseControl_);
+    appendU8(noiseAttenuation_);
+    appendDouble(noiseCounter_);
+    appendU16(noiseLfsr_);
+    appendBool(noiseOutputHigh_);
+    appendU8(stereoControl_);
+    appendBytes(compatRegisters_);
+    appendBytes(waveRam_);
+    appendSamples(currentFrameSamples_);
+    appendSamples(recentSamples_);
+    appendU64(chunkSamplesLast_);
+    appendU64(chunkSamplesMin_);
+    appendU64(chunkSamplesMax_);
+    appendU64(frameCounter_);
+    appendU64(samplesGeneratedTotal_);
+    appendU64(samplePhase_);
+    appendU64(frameCounter_);
+    appendU8(latchedChannel_);
+    appendBool(latchedVolume_);
+    return state;
+}
+
+void GameGearPSG::importState(const std::vector<uint8_t>& state) {
+    std::size_t pos = 0;
+    const auto require = [&state, &pos](std::size_t count) {
+        if (pos > state.size() || count > state.size() - pos) {
+            throw std::invalid_argument("Game Gear PSG state truncated");
+        }
+    };
+    const auto readU8 = [&state, &pos, &require]() {
+        require(1u);
+        return state[pos++];
+    };
+    const auto readBool = [&readU8]() {
+        const auto value = readU8();
+        if (value > 1u) {
+            throw std::invalid_argument("Game Gear PSG state boolean invalid");
+        }
+        return value != 0u;
+    };
+    const auto readU16 = [&readU8]() {
+        const auto lo = static_cast<uint16_t>(readU8());
+        const auto hi = static_cast<uint16_t>(readU8());
+        return static_cast<uint16_t>(lo | (hi << 8u));
+    };
+    const auto readU32 = [&readU8]() {
+        const auto b0 = static_cast<uint32_t>(readU8());
+        const auto b1 = static_cast<uint32_t>(readU8());
+        const auto b2 = static_cast<uint32_t>(readU8());
+        const auto b3 = static_cast<uint32_t>(readU8());
+        return b0 | (b1 << 8u) | (b2 << 16u) | (b3 << 24u);
+    };
+    const auto readU64 = [&readU32]() {
+        const auto lo = static_cast<uint64_t>(readU32());
+        const auto hi = static_cast<uint64_t>(readU32());
+        return lo | (hi << 32u);
+    };
+    const auto readDouble = [&readU64]() {
+        const auto bits = readU64();
+        double value = 0.0;
+        std::memcpy(&value, &bits, sizeof(value));
+        return value;
+    };
+    const auto readBytes = [&state, &pos, &require, &readU32](auto& out) {
+        const auto count = static_cast<std::size_t>(readU32());
+        if (count != out.size()) {
+            throw std::invalid_argument("Game Gear PSG state array size mismatch");
+        }
+        require(count);
+        std::copy_n(state.begin() + static_cast<std::ptrdiff_t>(pos), out.size(), out.begin());
+        pos += out.size();
+    };
+    const auto readSamples = [&readU32, &readU16](std::size_t maxSamples) {
+        const auto count = static_cast<std::size_t>(readU32());
+        if (count > maxSamples) {
+            throw std::invalid_argument("Game Gear PSG sample history too large");
+        }
+        std::vector<int16_t> samples;
+        samples.reserve(count);
+        for (std::size_t i = 0; i < count; ++i) {
+            samples.push_back(static_cast<int16_t>(readU16()));
+        }
+        return samples;
+    };
+
+    decltype(tones_) nextTones{};
+    for (auto& tone : nextTones) {
+        tone.period = readU16();
+        tone.attenuation = readU8();
+        tone.counter = readDouble();
+        tone.outputHigh = readBool();
+        tone.enabled = readBool();
+    }
+    const auto nextNoiseControl = readU8();
+    const auto nextNoiseAttenuation = readU8();
+    const auto nextNoiseCounter = readDouble();
+    const auto nextNoiseLfsr = readU16();
+    const auto nextNoiseOutputHigh = readBool();
+    const auto nextStereoControl = readU8();
+    decltype(compatRegisters_) nextCompat{};
+    decltype(waveRam_) nextWaveRam{};
+    readBytes(nextCompat);
+    readBytes(nextWaveRam);
+    auto nextCurrent = readSamples(kFramesPerChunk * kOutputChannelCount);
+    auto nextRecent = readSamples(8192u);
+    const auto nextChunkLast = static_cast<std::size_t>(readU64());
+    const auto nextChunkMin = static_cast<std::size_t>(readU64());
+    const auto nextChunkMax = static_cast<std::size_t>(readU64());
+    const auto nextChunksEmitted = readU64();
+    const auto nextSamplesTotal = readU64();
+    const auto nextSamplePhase = readU64();
+    const auto nextFrameCounter = readU64();
+    const auto nextLatchedChannel = readU8();
+    const auto nextLatchedVolume = readBool();
+    if (nextLatchedChannel > 3u || pos != state.size()) {
+        throw std::invalid_argument("Game Gear PSG state invalid");
+    }
+
+    tones_ = nextTones;
+    noiseControl_ = nextNoiseControl;
+    noiseAttenuation_ = nextNoiseAttenuation;
+    noiseCounter_ = nextNoiseCounter;
+    noiseLfsr_ = nextNoiseLfsr;
+    noiseOutputHigh_ = nextNoiseOutputHigh;
+    stereoControl_ = nextStereoControl;
+    compatRegisters_ = nextCompat;
+    waveRam_ = nextWaveRam;
+    currentFrameSamples_ = std::move(nextCurrent);
+    recentSamples_ = std::move(nextRecent);
+    chunkSamplesLast_ = nextChunkLast;
+    chunkSamplesMin_ = nextChunkMin;
+    chunkSamplesMax_ = nextChunkMax;
+    (void)nextChunksEmitted;
+    samplesGeneratedTotal_ = nextSamplesTotal;
+    samplePhase_ = nextSamplePhase;
+    frameCounter_ = nextFrameCounter;
+    latchedChannel_ = nextLatchedChannel;
+    latchedVolume_ = nextLatchedVolume;
 }

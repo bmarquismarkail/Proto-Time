@@ -12,6 +12,7 @@
 #include "machine/plugins/IoPlugin.hpp"
 #include "machine/plugins/PluginManager.hpp"
 #include "machine/BackgroundTaskService.hpp"
+#include "machine/SaveState.hpp"
 #include "Z80Interpreter.hpp"
 #include "GameGearVDP.hpp"
 #include "GameGearPSG.hpp"
@@ -38,6 +39,67 @@ constexpr std::array<IoRegionDescriptor, 5> kIoRegions{{
     {PluginCategory::Video, 0x00BEu, 0x0002u, "VDP Ports (IO)", true, true},
     {PluginCategory::DigitalInput, 0x00DCu, 0x0002u, "Input Ports (0xDC/0xDD)", true, false},
 }};
+
+SaveStateChunk makeChunk(std::string name, std::vector<uint8_t> data)
+{
+    SaveStateChunk chunk;
+    chunk.name = std::move(name);
+    chunk.size = static_cast<uint32_t>(data.size());
+    chunk.data = std::move(data);
+    return chunk;
+}
+
+const SaveStateChunk& requireChunk(const SaveStateFile& state, std::string_view name)
+{
+    const auto found = std::find_if(state.chunks.begin(), state.chunks.end(), [name](const auto& chunk) {
+        return chunk.name == name;
+    });
+    if (found == state.chunks.end()) {
+        throw std::invalid_argument("save state is missing required chunk");
+    }
+    return *found;
+}
+
+void appendU64(std::vector<uint8_t>& out, uint64_t value)
+{
+    for (int i = 0; i < 8; ++i) {
+        out.push_back(static_cast<uint8_t>((value >> (i * 8)) & 0xFFu));
+    }
+}
+
+uint64_t readU64(const std::vector<uint8_t>& bytes, std::size_t& pos)
+{
+    if (pos > bytes.size() || bytes.size() - pos < 8u) {
+        throw std::invalid_argument("Game Gear machine metadata truncated");
+    }
+    uint64_t value = 0;
+    for (int i = 0; i < 8; ++i) {
+        value |= static_cast<uint64_t>(bytes[pos++]) << (i * 8);
+    }
+    return value;
+}
+
+std::vector<uint8_t> serializeMachineMeta(uint64_t stepCounter,
+                                          uint64_t lastAudioFrameCounter,
+                                          bool interruptRequested,
+                                          const std::optional<uint32_t>& lastDigitalInputMask,
+                                          uint64_t inputGeneration)
+{
+    std::vector<uint8_t> bytes;
+    appendU64(bytes, stepCounter);
+    appendU64(bytes, lastAudioFrameCounter);
+    bytes.push_back(interruptRequested ? 1u : 0u);
+    bytes.push_back(lastDigitalInputMask.has_value() ? 1u : 0u);
+    if (lastDigitalInputMask.has_value()) {
+        const auto value = *lastDigitalInputMask;
+        bytes.push_back(static_cast<uint8_t>(value & 0xFFu));
+        bytes.push_back(static_cast<uint8_t>((value >> 8u) & 0xFFu));
+        bytes.push_back(static_cast<uint8_t>((value >> 16u) & 0xFFu));
+        bytes.push_back(static_cast<uint8_t>((value >> 24u) & 0xFFu));
+    }
+    appendU64(bytes, inputGeneration);
+    return bytes;
+}
 
 [[nodiscard]] bool romPathAllowsSaveBinding(const std::optional<std::filesystem::path>& path)
 {
@@ -375,6 +437,85 @@ PluginManager& GameGearMachine::pluginManager() {
 
 const PluginManager& GameGearMachine::pluginManager() const {
     return impl->pluginManager;
+}
+
+void GameGearMachine::save_state(const std::filesystem::path& path) {
+    if (!impl->romLoaded || !impl->cart) {
+        throw std::runtime_error("Cannot save Game Gear state before ROM is loaded");
+    }
+
+    SaveStateFile state;
+    state.header.core_id = kCoreId_GameGear;
+    state.header.checksum = SaveStateChecksum::Crc32;
+    state.header.rom_hash = 0u;
+    state.chunks.push_back(makeChunk("gg.machine", serializeMachineMeta(
+        impl->stepCounter,
+        impl->lastAudioFrameCounter,
+        impl->interruptRequested,
+        impl->lastDigitalInputMask,
+        impl->inputGeneration)));
+    state.chunks.push_back(makeChunk("gg.cpu", impl->cpu.exportState()));
+    state.chunks.push_back(makeChunk("gg.memory", impl->mem.exportState()));
+    state.chunks.push_back(makeChunk("gg.vdp", impl->vdp.exportState()));
+    state.chunks.push_back(makeChunk("gg.psg", impl->psg.exportState()));
+    state.chunks.push_back(makeChunk("gg.input", impl->input.exportState()));
+    state.chunks.push_back(makeChunk("gg.mapper", impl->cart->exportState()));
+    SaveStateReader::write(state, path);
+}
+
+void GameGearMachine::load_state(const std::filesystem::path& path) {
+    if (!impl->romLoaded || !impl->cart) {
+        throw std::runtime_error("Load ROM before loading Game Gear save state");
+    }
+
+    const auto state = SaveStateReader::read(path);
+    if (state.header.core_id != kCoreId_GameGear) {
+        throw std::invalid_argument("save state is not a Game Gear state");
+    }
+
+    impl->cart->importState(requireChunk(state, "gg.mapper").data);
+    impl->mem.importState(requireChunk(state, "gg.memory").data);
+    impl->vdp.importState(requireChunk(state, "gg.vdp").data);
+    impl->psg.importState(requireChunk(state, "gg.psg").data);
+    impl->input.importState(requireChunk(state, "gg.input").data);
+    impl->cpu.importState(requireChunk(state, "gg.cpu").data);
+
+    const auto& meta = requireChunk(state, "gg.machine").data;
+    std::size_t pos = 0;
+    impl->stepCounter = readU64(meta, pos);
+    impl->lastAudioFrameCounter = readU64(meta, pos);
+    if (pos > meta.size() || meta.size() - pos < 2u) {
+        throw std::invalid_argument("Game Gear machine metadata truncated");
+    }
+    const auto interrupt = meta[pos++];
+    const auto hasInput = meta[pos++];
+    if (interrupt > 1u || hasInput > 1u) {
+        throw std::invalid_argument("Game Gear machine metadata boolean invalid");
+    }
+    impl->interruptRequested = interrupt != 0u;
+    if (hasInput != 0u) {
+        if (meta.size() - pos < 4u) {
+            throw std::invalid_argument("Game Gear machine metadata input truncated");
+        }
+        impl->lastDigitalInputMask =
+            static_cast<uint32_t>(meta[pos]) |
+            (static_cast<uint32_t>(meta[pos + 1u]) << 8u) |
+            (static_cast<uint32_t>(meta[pos + 2u]) << 16u) |
+            (static_cast<uint32_t>(meta[pos + 3u]) << 24u);
+        pos += 4u;
+    } else {
+        impl->lastDigitalInputMask.reset();
+    }
+    impl->inputGeneration = readU64(meta, pos);
+    if (pos != meta.size()) {
+        throw std::invalid_argument("Game Gear machine metadata has trailing data");
+    }
+
+    impl->mem.setCartridge(impl->cart.get());
+    impl->mem.setInput(&impl->input);
+    impl->mem.setPsg(&impl->psg);
+    impl->mem.setVdp(&impl->vdp);
+    inputService().advanceGeneration(impl->inputGeneration);
 }
 
 void GameGearMachine::step() {

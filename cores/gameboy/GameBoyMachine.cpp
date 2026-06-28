@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <optional>
 #include <span>
 #include <sstream>
@@ -12,6 +13,7 @@
 #include <string_view>
 
 #include "../../inst_cycle/executor/PluginContract.hpp"
+#include "../../machine/SaveState.hpp"
 #include "../../machine/plugins/IoPlugin.hpp"
 #include "../../machine/plugins/PluginManager.hpp"
 #include "../../machine/BackgroundTaskService.hpp"
@@ -55,6 +57,519 @@ inline void flushSaveSnapshotViaBackground(
     if (!queued) {
         CartridgeSaveManager::flushSnapshot(*sharedSnapshot);
     }
+}
+
+class StateWriter {
+public:
+    [[nodiscard]] const std::vector<uint8_t>& bytes() const noexcept { return bytes_; }
+    [[nodiscard]] std::vector<uint8_t> take() { return std::move(bytes_); }
+
+    void u8(uint8_t value) { bytes_.push_back(value); }
+    void boolean(bool value) { u8(value ? 1u : 0u); }
+    void u16(uint16_t value) {
+        u8(static_cast<uint8_t>(value & 0xFFu));
+        u8(static_cast<uint8_t>((value >> 8u) & 0xFFu));
+    }
+    void u32(uint32_t value) {
+        u16(static_cast<uint16_t>(value & 0xFFFFu));
+        u16(static_cast<uint16_t>((value >> 16u) & 0xFFFFu));
+    }
+    void u64(uint64_t value) {
+        u32(static_cast<uint32_t>(value & 0xFFFFFFFFull));
+        u32(static_cast<uint32_t>((value >> 32u) & 0xFFFFFFFFull));
+    }
+    void size(std::size_t value) {
+        if (value > std::numeric_limits<uint32_t>::max()) {
+            throw std::runtime_error("save state section too large");
+        }
+        u32(static_cast<uint32_t>(value));
+    }
+    void bytes(std::span<const uint8_t> data) {
+        size(data.size());
+        bytes_.insert(bytes_.end(), data.begin(), data.end());
+    }
+    void raw(std::span<const uint8_t> data) {
+        bytes_.insert(bytes_.end(), data.begin(), data.end());
+    }
+    void i16(int16_t value) { u16(static_cast<uint16_t>(value)); }
+
+private:
+    std::vector<uint8_t> bytes_{};
+};
+
+class StateReader {
+public:
+    explicit StateReader(std::span<const uint8_t> bytes) : bytes_(bytes) {}
+
+    [[nodiscard]] bool done() const noexcept { return pos_ == bytes_.size(); }
+
+    uint8_t u8() {
+        require(1u);
+        return bytes_[pos_++];
+    }
+    bool boolean() {
+        const auto value = u8();
+        if (value > 1u) {
+            throw std::invalid_argument("save state boolean is invalid");
+        }
+        return value != 0u;
+    }
+    uint16_t u16() {
+        const auto lo = static_cast<uint16_t>(u8());
+        const auto hi = static_cast<uint16_t>(u8());
+        return static_cast<uint16_t>(lo | (hi << 8u));
+    }
+    uint32_t u32() {
+        const auto lo = static_cast<uint32_t>(u16());
+        const auto hi = static_cast<uint32_t>(u16());
+        return lo | (hi << 16u);
+    }
+    uint64_t u64() {
+        const auto lo = static_cast<uint64_t>(u32());
+        const auto hi = static_cast<uint64_t>(u32());
+        return lo | (hi << 32u);
+    }
+    std::size_t size() { return static_cast<std::size_t>(u32()); }
+    std::vector<uint8_t> bytes(std::size_t maxSize = std::numeric_limits<std::size_t>::max()) {
+        const auto count = size();
+        if (count > maxSize) {
+            throw std::invalid_argument("save state vector section is too large");
+        }
+        require(count);
+        std::vector<uint8_t> out(bytes_.begin() + static_cast<std::ptrdiff_t>(pos_),
+                                 bytes_.begin() + static_cast<std::ptrdiff_t>(pos_ + count));
+        pos_ += count;
+        return out;
+    }
+    int16_t i16() { return static_cast<int16_t>(u16()); }
+
+private:
+    void require(std::size_t count) const {
+        if (pos_ > bytes_.size() || count > bytes_.size() - pos_) {
+            throw std::invalid_argument("save state section is truncated");
+        }
+    }
+
+    std::span<const uint8_t> bytes_;
+    std::size_t pos_ = 0;
+};
+
+template <std::size_t N>
+void writeInt16Array(StateWriter& writer, const std::array<int16_t, N>& values)
+{
+    writer.size(values.size());
+    for (const auto value : values) {
+        writer.i16(value);
+    }
+}
+
+template <std::size_t N>
+void readInt16Array(StateReader& reader, std::array<int16_t, N>& values)
+{
+    const auto count = reader.size();
+    if (count != values.size()) {
+        throw std::invalid_argument("save state int16 array size mismatch");
+    }
+    for (auto& value : values) {
+        value = reader.i16();
+    }
+}
+
+template <std::size_t N>
+void writeU8Array(StateWriter& writer, const std::array<uint8_t, N>& values)
+{
+    writer.size(values.size());
+    writer.raw(std::span<const uint8_t>(values.data(), values.size()));
+}
+
+template <std::size_t N>
+void readU8Array(StateReader& reader, std::array<uint8_t, N>& values)
+{
+    const auto bytes = reader.bytes(values.size());
+    if (bytes.size() != values.size()) {
+        throw std::invalid_argument("save state uint8 array size mismatch");
+    }
+    std::copy(bytes.begin(), bytes.end(), values.begin());
+}
+
+void writeCpuFeedback(StateWriter& writer, const BMMQ::CpuFeedback& feedback)
+{
+    writer.boolean(feedback.segmentBoundaryHint);
+    writer.boolean(feedback.isControlFlow);
+    writer.u32(feedback.pcBefore);
+    writer.u32(feedback.pcAfter);
+    writer.u32(feedback.retiredCycles);
+    writer.u32(static_cast<uint32_t>(feedback.executionPath));
+}
+
+BMMQ::CpuFeedback readCpuFeedback(StateReader& reader)
+{
+    BMMQ::CpuFeedback feedback;
+    feedback.segmentBoundaryHint = reader.boolean();
+    feedback.isControlFlow = reader.boolean();
+    feedback.pcBefore = reader.u32();
+    feedback.pcAfter = reader.u32();
+    feedback.retiredCycles = reader.u32();
+    const auto path = reader.u32();
+    if (path > static_cast<uint32_t>(BMMQ::ExecutionPathHint::CpuOptimizedFastPath)) {
+        throw std::invalid_argument("save state execution path invalid");
+    }
+    feedback.executionPath = static_cast<BMMQ::ExecutionPathHint>(path);
+    return feedback;
+}
+
+std::vector<uint8_t> serializeCpuState(const LR3592_DMG::SaveState& state)
+{
+    StateWriter writer;
+    writer.u16(state.af);
+    writer.u16(state.bc);
+    writer.u16(state.de);
+    writer.u16(state.hl);
+    writer.u16(state.sp);
+    writer.u16(state.pc);
+    writer.u16(state.flagset);
+    writeCpuFeedback(writer, state.feedback);
+    writer.u8(state.cip);
+    writer.boolean(state.ime);
+    writer.boolean(state.imeEnablePending);
+    writer.u8(state.imeEnableDelay);
+    writer.boolean(state.stopFlag);
+    writer.boolean(state.haltFlag);
+    writer.boolean(state.haltBugActive);
+    writer.boolean(state.haltBugPcAdjustPending);
+    writer.u16(state.dividerCounter);
+    writer.boolean(state.dmaActive);
+    writer.u16(state.dmaSourceBase);
+    writer.u16(state.dmaCycleProgress);
+    writer.u64(static_cast<uint64_t>(state.pendingCycleCharge));
+    writer.boolean(state.serialTransferActive);
+    writer.u16(state.serialCycleProgress);
+    writer.u8(state.joypSelect);
+    writer.u8(state.joypadPressedMask);
+    writer.u32(state.ppuDotCounter);
+    writer.boolean(state.lcdEnabledLastTick);
+    writer.boolean(state.statInterruptLatched);
+    writer.u16(state.currentVramBank);
+    writer.u8(state.spriteContext);
+    writer.boolean(state.bankSwitchingEnabled);
+    return writer.take();
+}
+
+LR3592_DMG::SaveState deserializeCpuState(std::span<const uint8_t> bytes)
+{
+    StateReader reader(bytes);
+    LR3592_DMG::SaveState state;
+    state.af = reader.u16();
+    state.bc = reader.u16();
+    state.de = reader.u16();
+    state.hl = reader.u16();
+    state.sp = reader.u16();
+    state.pc = reader.u16();
+    state.flagset = reader.u16();
+    state.feedback = readCpuFeedback(reader);
+    state.cip = reader.u8();
+    state.ime = reader.boolean();
+    state.imeEnablePending = reader.boolean();
+    state.imeEnableDelay = reader.u8();
+    state.stopFlag = reader.boolean();
+    state.haltFlag = reader.boolean();
+    state.haltBugActive = reader.boolean();
+    state.haltBugPcAdjustPending = reader.boolean();
+    state.dividerCounter = reader.u16();
+    state.dmaActive = reader.boolean();
+    state.dmaSourceBase = reader.u16();
+    state.dmaCycleProgress = reader.u16();
+    state.pendingCycleCharge = static_cast<std::size_t>(reader.u64());
+    state.serialTransferActive = reader.boolean();
+    state.serialCycleProgress = reader.u16();
+    state.joypSelect = reader.u8();
+    state.joypadPressedMask = reader.u8();
+    state.ppuDotCounter = reader.u32();
+    state.lcdEnabledLastTick = reader.boolean();
+    state.statInterruptLatched = reader.boolean();
+    state.currentVramBank = reader.u16();
+    state.spriteContext = reader.u8();
+    state.bankSwitchingEnabled = reader.boolean();
+    if (!reader.done()) {
+        throw std::invalid_argument("CPU save state has trailing data");
+    }
+    return state;
+}
+
+void writePulseChannel(StateWriter& writer, const PulseChannel& channel)
+{
+    writer.boolean(channel.enabled);
+    writer.boolean(channel.dacEnabled);
+    writer.boolean(channel.lengthEnabled);
+    writer.u8(channel.duty);
+    writer.u8(channel.dutyStep);
+    writer.u16(channel.lengthCounter);
+    writer.u8(channel.initialVolume);
+    writer.u8(channel.volume);
+    writer.boolean(channel.envelopeIncrease);
+    writer.u8(channel.envelopePeriod);
+    writer.u8(channel.envelopeTimer);
+    writer.u16(channel.frequency);
+    writer.u16(channel.timer);
+    writer.boolean(channel.hasSweep);
+    writer.u8(channel.sweepPeriod);
+    writer.u8(channel.sweepTimer);
+    writer.boolean(channel.sweepNegate);
+    writer.u8(channel.sweepShift);
+    writer.u16(channel.shadowFrequency);
+    writer.boolean(channel.sweepEnabled);
+}
+
+PulseChannel readPulseChannel(StateReader& reader)
+{
+    PulseChannel channel;
+    channel.enabled = reader.boolean();
+    channel.dacEnabled = reader.boolean();
+    channel.lengthEnabled = reader.boolean();
+    channel.duty = reader.u8();
+    channel.dutyStep = reader.u8();
+    channel.lengthCounter = reader.u16();
+    channel.initialVolume = reader.u8();
+    channel.volume = reader.u8();
+    channel.envelopeIncrease = reader.boolean();
+    channel.envelopePeriod = reader.u8();
+    channel.envelopeTimer = reader.u8();
+    channel.frequency = reader.u16();
+    channel.timer = reader.u16();
+    channel.hasSweep = reader.boolean();
+    channel.sweepPeriod = reader.u8();
+    channel.sweepTimer = reader.u8();
+    channel.sweepNegate = reader.boolean();
+    channel.sweepShift = reader.u8();
+    channel.shadowFrequency = reader.u16();
+    channel.sweepEnabled = reader.boolean();
+    return channel;
+}
+
+void writeWaveChannel(StateWriter& writer, const WaveChannel& channel)
+{
+    writer.boolean(channel.enabled);
+    writer.boolean(channel.dacEnabled);
+    writer.boolean(channel.lengthEnabled);
+    writer.u16(channel.lengthCounter);
+    writer.u16(channel.frequency);
+    writer.u16(channel.timer);
+    writer.u8(channel.sampleIndex);
+    writer.u8(channel.outputLevel);
+}
+
+WaveChannel readWaveChannel(StateReader& reader)
+{
+    WaveChannel channel;
+    channel.enabled = reader.boolean();
+    channel.dacEnabled = reader.boolean();
+    channel.lengthEnabled = reader.boolean();
+    channel.lengthCounter = reader.u16();
+    channel.frequency = reader.u16();
+    channel.timer = reader.u16();
+    channel.sampleIndex = reader.u8();
+    channel.outputLevel = reader.u8();
+    return channel;
+}
+
+void writeNoiseChannel(StateWriter& writer, const NoiseChannel& channel)
+{
+    writer.boolean(channel.enabled);
+    writer.boolean(channel.dacEnabled);
+    writer.boolean(channel.lengthEnabled);
+    writer.u16(channel.lengthCounter);
+    writer.u8(channel.initialVolume);
+    writer.u8(channel.volume);
+    writer.boolean(channel.envelopeIncrease);
+    writer.u8(channel.envelopePeriod);
+    writer.u8(channel.envelopeTimer);
+    writer.u8(channel.clockShift);
+    writer.u8(channel.divisorCode);
+    writer.boolean(channel.widthMode7);
+    writer.u16(channel.timer);
+    writer.u16(channel.lfsr);
+}
+
+NoiseChannel readNoiseChannel(StateReader& reader)
+{
+    NoiseChannel channel;
+    channel.enabled = reader.boolean();
+    channel.dacEnabled = reader.boolean();
+    channel.lengthEnabled = reader.boolean();
+    channel.lengthCounter = reader.u16();
+    channel.initialVolume = reader.u8();
+    channel.volume = reader.u8();
+    channel.envelopeIncrease = reader.boolean();
+    channel.envelopePeriod = reader.u8();
+    channel.envelopeTimer = reader.u8();
+    channel.clockShift = reader.u8();
+    channel.divisorCode = reader.u8();
+    channel.widthMode7 = reader.boolean();
+    channel.timer = reader.u16();
+    channel.lfsr = reader.u16();
+    return channel;
+}
+
+std::vector<uint8_t> serializeApuState(const GameBoyAPUState& state)
+{
+    StateWriter writer;
+    writer.boolean(state.masterEnabled);
+    writer.u32(state.frameSequencerCounter);
+    writer.u8(state.frameSequencerStep);
+    writer.u32(state.sampleAccumulator);
+    writer.u64(state.sampleCounter);
+    writer.u64(state.frameCounter);
+    writeInt16Array(writer, state.recentSamples);
+    writer.size(state.recentWriteCursor);
+    writer.size(state.recentSampleCount);
+    writer.size(state.pendingReadCursor);
+    writer.size(state.pendingSampleCount);
+    writeU8Array(writer, state.waveRam);
+    writer.u8(state.nr50);
+    writer.u8(state.nr51);
+    writer.u8(state.nr52);
+    writePulseChannel(writer, state.pulse1);
+    writePulseChannel(writer, state.pulse2);
+    writeWaveChannel(writer, state.wave);
+    writeNoiseChannel(writer, state.noise);
+    return writer.take();
+}
+
+GameBoyAPUState deserializeApuState(std::span<const uint8_t> bytes)
+{
+    StateReader reader(bytes);
+    GameBoyAPUState state;
+    state.masterEnabled = reader.boolean();
+    state.frameSequencerCounter = reader.u32();
+    state.frameSequencerStep = reader.u8();
+    state.sampleAccumulator = reader.u32();
+    state.sampleCounter = reader.u64();
+    state.frameCounter = reader.u64();
+    readInt16Array(reader, state.recentSamples);
+    state.recentWriteCursor = reader.size();
+    state.recentSampleCount = reader.size();
+    state.pendingReadCursor = reader.size();
+    state.pendingSampleCount = reader.size();
+    readU8Array(reader, state.waveRam);
+    state.nr50 = reader.u8();
+    state.nr51 = reader.u8();
+    state.nr52 = reader.u8();
+    state.pulse1 = readPulseChannel(reader);
+    state.pulse2 = readPulseChannel(reader);
+    state.wave = readWaveChannel(reader);
+    state.noise = readNoiseChannel(reader);
+    if (!reader.done()) {
+        throw std::invalid_argument("APU save state has trailing data");
+    }
+    return state;
+}
+
+std::vector<uint8_t> serializeMapperState(const GameBoyMapper::SaveState& state)
+{
+    StateWriter writer;
+    writer.size(state.romSize);
+    writer.size(state.romBankCount);
+    writer.u16(state.romBankLow);
+    writer.size(state.effectiveRomBank);
+    writer.u8(state.ramBankSelect);
+    writer.u8(state.ramBankMode);
+    writer.boolean(state.ramEnabled);
+    writer.boolean(state.dirty);
+    writer.boolean(state.hasBattery);
+    writer.boolean(state.externalRamValid);
+    writer.bytes(state.externalRam);
+    return writer.take();
+}
+
+GameBoyMapper::SaveState deserializeMapperState(std::span<const uint8_t> bytes)
+{
+    StateReader reader(bytes);
+    GameBoyMapper::SaveState state;
+    state.romSize = reader.size();
+    state.romBankCount = reader.size();
+    state.romBankLow = reader.u16();
+    state.effectiveRomBank = reader.size();
+    state.ramBankSelect = reader.u8();
+    state.ramBankMode = reader.u8();
+    state.ramEnabled = reader.boolean();
+    state.dirty = reader.boolean();
+    state.hasBattery = reader.boolean();
+    state.externalRamValid = reader.boolean();
+    state.externalRam = reader.bytes(0x20000u);
+    if (!reader.done()) {
+        throw std::invalid_argument("mapper save state has trailing data");
+    }
+    return state;
+}
+
+std::vector<uint8_t> serializeCartridgeState(const GameBoyCartridge::State& state)
+{
+    StateWriter writer;
+    writer.size(state.romSize);
+    writer.size(state.romBankCount);
+    writer.size(state.currentRomBank);
+    writer.size(state.currentRamBank);
+    writer.boolean(state.ramEnabled);
+    writer.u8(state.selectedRtcRegister);
+    writer.boolean(state.rtc.has_value());
+    if (state.rtc.has_value()) {
+        writeU8Array(writer, state.rtc->registers);
+        writer.boolean(state.rtc->latched);
+    }
+    writer.boolean(state.mbc1BankingModeSelect);
+    writer.size(state.mbc1UpperBankBits);
+    writer.size(state.mbc1LowBankBits);
+    writer.boolean(state.dirty);
+    writer.bytes(state.externalRam);
+    return writer.take();
+}
+
+GameBoyCartridge::State deserializeCartridgeState(std::span<const uint8_t> bytes)
+{
+    StateReader reader(bytes);
+    GameBoyCartridge::State state;
+    state.romSize = reader.size();
+    state.romBankCount = reader.size();
+    state.currentRomBank = reader.size();
+    state.currentRamBank = reader.size();
+    state.ramEnabled = reader.boolean();
+    state.selectedRtcRegister = reader.u8();
+    const bool hasRtc = reader.boolean();
+    if (hasRtc) {
+        RtcSaveData rtc;
+        readU8Array(reader, rtc.registers);
+        rtc.latched = reader.boolean();
+        state.rtc = rtc;
+    }
+    state.mbc1BankingModeSelect = reader.boolean();
+    state.mbc1UpperBankBits = reader.size();
+    state.mbc1LowBankBits = reader.size();
+    state.dirty = reader.boolean();
+    state.externalRam = reader.bytes(0x20000u);
+    if (!reader.done()) {
+        throw std::invalid_argument("cartridge save state has trailing data");
+    }
+    return state;
+}
+
+BMMQ::SaveStateChunk makeChunk(std::string name, std::vector<uint8_t> data)
+{
+    BMMQ::SaveStateChunk chunk;
+    chunk.name = std::move(name);
+    chunk.size = static_cast<uint32_t>(data.size());
+    chunk.data = std::move(data);
+    return chunk;
+}
+
+const BMMQ::SaveStateChunk& requireChunk(const BMMQ::SaveStateFile& state, std::string_view name)
+{
+    const auto found = std::find_if(state.chunks.begin(), state.chunks.end(), [name](const auto& chunk) {
+        return chunk.name == name;
+    });
+    if (found == state.chunks.end()) {
+        throw std::invalid_argument("save state is missing required chunk");
+    }
+    return *found;
 }
 
 // Game Boy runtime context — mirrors GameGearRuntimeContext pattern.
@@ -811,11 +1326,80 @@ void GameBoyMachine::setBlockCacheEnabled(bool enabled) {
     impl_->cpu.cpu().setBlockCacheEnabled(enabled);
 }
 
-void GameBoyMachine::save_state(const std::filesystem::path&) {
-    throw std::runtime_error("Game Boy save states require full CPU/PPU/APU/cartridge serialization");
+void GameBoyMachine::save_state(const std::filesystem::path& path) {
+    if (!impl_->romLoaded) {
+        throw std::runtime_error("Cannot save Game Boy state before ROM is loaded");
+    }
+
+    StateWriter machineWriter;
+    machineWriter.u64(impl_->stepCounter);
+    machineWriter.u64(impl_->lastAudioFrameCounter);
+    machineWriter.boolean(impl_->bootEntryPending);
+    machineWriter.boolean(impl_->interruptRequested);
+    machineWriter.boolean(impl_->lastDigitalInputMask.has_value());
+    if (impl_->lastDigitalInputMask.has_value()) {
+        machineWriter.u32(*impl_->lastDigitalInputMask);
+    }
+    machineWriter.u64(impl_->inputGeneration);
+
+    BMMQ::SaveStateFile state;
+    state.header.core_id = BMMQ::kCoreId_GameBoy;
+    state.header.checksum = BMMQ::SaveStateChecksum::Crc32;
+    state.header.rom_hash = 0u;
+    state.chunks.push_back(makeChunk("gb.machine", machineWriter.take()));
+    state.chunks.push_back(makeChunk("gb.cpu", serializeCpuState(impl_->cpu.cpu().exportState())));
+    state.chunks.push_back(makeChunk("gb.memory", impl_->memoryMap.exportState()));
+    state.chunks.push_back(makeChunk("gb.ppu", impl_->ppu.exportState()));
+    state.chunks.push_back(makeChunk("gb.apu", serializeApuState(impl_->apu.exportState())));
+    state.chunks.push_back(makeChunk("gb.input", impl_->input.exportState()));
+    state.chunks.push_back(makeChunk("gb.mapper", serializeMapperState(impl_->mapper.exportState())));
+    state.chunks.push_back(makeChunk("gb.cartridge", serializeCartridgeState(impl_->cartridge_.exportState())));
+    BMMQ::SaveStateReader::write(state, path);
 }
 
-void GameBoyMachine::load_state(const std::filesystem::path&) {
-    throw std::runtime_error("Game Boy save states require full CPU/PPU/APU/cartridge rehydration");
+void GameBoyMachine::load_state(const std::filesystem::path& path) {
+    if (!impl_->romLoaded) {
+        throw std::runtime_error("Load ROM before loading Game Boy save state");
+    }
+
+    const auto state = BMMQ::SaveStateReader::read(path);
+    if (state.header.core_id != BMMQ::kCoreId_GameBoy) {
+        throw std::invalid_argument("save state is not a Game Boy state");
+    }
+
+    impl_->mapper.importState(deserializeMapperState(requireChunk(state, "gb.mapper").data));
+    impl_->cartridge_.importState(deserializeCartridgeState(requireChunk(state, "gb.cartridge").data));
+    impl_->memoryMap.importState(requireChunk(state, "gb.memory").data);
+    impl_->ppu.importState(requireChunk(state, "gb.ppu").data);
+    impl_->apu.importState(deserializeApuState(requireChunk(state, "gb.apu").data));
+    impl_->input.importState(requireChunk(state, "gb.input").data);
+    impl_->cpu.cpu().importState(deserializeCpuState(requireChunk(state, "gb.cpu").data));
+
+    StateReader machineReader(requireChunk(state, "gb.machine").data);
+    impl_->stepCounter = machineReader.u64();
+    impl_->lastAudioFrameCounter = machineReader.u64();
+    impl_->bootEntryPending = machineReader.boolean();
+    impl_->interruptRequested = machineReader.boolean();
+    if (machineReader.boolean()) {
+        impl_->lastDigitalInputMask = machineReader.u32();
+    } else {
+        impl_->lastDigitalInputMask.reset();
+    }
+    impl_->inputGeneration = machineReader.u64();
+    if (!machineReader.done()) {
+        throw std::invalid_argument("Game Boy machine save state has trailing data");
+    }
+
+    impl_->memoryMap.setMapper(&impl_->mapper);
+    impl_->memoryMap.setCartridge(&impl_->cartridge_);
+    impl_->ppu.memoryMap = &impl_->memoryMap;
+    impl_->input.writeRegister(impl_->memoryMap.read(0xFF00u));
+    impl_->memoryMap.setIoRegisterRaw(0xFF00u, impl_->input.readRegister());
+    for (uint16_t address = 0xFF00u; address < 0xFF80u; ++address) {
+        impl_->cpu.cpu().syncCachedIoRegisterWrite(address, impl_->memoryMap.read(address));
+    }
+    impl_->cpu.cpu().syncCachedIoRegisterWrite(0xFFFFu, impl_->memoryMap.read(0xFFFFu));
+    impl_->cpu.cpu().syncCachedIoRegisterWrite(0xFF26u, impl_->apu.readRegister(0xFF26u));
+    inputService().advanceGeneration(impl_->inputGeneration);
 }
 } // namespace GB

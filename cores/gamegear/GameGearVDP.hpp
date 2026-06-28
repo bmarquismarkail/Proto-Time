@@ -52,6 +52,8 @@ public:
         const BMMQ::VideoDebugRenderRequest& request) const;
     [[nodiscard]] BMMQ::RealtimeVideoPacket buildRealtimeFrame(
         const BMMQ::VideoDebugRenderRequest& request) const;
+    [[nodiscard]] std::vector<uint8_t> exportState() const;
+    void importState(const std::vector<uint8_t>& state);
 
 private:
     static constexpr uint32_t kCyclesPerScanline = 228u;

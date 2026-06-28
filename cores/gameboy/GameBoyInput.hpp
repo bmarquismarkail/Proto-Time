@@ -8,6 +8,7 @@
 //   - Directional vs button select bit control
 
 #include <cstdint>
+#include <vector>
 
 namespace GB {
 
@@ -17,6 +18,16 @@ public:
     ~GameBoyInput() = default;
 
     void reset();
+
+    // Bit masks for logical buttons
+    static constexpr uint8_t kRight  = 0x01;
+    static constexpr uint8_t kLeft   = 0x02;
+    static constexpr uint8_t kUp     = 0x04;
+    static constexpr uint8_t kDown   = 0x08;
+    static constexpr uint8_t kA      = 0x10;
+    static constexpr uint8_t kB      = 0x20;
+    static constexpr uint8_t kSelect = 0x40;
+    static constexpr uint8_t kStart  = 0x80;
 
     // Set logical button state (from frontend/input service)
     void setLogicalButtons(uint8_t mask);
@@ -28,17 +39,11 @@ public:
     [[nodiscard]] uint8_t readRegister() const noexcept;
     void writeRegister(uint8_t value) noexcept;
 
-private:
-    // Bit masks for logical buttons
-    static constexpr uint8_t kRight  = 0x01;
-    static constexpr uint8_t kLeft   = 0x02;
-    static constexpr uint8_t kUp     = 0x04;
-    static constexpr uint8_t kDown   = 0x08;
-    static constexpr uint8_t kA      = 0x10;
-    static constexpr uint8_t kB      = 0x20;
-    static constexpr uint8_t kSelect = 0x40;
-    static constexpr uint8_t kStart  = 0x80;
+    // Save state export/import.
+    std::vector<uint8_t> exportState() const;
+    void importState(const std::vector<uint8_t>& state);
 
+private:
     // Logical button state (set by frontend)
     uint8_t logicalButtons_ = 0x00;
 

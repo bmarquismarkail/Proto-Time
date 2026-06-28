@@ -50,6 +50,7 @@ add_library(time-machine-runtime-common STATIC
     machine/PngDecode.cpp
     machine/ImageDecoder.cpp
     machine/DebugSnapshotService.cpp
+    machine/SaveState.cpp
 )
 set_target_properties(time-machine-runtime-common PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(time-machine-runtime-common PUBLIC ZLIB::ZLIB time-simd-pixel-ops)
@@ -305,6 +306,9 @@ add_test(NAME smoke-gamegear-psg-subsystem COMMAND time-smoke-gamegear-psg-subsy
 add_executable(time-smoke-gamegear-save-persistence tests/smoke_gamegear_save_persistence.cpp)
 target_link_libraries(time-smoke-gamegear-save-persistence time-gamegear-core)
 add_test(NAME smoke-gamegear-save-persistence COMMAND time-smoke-gamegear-save-persistence)
+add_executable(time-smoke-gamegear-save-state tests/smoke_gamegear_save_state.cpp)
+target_link_libraries(time-smoke-gamegear-save-state time-gamegear-core)
+add_test(NAME smoke-gamegear-save-state COMMAND time-smoke-gamegear-save-state)
 
 add_executable(time-smoke-gamegear-rom-baseline tests/smoke_gamegear_rom_baseline.cpp)
 target_link_libraries(time-smoke-gamegear-rom-baseline time-gamegear-core)
@@ -436,6 +440,9 @@ add_test(NAME smoke-machine-boot COMMAND time-smoke-machine-boot)
 add_executable(time-smoke-gameboy-cartridge-save tests/smoke_gameboy_cartridge_save.cpp)
 target_link_libraries(time-smoke-gameboy-cartridge-save time-gameboy-interpreter-core)
 add_test(NAME smoke-gameboy-cartridge-save COMMAND time-smoke-gameboy-cartridge-save)
+add_executable(time-smoke-gameboy-save-state tests/smoke_gameboy_save_state.cpp)
+target_link_libraries(time-smoke-gameboy-save-state time-gameboy-interpreter-core)
+add_test(NAME smoke-gameboy-save-state COMMAND time-smoke-gameboy-save-state)
 add_executable(time-smoke-gameboy-mapper tests/smoke_gameboy_mapper.cpp)
 target_link_libraries(time-smoke-gameboy-mapper time-gameboy-interpreter-core)
 add_test(NAME smoke-gameboy-mapper COMMAND time-smoke-gameboy-mapper)
@@ -498,6 +505,17 @@ target_link_libraries(time-smoke-block-cache time-gameboy-interpreter-core)
 target_link_libraries(time-smoke-slim-packets time-gameboy-interpreter-core)
 add_test(NAME smoke-slim-packets COMMAND time-smoke-slim-packets)
 add_test(NAME smoke-block-cache COMMAND time-smoke-block-cache)
+
+# Save-state smoke tests for Game Boy memory map, APU, and input.
+add_executable(time-smoke-memory-map-state tests/smoke_memory_map_state.cpp)
+target_link_libraries(time-smoke-memory-map-state time-gameboy-interpreter-core)
+add_test(NAME smoke-memory-map-state COMMAND time-smoke-memory-map-state)
+add_executable(time-smoke-apu-state-roundtrip tests/smoke_apu_state_roundtrip.cpp)
+target_link_libraries(time-smoke-apu-state-roundtrip time-gameboy-interpreter-core)
+add_test(NAME smoke-apu-state-roundtrip COMMAND time-smoke-apu-state-roundtrip)
+add_executable(time-smoke-input-state-roundtrip tests/smoke_input_state_roundtrip.cpp)
+target_link_libraries(time-smoke-input-state-roundtrip time-gameboy-interpreter-core)
+add_test(NAME smoke-input-state-roundtrip COMMAND time-smoke-input-state-roundtrip)
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     get_property(BMMQ_ALL_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
