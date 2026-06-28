@@ -16,11 +16,11 @@ static constexpr std::array<std::array<uint8_t, 8>, 4> kDutyPatterns{{
 }};
 
 GameBoyAPU::GameBoyAPU() {
-    apu_ = ApuState{};
+    apu_ = GameBoyAPUState{};
 }
 
 void GameBoyAPU::reset() {
-    apu_ = ApuState{};
+    apu_ = GameBoyAPUState{};
     apu_.masterEnabled = true;
 }
 

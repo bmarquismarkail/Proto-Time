@@ -137,27 +137,9 @@ private:
     static constexpr std::size_t kFrameChunkSamples = 256u;
     static constexpr uint32_t kCyclesPerFrameStep = 8192u; // 512Hz frame sequencer
 
-    struct ApuState {
-        bool masterEnabled = true;
-        uint32_t frameSequencerCounter = 0;
-        uint8_t frameSequencerStep = 0;
-        uint32_t sampleAccumulator = 0;
-        uint64_t sampleCounter = 0;
-        uint64_t frameCounter = 0;
-        std::array<int16_t, kHistorySamples> recentSamples{};
-        std::size_t recentWriteCursor = 0;
-        std::size_t recentSampleCount = 0;
-        mutable std::size_t pendingReadCursor = 0;
-        mutable std::size_t pendingSampleCount = 0;
-        std::array<uint8_t, 0x10> waveRam{};
-        uint8_t nr50 = 0;
-        uint8_t nr51 = 0;
-        uint8_t nr52 = 0;
-        PulseChannel pulse1{};
-        PulseChannel pulse2{};
-        WaveChannel wave{};
-        NoiseChannel noise{};
-    };
+    // GameBoyAPUState is the single source of truth. The apu_ member
+    // stores it directly to avoid drift between a private mirror and the
+    // state exported via exportState()/importState().
 
     [[nodiscard]] uint16_t pulseTimerPeriod(uint16_t frequency) const noexcept;
     [[nodiscard]] uint16_t waveTimerPeriod(uint16_t frequency) const noexcept;
@@ -175,7 +157,7 @@ private:
     [[nodiscard]] int currentNoiseSample() const noexcept;
     [[nodiscard]] int16_t mixCurrentSample() const noexcept;
 
-    ApuState apu_{};
+    GameBoyAPUState apu_{};
 };
 
 } // namespace GB
