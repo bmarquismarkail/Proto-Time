@@ -294,16 +294,19 @@ void GameBoyAPU::pushSample(int16_t sample) {
 void GameBoyAPU::writeRegister(uint16_t address, uint8_t value) {
     switch (address) {
     case 0xFF10: // NR10
+        if (!apu_.masterEnabled) break;
         apu_.pulse1.sweepPeriod = (value >> 4) & 0x07u;
         apu_.pulse1.sweepNegate = (value & 0x08u) != 0;
         apu_.pulse1.sweepShift = value & 0x07u;
         apu_.pulse1.sweepEnabled = apu_.pulse1.sweepPeriod != 0 || apu_.pulse1.sweepShift != 0;
         break;
     case 0xFF11: // NR11
+        if (!apu_.masterEnabled) break;
         apu_.pulse1.duty = (value >> 6u) & 0x03u;
         apu_.pulse1.lengthCounter = 64 - (value & 0x3Fu);
         break;
     case 0xFF12: // NR12
+        if (!apu_.masterEnabled) break;
         apu_.pulse1.dacEnabled = (value & 0xF8u) != 0;
         apu_.pulse1.envelopeIncrease = (value & 0x08u) != 0;
         apu_.pulse1.envelopePeriod = value & 0x07u;
@@ -312,9 +315,11 @@ void GameBoyAPU::writeRegister(uint16_t address, uint8_t value) {
         apu_.pulse1.envelopeTimer = apu_.pulse1.envelopePeriod;
         break;
     case 0xFF13: // NR13
+        if (!apu_.masterEnabled) break;
         apu_.pulse1.frequency = (apu_.pulse1.frequency & 0x0700u) | value;
         break;
     case 0xFF14: // NR14
+        if (!apu_.masterEnabled) break;
         apu_.pulse1.frequency = (value & 0x07u) << 8 | (apu_.pulse1.frequency & 0x00FFu);
         apu_.pulse1.lengthEnabled = (value & 0x40u) != 0;
         if ((value & 0x80u) != 0) {
@@ -333,10 +338,12 @@ void GameBoyAPU::writeRegister(uint16_t address, uint8_t value) {
         apu_.pulse1.sweepTimer = apu_.pulse1.sweepPeriod;
         break;
     case 0xFF16: // NR21
+        if (!apu_.masterEnabled) break;
         apu_.pulse2.duty = (value >> 6u) & 0x03u;
         apu_.pulse2.lengthCounter = 64 - (value & 0x3Fu);
         break;
     case 0xFF17: // NR22
+        if (!apu_.masterEnabled) break;
         apu_.pulse2.dacEnabled = (value & 0xF8u) != 0;
         apu_.pulse2.envelopeIncrease = (value & 0x08u) != 0;
         apu_.pulse2.envelopePeriod = value & 0x07u;
@@ -345,9 +352,11 @@ void GameBoyAPU::writeRegister(uint16_t address, uint8_t value) {
         apu_.pulse2.envelopeTimer = apu_.pulse2.envelopePeriod;
         break;
     case 0xFF18: // NR23
+        if (!apu_.masterEnabled) break;
         apu_.pulse2.frequency = (apu_.pulse2.frequency & 0x0700u) | value;
         break;
     case 0xFF19: // NR24
+        if (!apu_.masterEnabled) break;
         apu_.pulse2.frequency = (value & 0x07u) << 8 | (apu_.pulse2.frequency & 0x00FFu);
         apu_.pulse2.lengthEnabled = (value & 0x40u) != 0;
         if ((value & 0x80u) != 0) {
@@ -362,19 +371,24 @@ void GameBoyAPU::writeRegister(uint16_t address, uint8_t value) {
         }
         break;
     case 0xFF1A: // NR30
+        if (!apu_.masterEnabled) break;
         apu_.wave.dacEnabled = (value & 0x80u) != 0;
         if (!apu_.wave.dacEnabled) apu_.wave.enabled = false;
         break;
     case 0xFF1B: // NR31
+        if (!apu_.masterEnabled) break;
         apu_.wave.lengthCounter = 256 - value;
         break;
     case 0xFF1C: // NR32
+        if (!apu_.masterEnabled) break;
         apu_.wave.outputLevel = static_cast<uint8_t>((value >> 5u) & 0x03u);
         break;
     case 0xFF1D: // NR33
+        if (!apu_.masterEnabled) break;
         apu_.wave.frequency = (apu_.wave.frequency & 0x0700u) | value;
         break;
     case 0xFF1E: // NR34
+        if (!apu_.masterEnabled) break;
         apu_.wave.frequency = (value & 0x07u) << 8 | (apu_.wave.frequency & 0x00FFu);
         apu_.wave.lengthEnabled = (value & 0x40u) != 0;
         if ((value & 0x80u) != 0 && apu_.wave.lengthCounter == 0) {
@@ -387,9 +401,11 @@ void GameBoyAPU::writeRegister(uint16_t address, uint8_t value) {
         }
         break;
     case 0xFF20: // NR41
+        if (!apu_.masterEnabled) break;
         apu_.noise.lengthCounter = 64 - (value & 0x3Fu);
         break;
     case 0xFF21: // NR42
+        if (!apu_.masterEnabled) break;
         apu_.noise.dacEnabled = (value & 0xF8u) != 0;
         apu_.noise.envelopeIncrease = (value & 0x08u) != 0;
         apu_.noise.envelopePeriod = value & 0x07u;
@@ -398,11 +414,13 @@ void GameBoyAPU::writeRegister(uint16_t address, uint8_t value) {
         apu_.noise.envelopeTimer = apu_.noise.envelopePeriod;
         break;
     case 0xFF22: // NR43
+        if (!apu_.masterEnabled) break;
         apu_.noise.clockShift = (value >> 4);
         apu_.noise.divisorCode = value & 0x07u;
         apu_.noise.widthMode7 = (value & 0x08u) != 0;
         break;
     case 0xFF23: // NR44
+        if (!apu_.masterEnabled) break;
         apu_.noise.lengthEnabled = (value & 0x40u) != 0;
         if ((value & 0x80u) != 0) {
             if (apu_.noise.lengthCounter == 0) {
@@ -416,9 +434,11 @@ void GameBoyAPU::writeRegister(uint16_t address, uint8_t value) {
         }
         break;
     case 0xFF24: // NR50 - volume / mixing
+        if (!apu_.masterEnabled) break;
         apu_.nr50 = value;
         break;
     case 0xFF25: // NR51 - PWR NR
+        if (!apu_.masterEnabled) break;
         apu_.nr51 = value;
         break;
     case 0xFF26: // NR52 - APU power control
