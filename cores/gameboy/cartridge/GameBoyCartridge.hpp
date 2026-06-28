@@ -277,13 +277,13 @@ public:
         if (state.externalRam.size() != externalRam_.size()) {
             throw std::invalid_argument("cartridge save state external RAM size mismatch");
         }
-        if (state.currentRomBank >= std::max<std::size_t>(metadata_.romBankCount, 1u)) {
+        if (state.currentRomBank >= metadata_.romBankCount) {
             throw std::invalid_argument("cartridge save state ROM bank out of range");
         }
         const auto ramBankCount = externalRam_.empty()
             ? std::size_t{1}
             : std::max<std::size_t>(std::size_t{1}, externalRam_.size() / ramBankSize());
-        if (state.currentRamBank >= ramBankCount && metadata_.mapper != CartridgeMapper::MBC1) {
+        if (state.currentRamBank >= ramBankCount) {
             throw std::invalid_argument("cartridge save state RAM bank out of range");
         }
         if (state.selectedRtcRegister != 0xFFu &&
