@@ -13,7 +13,7 @@ namespace BMMQ {
 
 namespace {
 constexpr std::size_t kChunkNameSize = 32u;
-constexpr std::uint32_t kMaxChunkSize = 64u * 1024u * 1024u;
+constexpr std::size_t kMaxChunkSize = 64u * 1024u * 1024u;
 
 void appendU32(std::vector<std::uint8_t>& out, std::uint32_t value)
 {
@@ -192,22 +192,38 @@ void SaveStateReader::write(const SaveStateFile& state, const std::filesystem::p
         writeChunkBytes(payload, chunk);
     }
 
-    std::ofstream file(path, std::ios::binary);
-    if (!file.is_open()) {
-        throw std::runtime_error("Failed to open save state file for writing: " + path.string());
-    }
-
-    if (!payload.empty()) {
-        file.write(reinterpret_cast<const char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
-    }
+    std::vector<std::uint8_t> trailer;
     if (header.checksum == SaveStateChecksum::Crc32) {
         const auto checksum = crc32(payload.data(), payload.size());
-        std::vector<std::uint8_t> trailer;
         appendU32(trailer, checksum);
-        file.write(reinterpret_cast<const char*>(trailer.data()), static_cast<std::streamsize>(trailer.size()));
     }
-    if (!file) {
-        throw std::runtime_error("Failed to write save state file: " + path.string());
+
+    const auto tempPath = path.string() + ".tmp";
+    {
+        std::ofstream file(tempPath, std::ios::binary);
+        if (!file.is_open()) {
+            throw std::runtime_error("Failed to open temp save state file: " + tempPath);
+        }
+        if (!payload.empty()) {
+            file.write(reinterpret_cast<const char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
+        }
+        if (!trailer.empty()) {
+            file.write(reinterpret_cast<const char*>(trailer.data()), static_cast<std::streamsize>(trailer.size()));
+        }
+        if (!file) {
+            throw std::runtime_error("Failed to write save state file: " + tempPath);
+        }
+        file.close();
+        if (!file) {
+            throw std::runtime_error("Failed to close temp save state file: " + tempPath);
+        }
+    }
+    std::error_code ec;
+    std::filesystem::rename(tempPath, path, ec);
+    if (ec) {
+        std::error_code ignoreRemoveError;
+        std::filesystem::remove(tempPath, ignoreRemoveError);
+        throw std::runtime_error("Failed to rename save state into place: " + ec.message());
     }
 }
 
