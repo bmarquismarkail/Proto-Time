@@ -481,6 +481,9 @@ void GameBoyMemoryMap::importState(const std::vector<uint8_t>& state) {
     auto win0 = readVector(0x4000u);
     const bool win4Active = readFlag();
     auto win4 = readVector(0x4000u);
+    if ((win0Active && win0.size() != 0x4000u) || (win4Active && win4.size() != 0x4000u)) {
+        throw std::invalid_argument("Active ROM window state has wrong size");
+    }
 
     decltype(vram_) nextVram{};
     decltype(wram_) nextWram{};
