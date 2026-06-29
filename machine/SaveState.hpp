@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -57,6 +58,11 @@ class SaveStateReader {
 public:
     // Read a save state file.
     static SaveStateFile read(const std::filesystem::path& path);
+
+    // Validate and read a save state file for a specific core/ROM pair.
+    [[nodiscard]] static SaveStateFile readForCore(const std::filesystem::path& path,
+                                                   uint32_t expectedCoreId,
+                                                   std::span<const uint8_t> expectedRomBytes);
 
     // Write a save state file.
     static void write(const SaveStateFile& state, const std::filesystem::path& path);

@@ -5,6 +5,7 @@
 #include <cstring>
 #include <fstream>
 #include <limits>
+#include <span>
 #include <stdexcept>
 #include <string>
 
@@ -153,6 +154,25 @@ SaveStateFile SaveStateReader::read(const std::filesystem::path& path)
         throw std::runtime_error("Failed to finalize save state read");
     }
 
+    return state;
+}
+
+SaveStateFile SaveStateReader::readForCore(const std::filesystem::path& path,
+                                          uint32_t expectedCoreId,
+                                          std::span<const uint8_t> expectedRomBytes)
+{
+    if (expectedCoreId == 0u) {
+        throw std::invalid_argument("expected core id must be set");
+    }
+
+    auto state = read(path);
+    if (state.header.core_id != expectedCoreId) {
+        throw std::invalid_argument("save state is not compatible with this machine");
+    }
+    const auto expectedRomHash = crc32(expectedRomBytes.data(), expectedRomBytes.size());
+    if (state.header.rom_hash != 0u && expectedRomHash != state.header.rom_hash) {
+        throw std::invalid_argument("save state ROM identity does not match the loaded ROM");
+    }
     return state;
 }
 

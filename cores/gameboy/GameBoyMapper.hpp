@@ -47,6 +47,7 @@ public:
     [[nodiscard]] bool hasDirtySaveData() const noexcept { return !externalRam_.empty() && dirty_; }
     [[nodiscard]] std::size_t externalRamSize() const noexcept { return externalRamSize_; }
     [[nodiscard]] std::size_t romBankCount() const noexcept { return romBankCount_; }
+    [[nodiscard]] std::span<const uint8_t> romData() const noexcept { return romData_; }
 
     // Save state serialization — deterministic, self-delimiting, CRC trailer
     struct SaveState {

@@ -17,6 +17,7 @@ public:
     bool load(const uint8_t* data, size_t size);
     void reset();
     [[nodiscard]] bool loaded() const noexcept;
+    [[nodiscard]] const std::vector<uint8_t>& romData() const noexcept { return rom; }
     [[nodiscard]] bool handlesControlWrite(uint16_t addr) const noexcept;
     [[nodiscard]] bool handlesMappedWrite(uint16_t addr) const noexcept;
     [[nodiscard]] uint8_t read(uint16_t addr) const;

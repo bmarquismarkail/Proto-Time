@@ -445,9 +445,12 @@ void GameGearMachine::save_state(const std::filesystem::path& path) {
     }
 
     SaveStateFile state;
-    state.header.core_id = kCoreId_GameGear;
-    state.header.checksum = SaveStateChecksum::Crc32;
-    state.header.rom_hash = 0u;
+    state.header.core_id = BMMQ::kCoreId_GameGear;
+    state.header.checksum = BMMQ::SaveStateChecksum::Crc32;
+    state.header.rom_hash = BMMQ::crc32(
+        impl->cart->romData().data(),
+        impl->cart->romData().size());
+
     state.chunks.push_back(makeChunk("gg.machine", serializeMachineMeta(
         impl->stepCounter,
         impl->lastAudioFrameCounter,
@@ -468,8 +471,9 @@ void GameGearMachine::load_state(const std::filesystem::path& path) {
         throw std::runtime_error("Load ROM before loading Game Gear save state");
     }
 
-    const auto state = SaveStateReader::read(path);
-    if (state.header.core_id != kCoreId_GameGear) {
+    const auto state = SaveStateReader::readForCore(
+        path, BMMQ::kCoreId_GameGear, impl->cart->romData());
+    if (state.header.core_id != BMMQ::kCoreId_GameGear) {
         throw std::invalid_argument("save state is not a Game Gear state");
     }
 

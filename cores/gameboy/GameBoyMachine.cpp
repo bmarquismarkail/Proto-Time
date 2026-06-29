@@ -1345,7 +1345,9 @@ void GameBoyMachine::save_state(const std::filesystem::path& path) {
     BMMQ::SaveStateFile state;
     state.header.core_id = BMMQ::kCoreId_GameBoy;
     state.header.checksum = BMMQ::SaveStateChecksum::Crc32;
-    state.header.rom_hash = 0u;
+    state.header.rom_hash = BMMQ::crc32(
+        impl_->mapper.romData().data(),
+        impl_->mapper.romData().size());
     state.chunks.push_back(makeChunk("gb.machine", machineWriter.take()));
     state.chunks.push_back(makeChunk("gb.cpu", serializeCpuState(impl_->cpu.cpu().exportState())));
     state.chunks.push_back(makeChunk("gb.memory", impl_->memoryMap.exportState()));
@@ -1362,10 +1364,10 @@ void GameBoyMachine::load_state(const std::filesystem::path& path) {
         throw std::runtime_error("Load ROM before loading Game Boy save state");
     }
 
-    const auto state = BMMQ::SaveStateReader::read(path);
-    if (state.header.core_id != BMMQ::kCoreId_GameBoy) {
-        throw std::invalid_argument("save state is not a Game Boy state");
-    }
+    const auto state = BMMQ::SaveStateReader::readForCore(
+        path,
+        BMMQ::kCoreId_GameBoy,
+        impl_->mapper.romData());
 
     impl_->mapper.importState(deserializeMapperState(requireChunk(state, "gb.mapper").data));
     impl_->cartridge_.importState(deserializeCartridgeState(requireChunk(state, "gb.cartridge").data));
