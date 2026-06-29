@@ -1,6 +1,7 @@
 #include <cassert>
 #include <cstdint>
 #include <filesystem>
+#include <random>
 #include <vector>
 
 #include "cores/gamegear/GameGearMachine.hpp"
@@ -17,7 +18,10 @@ void removeIfExists(const std::filesystem::path& path)
 
 int main()
 {
-    const auto savePath = std::filesystem::temp_directory_path() / "proto-time-gg-machine.ptss";
+    std::random_device rd;
+    std::uniform_int_distribution<uint64_t> dist;
+    const auto uniqueName = std::filesystem::path("proto-time-gg-machine-") += std::to_string(dist(rd)) += ".ptss";
+    const auto savePath = std::filesystem::temp_directory_path() / uniqueName;
     removeIfExists(savePath);
 
     std::vector<uint8_t> rom(0x8000u, 0x00u);
