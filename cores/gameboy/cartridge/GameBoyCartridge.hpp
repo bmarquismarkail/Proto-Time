@@ -277,14 +277,56 @@ public:
         if (state.externalRam.size() != externalRam_.size()) {
             throw std::invalid_argument("cartridge save state external RAM size mismatch");
         }
-        if (state.currentRomBank >= metadata_.romBankCount) {
-            throw std::invalid_argument("cartridge save state ROM bank out of range");
+        if (metadata_.romBankCount == 1) {
+            if (state.currentRomBank != 0) {
+                throw std::invalid_argument("cartridge save state ROM bank out of range");
+            }
+        } else {
+            switch (metadata_.mapper) {
+            case CartridgeMapper::MBC3:
+                if (state.currentRomBank < 1 || state.currentRomBank > 0x7Fu) {
+                    throw std::invalid_argument("cartridge save state ROM bank out of range");
+                }
+                break;
+            case CartridgeMapper::MBC5:
+                if (state.currentRomBank > 0x1FFu) {
+                    throw std::invalid_argument("cartridge save state ROM bank out of range");
+                }
+                break;
+            case CartridgeMapper::MBC2:
+                if (state.currentRomBank < 1 || state.currentRomBank > 0x0Fu) {
+                    throw std::invalid_argument("cartridge save state ROM bank out of range");
+                }
+                break;
+            default:
+                if (state.currentRomBank == 0 || state.currentRomBank >= 0x80u) {
+                    throw std::invalid_argument("cartridge save state ROM bank out of range");
+                }
+                break;
+            }
         }
-        const auto ramBankCount = externalRam_.empty()
-            ? std::size_t{1}
-            : std::max<std::size_t>(std::size_t{1}, externalRam_.size() / ramBankSize());
-        if (state.currentRamBank >= ramBankCount) {
-            throw std::invalid_argument("cartridge save state RAM bank out of range");
+        switch (metadata_.mapper) {
+        case CartridgeMapper::MBC3:
+            if (state.currentRamBank >= 4) {
+                throw std::invalid_argument("cartridge save state RAM bank out of range");
+            }
+            break;
+        case CartridgeMapper::MBC5:
+            if (state.currentRamBank >= 0x10u) {
+                throw std::invalid_argument("cartridge save state RAM bank out of range");
+            }
+            break;
+        case CartridgeMapper::MBC1:
+            if (state.currentRamBank != 0) {
+                throw std::invalid_argument("cartridge save state RAM bank out of range");
+            }
+            break;
+        case CartridgeMapper::MBC2:
+        case CartridgeMapper::None:
+            if (state.currentRamBank != 0) {
+                throw std::invalid_argument("cartridge save state RAM bank out of range");
+            }
+            break;
         }
         if (state.selectedRtcRegister != 0xFFu &&
             (!metadata_.hasRtc || state.selectedRtcRegister < 0x08u || state.selectedRtcRegister > 0x0Cu)) {
