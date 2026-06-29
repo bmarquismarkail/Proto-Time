@@ -1380,11 +1380,18 @@ void GameBoyMachine::load_state(const std::filesystem::path& path) {
     impl_->lastAudioFrameCounter = machineReader.u64();
     impl_->bootEntryPending = machineReader.boolean();
     impl_->interruptRequested = machineReader.boolean();
+
     if (machineReader.boolean()) {
-        impl_->lastDigitalInputMask = machineReader.u32();
+        uint32_t mask = machineReader.u32();
+        if (mask <= 0xFFu) {
+            impl_->lastDigitalInputMask = mask;
+        } else {
+            impl_->lastDigitalInputMask.reset();
+        }
     } else {
         impl_->lastDigitalInputMask.reset();
     }
+
     impl_->inputGeneration = machineReader.u64();
     if (!machineReader.done()) {
         throw std::invalid_argument("Game Boy machine save state has trailing data");
@@ -1402,4 +1409,5 @@ void GameBoyMachine::load_state(const std::filesystem::path& path) {
     impl_->cpu.cpu().syncCachedIoRegisterWrite(0xFF26u, impl_->apu.readRegister(0xFF26u));
     inputService().advanceGeneration(impl_->inputGeneration);
 }
+
 } // namespace GB
