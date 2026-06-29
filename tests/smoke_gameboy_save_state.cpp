@@ -1,7 +1,11 @@
 #include <cassert>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <sstream>
 #include <vector>
+
+#include <unistd.h>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
 
@@ -19,6 +23,14 @@ std::vector<uint8_t> makeRom()
     return rom;
 }
 
+std::filesystem::path makeSavePath()
+{
+    std::ostringstream name;
+    name << "proto-time-gb-machine-" << ::getpid() << "-" << ::getppid() << "-"
+         << std::chrono::steady_clock::now().time_since_epoch().count() << ".ptss";
+    return std::filesystem::temp_directory_path() / name.str();
+}
+
 void removeIfExists(const std::filesystem::path& path)
 {
     std::error_code ec;
@@ -29,7 +41,7 @@ void removeIfExists(const std::filesystem::path& path)
 
 int main()
 {
-    const auto savePath = std::filesystem::temp_directory_path() / "proto-time-gb-machine.ptss";
+    const auto savePath = makeSavePath();
     removeIfExists(savePath);
 
     const auto rom = makeRom();
