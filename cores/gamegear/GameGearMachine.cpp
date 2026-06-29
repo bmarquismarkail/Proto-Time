@@ -477,17 +477,10 @@ void GameGearMachine::load_state(const std::filesystem::path& path) {
         throw std::invalid_argument("save state is not a Game Gear state");
     }
 
-    impl->cart->importState(requireChunk(state, "gg.mapper").data);
-    impl->mem.importState(requireChunk(state, "gg.memory").data);
-    impl->vdp.importState(requireChunk(state, "gg.vdp").data);
-    impl->psg.importState(requireChunk(state, "gg.psg").data);
-    impl->input.importState(requireChunk(state, "gg.input").data);
-    impl->cpu.importState(requireChunk(state, "gg.cpu").data);
-
     const auto& meta = requireChunk(state, "gg.machine").data;
     std::size_t pos = 0;
-    impl->stepCounter = readU64(meta, pos);
-    impl->lastAudioFrameCounter = readU64(meta, pos);
+    const auto nextStepCounter = readU64(meta, pos);
+    const auto nextLastAudioFrameCounter = readU64(meta, pos);
     if (pos > meta.size() || meta.size() - pos < 2u) {
         throw std::invalid_argument("Game Gear machine metadata truncated");
     }
@@ -496,25 +489,54 @@ void GameGearMachine::load_state(const std::filesystem::path& path) {
     if (interrupt > 1u || hasInput > 1u) {
         throw std::invalid_argument("Game Gear machine metadata boolean invalid");
     }
-    impl->interruptRequested = interrupt != 0u;
+    std::optional<uint32_t> nextLastDigitalInputMask;
     if (hasInput != 0u) {
         if (meta.size() - pos < 4u) {
             throw std::invalid_argument("Game Gear machine metadata input truncated");
         }
-        impl->lastDigitalInputMask =
+        nextLastDigitalInputMask =
             static_cast<uint32_t>(meta[pos]) |
             (static_cast<uint32_t>(meta[pos + 1u]) << 8u) |
             (static_cast<uint32_t>(meta[pos + 2u]) << 16u) |
             (static_cast<uint32_t>(meta[pos + 3u]) << 24u);
         pos += 4u;
-    } else {
-        impl->lastDigitalInputMask.reset();
     }
-    impl->inputGeneration = readU64(meta, pos);
+    const auto nextInputGeneration = readU64(meta, pos);
     if (pos != meta.size()) {
         throw std::invalid_argument("Game Gear machine metadata has trailing data");
     }
 
+    auto nextCart = createMapperFromRom(
+        impl->cart->romData().data(),
+        impl->cart->romData().size(),
+        std::nullopt);
+    if (!nextCart) {
+        throw std::runtime_error("Failed to recreate mapper for Game Gear save state");
+    }
+    auto nextMem = impl->mem;
+    auto nextVdp = impl->vdp;
+    auto nextPsg = impl->psg;
+    auto nextInput = impl->input;
+    auto nextCpu = impl->cpu;
+
+    nextCart->importState(requireChunk(state, "gg.mapper").data);
+    nextMem.importState(requireChunk(state, "gg.memory").data);
+    nextVdp.importState(requireChunk(state, "gg.vdp").data);
+    nextPsg.importState(requireChunk(state, "gg.psg").data);
+    nextInput.importState(requireChunk(state, "gg.input").data);
+    nextCpu.importState(requireChunk(state, "gg.cpu").data);
+
+    impl->cart = std::move(nextCart);
+    impl->mem = std::move(nextMem);
+    impl->vdp = std::move(nextVdp);
+    impl->psg = std::move(nextPsg);
+    impl->input = std::move(nextInput);
+    impl->cpu = std::move(nextCpu);
+    impl->stepCounter = nextStepCounter;
+    impl->lastAudioFrameCounter = nextLastAudioFrameCounter;
+    impl->interruptRequested = interrupt != 0u;
+    impl->lastDigitalInputMask = nextLastDigitalInputMask;
+    impl->inputGeneration = nextInputGeneration;
     impl->mem.setCartridge(impl->cart.get());
     impl->mem.setInput(&impl->input);
     impl->mem.setPsg(&impl->psg);

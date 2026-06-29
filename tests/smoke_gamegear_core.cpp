@@ -436,6 +436,19 @@ int main() {
     assert(static_cast<uint8_t>((cpu.AF >> 8) & 0x00FFu) == 0x03u);
     assert(cpu.PC == 0x0002u);
 
+    auto cpuState = cpu.exportState();
+    assert(cpuState.size() == 32u);
+    cpuState[26u] = 2u; // invalid IFF1 boolean after register payload.
+    cpu.AF = 0x1234u;
+    bool rejectedInvalidCpuState = false;
+    try {
+        cpu.importState(cpuState);
+    } catch (const std::invalid_argument&) {
+        rejectedInvalidCpuState = true;
+    }
+    assert(rejectedInvalidCpuState);
+    assert(cpu.AF == 0x1234u);
+
     const auto logicalMask = static_cast<BMMQ::InputButtonMask>(
         BMMQ::inputButtonMask(BMMQ::InputButton::Right) |
         BMMQ::inputButtonMask(BMMQ::InputButton::Button1) |

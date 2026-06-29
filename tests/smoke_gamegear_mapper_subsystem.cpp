@@ -1,8 +1,10 @@
 #include "cores/gamegear/GameGearCartridge.hpp"
 #include "cores/gamegear/GameGearMemoryMap.hpp"
+#include "cores/gamegear/mappers/CodemastersMapper.hpp"
 
 #include <cassert>
 #include <cstdint>
+#include <stdexcept>
 #include <vector>
 
 int main()
@@ -47,6 +49,19 @@ int main()
 
     memory.write(0x8000u, 0x99u); // ROM window writes ignored when SRAM disabled
     assert(memory.read(0x8000u) == 0x40u);
+
+    CodemastersMapper mapper;
+    assert(mapper.load(rom.data(), rom.size()));
+    auto mapperState = mapper.exportState();
+    assert(mapperState.size() >= 2u);
+    mapperState[mapperState.size() - 1u] = 2u;
+    bool rejectedInvalidFlag = false;
+    try {
+        mapper.importState(mapperState);
+    } catch (const std::invalid_argument&) {
+        rejectedInvalidFlag = true;
+    }
+    assert(rejectedInvalidFlag);
 
     return 0;
 }

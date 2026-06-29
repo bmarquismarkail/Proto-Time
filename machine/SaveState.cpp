@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <limits>
 #include <span>
@@ -14,6 +15,9 @@ namespace BMMQ {
 namespace {
 constexpr std::size_t kChunkNameSize = 32u;
 constexpr std::size_t kMaxChunkSize = 64u * 1024u * 1024u;
+constexpr std::size_t kSerializedHeaderSize = sizeof(kSaveStateMagic) - 1u + 5u * sizeof(std::uint32_t);
+constexpr std::size_t kSerializedChunkHeaderSize = sizeof(std::uint32_t) + kChunkNameSize;
+constexpr std::uint32_t kMaxChunkCount = 4096u;
 
 void appendU32(std::vector<std::uint8_t>& out, std::uint32_t value)
 {
@@ -109,6 +113,23 @@ SaveStateFile SaveStateReader::read(const std::filesystem::path& path)
     if (state.header.checksum != SaveStateChecksum::None &&
         state.header.checksum != SaveStateChecksum::Crc32) {
         throw std::runtime_error("Unsupported save state checksum mode");
+    }
+    if (state.header.chunk_count > kMaxChunkCount) {
+        throw std::runtime_error("Save state chunk count is too large");
+    }
+    std::error_code fileSizeError;
+    const auto fileSize = std::filesystem::file_size(path, fileSizeError);
+    if (fileSizeError) {
+        throw std::runtime_error("Failed to determine save state file size: " + fileSizeError.message());
+    }
+    const auto trailerSize = state.header.checksum == SaveStateChecksum::Crc32 ? sizeof(std::uint32_t) : 0u;
+    if (fileSize < kSerializedHeaderSize + trailerSize) {
+        throw std::runtime_error("Save state file is too short");
+    }
+    const auto maxChunksBySize =
+        (fileSize - kSerializedHeaderSize - trailerSize) / kSerializedChunkHeaderSize;
+    if (state.header.chunk_count > maxChunksBySize) {
+        throw std::runtime_error("Save state chunk count exceeds file size");
     }
 
     std::vector<std::uint8_t> payload;

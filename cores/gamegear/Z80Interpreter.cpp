@@ -934,27 +934,48 @@ void Z80Interpreter::importState(const std::vector<uint8_t>& state) {
         return static_cast<uint16_t>(lo | (hi << 8u));
     };
 
-    AF = readU16();
-    BC = readU16();
-    DE = readU16();
-    HL = readU16();
-    IX = readU16();
-    IY = readU16();
-    SP = readU16();
-    PC = readU16();
-    AF_ = readU16();
-    BC_ = readU16();
-    DE_ = readU16();
-    HL_ = readU16();
-    I = readU8();
-    R = readU8();
-    IFF1 = readBool();
-    IFF2 = readBool();
-    IME = readBool();
-    imeEnableDelay_ = readU8();
-    halted_ = readBool();
-    interruptMode_ = readU8();
-    if (interruptMode_ > 2u || pos != state.size()) {
+    const auto nextAF = readU16();
+    const auto nextBC = readU16();
+    const auto nextDE = readU16();
+    const auto nextHL = readU16();
+    const auto nextIX = readU16();
+    const auto nextIY = readU16();
+    const auto nextSP = readU16();
+    const auto nextPC = readU16();
+    const auto nextAF_ = readU16();
+    const auto nextBC_ = readU16();
+    const auto nextDE_ = readU16();
+    const auto nextHL_ = readU16();
+    const auto nextI = readU8();
+    const auto nextR = readU8();
+    const auto nextIFF1 = readBool();
+    const auto nextIFF2 = readBool();
+    const auto nextIME = readBool();
+    const auto nextImeEnableDelay = readU8();
+    const auto nextHalted = readBool();
+    const auto nextInterruptMode = readU8();
+    if (nextInterruptMode > 2u || pos != state.size()) {
         throw std::invalid_argument("Z80 state invalid");
     }
+
+    AF = nextAF;
+    BC = nextBC;
+    DE = nextDE;
+    HL = nextHL;
+    IX = nextIX;
+    IY = nextIY;
+    SP = nextSP;
+    PC = nextPC;
+    AF_ = nextAF_;
+    BC_ = nextBC_;
+    DE_ = nextDE_;
+    HL_ = nextHL_;
+    I = nextI;
+    R = nextR;
+    IFF1 = nextIFF1;
+    IFF2 = nextIFF2;
+    IME = nextIME;
+    imeEnableDelay_ = nextImeEnableDelay;
+    halted_ = nextHalted;
+    interruptMode_ = nextInterruptMode;
 }

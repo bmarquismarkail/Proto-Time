@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <stdexcept>
 
@@ -10,10 +11,18 @@ constexpr std::array<int, 16> kAttenuationTable{{
     8192, 6507, 5168, 4105, 3261, 2590, 2057, 1634,
     1298, 1031, 819, 650, 516, 410, 326, 0,
 }};
+constexpr double kMaxImportedCounter = 1.0e9;
 
 [[nodiscard]] int16_t clampSample(int value) noexcept
 {
     return static_cast<int16_t>(std::clamp(value, -32768, 32767));
+}
+
+void validateImportedCounter(double value)
+{
+    if (!std::isfinite(value) || value < 0.0 || value > kMaxImportedCounter) {
+        throw std::invalid_argument("Game Gear PSG state counter invalid");
+    }
 }
 } // namespace
 
@@ -467,12 +476,14 @@ void GameGearPSG::importState(const std::vector<uint8_t>& state) {
         tone.period = readU16();
         tone.attenuation = readU8();
         tone.counter = readDouble();
+        validateImportedCounter(tone.counter);
         tone.outputHigh = readBool();
         tone.enabled = readBool();
     }
     const auto nextNoiseControl = readU8();
     const auto nextNoiseAttenuation = readU8();
     const auto nextNoiseCounter = readDouble();
+    validateImportedCounter(nextNoiseCounter);
     const auto nextNoiseLfsr = readU16();
     const auto nextNoiseOutputHigh = readBool();
     const auto nextStereoControl = readU8();

@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <cstring>
 #include <iostream>
+#include <limits>
+#include <stdexcept>
 
 namespace {
 
@@ -97,6 +100,18 @@ int main()
 
     psg.writeCompatRegister(0xFF26u, 0x00u);
     assert((psg.readCompatRegister(0xFF26u) & 0x80u) == 0u);
+
+    auto state = psg.exportState();
+    const auto nan = std::numeric_limits<double>::quiet_NaN();
+    static_assert(sizeof(nan) == 8u);
+    std::memcpy(state.data() + 3u, &nan, sizeof(nan));
+    bool rejectedInvalidCounter = false;
+    try {
+        psg.importState(state);
+    } catch (const std::invalid_argument&) {
+        rejectedInvalidCounter = true;
+    }
+    assert(rejectedInvalidCounter);
 
     return 0;
 }
