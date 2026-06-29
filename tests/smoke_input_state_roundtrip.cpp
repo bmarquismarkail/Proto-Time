@@ -27,9 +27,12 @@ int main()
         assert(reExported == exported);
     }
 
-    // Test 3: Set buttons to some combination, export, import, verify.
+    // Test 3: Set buttons to some combination, exercise JOYP select bits, export/import, verify.
     {
         GameBoyInput input;
+
+        // Select the directional group only so the low nibble reads D-pad state.
+        input.writeRegister(0x20u); // JOYP bit5=1 deselects buttons, bit4=0 selects directions
 
         // Set logical buttons: Up + A + B.
         input.setLogicalButtons(GameBoyInput::kUp | GameBoyInput::kA | GameBoyInput::kB);
@@ -38,22 +41,21 @@ int main()
         assert(!exported.empty());
         assert(exported.size() == 2u);
 
-        input.writeRegister(0x00u);
         const uint8_t physical = input.readRegister();
         assert((physical & 0x04u) == 0); // Up pressed.
-        assert((physical & 0x01u) == 0); // A pressed.
-        assert((physical & 0x02u) == 0); // B pressed.
-        assert((physical & 0x08u) != 0); // Select/Start not pressed in selected button low nibble.
+        assert((physical & 0x01u) != 0); // A not visible in directional view.
+        assert((physical & 0x02u) != 0); // B not visible in directional view.
+        assert((physical & 0x08u) != 0); // Down not pressed in selected button low nibble.
 
-        // Import back and verify state matches.
+        // Import back and verify state matches, especially preserved select bits.
         GameBoyInput imported;
         imported.importState(exported);
 
+        // select-bit persistence pass: read back reflects the exported register state.
+        assert(imported.readRegister() == physical);
+
         auto reExported = imported.exportState();
         assert(reExported == exported);
-
-        imported.writeRegister(0x00u);
-        assert(imported.readRegister() == physical);
     }
 
     // Test 4: Set buttons to another combination and round-trip again.
