@@ -98,6 +98,16 @@ int main()
 
     {
         BMMQ::MemoryStorage<AddressType, DataType> invalidStorage;
+        BMMQ::MemoryStorage<AddressType, DataType> validStorage;
+        validStorage.rehydrate(
+            std::vector<DataType>{0x01u},
+            std::vector<std::tuple<AddressType, AddressType, BMMQ::memAccess>>{
+                {static_cast<AddressType>(0x0000u), static_cast<AddressType>(0x0001u), BMMQ::memAccess::ReadWrite}
+            });
+        DataType rehydratedObserved = 0x00u;
+        validStorage.read(std::span<DataType>(&rehydratedObserved, 1), static_cast<AddressType>(0x0000u));
+        assert(rehydratedObserved == 0x01u);
+
         bool mismatchThrew = false;
         try {
             invalidStorage.rehydrate(

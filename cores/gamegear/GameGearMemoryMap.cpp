@@ -5,6 +5,9 @@
 #include "GameGearPSG.hpp"
 #include "GameGearVDP.hpp"
 
+#include <algorithm>
+#include <stdexcept>
+
 namespace {
 GameGearCartridge& fallbackCartridgeStorage() {
     static GameGearCartridge cartridge;
@@ -92,6 +95,27 @@ void GameGearMemoryMap::writeIoPort(uint8_t port, uint8_t value) {
         }
         return;
     }
+}
+
+void appendU32(std::vector<uint8_t>& out, std::uint32_t value)
+{
+    out.push_back(static_cast<uint8_t>(value & 0xFFu));
+    out.push_back(static_cast<uint8_t>((value >> 8u) & 0xFFu));
+    out.push_back(static_cast<uint8_t>((value >> 16u) & 0xFFu));
+    out.push_back(static_cast<uint8_t>((value >> 24u) & 0xFFu));
+}
+
+std::uint32_t readU32(const std::vector<uint8_t>& bytes, std::size_t& pos)
+{
+    if (pos > bytes.size() || bytes.size() - pos < 4u) {
+        throw std::invalid_argument("Game Gear memory state truncated");
+    }
+    const auto value = static_cast<std::uint32_t>(bytes[pos]) |
+        (static_cast<std::uint32_t>(bytes[pos + 1u]) << 8u) |
+        (static_cast<std::uint32_t>(bytes[pos + 2u]) << 16u) |
+        (static_cast<std::uint32_t>(bytes[pos + 3u]) << 24u);
+    pos += 4u;
+    return value;
 }
 
 
@@ -189,7 +213,7 @@ uint8_t GameGearMemoryMap::read(uint16_t addr) const {
         return ram[addr - 0xE000];
     }
     // RAM mirror for $FFFC-$FFFF and $DFFC-$DFFF
-    if ((addr >= 0xDFFCu && addr <= 0xDFFFu) || (addr >= 0xFFFCu && addr <= 0xFFFFu)) {
+    if ((addr >= 0xDFFCu && addr <= 0xDFFFu) || (addr >= 0xFFFCu)) {
         return ram[0x1FFCu + (addr & 0x3)];
     }
     return 0xFF;
@@ -200,7 +224,7 @@ void GameGearMemoryMap::write(uint16_t addr, uint8_t value) {
     if (cartridge != nullptr && cartridge->handlesControlWrite(addr)) {
         cartridge->write(addr, value);
         // Writes to $FFFC-$FFFF also update RAM mirror at $1FFC-$1FFF
-        if (addr >= 0xFFFCu && addr <= 0xFFFFu) {
+        if (addr >= 0xFFFCu) {
             ram[0x1FFCu + (addr & 0x3)] = value;
         }
         return;
@@ -244,4 +268,42 @@ void GameGearMemoryMap::write(uint16_t addr, uint8_t value) {
         ram[0x1FFCu + (addr & 0x3)] = value;
         return;
     }
+}
+
+std::vector<uint8_t> GameGearMemoryMap::exportState() const {
+    std::vector<uint8_t> state;
+    state.reserve(2u + ram.size() + bios_.size() + 8u);
+    state.push_back(memoryControl_);
+    state.push_back(ioControl_);
+    appendU32(state, static_cast<std::uint32_t>(ram.size()));
+    state.insert(state.end(), ram.begin(), ram.end());
+    appendU32(state, static_cast<std::uint32_t>(bios_.size()));
+    state.insert(state.end(), bios_.begin(), bios_.end());
+    return state;
+}
+
+void GameGearMemoryMap::importState(const std::vector<uint8_t>& state) {
+    std::size_t pos = 0;
+    if (state.size() < 10u) {
+        throw std::invalid_argument("Game Gear memory state too short");
+    }
+    const auto nextMemoryControl = state[pos++];
+    const auto nextIoControl = state[pos++];
+    const auto ramSize = static_cast<std::size_t>(readU32(state, pos));
+    if (ramSize != ram.size() || state.size() - pos < ramSize + 4u) {
+        throw std::invalid_argument("Game Gear memory state RAM size mismatch");
+    }
+    decltype(ram) nextRam{};
+    std::copy_n(state.begin() + static_cast<std::ptrdiff_t>(pos), nextRam.size(), nextRam.begin());
+    pos += nextRam.size();
+    const auto biosSize = static_cast<std::size_t>(readU32(state, pos));
+    if (biosSize > 0x4000u || state.size() - pos != biosSize) {
+        throw std::invalid_argument("Game Gear memory state BIOS size invalid");
+    }
+    std::vector<uint8_t> nextBios(state.begin() + static_cast<std::ptrdiff_t>(pos), state.end());
+
+    memoryControl_ = nextMemoryControl;
+    ioControl_ = nextIoControl;
+    ram = nextRam;
+    bios_ = std::move(nextBios);
 }

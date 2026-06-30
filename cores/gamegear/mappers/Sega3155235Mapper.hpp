@@ -23,4 +23,6 @@ public:
         write(0xFFFEu, 0x01u);
         write(0xFFFFu, 0x02u);
     }
+
+    const std::vector<uint8_t>& romData() const noexcept override { return GameGearCartridge::romData(); }
 };

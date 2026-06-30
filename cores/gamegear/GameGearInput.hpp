@@ -3,6 +3,7 @@
 // References: SMS Power, MAME
 
 #include <cstdint>
+#include <vector>
 
 #include "machine/InputTypes.hpp"
 
@@ -19,6 +20,8 @@ public:
     [[nodiscard]] uint8_t readSystemPort(uint8_t port) const noexcept;
     void writeSystemPort(uint8_t port, uint8_t value) noexcept;
     [[nodiscard]] uint8_t audioStereoControl() const noexcept;
+    [[nodiscard]] std::vector<uint8_t> exportState() const;
+    void importState(const std::vector<uint8_t>& state);
 
 private:
     BMMQ::InputButtonMask logicalButtons_ = 0u;

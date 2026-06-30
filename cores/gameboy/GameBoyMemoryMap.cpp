@@ -1,9 +1,11 @@
 #include "GameBoyMemoryMap.hpp"
 #include "GameBoyMapper.hpp"
 #include "cartridge/GameBoyCartridge.hpp"
+#include "../../machine/SaveState.hpp"
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <stdexcept>
 #include <tuple>
 
 namespace GB {
@@ -365,6 +367,149 @@ void GameBoyMemoryMap::setIoRegisterRaw(uint16_t address, uint8_t value) {
     } else if (address == 0xFFFFu) {
         hram_[0xFFu] = value;
     }
+}
+
+
+
+std::vector<uint8_t> GameBoyMemoryMap::exportState() const {
+    std::vector<uint8_t> state;
+    const auto appendU32 = [&state](std::uint32_t value) {
+        state.push_back(static_cast<uint8_t>(value & 0xFFu));
+        state.push_back(static_cast<uint8_t>((value >> 8u) & 0xFFu));
+        state.push_back(static_cast<uint8_t>((value >> 16u) & 0xFFu));
+        state.push_back(static_cast<uint8_t>((value >> 24u) & 0xFFu));
+    };
+    const auto appendBytes = [&state](const auto& bytes) {
+        state.insert(state.end(), bytes.begin(), bytes.end());
+    };
+
+    state.reserve(vram_.size() + wram_.size() + oam_.size() + ioRegs_.size() + hram_.size() +
+                  bootRom_.size() + romWindow0x0000_.data.size() + romWindow0x4000_.data.size() + 32u);
+
+    state.push_back(bootRomActive_ ? 1u : 0u);
+    appendU32(static_cast<std::uint32_t>(bootRom_.size()));
+    appendBytes(bootRom_);
+
+    state.push_back(romWindow0x0000_.active ? 1u : 0u);
+    appendU32(static_cast<std::uint32_t>(romWindow0x0000_.data.size()));
+    appendBytes(romWindow0x0000_.data);
+
+    state.push_back(romWindow0x4000_.active ? 1u : 0u);
+    appendU32(static_cast<std::uint32_t>(romWindow0x4000_.data.size()));
+    appendBytes(romWindow0x4000_.data);
+
+    appendBytes(vram_);
+    appendBytes(wram_);
+    appendBytes(oam_);
+    appendBytes(ioRegs_);
+    appendBytes(hram_);
+
+    uint32_t crc = BMMQ::crc32(state.data(), state.size());
+    state.push_back(static_cast<uint8_t>(crc & 0xFF));
+    state.push_back(static_cast<uint8_t>((crc >> 8) & 0xFF));
+    state.push_back(static_cast<uint8_t>((crc >> 16) & 0xFF));
+    state.push_back(static_cast<uint8_t>((crc >> 24) & 0xFF));
+
+    return state;
+}
+
+void GameBoyMemoryMap::importState(const std::vector<uint8_t>& state) {
+    const auto fixedPayloadSize = vram_.size() + wram_.size() + oam_.size() + ioRegs_.size() + hram_.size();
+    if (state.size() < 4u + 15u + fixedPayloadSize) {
+        throw std::invalid_argument("Memory map state too short");
+    }
+
+    const auto crcPos = state.size() - 4u;
+    const uint32_t storedCrc =
+        static_cast<uint32_t>(state[crcPos]) |
+        (static_cast<uint32_t>(state[crcPos + 1u]) << 8u) |
+        (static_cast<uint32_t>(state[crcPos + 2u]) << 16u) |
+        (static_cast<uint32_t>(state[crcPos + 3u]) << 24u);
+    const uint32_t expectedCrc = BMMQ::crc32(state.data(), crcPos);
+    if (storedCrc != expectedCrc) {
+        throw std::invalid_argument("Memory map state checksum mismatch");
+    }
+
+    std::size_t pos = 0;
+    const auto payloadEnd = crcPos;
+    const auto require = [&](std::size_t count) {
+        if (pos > payloadEnd || count > payloadEnd - pos) {
+            throw std::invalid_argument("Memory map state is truncated");
+        }
+    };
+    const auto readFlag = [&]() -> bool {
+        require(1u);
+        const auto value = state[pos++];
+        if (value > 1u) {
+            throw std::invalid_argument("Memory map state contains invalid flag");
+        }
+        return value != 0u;
+    };
+    const auto readU32 = [&]() -> std::uint32_t {
+        require(4u);
+        const auto value = static_cast<std::uint32_t>(state[pos]) |
+            (static_cast<std::uint32_t>(state[pos + 1u]) << 8u) |
+            (static_cast<std::uint32_t>(state[pos + 2u]) << 16u) |
+            (static_cast<std::uint32_t>(state[pos + 3u]) << 24u);
+        pos += 4u;
+        return value;
+    };
+    const auto readVector = [&](std::size_t maxSize) {
+        const auto length = readU32();
+        if (length > maxSize) {
+            throw std::invalid_argument("Memory map state section is too large");
+        }
+        require(length);
+        std::vector<uint8_t> bytes(state.begin() + static_cast<std::ptrdiff_t>(pos),
+                                   state.begin() + static_cast<std::ptrdiff_t>(pos + length));
+        pos += length;
+        return bytes;
+    };
+    const auto readArray = [&](auto& out) {
+        require(out.size());
+        std::copy_n(state.begin() + static_cast<std::ptrdiff_t>(pos), out.size(), out.begin());
+        pos += out.size();
+    };
+
+    const bool bootActive = readFlag();
+    auto bootRom = readVector(0x100u);
+    if (bootActive && bootRom.empty()) {
+        throw std::invalid_argument("Active boot ROM state has no boot ROM data");
+    }
+
+    const bool win0Active = readFlag();
+    auto win0 = readVector(0x4000u);
+    const bool win4Active = readFlag();
+    auto win4 = readVector(0x4000u);
+    if ((win0Active && win0.size() != 0x4000u) || (win4Active && win4.size() != 0x4000u)) {
+        throw std::invalid_argument("Active ROM window state has wrong size");
+    }
+
+    decltype(vram_) nextVram{};
+    decltype(wram_) nextWram{};
+    decltype(oam_) nextOam{};
+    decltype(ioRegs_) nextIoRegs{};
+    decltype(hram_) nextHram{};
+    readArray(nextVram);
+    readArray(nextWram);
+    readArray(nextOam);
+    readArray(nextIoRegs);
+    readArray(nextHram);
+    if (pos != payloadEnd) {
+        throw std::invalid_argument("Memory map state contains trailing payload data");
+    }
+
+    bootRom_ = std::move(bootRom);
+    bootRomActive_ = bootActive;
+    romWindow0x0000_.active = win0Active;
+    romWindow0x0000_.data = win0Active ? std::move(win0) : std::vector<uint8_t>{};
+    romWindow0x4000_.active = win4Active;
+    romWindow0x4000_.data = win4Active ? std::move(win4) : std::vector<uint8_t>{};
+    vram_ = nextVram;
+    wram_ = nextWram;
+    oam_ = nextOam;
+    ioRegs_ = nextIoRegs;
+    hram_ = nextHram;
 }
 
 } // namespace GB

@@ -28,6 +28,8 @@ public:
     const RuntimeContext& runtimeContext() const override;
     PluginManager& pluginManager() override;
     const PluginManager& pluginManager() const override;
+    void save_state(const std::filesystem::path& path) override;
+    void load_state(const std::filesystem::path& path) override;
     void step() override;
     void serviceInput() override;
 

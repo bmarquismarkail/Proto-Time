@@ -14,6 +14,7 @@ public:
     virtual bool load(const uint8_t* data, size_t size) = 0;
     virtual void reset() = 0;
     virtual bool loaded() const noexcept = 0;
+    virtual const std::vector<uint8_t>& romData() const noexcept = 0;
 
     // Cartridge I/O hooks
     virtual bool handlesControlWrite(uint16_t addr) const noexcept = 0;
@@ -27,4 +28,8 @@ public:
     virtual void markSaveClean() noexcept = 0;
     virtual std::vector<uint8_t> exportSaveData() const = 0;
     virtual void importSaveData(const std::vector<uint8_t>& saveData) = 0;
+
+    // Runtime save-state support. This is distinct from persistent SRAM.
+    [[nodiscard]] virtual std::vector<uint8_t> exportState() const = 0;
+    virtual void importState(const std::vector<uint8_t>& state) = 0;
 };

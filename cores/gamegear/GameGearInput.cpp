@@ -1,5 +1,7 @@
 #include "GameGearInput.hpp"
 
+#include <stdexcept>
+
 GameGearInput::GameGearInput() {}
 GameGearInput::~GameGearInput() {}
 
@@ -99,4 +101,40 @@ void GameGearInput::writeSystemPort(uint8_t port, uint8_t value) noexcept {
 
 uint8_t GameGearInput::audioStereoControl() const noexcept {
     return audioStereoControl_;
+}
+
+std::vector<uint8_t> GameGearInput::exportState() const {
+    std::vector<uint8_t> state;
+    state.reserve(12u);
+    const auto appendU32 = [&state](std::uint32_t value) {
+        state.push_back(static_cast<uint8_t>(value & 0xFFu));
+        state.push_back(static_cast<uint8_t>((value >> 8u) & 0xFFu));
+        state.push_back(static_cast<uint8_t>((value >> 16u) & 0xFFu));
+        state.push_back(static_cast<uint8_t>((value >> 24u) & 0xFFu));
+    };
+    appendU32(static_cast<std::uint32_t>(logicalButtons_));
+    state.push_back(extData_);
+    state.push_back(extDirectionNmi_);
+    state.push_back(serialTxData_);
+    state.push_back(serialRxData_);
+    state.push_back(serialControl_);
+    state.push_back(audioStereoControl_);
+    return state;
+}
+
+void GameGearInput::importState(const std::vector<uint8_t>& state) {
+    if (state.size() != 10u) {
+        throw std::invalid_argument("Game Gear input state must be exactly 10 bytes");
+    }
+    logicalButtons_ = static_cast<BMMQ::InputButtonMask>(
+        static_cast<std::uint32_t>(state[0]) |
+        (static_cast<std::uint32_t>(state[1]) << 8u) |
+        (static_cast<std::uint32_t>(state[2]) << 16u) |
+        (static_cast<std::uint32_t>(state[3]) << 24u));
+    extData_ = state[4];
+    extDirectionNmi_ = state[5];
+    serialTxData_ = state[6];
+    serialRxData_ = state[7];
+    serialControl_ = state[8];
+    audioStereoControl_ = state[9];
 }

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstring>
 #include <cstdint>
+#include <stdexcept>
 #include <vector>
 
 namespace GB {
@@ -406,6 +407,65 @@ bool GameBoyPPU::takeVBlankEntered() {
     if (!vblankPending_) return false;
     vblankPending_ = false;
     return true;
+}
+
+// Save state export/import.
+std::vector<uint8_t> GameBoyPPU::exportState() const {
+    std::vector<uint8_t> state;
+    const auto appendU32 = [&state](uint32_t value) {
+        state.push_back(static_cast<uint8_t>(value & 0xFFu));
+        state.push_back(static_cast<uint8_t>((value >> 8u) & 0xFFu));
+        state.push_back(static_cast<uint8_t>((value >> 16u) & 0xFFu));
+        state.push_back(static_cast<uint8_t>((value >> 24u) & 0xFFu));
+    };
+    appendU32(dotCounter_);
+    state.push_back(static_cast<uint8_t>(ppuMode_));
+    state.push_back(ly_);
+    state.push_back(lastReadyScanline_);
+    state.push_back(lastLy_);
+    state.push_back(static_cast<uint8_t>(scanlineReadyPending_));
+    state.push_back(static_cast<uint8_t>(vblankPending_));
+    return state;
+}
+
+void GameBoyPPU::importState(const std::vector<uint8_t>& state) {
+    if (state.size() != 10u) {
+        throw std::invalid_argument("PPU state too short");
+    }
+    const auto readU32 = [&state](std::size_t offset) {
+        return static_cast<uint32_t>(state[offset]) |
+               (static_cast<uint32_t>(state[offset + 1u]) << 8u) |
+               (static_cast<uint32_t>(state[offset + 2u]) << 16u) |
+               (static_cast<uint32_t>(state[offset + 3u]) << 24u);
+    };
+    const uint32_t nextDotCounter = readU32(0u);
+    const uint8_t nextMode = state[4];
+    const uint8_t nextLy = state[5];
+    const uint8_t nextLastReadyScanline = state[6];
+    const uint8_t nextLastLy = state[7];
+    const uint8_t nextScanlineReady = state[8];
+    const uint8_t nextVblank = state[9];
+    if (nextDotCounter >= kCyclesPerScanline ||
+        nextMode > kModeDMATransfer ||
+        nextLy >= kTotalScanlines ||
+        nextLastReadyScanline >= kTotalScanlines ||
+        nextLastLy >= kTotalScanlines ||
+        nextScanlineReady > 1u ||
+        nextVblank > 1u) {
+        throw std::invalid_argument("PPU state contains invalid values");
+    }
+
+    dotCounter_ = nextDotCounter;
+    ppuMode_ = nextMode;
+    ly_ = nextLy;
+    lastReadyScanline_ = nextLastReadyScanline;
+    lastLy_ = nextLastLy;
+    scanlineReadyPending_ = nextScanlineReady != 0u;
+    vblankPending_ = nextVblank != 0u;
+
+    // Clear captured scanlines for deterministic mid-frame restore
+    capturedScanlines_.fill(0);
+    hasCapturedScanlines_ = false;
 }
 
 } // namespace GB

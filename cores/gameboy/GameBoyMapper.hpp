@@ -46,12 +46,38 @@ public:
     [[nodiscard]] bool supportsBatterySave() const noexcept { return hasBattery_; }
     [[nodiscard]] bool hasDirtySaveData() const noexcept { return !externalRam_.empty() && dirty_; }
     [[nodiscard]] std::size_t externalRamSize() const noexcept { return externalRamSize_; }
+    [[nodiscard]] std::size_t romBankCount() const noexcept { return romBankCount_; }
+    [[nodiscard]] std::span<const uint8_t> romData() const noexcept { return romData_; }
 
-    // Save data export/import
-    struct SaveSnapshot {
+    // Save state serialization — deterministic, self-delimiting, CRC trailer
+    struct SaveState {
+        // ROM identity (not full ROM data — ROM is assumed loaded by Machine)
+        std::size_t romSize;
+        std::size_t romBankCount;
+        // Banking state — must export/import for exact state restoration
+        uint16_t romBankLow;
+        std::size_t effectiveRomBank;
+        uint8_t ramBankSelect;
+        uint8_t ramBankMode;
+        bool ramEnabled;
+        // Dirty persistence
+        bool dirty;
+        bool hasBattery;
+        // External RAM data (only when dirty)
+        bool externalRamValid;
         std::vector<uint8_t> externalRam;
     };
+
+    [[nodiscard]] SaveState exportState() const;
+    void importState(const SaveState& state);
+
+    // Save data export/import (legacy — kept for backward compat)
+    struct [[deprecated("Use exportState()/importState() instead")]] SaveSnapshot {
+        std::vector<uint8_t> externalRam;
+    };
+    [[deprecated("Use exportState() instead")]]
     [[nodiscard]] SaveSnapshot extractDirtySaveSnapshot() const;
+    [[deprecated("Use importState() instead")]]
     static void flushSnapshot(const SaveSnapshot& snapshot);
 
 private:

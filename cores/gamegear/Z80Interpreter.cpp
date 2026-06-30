@@ -881,3 +881,101 @@ uint32_t Z80Interpreter::step() {
     }
     return cycles;
 }
+
+std::vector<uint8_t> Z80Interpreter::exportState() const {
+    std::vector<uint8_t> state;
+    const auto appendU8 = [&state](uint8_t value) { state.push_back(value); };
+    const auto appendBool = [&appendU8](bool value) { appendU8(value ? 1u : 0u); };
+    const auto appendU16 = [&appendU8](uint16_t value) {
+        appendU8(static_cast<uint8_t>(value & 0xFFu));
+        appendU8(static_cast<uint8_t>((value >> 8u) & 0xFFu));
+    };
+    appendU16(AF);
+    appendU16(BC);
+    appendU16(DE);
+    appendU16(HL);
+    appendU16(IX);
+    appendU16(IY);
+    appendU16(SP);
+    appendU16(PC);
+    appendU16(AF_);
+    appendU16(BC_);
+    appendU16(DE_);
+    appendU16(HL_);
+    appendU8(I);
+    appendU8(R);
+    appendBool(IFF1);
+    appendBool(IFF2);
+    appendBool(IME);
+    appendU8(static_cast<uint8_t>(imeEnableDelay_));
+    appendBool(halted_);
+    appendU8(interruptMode_);
+    return state;
+}
+
+void Z80Interpreter::importState(const std::vector<uint8_t>& state) {
+    std::size_t pos = 0;
+    const auto readU8 = [&state, &pos]() {
+        if (pos >= state.size()) {
+            throw std::invalid_argument("Z80 state truncated");
+        }
+        return state[pos++];
+    };
+    const auto readBool = [&readU8]() {
+        const auto value = readU8();
+        if (value > 1u) {
+            throw std::invalid_argument("Z80 state boolean invalid");
+        }
+        return value != 0u;
+    };
+    const auto readU16 = [&readU8]() {
+        const auto lo = static_cast<uint16_t>(readU8());
+        const auto hi = static_cast<uint16_t>(readU8());
+        return static_cast<uint16_t>(lo | (hi << 8u));
+    };
+
+    const auto nextAF = readU16();
+    const auto nextBC = readU16();
+    const auto nextDE = readU16();
+    const auto nextHL = readU16();
+    const auto nextIX = readU16();
+    const auto nextIY = readU16();
+    const auto nextSP = readU16();
+    const auto nextPC = readU16();
+    const auto nextAF_ = readU16();
+    const auto nextBC_ = readU16();
+    const auto nextDE_ = readU16();
+    const auto nextHL_ = readU16();
+    const auto nextI = readU8();
+    const auto nextR = readU8();
+    const auto nextIFF1 = readBool();
+    const auto nextIFF2 = readBool();
+    const auto nextIME = readBool();
+    const auto nextImeEnableDelay = readU8();
+    const auto nextHalted = readBool();
+    const auto nextInterruptMode = readU8();
+    if (nextInterruptMode > 2u || pos != state.size()) {
+        throw std::invalid_argument("Z80 state invalid");
+    }
+
+    AF = nextAF;
+    BC = nextBC;
+    DE = nextDE;
+    HL = nextHL;
+    IX = nextIX;
+    IY = nextIY;
+    SP = nextSP;
+    PC = nextPC;
+    AF_ = nextAF_;
+    BC_ = nextBC_;
+    DE_ = nextDE_;
+    HL_ = nextHL_;
+    I = nextI;
+    R = nextR;
+    IFF1 = nextIFF1;
+    IFF2 = nextIFF2;
+    IME = nextIME;
+    imeEnableDelay_ = nextImeEnableDelay;
+    halted_ = nextHalted;
+    interruptMode_ = nextInterruptMode;
+}

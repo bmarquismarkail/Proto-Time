@@ -207,6 +207,155 @@ public:
         saveDirty_ = false;
     }
 
+    /// State export/import for save/load state.
+    /// ROM identity (size + bank count) is used as identity, not full ROM data.
+    /// Caller is responsible for loading ROM bytes before calling importState().
+    struct State
+    {
+        /// ROM identity: size and bank count
+        std::size_t romSize = 0;
+        std::size_t romBankCount = 0;
+
+        /// Current bank selection
+        std::size_t currentRomBank = 0;
+        std::size_t currentRamBank = 0;
+
+        /// RAM enable state
+        bool ramEnabled = false;
+
+        /// Selected RTC register, or 0xFF when RAM is selected.
+        uint8_t selectedRtcRegister = 0xFFu;
+
+        /// RTC state (only present if cartridge supports RTC)
+        std::optional<RtcSaveData> rtc;
+
+        /// MBC1 banking bits
+        bool mbc1BankingModeSelect = false;
+        std::size_t mbc1UpperBankBits = 0;
+        std::size_t mbc1LowBankBits = 1;
+
+        /// Dirty persistence flag
+        bool dirty = false;
+
+        /// External RAM data
+        std::vector<uint8_t> externalRam;
+    };
+
+    /// Export current cartridge state.
+    /// Does NOT include ROM data — only identity (size + bank count).
+    /// Caller must have ROM data loaded before calling importState().
+    State exportState() const noexcept
+    {
+        State state;
+        state.romSize = rom_.size();
+        state.romBankCount = metadata_.romBankCount;
+        state.currentRomBank = currentRomBank_;
+        state.currentRamBank = currentRamBank_;
+        state.ramEnabled = ramEnabled_;
+        state.selectedRtcRegister = selectedRtcRegister_;
+        state.mbc1BankingModeSelect = mbc1BankingModeSelect_;
+        state.mbc1UpperBankBits = mbc1UpperBankBits_;
+        state.mbc1LowBankBits = mbc1LowBankBits_ & 0x1Fu;
+        state.dirty = saveDirty_;
+        state.externalRam = externalRam_;
+
+        if (metadata_.hasRtc)
+        {
+            state.rtc = RtcSaveData{rtcRegisters_, rtcLatched_};
+        }
+
+        return state;
+    }
+
+    /// Import cartridge state.
+    /// Caller must ensure ROM is loaded and has matching size/bank count.
+    void importState(const State& state)
+    {
+        if (state.romSize != rom_.size() || state.romBankCount != metadata_.romBankCount) {
+            throw std::invalid_argument("cartridge save state does not match loaded ROM");
+        }
+        if (state.externalRam.size() != externalRam_.size()) {
+            throw std::invalid_argument("cartridge save state external RAM size mismatch");
+        }
+        if (metadata_.romBankCount == 1) {
+            if (state.currentRomBank != 0) {
+                throw std::invalid_argument("cartridge save state ROM bank out of range");
+            }
+        } else {
+            switch (metadata_.mapper) {
+            case CartridgeMapper::MBC3:
+                if (state.currentRomBank < 1 || state.currentRomBank > 0x7Fu) {
+                    throw std::invalid_argument("cartridge save state ROM bank out of range");
+                }
+                break;
+            case CartridgeMapper::MBC5:
+                if (state.currentRomBank > 0x1FFu) {
+                    throw std::invalid_argument("cartridge save state ROM bank out of range");
+                }
+                break;
+            case CartridgeMapper::MBC2:
+                if (state.currentRomBank < 1 || state.currentRomBank > 0x0Fu) {
+                    throw std::invalid_argument("cartridge save state ROM bank out of range");
+                }
+                break;
+            default:
+                if (state.currentRomBank == 0 || state.currentRomBank >= 0x80u) {
+                    throw std::invalid_argument("cartridge save state ROM bank out of range");
+                }
+                break;
+            }
+        }
+        switch (metadata_.mapper) {
+        case CartridgeMapper::MBC3:
+            if (state.currentRamBank >= 4) {
+                throw std::invalid_argument("cartridge save state RAM bank out of range");
+            }
+            break;
+        case CartridgeMapper::MBC5:
+            if (state.currentRamBank >= 0x10u) {
+                throw std::invalid_argument("cartridge save state RAM bank out of range");
+            }
+            break;
+        case CartridgeMapper::MBC1:
+            if (state.currentRamBank != 0) {
+                throw std::invalid_argument("cartridge save state RAM bank out of range");
+            }
+            break;
+        case CartridgeMapper::MBC2:
+        case CartridgeMapper::None:
+            if (state.currentRamBank != 0) {
+                throw std::invalid_argument("cartridge save state RAM bank out of range");
+            }
+            break;
+        }
+        if (state.selectedRtcRegister != 0xFFu &&
+            (!metadata_.hasRtc || state.selectedRtcRegister < 0x08u || state.selectedRtcRegister > 0x0Cu)) {
+            throw std::invalid_argument("cartridge save state RTC selector invalid");
+        }
+        if (state.rtc.has_value() != metadata_.hasRtc) {
+            throw std::invalid_argument("cartridge save state RTC presence mismatch");
+        }
+        currentRomBank_ = state.currentRomBank;
+        currentRamBank_ = state.currentRamBank;
+        ramEnabled_ = state.ramEnabled;
+        selectedRtcRegister_ = state.selectedRtcRegister;
+        mbc1BankingModeSelect_ = state.mbc1BankingModeSelect;
+        mbc1UpperBankBits_ = state.mbc1UpperBankBits;
+        mbc1LowBankBits_ = state.mbc1LowBankBits & 0x1Fu;
+        if (mbc1LowBankBits_ == 0)
+        {
+            mbc1LowBankBits_ = 1;
+        }
+        saveDirty_ = state.dirty;
+        externalRam_ = state.externalRam;
+
+        if (state.rtc.has_value())
+        {
+            rtcRegisters_ = state.rtc->registers;
+            rtcLatched_ = state.rtc->latched;
+        }
+    }
+
     [[nodiscard]] CartridgeSaveData exportSaveData() const
     {
         CartridgeSaveData save{};

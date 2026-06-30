@@ -147,9 +147,8 @@ private:
         GB::CartridgeSaveManager saveManager;
         BMMQ::PluginManager pluginManager;
         BMMQ::BackgroundTaskService* backgroundTaskService = nullptr;
-        BMMQ::Plugin::DefaultStepPolicy defaultPolicy;
-        BMMQ::Plugin::IExecutorPolicyPlugin* activePolicy = &defaultPolicy;
         bool romLoaded = false;
+        uint32_t romHash = 0u;
         std::optional<std::filesystem::path> pendingRomSourcePath;
         std::optional<uint32_t> lastDigitalInputMask;
         uint64_t inputGeneration = 0u;
@@ -160,6 +159,8 @@ private:
         bool interruptRequested = false;
         // Runtime context wrapping CPU + memory map
         std::unique_ptr<GameBoyRuntimeContext> context;
+        BMMQ::Plugin::DefaultStepPolicy defaultPolicy;
+        BMMQ::Plugin::IExecutorPolicyPlugin* activePolicy = &defaultPolicy;
     };
 
     std::unique_ptr<Impl> impl_;

@@ -78,6 +78,33 @@ int main()
     assert(exported.externalRam[0x0000u] == 0x12u);
     assert(exported.externalRam[0x2000u] == 0x34u);
 
+    const auto cartridgeState = cartridge.exportState();
+    assert(cartridgeState.romSize == batteryRom.size());
+    assert(cartridgeState.romBankCount == batteryMetadata.romBankCount);
+    assert(cartridgeState.currentRomBank == 1u);
+    assert(cartridgeState.currentRamBank == 1u);
+    assert(cartridgeState.ramEnabled);
+    assert(cartridgeState.dirty);
+    assert(cartridgeState.externalRam[0x0000u] == 0x12u);
+    assert(cartridgeState.externalRam[0x2000u] == 0x34u);
+
+    GB::GameBoyCartridge stateImported;
+    stateImported.load(batteryRom);
+    stateImported.importState(cartridgeState);
+    assert(stateImported.read(0xA000u) == 0x34u);
+    stateImported.write(0x4000u, 0x00u);
+    assert(stateImported.read(0xA000u) == 0x12u);
+
+    auto invalidCartridgeState = cartridgeState;
+    invalidCartridgeState.romSize += 1u;
+    bool rejectedCartridgeState = false;
+    try {
+        stateImported.importState(invalidCartridgeState);
+    } catch (const std::invalid_argument&) {
+        rejectedCartridgeState = true;
+    }
+    assert(rejectedCartridgeState);
+
     GB::GameBoyCartridge imported;
     imported.load(batteryRom);
     imported.importSaveData(exported);

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <vector>
 
 class Z80Interpreter {
 public:
@@ -33,6 +34,8 @@ public:
     // Programmatic setter for interrupt mode (0,1,2). Invalid values fall
     // back to IM1 so interrupt handling stays in a defined state.
     void setInterruptMode(uint8_t mode) { interruptMode_ = (mode <= 2u) ? mode : 1u; }
+    [[nodiscard]] std::vector<uint8_t> exportState() const;
+    void importState(const std::vector<uint8_t>& state);
 
     // Z80 registers
     uint16_t AF = 0;

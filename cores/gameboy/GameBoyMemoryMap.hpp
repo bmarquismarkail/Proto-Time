@@ -64,6 +64,10 @@ public:
     [[nodiscard]] std::span<uint8_t> storageSpan() noexcept { return storage_; }
     [[nodiscard]] std::span<const uint8_t> storageSpan() const noexcept { return storage_; }
 
+    // Save state export/import.
+    std::vector<uint8_t> exportState() const;
+    void importState(const std::vector<uint8_t>& state);
+
 private:
     // Resolve echo RAM address (E000-FDFF -> C000-DDFF)
     [[nodiscard]] static uint16_t resolveEchoAddress(uint16_t address) noexcept;

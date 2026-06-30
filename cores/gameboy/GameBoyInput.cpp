@@ -1,5 +1,8 @@
 #include "GameBoyInput.hpp"
 
+#include <stdexcept>
+#include <vector>
+
 namespace GB {
 
 void GameBoyInput::reset() {
@@ -47,6 +50,22 @@ uint8_t GameBoyInput::readRegister() const noexcept {
 void GameBoyInput::writeRegister(uint8_t value) noexcept {
     // Only bits 4-5 are writable
     joypRegister_ = (joypRegister_ & 0xCFu) | (value & 0x30u);
+}
+
+// Save state export/import.
+std::vector<uint8_t> GameBoyInput::exportState() const {
+    std::vector<uint8_t> state;
+    state.push_back(logicalButtons_);
+    state.push_back(joypRegister_);
+    return state;
+}
+
+void GameBoyInput::importState(const std::vector<uint8_t>& state) {
+    if (state.size() != 2u) {
+        throw std::invalid_argument("Input state must be exactly 2 bytes");
+    }
+    logicalButtons_ = state[0];
+    joypRegister_ = static_cast<uint8_t>(0xC0u | (state[1] & 0x30u) | 0x0Fu);
 }
 
 } // namespace GB

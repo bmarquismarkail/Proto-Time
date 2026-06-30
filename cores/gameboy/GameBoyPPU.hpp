@@ -52,6 +52,10 @@ public:
     [[nodiscard]] BMMQ::RealtimeVideoPacket buildRealtimeFrame(
         const BMMQ::VideoDebugRenderRequest& request) const;
 
+    // Save state export/import.
+    std::vector<uint8_t> exportState() const;
+    void importState(const std::vector<uint8_t>& state);
+
 private:
     // PPU Mode constants (Pan Docs)
     static constexpr uint8_t kModeHBlank = 0;

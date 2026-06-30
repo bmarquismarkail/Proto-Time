@@ -38,6 +38,8 @@ public:
     // Debug / introspection
     [[nodiscard]] uint8_t ioControlValue() const noexcept;
     [[nodiscard]] uint8_t memoryControlValue() const noexcept;
+    [[nodiscard]] std::vector<uint8_t> exportState() const;
+    void importState(const std::vector<uint8_t>& state);
 
 private:
     GameGearInput* input = nullptr;

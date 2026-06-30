@@ -3288,3 +3288,86 @@ void LR3592_DMG::populateOpcodes()
     }));
 
 }
+
+LR3592_DMG::SaveState LR3592_DMG::exportState() const
+{
+    SaveState state;
+    state.af = cpuRegisters_.af != nullptr ? cpuRegisters_.af->value : 0;
+    state.bc = cpuRegisters_.bc != nullptr ? cpuRegisters_.bc->value : 0;
+    state.de = cpuRegisters_.de != nullptr ? cpuRegisters_.de->value : 0;
+    state.hl = cpuRegisters_.hl != nullptr ? cpuRegisters_.hl->value : 0;
+    state.sp = spRegister_ != nullptr ? spRegister_->value : 0;
+    state.pc = pcRegister_ != nullptr ? pcRegister_->value : 0;
+    state.flagset = flagset;
+    state.feedback = feedback;
+    state.cip = cip;
+    state.ime = ime;
+    state.imeEnablePending = imeEnablePending;
+    state.imeEnableDelay = imeEnableDelay;
+    state.stopFlag = stopFlag;
+    state.haltFlag = haltFlag;
+    state.haltBugActive = haltBugActive;
+    state.haltBugPcAdjustPending = haltBugPcAdjustPending;
+    state.dividerCounter = dividerCounter;
+    state.dmaActive = dmaActive;
+    state.dmaSourceBase = dmaSourceBase;
+    state.dmaCycleProgress = dmaCycleProgress;
+    state.pendingCycleCharge = pendingCycleCharge_;
+    state.serialTransferActive = serialTransferActive;
+    state.serialCycleProgress = serialCycleProgress;
+    state.joypSelect = joypSelect;
+    state.joypadPressedMask = joypadPressedMask;
+    state.ppuDotCounter = ppuDotCounter;
+    state.lcdEnabledLastTick = lcdEnabledLastTick;
+    state.statInterruptLatched = statInterruptLatched;
+    state.currentVramBank = current_vram_bank;
+    state.spriteContext = sprite_context;
+    state.bankSwitchingEnabled = bank_switching_enabled;
+    return state;
+}
+
+void LR3592_DMG::importState(const SaveState& state)
+{
+    if (state.currentVramBank > kBankB) {
+        throw std::invalid_argument("LR3592 save state has invalid VRAM bank");
+    }
+    if (state.spriteContext > 1u) {
+        throw std::invalid_argument("LR3592 save state has invalid sprite context");
+    }
+
+    if (cpuRegisters_.af != nullptr) cpuRegisters_.af->value = state.af;
+    if (cpuRegisters_.bc != nullptr) cpuRegisters_.bc->value = state.bc;
+    if (cpuRegisters_.de != nullptr) cpuRegisters_.de->value = state.de;
+    if (cpuRegisters_.hl != nullptr) cpuRegisters_.hl->value = state.hl;
+    if (spRegister_ != nullptr) spRegister_->value = state.sp;
+    if (pcRegister_ != nullptr) pcRegister_->value = state.pc;
+    flagset = state.flagset;
+    feedback = state.feedback;
+    cip = state.cip;
+    ime = state.ime;
+    imeEnablePending = state.imeEnablePending;
+    imeEnableDelay = state.imeEnableDelay;
+    stopFlag = state.stopFlag;
+    haltFlag = state.haltFlag;
+    haltBugActive = state.haltBugActive;
+    haltBugPcAdjustPending = state.haltBugPcAdjustPending;
+    dividerCounter = state.dividerCounter;
+    dmaActive = state.dmaActive;
+    dmaSourceBase = state.dmaSourceBase;
+    dmaCycleProgress = state.dmaCycleProgress;
+    pendingCycleCharge_ = state.pendingCycleCharge;
+    serialTransferActive = state.serialTransferActive;
+    serialCycleProgress = state.serialCycleProgress;
+    joypSelect = state.joypSelect;
+    joypadPressedMask = state.joypadPressedMask;
+    ppuDotCounter = state.ppuDotCounter;
+    lcdEnabledLastTick = state.lcdEnabledLastTick;
+    statInterruptLatched = state.statInterruptLatched;
+    current_vram_bank = state.currentVramBank;
+    sprite_context = state.spriteContext;
+    bank_switching_enabled = state.bankSwitchingEnabled;
+    vram_manager_.update_bank(current_vram_bank);
+    vram_manager_.set_sprite_context(sprite_context);
+    dma_controller_.clear_queue();
+    invalidateAllBlockCache();
+}
