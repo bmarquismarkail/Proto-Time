@@ -1395,13 +1395,42 @@ void GameBoyMachine::load_state(const std::filesystem::path& path) {
         throw std::invalid_argument("Game Boy machine save state has trailing data");
     }
 
-    impl_->mapper.importState(deserializeMapperState(mapperData));
-    impl_->cartridge_.importState(deserializeCartridgeState(cartridgeData));
-    impl_->memoryMap.importState(memoryData);
-    impl_->ppu.importState(ppuData);
-    impl_->apu.importState(deserializeApuState(apuData));
-    impl_->input.importState(inputData);
-    impl_->cpu.cpu().importState(deserializeCpuState(cpuData));
+    // Stage all imports into temporaries so a failure leaves impl_ unchanged.
+    GameBoyMapper::SaveState mapperState = deserializeMapperState(mapperData);
+    GameBoyCartridge::State cartridgeState = deserializeCartridgeState(cartridgeData);
+    GB::GameBoyCartridge nextCartridge = impl_->cartridge_;
+    nextCartridge.importState(cartridgeState);
+
+    GB::GameBoyMapper nextMapper = impl_->mapper;
+    std::vector<uint8_t> romData(impl_->mapper.romData().begin(), impl_->mapper.romData().end());
+    nextMapper.load(romData);
+    nextMapper.importState(mapperState);
+
+    GB::GameBoyAPU nextApu = impl_->apu;
+    nextApu.importState(deserializeApuState(apuData));
+
+    GB::GameBoyPPU nextPpu = impl_->ppu;
+    nextPpu.importState(ppuData);
+
+    GB::GameBoyInput nextInput = impl_->input;
+    nextInput.importState(inputData);
+
+    LR3592_DMG::SaveState cpuState = deserializeCpuState(cpuData);
+    GameBoyMemoryMap nextMemoryMap;
+    nextMemoryMap.importState(memoryData);
+
+    // Preserve the existing memory write observer across the memory-map replacement.
+    const auto preservedWriteObserver = impl_->memoryMap.writeObserver();
+
+    // Commit staged state into the live machine only after all imports succeeded.
+    impl_->mapper = std::move(nextMapper);
+    impl_->cartridge_ = std::move(nextCartridge);
+    impl_->memoryMap = std::move(nextMemoryMap);
+    impl_->memoryMap.setWriteObserver(std::move(preservedWriteObserver));
+    impl_->ppu = std::move(nextPpu);
+    impl_->apu = std::move(nextApu);
+    impl_->input = std::move(nextInput);
+    impl_->cpu.cpu().importState(cpuState);
 
     impl_->stepCounter = stepCounter;
     impl_->lastAudioFrameCounter = lastAudioFrameCounter;

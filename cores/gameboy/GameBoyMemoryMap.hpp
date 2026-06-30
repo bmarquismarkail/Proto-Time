@@ -42,12 +42,16 @@ public:
     [[nodiscard]] bool hasBootRom() const noexcept { return !bootRom_.empty(); }
     [[nodiscard]] bool bootRomMapped() const noexcept { return bootRomActive_; }
 
-    // Mapper callback for external RAM reads/writes
+    // Mapper callback for external RAM
     void setMapper(GameBoyMapper* mapper) noexcept { mapper_ = mapper; }
     void setCartridge(GameBoyCartridge* cartridge) noexcept { cartridge_ = cartridge; }
     void setWriteObserver(std::function<void(uint16_t, uint8_t)> observer)
     {
         writeObserver_ = std::move(observer);
+    }
+    [[nodiscard]] std::function<void(uint16_t, uint8_t)> writeObserver() const noexcept
+    {
+        return writeObserver_;
     }
     void setIoRegisterRaw(uint16_t address, uint8_t value);
 
