@@ -308,6 +308,9 @@ void GameBoyAPU::writeRegister(uint16_t address, uint8_t value) {
     case 0xFF12: // NR12
         if (!apu_.masterEnabled) break;
         apu_.pulse1.dacEnabled = (value & 0xF8u) != 0;
+        if (!apu_.pulse1.dacEnabled) {
+            apu_.pulse1.enabled = false;
+        }
         apu_.pulse1.envelopeIncrease = (value & 0x08u) != 0;
         apu_.pulse1.envelopePeriod = value & 0x07u;
         apu_.pulse1.initialVolume = (value >> 4) & 0x0Fu;
@@ -345,6 +348,9 @@ void GameBoyAPU::writeRegister(uint16_t address, uint8_t value) {
     case 0xFF17: // NR22
         if (!apu_.masterEnabled) break;
         apu_.pulse2.dacEnabled = (value & 0xF8u) != 0;
+        if (!apu_.pulse2.dacEnabled) {
+            apu_.pulse2.enabled = false;
+        }
         apu_.pulse2.envelopeIncrease = (value & 0x08u) != 0;
         apu_.pulse2.envelopePeriod = value & 0x07u;
         apu_.pulse2.initialVolume = (value >> 4) & 0x0Fu;
@@ -407,6 +413,9 @@ void GameBoyAPU::writeRegister(uint16_t address, uint8_t value) {
     case 0xFF21: // NR42
         if (!apu_.masterEnabled) break;
         apu_.noise.dacEnabled = (value & 0xF8u) != 0;
+        if (!apu_.noise.dacEnabled) {
+            apu_.noise.enabled = false;
+        }
         apu_.noise.envelopeIncrease = (value & 0x08u) != 0;
         apu_.noise.envelopePeriod = value & 0x07u;
         apu_.noise.initialVolume = (value >> 4) & 0x0Fu;
@@ -466,11 +475,11 @@ uint8_t GameBoyAPU::readRegister(uint16_t address) const {
     case 0xFF25:
         return apu_.nr51;
     case 0xFF26: // NR52
-        return static_cast<uint8_t>((apu_.masterEnabled ? 0x80u : 0u) |
-               (apu_.pulse1.enabled ? 0x01u : 0) |
-               (apu_.pulse2.enabled ? 0x02u : 0) |
-               (apu_.wave.enabled ? 0x04u : 0) |
-               (apu_.noise.enabled ? 0x08u : 0));
+        return static_cast<uint8_t>((0x70u | (apu_.masterEnabled ? 0x80u : 0u)) |
+               (((apu_.pulse1.enabled ? 0x01u : 0u) |
+                 (apu_.pulse2.enabled ? 0x02u : 0u) |
+                 (apu_.wave.enabled ? 0x04u : 0u) |
+                 (apu_.noise.enabled ? 0x08u : 0u)) & 0x0Fu));
     default:
         if (address >= 0xFF30u && address <= 0xFF3Fu) {
             return apu_.waveRam[address - 0xFF30u];
@@ -533,8 +542,10 @@ void GameBoyAPU::importState(const GameBoyAPUState& state) {
         state.recentWriteCursor >= kHistorySamples ||
         state.recentSampleCount > kHistorySamples ||
         state.pendingReadCursor >= kHistorySamples ||
-        state.pendingSampleCount > kHistorySamples) {
-        throw std::invalid_argument("APU state contains invalid buffer cursors");
+        state.pendingSampleCount > kHistorySamples ||
+        state.pulse1.sweepShift > 7u ||
+        state.noise.clockShift > 15u) {
+        throw std::invalid_argument("APU state contains invalid fields");
     }
     apu_.masterEnabled = state.masterEnabled;
     apu_.frameSequencerCounter = state.frameSequencerCounter;
