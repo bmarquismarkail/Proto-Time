@@ -1369,35 +1369,46 @@ void GameBoyMachine::load_state(const std::filesystem::path& path) {
         BMMQ::kCoreId_GameBoy,
         impl_->mapper.romData());
 
-    impl_->mapper.importState(deserializeMapperState(requireChunk(state, "gb.mapper").data));
-    impl_->cartridge_.importState(deserializeCartridgeState(requireChunk(state, "gb.cartridge").data));
-    impl_->memoryMap.importState(requireChunk(state, "gb.memory").data);
-    impl_->ppu.importState(requireChunk(state, "gb.ppu").data);
-    impl_->apu.importState(deserializeApuState(requireChunk(state, "gb.apu").data));
-    impl_->input.importState(requireChunk(state, "gb.input").data);
-    impl_->cpu.cpu().importState(deserializeCpuState(requireChunk(state, "gb.cpu").data));
+    const auto mapperData = requireChunk(state, "gb.mapper").data;
+    const auto cartridgeData = requireChunk(state, "gb.cartridge").data;
+    const auto memoryData = requireChunk(state, "gb.memory").data;
+    const auto ppuData = requireChunk(state, "gb.ppu").data;
+    const auto apuData = requireChunk(state, "gb.apu").data;
+    const auto inputData = requireChunk(state, "gb.input").data;
+    const auto cpuData = requireChunk(state, "gb.cpu").data;
 
     StateReader machineReader(requireChunk(state, "gb.machine").data);
-    impl_->stepCounter = machineReader.u64();
-    impl_->lastAudioFrameCounter = machineReader.u64();
-    impl_->bootEntryPending = machineReader.boolean();
-    impl_->interruptRequested = machineReader.boolean();
+    const uint64_t stepCounter = machineReader.u64();
+    const uint64_t lastAudioFrameCounter = machineReader.u64();
+    const bool bootEntryPending = machineReader.boolean();
+    const bool interruptRequested = machineReader.boolean();
 
+    std::optional<uint8_t> lastDigitalInputMask{};
     if (machineReader.boolean()) {
-        uint32_t mask = machineReader.u32();
+        const uint32_t mask = machineReader.u32();
         if (mask <= 0xFFu) {
-            impl_->lastDigitalInputMask = mask;
-        } else {
-            impl_->lastDigitalInputMask.reset();
+            lastDigitalInputMask = static_cast<uint8_t>(mask);
         }
-    } else {
-        impl_->lastDigitalInputMask.reset();
     }
-
-    impl_->inputGeneration = machineReader.u64();
+    const uint64_t inputGeneration = machineReader.u64();
     if (!machineReader.done()) {
         throw std::invalid_argument("Game Boy machine save state has trailing data");
     }
+
+    impl_->mapper.importState(deserializeMapperState(mapperData));
+    impl_->cartridge_.importState(deserializeCartridgeState(cartridgeData));
+    impl_->memoryMap.importState(memoryData);
+    impl_->ppu.importState(ppuData);
+    impl_->apu.importState(deserializeApuState(apuData));
+    impl_->input.importState(inputData);
+    impl_->cpu.cpu().importState(deserializeCpuState(cpuData));
+
+    impl_->stepCounter = stepCounter;
+    impl_->lastAudioFrameCounter = lastAudioFrameCounter;
+    impl_->bootEntryPending = bootEntryPending;
+    impl_->interruptRequested = interruptRequested;
+    impl_->lastDigitalInputMask = lastDigitalInputMask;
+    impl_->inputGeneration = inputGeneration;
 
     impl_->memoryMap.setMapper(&impl_->mapper);
     impl_->memoryMap.setCartridge(&impl_->cartridge_);
