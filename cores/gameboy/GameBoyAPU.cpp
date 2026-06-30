@@ -454,10 +454,12 @@ void GameBoyAPU::writeRegister(uint16_t address, uint8_t value) {
         apu_.masterEnabled = (value & 0x80u) != 0;
         apu_.nr52 = value;
         if (!apu_.masterEnabled) {
-            apu_.pulse1.enabled = false;
-            apu_.pulse2.enabled = false;
-            apu_.wave.enabled = false;
-            apu_.noise.enabled = false;
+            apu_.pulse1 = PulseChannel{};
+            apu_.pulse2 = PulseChannel{};
+            apu_.wave = WaveChannel{};
+            apu_.noise = NoiseChannel{};
+            apu_.nr50 = 0;
+            apu_.nr51 = 0;
         }
         break;
     default:
