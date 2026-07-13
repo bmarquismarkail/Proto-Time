@@ -16,6 +16,7 @@
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -525,10 +526,9 @@ int main(int argc, char** argv)
             config.frameWidth = descriptor.defaultFrameWidth;
             config.frameHeight = descriptor.defaultFrameHeight;
             config.autoInitializeBackend = true;
-            // Keep SDL event pumping, frame consumption, texture upload, and
-            // presentation off the emulation lane. This remains compatible
-            // with SDL's dummy video driver for headless validation.
-            config.enableRenderServiceThread = true;
+            // SDL video and event APIs are host-main-thread-affine. The process
+            // main thread is the render lane; guest execution runs separately.
+            config.enableRenderServiceThread = false;
             // The SDL presenter opens windows hidden; ensure frames are
             // presented automatically so the window appears during normal runs.
             config.createHiddenWindowOnInitialize = false;
@@ -766,12 +766,15 @@ int main(int argc, char** argv)
                 return false;
             }
             frontend->serviceFrontend();
-            pollVisualPackReload();
             return frontend->quitRequested();
         };
 
+        std::atomic<bool> stopRequested{false};
+        std::atomic<bool> emulationFinished{false};
+        std::atomic<bool> frontendInputTickPending{false};
+        std::exception_ptr emulationFailure;
+
         auto serviceFrontendUntil = [&](SteadyClock::time_point now) -> bool {
-            bool servicedFrontend = false;
             if (frontend == nullptr || now < nextFrontendService) {
                 return false;
             }
@@ -788,7 +791,6 @@ int main(int argc, char** argv)
             const auto mergedTicks = scheduledTicks - ticksToRun;
 
             for (std::uint32_t tick = 0u; tick < ticksToRun; ++tick) {
-                servicedFrontend = true;
                 ++executedTicks;
                 if (serviceFrontend()) {
                     timingService.noteFrontendServiceTick(scheduledTicks, executedTicks, lateness);
@@ -803,118 +805,144 @@ int main(int argc, char** argv)
                 nextFrontendService = now + kFrontendServicePeriod;
             }
             timingService.noteFrontendServiceTick(scheduledTicks, executedTicks, lateness);
-            if (servicedFrontend) {
-                timingEngine.applyControl(timingService.takeControlSnapshot());
-                machine.serviceInput();
-            }
+            frontendInputTickPending.store(true, std::memory_order_release);
             return false;
         };
 
-        while (gStopRequested == 0) {
-            if (options.stepLimit.has_value() && steps >= *options.stepLimit) {
-                break;
-            }
+        auto runEmulationLane = [&]() {
+            try {
+                while (!stopRequested.load(std::memory_order_acquire) && gStopRequested == 0) {
+                    if (options.stepLimit.has_value() && steps >= *options.stepLimit) {
+                        break;
+                    }
 
-            const auto now = SteadyClock::now();
-            if (serviceFrontendUntil(now)) {
-                break;
-            }
+                    const auto now = SteadyClock::now();
+                    if (frontendInputTickPending.exchange(false, std::memory_order_acq_rel)) {
+                        machine.serviceInput();
+                    }
 
-            timingEngine.applyControl(timingService.takeControlSnapshot());
-            timingEngine.update(now);
+                    timingEngine.applyControl(timingService.takeControlSnapshot());
+                    timingEngine.update(now);
 
-            bool executedInstruction = false;
-            bool executionSliceActive = false;
-            std::uint32_t wakeExecutionSlices = 0u;
-            double wakeExecutionCycles = 0.0;
-            while (timingEngine.canExecute() && gStopRequested == 0) {
-                if (options.stepLimit.has_value() && steps >= *options.stepLimit) {
-                    break;
-                }
-                if (wakeExecutionSlices >= timingConfig.maxExecutionSlicesPerWake) {
-                    timingService.noteWakeBurstSliceLimitHit();
-                    break;
-                }
-                if (wakeExecutionCycles >= timingConfig.maxCyclesPerWake) {
-                    timingService.noteWakeBurstCycleLimitHit();
-                    break;
-                }
-
-                if (!executionSliceActive) {
-                    timingEngine.beginExecutionSlice();
-                    executionSliceActive = true;
-                    ++wakeExecutionSlices;
-                }
-
-                machine.step();
-                ++steps;
-                executedInstruction = true;
-                emulatedCycles += machine.runtimeContext().getLastFeedback().retiredCycles;
-
-                const auto retiredCycles = static_cast<double>(machine.runtimeContext().getLastFeedback().retiredCycles);
-                const auto chargedCycles = std::max(kMinInstructionCycles, retiredCycles);
-                wakeExecutionCycles += chargedCycles;
-                timingEngine.charge(retiredCycles);
-                const auto sliceDecision = timingEngine.recordExecutionSliceCycles(chargedCycles);
-
-                if (sliceDecision.frontendServiceDue && serviceFrontendUntil(SteadyClock::now())) {
-                    gStopRequested = 1;
-                    break;
-                }
-                if (sliceDecision.executionSliceComplete) {
-                    break;
-                }
-            }
-            timingService.recordWakeBurst(wakeExecutionCycles, wakeExecutionSlices);
-            timingService.publishEngineStats(timingEngine.stats());
-            emitDiagnostics(SteadyClock::now(), false);
-
-            if (gStopRequested != 0) {
-                break;
-            }
-
-            const auto idleNow = SteadyClock::now();
-            if (serviceFrontendUntil(idleNow)) {
-                break;
-            }
-            if (frontend == nullptr) {
-                pollVisualPackReload();
-            }
-
-            if (!executedInstruction) {
-                const auto nextStepTime = timingEngine.nextWakeTime(idleNow);
-                const auto frontendWakeTime = (frontend != nullptr) ? nextFrontendService : idleNow;
-                const auto nextWakeTime = (frontend != nullptr)
-                    ? std::min(frontendWakeTime, nextStepTime)
-                    : nextStepTime;
-
-                const bool frontendSleepDue = (frontend != nullptr) && (frontendWakeTime > idleNow);
-                const bool timingSleepDue = timingEngine.shouldSleep(idleNow) && (nextStepTime > idleNow);
-
-                if (timingSleepDue || frontendSleepDue) {
-                    if (nextWakeTime > idleNow) {
-                        const auto requestedSleep = std::chrono::duration_cast<std::chrono::nanoseconds>(nextWakeTime - idleNow);
-                        const auto beforeSleep = SteadyClock::now();
-                        if (timingConfig.adaptiveSleepEnabled && requestedSleep > timingConfig.sleepSpinWindow &&
-                            timingConfig.sleepSpinWindow > std::chrono::nanoseconds::zero()) {
-                            const auto coarseWake = nextWakeTime - timingConfig.sleepSpinWindow;
-                            std::this_thread::sleep_until(coarseWake);
-                            const auto spinStart = SteadyClock::now();
-                            while (SteadyClock::now() < nextWakeTime) {
-                                if (SteadyClock::now() - spinStart >= timingConfig.sleepSpinCap) {
-                                    break;
-                                }
-                                std::this_thread::yield();
-                            }
-                        } else {
-                            std::this_thread::sleep_until(nextWakeTime);
+                    bool executedInstruction = false;
+                    bool executionSliceActive = false;
+                    std::uint32_t wakeExecutionSlices = 0u;
+                    double wakeExecutionCycles = 0.0;
+                    while (timingEngine.canExecute() &&
+                           !stopRequested.load(std::memory_order_acquire) &&
+                           gStopRequested == 0) {
+                        if (options.stepLimit.has_value() && steps >= *options.stepLimit) {
+                            break;
                         }
-                        const auto afterSleep = SteadyClock::now();
-                        const auto actualSleep = std::chrono::duration_cast<std::chrono::nanoseconds>(afterSleep - beforeSleep);
-                        timingService.noteHostSleep(requestedSleep, actualSleep);
+                        if (wakeExecutionSlices >= timingConfig.maxExecutionSlicesPerWake) {
+                            timingService.noteWakeBurstSliceLimitHit();
+                            break;
+                        }
+                        if (wakeExecutionCycles >= timingConfig.maxCyclesPerWake) {
+                            timingService.noteWakeBurstCycleLimitHit();
+                            break;
+                        }
+
+                        if (!executionSliceActive) {
+                            timingEngine.beginExecutionSlice();
+                            executionSliceActive = true;
+                            ++wakeExecutionSlices;
+                        }
+
+                        machine.step();
+                        ++steps;
+                        executedInstruction = true;
+                        emulatedCycles += machine.runtimeContext().getLastFeedback().retiredCycles;
+
+                        const auto retiredCycles =
+                            static_cast<double>(machine.runtimeContext().getLastFeedback().retiredCycles);
+                        const auto chargedCycles = std::max(kMinInstructionCycles, retiredCycles);
+                        wakeExecutionCycles += chargedCycles;
+                        timingEngine.charge(retiredCycles);
+                        const auto sliceDecision = timingEngine.recordExecutionSliceCycles(chargedCycles);
+
+                        if (sliceDecision.executionSliceComplete) {
+                            break;
+                        }
+                    }
+                    timingService.recordWakeBurst(wakeExecutionCycles, wakeExecutionSlices);
+                    timingService.publishEngineStats(timingEngine.stats());
+                    emitDiagnostics(SteadyClock::now(), false);
+
+                    if (stopRequested.load(std::memory_order_acquire) || gStopRequested != 0) {
+                        break;
+                    }
+
+                    const auto idleNow = SteadyClock::now();
+                    pollVisualPackReload();
+
+                    if (!executedInstruction) {
+                        const auto nextStepTime = timingEngine.nextWakeTime(idleNow);
+                        const bool timingSleepDue =
+                            timingEngine.shouldSleep(idleNow) && (nextStepTime > idleNow);
+
+                        if (timingSleepDue && nextStepTime > idleNow) {
+                            const auto requestedSleep =
+                                std::chrono::duration_cast<std::chrono::nanoseconds>(nextStepTime - idleNow);
+                            const auto beforeSleep = SteadyClock::now();
+                            if (timingConfig.adaptiveSleepEnabled &&
+                                requestedSleep > timingConfig.sleepSpinWindow &&
+                                timingConfig.sleepSpinWindow > std::chrono::nanoseconds::zero()) {
+                                const auto coarseWake = nextStepTime - timingConfig.sleepSpinWindow;
+                                std::this_thread::sleep_until(coarseWake);
+                                const auto spinStart = SteadyClock::now();
+                                while (SteadyClock::now() < nextStepTime) {
+                                    if (SteadyClock::now() - spinStart >= timingConfig.sleepSpinCap) {
+                                        break;
+                                    }
+                                    std::this_thread::yield();
+                                }
+                            } else {
+                                std::this_thread::sleep_until(nextStepTime);
+                            }
+                            const auto afterSleep = SteadyClock::now();
+                            const auto actualSleep =
+                                std::chrono::duration_cast<std::chrono::nanoseconds>(afterSleep - beforeSleep);
+                            timingService.noteHostSleep(requestedSleep, actualSleep);
+                        }
                     }
                 }
+            } catch (...) {
+                emulationFailure = std::current_exception();
+                stopRequested.store(true, std::memory_order_release);
             }
+            emulationFinished.store(true, std::memory_order_release);
+        };
+
+        std::thread emulationThread(runEmulationLane);
+
+        // SDL requires video setup, event pumping, presentation, and teardown
+        // on the process main thread. This loop is therefore the UI/render lane.
+        try {
+            while (!emulationFinished.load(std::memory_order_acquire)) {
+                const auto now = SteadyClock::now();
+                if (gStopRequested != 0 || serviceFrontendUntil(now)) {
+                    stopRequested.store(true, std::memory_order_release);
+                    break;
+                }
+                if (frontend == nullptr) {
+                    std::this_thread::sleep_for(kFrontendServicePeriod);
+                } else if (nextFrontendService > now) {
+                    std::this_thread::sleep_until(nextFrontendService);
+                } else {
+                    std::this_thread::yield();
+                }
+            }
+        } catch (...) {
+            stopRequested.store(true, std::memory_order_release);
+            emulationThread.join();
+            throw;
+        }
+
+        stopRequested.store(true, std::memory_order_release);
+        emulationThread.join();
+        if (emulationFailure != nullptr) {
+            std::rethrow_exception(emulationFailure);
         }
 
         serviceFrontend();
@@ -931,6 +959,9 @@ int main(int argc, char** argv)
         } else {
             std::cout << '\n';
         }
+        // Explicitly detach the frontend while still on the SDL-owning host
+        // thread, before machine/service destruction begins.
+        machine.pluginManager().shutdown(machine.mutableView());
         backgroundTaskService.shutdown();
         return EXIT_SUCCESS;
     } catch (const std::invalid_argument& ex) {

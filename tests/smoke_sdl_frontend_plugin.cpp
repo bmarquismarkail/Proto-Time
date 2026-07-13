@@ -176,11 +176,9 @@ int main(int argc, char** argv)
     if (initResult) {
         assert(frontend->backendReady());
     }
-    if (initResult) {
-        assert(frontend->stats().renderServiceState != BMMQ::SdlRenderServiceState::Stopped);
-    } else {
-        assert(frontend->stats().renderServiceState == BMMQ::SdlRenderServiceState::Stopped);
-    }
+    // SDL is process-main-thread-affine, so a configured internal render worker
+    // must remain stopped even when the backend initializes successfully.
+    assert(frontend->stats().renderServiceState == BMMQ::SdlRenderServiceState::Stopped);
     assert(!frontend->windowVisible());
     assert(!frontend->windowVisibilityRequested());
     frontend->requestWindowVisibility(true);
@@ -367,8 +365,9 @@ int main(int argc, char** argv)
     // Phase 25: realtime packets are built outside sharedStateMutex_ in onVideoEvent(); counter must track this
     assert(stats.videoRealtimePacketsBuiltOutsideLock >= stats.videoRealtimePacketsAccepted);
     assert(stats.videoDebugModelBuildSkipCount <= stats.videoEvents);
-    // Phase 26: SDL present is called outside sharedStateMutex_ in renderServiceLoop(); counter must track this
-    assert(stats.renderServicePresentCallsOutsideLock >= stats.renderServicePresentSuccessCount);
+    // The host thread presents outside sharedStateMutex_; the retired internal
+    // render worker must not execute SDL work.
+    assert(stats.renderServicePresentCallsOutsideLock == 0u);
     // Phase 27: render loop uses lightweight sync per iteration; full sync only on present
     assert(stats.renderServiceLightweightSyncCount + stats.renderServicePresentSuccessCount >= stats.renderServiceLoopCount);
     // Phase 28: wake-reason counters must account for every sleep entered (fencepost: first iteration has no prior sleep)
@@ -439,14 +438,10 @@ int main(int argc, char** argv)
                stats.timingSleepWakeJitter500usTo2msCount +
                stats.timingSleepWakeJitterOver2msCount <=
            stats.timingSleepCalls);
+    assert(stats.renderServiceState == BMMQ::SdlRenderServiceState::Stopped);
     if (initResult) {
-        assert(stats.renderServiceState != BMMQ::SdlRenderServiceState::Stopped);
-    } else {
-        assert(stats.renderServiceState == BMMQ::SdlRenderServiceState::Stopped);
-    }
-    if (initResult) {
-        assert(stats.renderServiceLoopCount >= 1u);
-        assert(stats.renderServiceSleepCount >= 1u);
+        assert(stats.renderServiceLoopCount == 0u);
+        assert(stats.renderServiceSleepCount == 0u);
         assert(stats.lifecycleLastOutcome != BMMQ::MachineTransitionOutcome::Failed);
     }
     assert(!stats.lifecycleLastRejectedForReentry);

@@ -1210,6 +1210,20 @@ private:
             setRenderServiceState(BMMQ::SdlRenderServiceState::Stopped);
             return;
         }
+#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
+        // SDL video setup, event pumping, rendering, and teardown belong to the
+        // process main thread. The application-level host lane services this
+        // plugin there while guest execution runs independently.
+        appendLog("sdl: internal render service disabled; host main thread owns SDL");
+        setRenderServiceState(BMMQ::SdlRenderServiceState::Stopped);
+        return;
+#else
+        if (videoPresenter_ != nullptr &&
+            videoPresenter_->capabilities().requiresHostThreadAffinity) {
+            appendLog("sdl: internal render service disabled for host-thread-affine presenter");
+            setRenderServiceState(BMMQ::SdlRenderServiceState::Stopped);
+            return;
+        }
         if (renderServiceThread_.joinable()) {
             return;
         }
@@ -1217,6 +1231,7 @@ private:
         renderServiceStopRequested_.store(false, std::memory_order_release);
         setRenderServiceState(BMMQ::SdlRenderServiceState::Starting);
         renderServiceThread_ = std::thread([this]() { renderServiceLoop(); });
+#endif
     }
 
     void stopRenderService()
