@@ -177,15 +177,32 @@ int main()
         return 1;
     }
     auto transportStats = view.audioService().transportStats();
-    if (transportStats.underrunCount != 1u || transportStats.silenceSamplesFilled != 4u) {
-        std::cerr << "empty ready output did not record underrun stats" << '\n';
+    if (transportStats.underrunCount != 0u ||
+        transportStats.primingSilenceCallbackCount != 1u ||
+        transportStats.primingSilenceSamples != 4u ||
+        transportStats.primedForDrain) {
+        std::cerr << "pre-prime drain was not classified as startup silence" << '\n';
         return 1;
     }
 
-    std::vector<int16_t> transportSamples = {201, 202, 203, 204, 205, 206};
+    std::vector<int16_t> transportSamples = {201, 202, 203, 204, 205, 206, 207, 208};
     view.audioService().appendRecentPcm(transportSamples, 2u);
     if (!view.audioService().produceReadyOutputBlock()) {
         std::cerr << "audio service did not produce ready output block" << '\n';
+        return 1;
+    }
+    if (view.audioService().primedForDrain()) {
+        std::cerr << "audio service primed before reaching its two-block target" << '\n';
+        return 1;
+    }
+    if (!view.audioService().produceReadyOutputBlock()) {
+        std::cerr << "audio service did not produce second prefill block" << '\n';
+        return 1;
+    }
+    transportStats = view.audioService().transportStats();
+    if (!transportStats.primedForDrain || transportStats.prefillTargetChunks != 2u ||
+        transportStats.primedTransitionCount != 1u || transportStats.readyQueueDepth != 2u) {
+        std::cerr << "audio service did not transition to primed at the configured target" << '\n';
         return 1;
     }
     std::vector<int16_t> transportOutput(4, 0);
@@ -196,8 +213,15 @@ int main()
         return 1;
     }
     transportStats = view.audioService().transportStats();
-    if (transportStats.workerProducedBlocks != 1u || transportStats.drainCallbackCount != 2u) {
+    if (transportStats.workerProducedBlocks != 2u || transportStats.drainCallbackCount != 2u) {
         std::cerr << "ready output transport stats were not updated" << '\n';
+        return 1;
+    }
+
+    view.audioService().drainReadyOutput(std::span<int16_t>(transportOutput.data(), transportOutput.size()));
+    if (transportOutput[0] != 205 || transportOutput[1] != 206 ||
+        transportOutput[2] != 207 || transportOutput[3] != 208) {
+        std::cerr << "second prefill block did not preserve source samples" << '\n';
         return 1;
     }
 
@@ -216,8 +240,8 @@ int main()
     }
     std::fill(transportOutput.begin(), transportOutput.end(), 0);
     view.audioService().drainReadyOutput(std::span<int16_t>(transportOutput.data(), transportOutput.size()));
-    if (transportOutput[0] != 215 || transportOutput[1] != 216 ||
-        transportOutput[2] != 211 || transportOutput[3] != 212) {
+    if (transportOutput[0] != 211 || transportOutput[1] != 212 ||
+        transportOutput[2] != 213 || transportOutput[3] != 214) {
         std::cerr << "pipeline output was not captured at ready-block production time" << '\n';
         return 1;
     }
@@ -242,7 +266,33 @@ int main()
         std::cerr << "audio transport epoch regressed after pause/close barrier" << '\n';
         return 1;
     }
+    if (transportStatsAfterPause.primedForDrain) {
+        std::cerr << "audio transport remained primed after stop" << '\n';
+        return 1;
+    }
     assert(view.audioService().canPerformReset());
+
+    if (!view.audioService().configureOutputTransport({
+            .deviceSampleRate = 48000,
+            .channelCount = 1,
+            .callbackChunkSamples = 4,
+            .readyQueueChunks = 1,
+        })) {
+        std::cerr << "audio service did not configure one-slot prefill transport" << '\n';
+        return 1;
+    }
+    const std::vector<int16_t> oneSlotSamples = {301, 302, 303, 304};
+    view.audioService().appendRecentPcm(oneSlotSamples, 4u);
+    if (!view.audioService().produceReadyOutputBlock()) {
+        std::cerr << "audio service did not produce one-slot prefill block" << '\n';
+        return 1;
+    }
+    const auto oneSlotStats = view.audioService().transportStats();
+    if (!oneSlotStats.primedForDrain || oneSlotStats.prefillTargetChunks != 1u ||
+        oneSlotStats.primedTransitionCount != 1u) {
+        std::cerr << "one-slot transport did not use a reachable prefill target" << '\n';
+        return 1;
+    }
 
     assert(!machine.setAudioService(nullptr));
     assert(&machine.audioService() == defaultService);

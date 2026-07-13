@@ -57,7 +57,9 @@ bool MachineLifecycleCoordinator::resumeLanesLocked(bool resumeVideo) noexcept
         ok = videoService_->resume() && ok;
     }
     if (audioService_ != nullptr) {
-        audioService_->setBackendPausedOrClosed(false);
+        // The backend remains drain-gated until its newly reset transport has
+        // rebuilt the startup prefill target.
+        audioService_->setBackendDrainActive(false);
     }
     return ok;
 }

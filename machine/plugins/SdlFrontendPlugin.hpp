@@ -271,6 +271,7 @@ struct SdlFrontendStats {
     std::size_t audioPipelineCapacitySkipCount = 0;
     std::size_t audioReadyQueueDepth = 0;
     std::size_t audioTransportConfiguredReadyQueueChunks = 0;
+    std::size_t audioTransportPrefillTargetChunks = 0;
     std::size_t audioTransportReadyQueueCapacityChunks = 0;
     std::size_t audioTransportReadyQueueUsableChunks = 0;
     std::size_t audioReadyQueueHighWaterChunks = 0;
@@ -317,6 +318,8 @@ struct SdlFrontendStats {
     std::size_t audioTransportStaleEpochDropCount = 0;
     std::size_t audioTransportEpochBumpCount = 0;
     std::size_t audioTransportPrimedTransitionCount = 0;
+    std::size_t audioTransportPrimingSilenceCallbackCount = 0;
+    std::size_t audioTransportPrimingSilenceSamples = 0;
     std::uint64_t audioTransportLifecycleEpoch = 1;
     bool audioTransportPrimedForDrain = false;
     std::size_t audioTransportDrainDurationSampleCount = 0;

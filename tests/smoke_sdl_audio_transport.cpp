@@ -99,12 +99,13 @@ int main(int argc, char** argv)
         }
         assert(frontend->stats().audioBufferedHighWaterSamples >= 256u);
         const bool primed = waitUntil([frontend]() {
+            (void)frontend->serviceFrontend();
             const auto stats = frontend->stats();
-            return stats.audioTransportPrimedForDrain ||
-                   stats.audioTransportWorkerProducedBlocks > 0u ||
-                   frontend->bufferedAudioSamples() > 0u;
+            return stats.audioTransportPrimedForDrain;
         }, std::chrono::milliseconds(150), std::chrono::milliseconds(5));
         assert(primed);
+        assert(frontend->stats().audioTransportPrimedTransitionCount == 1u);
+        assert(frontend->stats().audioTransportPrefillTargetChunks == 2u);
 
         std::this_thread::sleep_for(std::chrono::milliseconds(40));
         const auto bufferedAfterDrain = frontend->bufferedAudioSamples();

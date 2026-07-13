@@ -316,6 +316,10 @@ void writeDiagnosticsSample(std::ostream& output,
 
     output << ",\"audio\":{";
     output << "\"primed_for_drain\":" << (stats.audioTransportPrimedForDrain ? "true" : "false");
+    output << ",\"primed_transition_count\":" << stats.audioTransportPrimedTransitionCount;
+    output << ",\"priming_silence_callback_count\":"
+           << stats.audioTransportPrimingSilenceCallbackCount;
+    output << ",\"priming_silence_samples\":" << stats.audioTransportPrimingSilenceSamples;
     output << ",\"kpi_status\":\"" << BMMQ::audioKpiStatusName(audioKpi.status) << "\"";
     output << ",\"kpi_source_ratio\":";
     writeJsonDoubleOrNull(output, audioKpi.hasSourceRatio, audioKpi.sourceRatio);
@@ -344,6 +348,7 @@ void writeDiagnosticsSample(std::ostream& output,
     output << "}";
     output << ",\"ready_queue\":{";
     output << "\"configured_chunks\":" << stats.audioTransportConfiguredReadyQueueChunks;
+    output << ",\"prefill_target_chunks\":" << stats.audioTransportPrefillTargetChunks;
     output << ",\"capacity_chunks\":" << stats.audioTransportReadyQueueCapacityChunks;
     output << ",\"usable_chunks\":" << stats.audioTransportReadyQueueUsableChunks;
     output << ",\"depth_last\":" << stats.audioReadyQueueDepth;

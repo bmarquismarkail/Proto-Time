@@ -30,6 +30,7 @@ struct AudioOutputTransportConfig {
 
 struct AudioOutputTransportStats {
     std::size_t configuredReadyQueueChunks = 0;
+    std::size_t prefillTargetChunks = 0;
     std::size_t readyQueueCapacityChunks = 0;
     std::size_t readyQueueUsableChunks = 0;
     std::size_t readyQueueDepth = 0;
@@ -76,6 +77,8 @@ struct AudioOutputTransportStats {
     std::size_t staleEpochDropCount = 0;
     std::size_t epochBumpCount = 0;
     std::size_t primedTransitionCount = 0;
+    std::size_t primingSilenceCallbackCount = 0;
+    std::size_t primingSilenceSamples = 0;
     std::uint64_t lifecycleEpoch = 1;
     bool primedForDrain = false;
     std::size_t drainCallbackDurationSampleCount = 0;
@@ -234,7 +237,6 @@ public:
             bumpTransportEpochLocked();
             outputTransportStopRequested_.store(false, std::memory_order_release);
             outputTransportRunning_.store(true, std::memory_order_release);
-            backendPausedOrClosed_.store(false, std::memory_order_release);
             outputTransportWorker_ = std::thread([this]() { outputTransportWorkerLoop(); });
             outputTransportCv_.notify_one();
         }
@@ -265,7 +267,6 @@ public:
         }
         outputTransportStopRequested_.store(false, std::memory_order_release);
         outputTransportRunning_.store(true, std::memory_order_release);
-        backendPausedOrClosed_.store(false, std::memory_order_release);
         outputTransportWorker_ = std::thread([this]() { outputTransportWorkerLoop(); });
         outputTransportCv_.notify_one();
         return true;
@@ -302,6 +303,11 @@ public:
     [[nodiscard]] std::uint64_t lifecycleEpoch() const noexcept
     {
         return transportEpoch_.load(std::memory_order_acquire);
+    }
+
+    [[nodiscard]] bool primedForDrain() const noexcept
+    {
+        return transportPrimedForDrain_.load(std::memory_order_acquire);
     }
 
     void setLifecycleContractEnforced(bool enforced) noexcept
@@ -345,6 +351,13 @@ public:
         if (pausedOrClosed) {
             bumpTransportEpochLocked();
         }
+    }
+
+    // Backend-only drain gate used by asynchronous priming. This does not
+    // mutate transport epochs or queue contents.
+    void setBackendDrainActive(bool active) noexcept
+    {
+        backendPausedOrClosed_.store(!active, std::memory_order_release);
     }
 
     // Not real-time safe. Requires canPerformReset() == true.
@@ -452,7 +465,9 @@ public:
         transportWorkerProductionSourceBufferedSamplesSuccessLast_.store(
             sourceBufferedSamples, std::memory_order_relaxed);
         transportWorkerProducedBlocks_.fetch_add(1u, std::memory_order_relaxed);
-        noteReadyQueueHighWater(readyQueueDepth());
+        const auto depth = readyQueueDepth();
+        noteReadyQueueHighWater(depth);
+        maybeMarkTransportPrimed(depth);
         return true;
     }
 
@@ -464,6 +479,13 @@ public:
         recordReadyQueueDrainOccupancy(fifoDepth);
         transportDrainRequestedSamples_.fetch_add(output.size(), std::memory_order_relaxed);
         if (output.empty()) {
+            return;
+        }
+
+        if (!transportPrimedForDrain_.load(std::memory_order_acquire)) {
+            std::fill(output.begin(), output.end(), 0);
+            transportPrimingSilenceCallbackCount_.fetch_add(1u, std::memory_order_relaxed);
+            transportPrimingSilenceSamples_.fetch_add(output.size(), std::memory_order_relaxed);
             return;
         }
 
@@ -496,6 +518,7 @@ public:
     {
         AudioOutputTransportStats stats;
         stats.configuredReadyQueueChunks = outputTransportConfig_.readyQueueChunks;
+        stats.prefillTargetChunks = prefillTargetChunks();
         const auto queueCapacity = readyBlocks_.empty() ? 0u : (readyBlocks_.size() - 1u);
         stats.readyQueueCapacityChunks = queueCapacity;
         stats.readyQueueUsableChunks = queueCapacity;
@@ -546,8 +569,13 @@ public:
         stats.staleEpochDropCount = 0;
         stats.epochBumpCount = transportEpochBumpCount_.load(std::memory_order_relaxed);
         stats.lifecycleEpoch = transportEpoch_.load(std::memory_order_acquire);
-        stats.primedTransitionCount = 0;
-        stats.primedForDrain = false;
+        stats.primedTransitionCount =
+            transportPrimedTransitionCount_.load(std::memory_order_relaxed);
+        stats.primingSilenceCallbackCount =
+            transportPrimingSilenceCallbackCount_.load(std::memory_order_relaxed);
+        stats.primingSilenceSamples =
+            transportPrimingSilenceSamples_.load(std::memory_order_relaxed);
+        stats.primedForDrain = transportPrimedForDrain_.load(std::memory_order_acquire);
         stats.drainCallbackDurationSampleCount =
             transportDrainDurationSampleCount_.load(std::memory_order_relaxed);
         stats.drainCallbackDurationLastNanos =
@@ -773,8 +801,28 @@ private:
         return nextReadyIndex(writeIndex) != readyReadIndex_.load(std::memory_order_acquire);
     }
 
+    [[nodiscard]] std::size_t prefillTargetChunks() const noexcept
+    {
+        const auto capacity = readyBlocks_.empty() ? 0u : readyBlocks_.size() - 1u;
+        return std::min<std::size_t>(2u, capacity);
+    }
+
+    void maybeMarkTransportPrimed(std::size_t depth) noexcept
+    {
+        const auto target = prefillTargetChunks();
+        if (target == 0u || depth < target) {
+            return;
+        }
+        bool expected = false;
+        if (transportPrimedForDrain_.compare_exchange_strong(
+                expected, true, std::memory_order_release, std::memory_order_relaxed)) {
+            transportPrimedTransitionCount_.fetch_add(1u, std::memory_order_relaxed);
+        }
+    }
+
     void clearReadyQueue() noexcept
     {
+        transportPrimedForDrain_.store(false, std::memory_order_release);
         readyReadIndex_.store(0u, std::memory_order_release);
         readyWriteIndex_.store(0u, std::memory_order_release);
     }
@@ -837,8 +885,10 @@ private:
                 transportWorkerEmulationWakeCount_.fetch_add(1u, std::memory_order_relaxed);
                 noteWorkerEmulationWakeLatency();
             }
-            // Proactive drain: skip production if queue already has >= 2 blocks.
-            if (readyQueueDepth() >= 2u) {
+            // Fill the startup prefill target before the backend begins draining,
+            // then maintain that same low-water depth during steady state.
+            const auto targetDepth = prefillTargetChunks();
+            if (targetDepth != 0u && readyQueueDepth() >= targetDepth) {
                 transportWorkerWakeProducedBlocks0Count_.fetch_add(1u, std::memory_order_relaxed);
                 continue;
             }
@@ -902,6 +952,9 @@ private:
         transportAppendRecentPcmCallCount_.store(0u, std::memory_order_relaxed);
         transportAppendRecentPcmSamplesAppended_.store(0u, std::memory_order_relaxed);
         transportStaleEpochDropCount_.store(0u, std::memory_order_relaxed);
+        transportPrimedTransitionCount_.store(0u, std::memory_order_relaxed);
+        transportPrimingSilenceCallbackCount_.store(0u, std::memory_order_relaxed);
+        transportPrimingSilenceSamples_.store(0u, std::memory_order_relaxed);
         transportDrainDurationSampleCount_.store(0u, std::memory_order_relaxed);
         transportDrainDurationLastNanos_.store(0, std::memory_order_relaxed);
         transportDrainDurationHighWaterNanos_.store(0, std::memory_order_relaxed);
@@ -1078,6 +1131,10 @@ private:
     std::atomic<std::size_t> transportAppendRecentPcmSamplesAppended_{0};
     std::atomic<std::size_t> transportStaleEpochDropCount_{0};
     std::atomic<std::size_t> transportEpochBumpCount_{0};
+    std::atomic<std::size_t> transportPrimedTransitionCount_{0};
+    std::atomic<std::size_t> transportPrimingSilenceCallbackCount_{0};
+    std::atomic<std::size_t> transportPrimingSilenceSamples_{0};
+    std::atomic<bool> transportPrimedForDrain_{false};
     std::atomic<std::uint64_t> transportEpoch_{1};
     std::atomic<std::size_t> transportDrainDurationSampleCount_{0};
     std::atomic<std::int64_t> transportDrainDurationLastNanos_{0};

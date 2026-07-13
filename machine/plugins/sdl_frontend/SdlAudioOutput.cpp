@@ -122,7 +122,9 @@ public:
             close();
             return false;
         }
-        SDL_PauseAudioDevice(audioDevice_, 0);
+        // SDL opens the device paused. The host lane unpauses it from service()
+        // only after AudioService has published the full prefill target.
+        deviceUnpaused_ = false;
         return true;
 #else
         (void)engine;
@@ -133,6 +135,25 @@ public:
 #endif
     }
 
+    void service() noexcept
+    {
+#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
+        if (audioDevice_ == 0 || service_ == nullptr) {
+            return;
+        }
+        const bool primed = service_->primedForDrain();
+        if (primed && !deviceUnpaused_) {
+            service_->setBackendDrainActive(true);
+            SDL_PauseAudioDevice(audioDevice_, 0);
+            deviceUnpaused_ = true;
+        } else if (!primed && deviceUnpaused_) {
+            SDL_PauseAudioDevice(audioDevice_, 1);
+            service_->setBackendDrainActive(false);
+            deviceUnpaused_ = false;
+        }
+#endif
+    }
+
     void close() noexcept
     {
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
@@ -140,6 +161,7 @@ public:
             SDL_CloseAudioDevice(audioDevice_);
             audioDevice_ = 0;
         }
+        deviceUnpaused_ = false;
 #endif
         if (service_ != nullptr) {
             service_->stopOutputTransport();
@@ -201,6 +223,7 @@ private:
     }
 
     SDL_AudioDeviceID audioDevice_ = 0;
+    bool deviceUnpaused_ = false;
 #endif
     AudioEngine* engine_ = nullptr;
     AudioService* service_ = nullptr;
@@ -223,6 +246,13 @@ bool SdlAudioOutputBackend::open(AudioEngine& engine, const AudioOutputOpenConfi
         impl_ = std::make_unique<Impl>();
     }
     return impl_->open(engine, config);
+}
+
+void SdlAudioOutputBackend::service() noexcept
+{
+    if (impl_ != nullptr) {
+        impl_->service();
+    }
 }
 
 void SdlAudioOutputBackend::close() noexcept

@@ -272,6 +272,9 @@ public:
             stats_.renderServiceState = renderServiceState_.load(std::memory_order_acquire);
             syncTimingStats();
             applyLifecycleRecoveryPolicy();
+            if (audioOutput_ != nullptr) {
+                audioOutput_->service();
+            }
             if (renderServiceActive()) {
                 syncVideoTransportStats();
                 syncAudioTransportStats();
@@ -1709,6 +1712,7 @@ private:
         stats_.audioPipelineCapacitySkipCount = engineStats.pipelineCapacitySkipCount;
         stats_.audioReadyQueueDepth = transportStats.readyQueueDepth;
         stats_.audioTransportConfiguredReadyQueueChunks = transportStats.configuredReadyQueueChunks;
+        stats_.audioTransportPrefillTargetChunks = transportStats.prefillTargetChunks;
         stats_.audioTransportReadyQueueCapacityChunks = transportStats.readyQueueCapacityChunks;
         stats_.audioTransportReadyQueueUsableChunks = transportStats.readyQueueUsableChunks;
         stats_.audioReadyQueueHighWaterChunks = transportStats.readyQueueHighWaterChunks;
@@ -1764,6 +1768,8 @@ private:
         stats_.audioTransportStaleEpochDropCount = transportStats.staleEpochDropCount;
         stats_.audioTransportEpochBumpCount = transportStats.epochBumpCount;
         stats_.audioTransportPrimedTransitionCount = transportStats.primedTransitionCount;
+        stats_.audioTransportPrimingSilenceCallbackCount = transportStats.primingSilenceCallbackCount;
+        stats_.audioTransportPrimingSilenceSamples = transportStats.primingSilenceSamples;
         stats_.audioTransportLifecycleEpoch = transportStats.lifecycleEpoch;
         stats_.audioTransportPrimedForDrain = transportStats.primedForDrain;
         stats_.audioTransportDrainDurationSampleCount = transportStats.drainCallbackDurationSampleCount;
@@ -2521,7 +2527,6 @@ private:
                 };
             }
 
-            audioService_->setBackendPausedOrClosed(false);
             syncAudioTransportStats();
             appendLog("sdl: audio device opened at " + std::to_string(audioService_->engine().config().deviceSampleRate) + " Hz");
             return BMMQ::MachineTransitionMutationResult{

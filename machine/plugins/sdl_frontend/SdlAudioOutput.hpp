@@ -21,6 +21,7 @@ public:
 
     [[nodiscard]] std::string_view name() const noexcept override;
     [[nodiscard]] bool open(AudioEngine& engine, const AudioOutputOpenConfig& config) override;
+    void service() noexcept override;
     void close() noexcept override;
     [[nodiscard]] bool ready() const noexcept override;
     [[nodiscard]] std::string lastError() const noexcept override;

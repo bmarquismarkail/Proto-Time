@@ -44,7 +44,12 @@ int main()
         recent[i] = static_cast<int16_t>(i);
     }
     service.appendRecentPcm(recent, 1u);
-
+    for (int attempt = 0; attempt < 40 && !service.primedForDrain(); ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    assert(service.primedForDrain());
+    assert(service.transportStats().readyQueueDepth >= service.transportStats().prefillTargetChunks);
+    output.service();
     std::this_thread::sleep_for(std::chrono::milliseconds(40));
     assert(engine.stats().callbackCount >= 1u);
     assert(engine.stats().outputSamplesProduced >= 1u);
@@ -100,12 +105,17 @@ int main()
         return 0;
     }
     assert(output.deviceInfo().channels == 2);
-    std::vector<int16_t> stereoRecent(512, 0);
+    std::vector<int16_t> stereoRecent(1024, 0);
     for (std::size_t i = 0; i < stereoRecent.size(); i += 2u) {
         stereoRecent[i] = 1000;
         stereoRecent[i + 1u] = -1000;
     }
     stereoService.appendRecentPcm(stereoRecent, 1u);
+    for (int attempt = 0; attempt < 40 && !stereoService.primedForDrain(); ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    assert(stereoService.primedForDrain());
+    output.service();
     std::this_thread::sleep_for(std::chrono::milliseconds(40));
     assert(stereoEngine.stats().outputSamplesProduced >= 2u);
     assert(stereoService.transportStats().drainCallbackCount >= 1u);
