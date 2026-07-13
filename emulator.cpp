@@ -184,6 +184,17 @@ void writeDiagnosticsSample(std::ostream& output,
     output << ",\"active_timing_profile\":\""
            << jsonEscape(BMMQ::timingPolicyProfileName(timingStats.activeProfile)) << "\"";
 
+    output << ",\"render_service\":{";
+    output << "\"state\":" << static_cast<unsigned int>(stats.renderServiceState);
+    output << ",\"loop_count\":" << stats.renderServiceLoopCount;
+    output << ",\"present_attempts\":" << stats.renderServicePresentAttempts;
+    output << ",\"present_successes\":" << stats.renderServicePresentSuccessCount;
+    output << ",\"present_failures\":" << stats.renderServicePresentFailureCount;
+    output << ",\"event_pump_count\":" << stats.renderServiceEventPumpCount;
+    output << ",\"frame_wake_count\":" << stats.renderServiceFrameWakeCount;
+    output << ",\"timeout_wake_count\":" << stats.renderServiceTimeoutWakeCount;
+    output << "}";
+
     output << ",\"video\":{";
     output << "\"frames_submitted\":" << stats.videoFramesPublished;
     output << ",\"frames_presented\":" << stats.framesPresented;
@@ -405,6 +416,7 @@ void writeDiagnosticsSample(std::ostream& output,
     output << ",\"_5_to_10ms\":" << stats.audioTransportDrainDuration5To10msCount;
     output << ",\"over_10ms\":" << stats.audioTransportDrainDurationOver10msCount;
     output << "}";
+    output << "}";
     output << ",\"append_recent_pcm\":{";
     output << "\"call_count\":" << stats.audioTransportAppendRecentPcmCallCount;
     output << ",\"samples_appended_total\":" << stats.audioTransportAppendRecentPcmSamplesAppended;
@@ -513,6 +525,10 @@ int main(int argc, char** argv)
             config.frameWidth = descriptor.defaultFrameWidth;
             config.frameHeight = descriptor.defaultFrameHeight;
             config.autoInitializeBackend = true;
+            // Keep SDL event pumping, frame consumption, texture upload, and
+            // presentation off the emulation lane. This remains compatible
+            // with SDL's dummy video driver for headless validation.
+            config.enableRenderServiceThread = true;
             // The SDL presenter opens windows hidden; ensure frames are
             // presented automatically so the window appears during normal runs.
             config.createHiddenWindowOnInitialize = false;
