@@ -28,6 +28,34 @@ cmake --build build-working --target time-perf-concurrency-success-gates -j4
 ctest --test-dir build-working -R perf_concurrency_success_gates --output-on-failure
 ```
 
+## End-to-end headless scheduling gate
+
+`time-perf-headless-scheduling-video` covers the portion intentionally excluded
+from the transport microbenchmark. It runs a real Game Boy machine on an
+emulation thread paced by `TimingEngine`, observes guest-generated VBlank
+events, builds and publishes production packed video packets, drains them on a
+separate headless render lane, reconstructs the frame, and records presentation.
+
+The gate requires:
+
+- 30 guest-scheduled frames published and presented;
+- zero latest-mailbox overwrites and stale lifecycle-epoch drops;
+- publication-to-headless-presentation p99 below 16 ms;
+- ideal guest-VBlank-schedule-to-presentation p99 below 16 ms.
+
+The wall-clock limits are disabled under TSAN, while frame counts, lifecycle
+correctness, and overwrite requirements remain enforced.
+
+```bash
+cmake --build build-working --target time-perf-headless-scheduling-video -j4
+ctest --test-dir build-working -R perf_headless_scheduling_video --output-on-failure
+```
+
+Steady-state production VBlank publication uses `RealtimeVideoMailbox`, a
+three-slot latest-only SPSC ownership exchange. Configuration, presenter
+changes, and lifecycle resets remain mutex-protected control-plane operations;
+the emulation-lane publish operation itself takes no mutex.
+
 ## Criteria requiring specialized validation
 
 - **TSAN clean:** configure a dedicated tree with

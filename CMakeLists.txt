@@ -287,6 +287,18 @@ set_tests_properties(perf_concurrency_success_gates PROPERTIES
     TIMEOUT 120
 )
 
+add_executable(time-perf-headless-scheduling-video tests/perf_headless_scheduling_video.cpp)
+target_link_libraries(time-perf-headless-scheduling-video time-gameboy-interpreter-core)
+add_test(NAME perf_headless_scheduling_video COMMAND time-perf-headless-scheduling-video)
+set_tests_properties(perf_headless_scheduling_video PROPERTIES
+    LABELS "performance;concurrency"
+    TIMEOUT 10
+)
+
+add_executable(time-smoke-realtime-video-mailbox tests/smoke_realtime_video_mailbox.cpp)
+target_link_libraries(time-smoke-realtime-video-mailbox time-machine-runtime-common)
+add_test(NAME smoke-realtime-video-mailbox COMMAND time-smoke-realtime-video-mailbox)
+
 add_executable(time-smoke-gamegear-vdp-cram tests/smoke_gamegear_vdp_cram.cpp)
 target_link_libraries(time-smoke-gamegear-vdp-cram time-gamegear-core)
 add_test(NAME smoke-gamegear-vdp-cram COMMAND time-smoke-gamegear-vdp-cram)

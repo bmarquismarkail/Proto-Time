@@ -192,7 +192,34 @@ public:
         stats_.renderServiceSleepOvershootCount =
             renderServiceSleepOvershootCountAtomic_.load(std::memory_order_relaxed);
         syncAudioTransportStats();
-        return stats_;
+        auto snapshot = stats_;
+        snapshot.videoEvents += videoFastPathEventCountAtomic_.load(std::memory_order_relaxed);
+        snapshot.videoRealtimePacketsBuiltOutsideLock +=
+            videoFastPathPacketBuiltCountAtomic_.load(std::memory_order_relaxed);
+        snapshot.videoRealtimePacketsAccepted +=
+            videoFastPathPacketAcceptedCountAtomic_.load(std::memory_order_relaxed);
+        snapshot.videoRealtimePacketsSkipped +=
+            videoFastPathPacketSkippedCountAtomic_.load(std::memory_order_relaxed);
+        snapshot.videoRealtimeRenderRequestCount +=
+            videoFastPathRenderRequestCountAtomic_.load(std::memory_order_relaxed);
+        snapshot.videoRealtimeRenderFromVBlankCount +=
+            videoFastPathVBlankRequestCountAtomic_.load(std::memory_order_relaxed);
+        snapshot.framesPrepared +=
+            videoFastPathFramesPreparedCountAtomic_.load(std::memory_order_relaxed);
+        // Publication diagnostics are atomically accumulated by VideoService's
+        // realtime mailbox. Querying them here is control-plane observation and
+        // keeps onVideoEvent's steady-state path lock-free.
+        if (videoService_ != nullptr) {
+            const auto videoDiagnostics = videoService_->diagnostics();
+            snapshot.videoFramesPublished = videoDiagnostics.publishedFrameCount;
+            snapshot.videoMailboxDepth = videoDiagnostics.mailboxDepth;
+            snapshot.videoMailboxHighWaterFrames = videoDiagnostics.mailboxHighWaterMark;
+            snapshot.videoMailboxOverwriteCount = videoDiagnostics.overwriteCount;
+            snapshot.videoMailboxOverwriteRealtimeCount =
+                videoDiagnostics.overwriteRealtimeFrameCount;
+            snapshot.videoLastPublishedGeneration = videoDiagnostics.lastPublishedGeneration;
+        }
+        return snapshot;
     }
 
     [[nodiscard]] const std::vector<std::string>& diagnostics() const noexcept override
@@ -295,7 +322,9 @@ public:
             if (renderServiceActive()) {
                 syncVideoTransportStats();
                 syncAudioTransportStats();
-                const bool hasVideoWork = config_.enableVideo && (frameDirty_ || lastFrame_.has_value());
+                const bool hasVideoWork = config_.enableVideo &&
+                    (frameDirty_ || lastFrame_.has_value() ||
+                     (videoService_ != nullptr && videoService_->hasPendingRealtimeFrame()));
                 const bool hasAudioStateRs = config_.enableAudio && lastAudioState_.has_value();
                 const bool hadAudioPreviewRs = config_.enableAudio && lastAudioPreview_.has_value();
                 return hasVideoWork || hasAudioStateRs || hadAudioPreviewRs || quitRequested_;
@@ -321,7 +350,10 @@ public:
                     lastAudioState_ = std::move(*aud);
                 }
             }
-            hadFrame        = config_.enableVideo && lastFrame_.has_value();
+            const bool realtimeFramePending =
+                videoService_ != nullptr && videoService_->hasPendingRealtimeFrame();
+            hadFrame = config_.enableVideo &&
+                (lastFrame_.has_value() || realtimeFramePending);
             hasAudioState   = config_.enableAudio && lastAudioState_.has_value();
             hadAudioPreview = config_.enableAudio && lastAudioPreview_.has_value();
             visibilityChanged =
@@ -330,7 +362,7 @@ public:
             audioActive = hasAudioState ||
                 (audioService_ != nullptr && audioService_->engine().bufferedSamples() != 0u);
 
-            if (hadFrame && (frameDirty_ || visibilityChanged)) {
+            if (hadFrame && (frameDirty_ || realtimeFramePending || visibilityChanged)) {
                 ++stats_.renderServicePresentAttempts;
                 if (frameDirty_ && shouldDeferVideoFrameForAudioLowWater()) {
                     videoPresentDeferredForAudioLowWater_ = true;
@@ -342,6 +374,13 @@ public:
                     }
                     ++stats_.renderAttempts;
                     processedFrame = videoService_->consumeAndProcessFrame();
+                    if (auto metadata = videoService_->takeConsumedRealtimeMetadata()) {
+                        accumulateVdpRenderBodyTiming(metadata->vdpRenderBodyTiming);
+                        accumulateVdpMode4BackgroundAttributes(metadata->vdpMode4BackgroundAttributes);
+                        accumulateVdpMode4SimpleBackground(metadata->vdpMode4SimpleBackground);
+                        lastVideoDebugModel_ = debugModelFromRealtimePacket(*metadata);
+                        scanlineVideoDebugModel_.reset();
+                    }
                     if (!processedFrame.has_value()) {
                         // Headless: consumeAndProcessFrame set state; treat as success.
                         presented = true;
@@ -352,6 +391,23 @@ public:
                         lastRenderSummary_ = "Presented (headless)";
                     } else {
                         updateLastFrameFromProcessedFrame(*processedFrame);
+                    }
+                } else if (realtimeFramePending && videoService_ != nullptr) {
+                    auto headlessFrame = videoService_->consumeHeadlessFrame();
+                    if (auto metadata = videoService_->takeConsumedRealtimeMetadata()) {
+                        accumulateVdpRenderBodyTiming(metadata->vdpRenderBodyTiming);
+                        accumulateVdpMode4BackgroundAttributes(metadata->vdpMode4BackgroundAttributes);
+                        accumulateVdpMode4SimpleBackground(metadata->vdpMode4SimpleBackground);
+                        lastVideoDebugModel_ = debugModelFromRealtimePacket(*metadata);
+                        scanlineVideoDebugModel_.reset();
+                    }
+                    if (headlessFrame.has_value()) {
+                        updateLastFrameFromProcessedFrame(*headlessFrame);
+                        presented = true;
+                        ++stats_.renderServicePresentSuccessCount;
+                        ++stats_.framesPresented;
+                        frameDirty_ = false;
+                        lastRenderSummary_ = "Presented (headless)";
                     }
                 } else {
                     ++stats_.renderServicePresentFailureCount;
@@ -806,6 +862,32 @@ public:
             });
         } else if (carriesVideoStateEarly) {
             videoDebugModelBuildSkipCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
+        }
+
+        // Production VBlank fast path: publish the immutable compact packet
+        // directly to VideoService's SPSC mailbox. No frontend or service mutex
+        // is acquired. Debug/capture paths retain the serialized rich-model path.
+        if (event.type == BMMQ::MachineEventType::VBlank &&
+            !needsDebugModel &&
+            config_.enableVideo &&
+            videoService_ != nullptr &&
+            prebuiltRealtime.has_value() &&
+            prebuiltRealtime->contractVersion == BMMQ::RealtimeVideoPacket::kContractVersion &&
+            !prebuiltRealtime->empty()) {
+            prebuiltRealtime->eventType = event.type;
+            if (videoService_->publishRealtimeVideoPacket(std::move(*prebuiltRealtime))) {
+                videoFastPathEventCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
+                videoFastPathPacketBuiltCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
+                videoFastPathPacketAcceptedCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
+                videoFastPathRenderRequestCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
+                videoFastPathVBlankRequestCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
+                videoFastPathFramesPreparedCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
+                renderServiceFramePending_.store(true, std::memory_order_release);
+                renderServiceWakeCv_.notify_all();
+                onVideoEventFrameNotifyOutsideLockCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
+                return;
+            }
+            videoFastPathPacketSkippedCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
         }
 
         // submittedVideoFrame is hoisted before the lock so it is visible to the
@@ -1346,11 +1428,14 @@ private:
                 applyCollectedEvents(eventBatch, eventCount);
                 ++stats_.renderServiceLightweightSyncCount;
                 syncPresentDecisionState();
-                const bool hadFrame = config_.enableVideo && lastFrame_.has_value();
+                const bool realtimeFramePending =
+                    videoService_ != nullptr && videoService_->hasPendingRealtimeFrame();
+                const bool hadFrame = config_.enableVideo &&
+                    (lastFrame_.has_value() || realtimeFramePending);
                 const bool visibilityChanged =
                     windowVisible_.load(std::memory_order_acquire) !=
                     windowVisibilityRequested_.load(std::memory_order_acquire);
-                if (hadFrame && (frameDirty_ || visibilityChanged)) {
+                if (hadFrame && (frameDirty_ || realtimeFramePending || visibilityChanged)) {
                     ++stats_.renderServicePresentAttempts;
                     if (frameDirty_ && shouldDeferVideoFrameForAudioLowWater()) {
                         videoPresentDeferredForAudioLowWater_ = true;
@@ -1361,6 +1446,13 @@ private:
                             requestWindowVisibility(true);
                         }
                         processedFrame = videoService_->consumeAndProcessFrame();
+                        if (auto metadata = videoService_->takeConsumedRealtimeMetadata()) {
+                            accumulateVdpRenderBodyTiming(metadata->vdpRenderBodyTiming);
+                            accumulateVdpMode4BackgroundAttributes(metadata->vdpMode4BackgroundAttributes);
+                            accumulateVdpMode4SimpleBackground(metadata->vdpMode4SimpleBackground);
+                            lastVideoDebugModel_ = debugModelFromRealtimePacket(*metadata);
+                            scanlineVideoDebugModel_.reset();
+                        }
                         if (processedFrame.has_value()) {
                             updateLastFrameFromProcessedFrame(*processedFrame);
                             ++stats_.renderServicePresentCallsOutsideLock;
@@ -1369,6 +1461,22 @@ private:
                             ++stats_.renderServicePresentSuccessCount;
                             frameDirty_ = false;
                             videoPresentDeferredForAudioLowWater_ = false;
+                            lastRenderSummary_ = "Presented (headless)";
+                        }
+                    } else if (realtimeFramePending && videoService_ != nullptr) {
+                        auto headlessFrame = videoService_->consumeHeadlessFrame();
+                        if (auto metadata = videoService_->takeConsumedRealtimeMetadata()) {
+                            accumulateVdpRenderBodyTiming(metadata->vdpRenderBodyTiming);
+                            accumulateVdpMode4BackgroundAttributes(metadata->vdpMode4BackgroundAttributes);
+                            accumulateVdpMode4SimpleBackground(metadata->vdpMode4SimpleBackground);
+                            lastVideoDebugModel_ = debugModelFromRealtimePacket(*metadata);
+                            scanlineVideoDebugModel_.reset();
+                        }
+                        if (headlessFrame.has_value()) {
+                            updateLastFrameFromProcessedFrame(*headlessFrame);
+                            ++stats_.renderServicePresentSuccessCount;
+                            ++stats_.framesPresented;
+                            frameDirty_ = false;
                             lastRenderSummary_ = "Presented (headless)";
                         }
                     } else {
@@ -2723,6 +2831,15 @@ private:
     // sharedStateMutex_ was released, reducing VBlank lock hold time.
     std::atomic<uint64_t> onVideoEventFrameNotifyOutsideLockCountAtomic_{0};
     std::atomic<uint64_t> videoDebugModelBuildSkipCountAtomic_{0};
+    // Production VBlank publication counters. These are written by the
+    // emulation lane without sharedStateMutex_ and folded into stats snapshots.
+    std::atomic<uint64_t> videoFastPathEventCountAtomic_{0};
+    std::atomic<uint64_t> videoFastPathPacketBuiltCountAtomic_{0};
+    std::atomic<uint64_t> videoFastPathPacketAcceptedCountAtomic_{0};
+    std::atomic<uint64_t> videoFastPathPacketSkippedCountAtomic_{0};
+    std::atomic<uint64_t> videoFastPathRenderRequestCountAtomic_{0};
+    std::atomic<uint64_t> videoFastPathVBlankRequestCountAtomic_{0};
+    std::atomic<uint64_t> videoFastPathFramesPreparedCountAtomic_{0};
     // Phase 36B render-service wait-block shadow atomics.
     // These are incremented inside the renderServiceWaitMutex_ condvar block (or
     // just before it, under no lock), so they cannot be written directly to stats_
