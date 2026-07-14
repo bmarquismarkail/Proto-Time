@@ -26,6 +26,21 @@ struct VideoPresenterDiagnostics {
     std::size_t textureUploadCount = 0;
     std::size_t presentCount = 0;
     std::string_view rendererName{};
+    std::size_t directIndexedFrameCount = 0;
+    std::size_t argbFrameCount = 0;
+    std::size_t textureLockCount = 0;
+    std::uint32_t rendererFlags = 0;
+    bool rendererAccelerated = false;
+    bool renderTargetSupported = false;
+    std::int64_t expansionDurationLastNanos = 0;
+    std::int64_t expansionDurationHighWaterNanos = 0;
+    std::int64_t uploadDurationLastNanos = 0;
+    std::int64_t uploadDurationHighWaterNanos = 0;
+    std::int64_t renderSubmitDurationLastNanos = 0;
+    std::int64_t renderSubmitDurationHighWaterNanos = 0;
+    std::int64_t totalDurationLastNanos = 0;
+    std::int64_t totalDurationHighWaterNanos = 0;
+    std::size_t stageDurationSampleCount = 0;
     
     // Phase 39A: presenter present() latency percentiles (nanoseconds)
     std::int64_t presenterPresentDurationLastNanos = 0;

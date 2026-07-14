@@ -3,7 +3,9 @@
 #endif
 
 #include <cassert>
+#include <array>
 #include <cstdlib>
+#include <vector>
 
 #include "machine/VideoService.hpp"
 #include "machine/plugins/video/adapters/HeadlessFrameDumper.hpp"
@@ -116,6 +118,36 @@ int main()
                 BMMQ::VideoPresenterFallbackReason::HardwareRendererUnavailable;
         assert(hardwareActive || softwareFallbackActive);
         assert(service.diagnostics().presenterPresentDurationSampleCount >= 1u);
+        const auto recreateCount = diagnostics.presenterTextureRecreateCount;
+
+        std::array<std::uint32_t, 4> palette{
+            0xFF000000u, 0xFF555555u, 0xFFAAAAAAu, 0xFFFFFFFFu};
+        std::vector<std::uint8_t> indices(64u);
+        for (std::size_t index = 0; index < indices.size(); ++index) {
+            indices[index] = static_cast<std::uint8_t>(index & 3u);
+        }
+        BMMQ::RealtimeVideoPacket indexedPacket;
+        indexedPacket.width = 8;
+        indexedPacket.height = 8;
+        indexedPacket.displayEnabled = true;
+        indexedPacket.generation = 15u;
+        indexedPacket.surface = BMMQ::makeIndexedVideoSurface(
+            indices, 8, 8, BMMQ::RealtimeVideoEncoding::Indexed2, palette);
+        assert(service.publishRealtimeVideoPacket({.packet = std::move(indexedPacket)}));
+        assert(service.presentOneFrame());
+
+        const auto indexedDiagnostics = service.diagnostics();
+        assert(indexedDiagnostics.presenterDirectIndexedFrameCount >= 1u);
+        assert(indexedDiagnostics.presenterTextureLockCount >= 2u);
+        assert(indexedDiagnostics.presenterTextureRecreateCount == recreateCount);
+        assert(indexedDiagnostics.presenterStageDurationSampleCount >= 2u);
+        assert(indexedDiagnostics.presenterUploadDurationHighWaterNanos >=
+               indexedDiagnostics.presenterUploadDurationLastNanos);
+        assert(indexedDiagnostics.presenterTotalDurationHighWaterNanos >=
+               indexedDiagnostics.presenterTotalDurationLastNanos);
+        if (indexedDiagnostics.activePresenterMode == BMMQ::VideoPresenterMode::Hardware) {
+            assert(indexedDiagnostics.presenterRendererAccelerated);
+        }
         assert(service.pause());
     } else {
         assert(service.state() == BMMQ::VideoLifecycleState::Faulted);

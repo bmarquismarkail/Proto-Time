@@ -161,6 +161,55 @@ struct RealtimeVideoSurface {
     return true;
 }
 
+// Decode into caller-owned storage. Presenters use this overload to expand an
+// indexed surface directly into a locked host texture without allocating an
+// intermediate ARGB framebuffer.
+[[nodiscard]] inline bool decodeVideoSurfaceToArgb(const RealtimeVideoSurface& surface,
+                                                   int width,
+                                                   int height,
+                                                   std::uint32_t* destination,
+                                                   std::size_t destinationStridePixels) noexcept
+{
+    if (destination == nullptr ||
+        destinationStridePixels < static_cast<std::size_t>(std::max(width, 0)) ||
+        !surface.validForDimensions(width, height)) {
+        return false;
+    }
+
+    if (surface.encoding == RealtimeVideoEncoding::Argb8888) {
+        for (int y = 0; y < height; ++y) {
+            const auto rowOffset = static_cast<std::size_t>(y) * static_cast<std::size_t>(width);
+            std::copy_n(surface.argbPixels.data() + rowOffset,
+                        static_cast<std::size_t>(width),
+                        destination + static_cast<std::size_t>(y) * destinationStridePixels);
+        }
+        return true;
+    }
+
+    const auto bitsPerPixel = static_cast<std::uint8_t>(surface.encoding);
+    const auto mask = static_cast<std::uint16_t>((std::uint16_t{1u} << bitsPerPixel) - 1u);
+    for (int y = 0; y < height; ++y) {
+        const auto sourceRow = static_cast<std::size_t>(y) * surface.strideBytes;
+        auto* destinationRow = destination + static_cast<std::size_t>(y) * destinationStridePixels;
+        std::size_t bitOffset = 0u;
+        for (int x = 0; x < width; ++x) {
+            const auto byteOffset = sourceRow + bitOffset / 8u;
+            const auto shift = static_cast<unsigned>(bitOffset % 8u);
+            std::uint16_t encoded = surface.indexedBytes[byteOffset];
+            if (shift + bitsPerPixel > 8u) {
+                encoded |= static_cast<std::uint16_t>(surface.indexedBytes[byteOffset + 1u]) << 8u;
+            }
+            const auto paletteIndex = static_cast<std::size_t>((encoded >> shift) & mask);
+            if (paletteIndex >= surface.paletteArgb.size()) {
+                return false;
+            }
+            destinationRow[static_cast<std::size_t>(x)] = surface.paletteArgb[paletteIndex];
+            bitOffset += bitsPerPixel;
+        }
+    }
+    return true;
+}
+
 } // namespace BMMQ
 
 #endif // BMMQ_REALTIME_VIDEO_SURFACE_HPP

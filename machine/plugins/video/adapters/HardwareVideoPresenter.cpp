@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <chrono>
+#include <cstring>
 #include <limits>
 
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
@@ -57,6 +58,7 @@ VideoPluginCapabilities HardwareVideoPresenter::capabilities() const noexcept
         .deterministic = false,
         .headlessSafe = false,
         .requiresHostThreadAffinity = true,
+        .acceptsIndexedSurface = true,
     };
 }
 
@@ -127,13 +129,9 @@ void HardwareVideoPresenter::close() noexcept
         SDL_DestroyTexture(uploadTexture_);
         uploadTexture_ = nullptr;
     }
-    if (renderTarget_ != nullptr) {
-        SDL_DestroyTexture(renderTarget_);
-        renderTarget_ = nullptr;
-    }
     textureWidth_ = 0;
     textureHeight_ = 0;
-    renderTargetAvailable_ = false;
+    rendererFlags_ = 0;
     if (renderer_ != nullptr) {
         SDL_DestroyRenderer(renderer_);
         renderer_ = nullptr;
@@ -170,6 +168,7 @@ bool HardwareVideoPresenter::present(const VideoFramePacket& frame) noexcept
         lastError_ = "empty video frame";
         return false;
     }
+    const auto totalStart = std::chrono::steady_clock::now();
 
     if (config_.showWindowOnPresent) {
         requestWindowVisibility(true);
@@ -191,69 +190,57 @@ bool HardwareVideoPresenter::present(const VideoFramePacket& frame) noexcept
         return false;
     }
 
-    if (SDL_UpdateTexture(uploadTexture_, nullptr, frame.pixels.data(),
-                          frame.width * static_cast<int>(sizeof(uint32_t))) != 0) {
-        const auto updateError = std::string(SDL_GetError());
+    std::int64_t expansionDurationNanos = 0;
+    const auto uploadStart = std::chrono::steady_clock::now();
+    if (!uploadLockedTexture(frame, expansionDurationNanos)) {
+        const auto updateError = lastError_;
         if (!fallbackToSoftwareRenderer(frame.width, frame.height, VideoPresenterFallbackReason::RuntimePresentFailure) ||
             !ensureTextures(frame.width, frame.height) ||
-            SDL_UpdateTexture(uploadTexture_, nullptr, frame.pixels.data(),
-                              frame.width * static_cast<int>(sizeof(uint32_t))) != 0) {
+            !uploadLockedTexture(frame, expansionDurationNanos)) {
             lastError_ = updateError;
             return false;
         }
     }
+    const auto uploadEnd = std::chrono::steady_clock::now();
+    const auto uploadDurationNanos =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(uploadEnd - uploadStart).count();
     ++diagnostics_.textureUploadCount;
-
-    SDL_Texture* presentTexture = uploadTexture_;
-    if (renderTargetAvailable_ && renderTarget_ != nullptr) {
-        if (SDL_SetRenderTarget(renderer_, renderTarget_) != 0 ||
-            SDL_RenderClear(renderer_) != 0 ||
-            SDL_RenderCopy(renderer_, uploadTexture_, nullptr, nullptr) != 0 ||
-            SDL_SetRenderTarget(renderer_, nullptr) != 0) {
-            const auto targetError = std::string(SDL_GetError());
-            if (!fallbackToSoftwareRenderer(frame.width, frame.height, VideoPresenterFallbackReason::RuntimePresentFailure) ||
-                !ensureTextures(frame.width, frame.height) ||
-                SDL_UpdateTexture(uploadTexture_, nullptr, frame.pixels.data(),
-                                  frame.width * static_cast<int>(sizeof(uint32_t))) != 0) {
-                lastError_ = targetError;
-                return false;
-            }
-            presentTexture = uploadTexture_;
-        } else {
-            presentTexture = renderTarget_;
-        }
-    }
-
+    const auto renderSubmitStart = std::chrono::steady_clock::now();
     if (SDL_RenderClear(renderer_) != 0) {
         const auto clearError = std::string(SDL_GetError());
         if (!fallbackToSoftwareRenderer(frame.width, frame.height, VideoPresenterFallbackReason::RuntimePresentFailure) ||
             !ensureTextures(frame.width, frame.height) ||
-            SDL_UpdateTexture(uploadTexture_, nullptr, frame.pixels.data(),
-                              frame.width * static_cast<int>(sizeof(uint32_t))) != 0 ||
+            !uploadLockedTexture(frame, expansionDurationNanos) ||
             SDL_RenderClear(renderer_) != 0) {
             lastError_ = clearError;
             return false;
         }
-        presentTexture = uploadTexture_;
     }
-    if (SDL_RenderCopy(renderer_, presentTexture, nullptr, nullptr) != 0) {
+    if (SDL_RenderCopy(renderer_, uploadTexture_, nullptr, nullptr) != 0) {
         const auto copyError = std::string(SDL_GetError());
         if (!fallbackToSoftwareRenderer(frame.width, frame.height, VideoPresenterFallbackReason::RuntimePresentFailure) ||
             !ensureTextures(frame.width, frame.height) ||
-            SDL_UpdateTexture(uploadTexture_, nullptr, frame.pixels.data(),
-                              frame.width * static_cast<int>(sizeof(uint32_t))) != 0 ||
+            !uploadLockedTexture(frame, expansionDurationNanos) ||
             SDL_RenderCopy(renderer_, uploadTexture_, nullptr, nullptr) != 0) {
             lastError_ = copyError;
             return false;
         }
     }
+    const auto renderSubmitEnd = std::chrono::steady_clock::now();
+    const auto renderSubmitDurationNanos =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(renderSubmitEnd - renderSubmitStart).count();
 
-    const auto presentStart = std::chrono::high_resolution_clock::now();
+    const auto presentStart = std::chrono::steady_clock::now();
     SDL_RenderPresent(renderer_);
-    const auto presentEnd = std::chrono::high_resolution_clock::now();
+    const auto presentEnd = std::chrono::steady_clock::now();
     const auto presentDurationNanos =
         std::chrono::duration_cast<std::chrono::nanoseconds>(presentEnd - presentStart).count();
     updatePresentDurationMetric(presentDurationNanos);
+    updateStageDurationMetrics(
+        expansionDurationNanos,
+        uploadDurationNanos,
+        renderSubmitDurationNanos,
+        std::chrono::duration_cast<std::chrono::nanoseconds>(presentEnd - totalStart).count());
     ++diagnostics_.presentCount;
     lastError_.clear();
     return true;
@@ -301,12 +288,19 @@ bool HardwareVideoPresenter::ensureRenderer(int frameWidth, int frameHeight) noe
 
     const auto assignRendererMetadata = [this]() {
         SDL_RendererInfo rendererInfo{};
-        if (SDL_GetRendererInfo(renderer_, &rendererInfo) == 0 && rendererInfo.name != nullptr) {
-            rendererNameStorage_ = rendererInfo.name;
+        if (SDL_GetRendererInfo(renderer_, &rendererInfo) == 0) {
+            rendererNameStorage_ = rendererInfo.name != nullptr ? rendererInfo.name : "";
+            rendererFlags_ = rendererInfo.flags;
         } else {
             rendererNameStorage_.clear();
+            rendererFlags_ = 0;
         }
         diagnostics_.rendererName = rendererNameStorage_;
+        diagnostics_.rendererFlags = rendererFlags_;
+        diagnostics_.rendererAccelerated =
+            (rendererFlags_ & SDL_RENDERER_ACCELERATED) != 0u;
+        diagnostics_.renderTargetSupported =
+            (rendererFlags_ & SDL_RENDERER_TARGETTEXTURE) != 0u;
     };
 
     auto createHardwareRenderer = [&](uint32_t flags) -> bool {
@@ -314,9 +308,14 @@ bool HardwareVideoPresenter::ensureRenderer(int frameWidth, int frameHeight) noe
         if (renderer_ == nullptr) {
             return false;
         }
-        diagnostics_.activeMode = VideoPresenterMode::Hardware;
         SDL_RenderSetLogicalSize(renderer_, frameWidth, frameHeight);
         assignRendererMetadata();
+        if (!diagnostics_.rendererAccelerated) {
+            SDL_DestroyRenderer(renderer_);
+            renderer_ = nullptr;
+            return false;
+        }
+        diagnostics_.activeMode = VideoPresenterMode::Hardware;
         return true;
     };
 
@@ -365,11 +364,6 @@ bool HardwareVideoPresenter::ensureTextures(int frameWidth, int frameHeight) noe
         SDL_DestroyTexture(uploadTexture_);
         uploadTexture_ = nullptr;
     }
-    if (renderTarget_ != nullptr) {
-        SDL_DestroyTexture(renderTarget_);
-        renderTarget_ = nullptr;
-    }
-    renderTargetAvailable_ = false;
     SDL_RenderSetLogicalSize(renderer_, frameWidth, frameHeight);
 
     uploadTexture_ = SDL_CreateTexture(renderer_,
@@ -382,15 +376,6 @@ bool HardwareVideoPresenter::ensureTextures(int frameWidth, int frameHeight) noe
         return false;
     }
 
-    if (diagnostics_.activeMode == VideoPresenterMode::Hardware) {
-        renderTarget_ = SDL_CreateTexture(renderer_,
-                                          SDL_PIXELFORMAT_ARGB8888,
-                                          SDL_TEXTUREACCESS_TARGET,
-                                          frameWidth,
-                                          frameHeight);
-        renderTargetAvailable_ = renderTarget_ != nullptr;
-    }
-
     textureWidth_ = frameWidth;
     textureHeight_ = frameHeight;
     ++diagnostics_.textureRecreateCount;
@@ -398,6 +383,64 @@ bool HardwareVideoPresenter::ensureTextures(int frameWidth, int frameHeight) noe
 #else
     (void)frameWidth;
     (void)frameHeight;
+    return false;
+#endif
+}
+
+bool HardwareVideoPresenter::uploadLockedTexture(const VideoFramePacket& frame,
+                                                 std::int64_t& expansionDurationNanos) noexcept
+{
+#if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
+    void* texturePixels = nullptr;
+    int pitch = 0;
+    if (SDL_LockTexture(uploadTexture_, nullptr, &texturePixels, &pitch) != 0) {
+        lastError_ = SDL_GetError();
+        return false;
+    }
+    ++diagnostics_.textureLockCount;
+    if (pitch <= 0 || pitch % static_cast<int>(sizeof(std::uint32_t)) != 0) {
+        SDL_UnlockTexture(uploadTexture_);
+        lastError_ = "SDL texture pitch is not ARGB-aligned";
+        return false;
+    }
+
+    bool copied = false;
+    const auto expansionStart = std::chrono::steady_clock::now();
+    if (!frame.pixels.empty()) {
+        const auto rowBytes = static_cast<std::size_t>(frame.width) * sizeof(std::uint32_t);
+        for (int y = 0; y < frame.height; ++y) {
+            const auto* source = reinterpret_cast<const std::uint8_t*>(frame.pixels.data()) +
+                static_cast<std::size_t>(y) * rowBytes;
+            auto* destination = static_cast<std::uint8_t*>(texturePixels) +
+                static_cast<std::size_t>(y) * static_cast<std::size_t>(pitch);
+            std::memcpy(destination, source, rowBytes);
+        }
+        ++diagnostics_.argbFrameCount;
+        copied = true;
+    } else {
+        copied = decodeVideoSurfaceToArgb(
+            frame.surface,
+            frame.width,
+            frame.height,
+            static_cast<std::uint32_t*>(texturePixels),
+            static_cast<std::size_t>(pitch) / sizeof(std::uint32_t));
+        if (copied && frame.surface.encoding != RealtimeVideoEncoding::Argb8888) {
+            ++diagnostics_.directIndexedFrameCount;
+        } else if (copied) {
+            ++diagnostics_.argbFrameCount;
+        }
+    }
+    const auto expansionEnd = std::chrono::steady_clock::now();
+    expansionDurationNanos =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(expansionEnd - expansionStart).count();
+    SDL_UnlockTexture(uploadTexture_);
+    if (!copied) {
+        lastError_ = "unable to expand video surface into SDL texture";
+    }
+    return copied;
+#else
+    (void)frame;
+    expansionDurationNanos = 0;
     return false;
 #endif
 }
@@ -417,13 +460,8 @@ bool HardwareVideoPresenter::fallbackToSoftwareRenderer(int frameWidth,
         SDL_DestroyTexture(uploadTexture_);
         uploadTexture_ = nullptr;
     }
-    if (renderTarget_ != nullptr) {
-        SDL_DestroyTexture(renderTarget_);
-        renderTarget_ = nullptr;
-    }
     textureWidth_ = 0;
     textureHeight_ = 0;
-    renderTargetAvailable_ = false;
     if (renderer_ != nullptr) {
         SDL_DestroyRenderer(renderer_);
         renderer_ = nullptr;
@@ -441,12 +479,18 @@ bool HardwareVideoPresenter::fallbackToSoftwareRenderer(int frameWidth,
     SDL_RenderSetLogicalSize(renderer_, frameWidth, frameHeight);
 
     SDL_RendererInfo rendererInfo{};
-    if (SDL_GetRendererInfo(renderer_, &rendererInfo) == 0 && rendererInfo.name != nullptr) {
-        rendererNameStorage_ = rendererInfo.name;
+    if (SDL_GetRendererInfo(renderer_, &rendererInfo) == 0) {
+        rendererNameStorage_ = rendererInfo.name != nullptr ? rendererInfo.name : "";
+        rendererFlags_ = rendererInfo.flags;
     } else {
         rendererNameStorage_.clear();
+        rendererFlags_ = 0;
     }
     diagnostics_.rendererName = rendererNameStorage_;
+    diagnostics_.rendererFlags = rendererFlags_;
+    diagnostics_.rendererAccelerated = false;
+    diagnostics_.renderTargetSupported =
+        (rendererFlags_ & SDL_RENDERER_TARGETTEXTURE) != 0u;
     return true;
 #else
     (void)frameWidth;
@@ -538,6 +582,27 @@ void HardwareVideoPresenter::updatePresentDurationMetric(std::int64_t durationNa
     diagnostics_.presenterPresentDurationP95Nanos = estimateAtRank(targetP95);
     diagnostics_.presenterPresentDurationP99Nanos = estimateAtRank(targetP99);
     diagnostics_.presenterPresentDurationP999Nanos = estimateAtRank(targetP999);
+}
+
+void HardwareVideoPresenter::updateStageDurationMetrics(
+    std::int64_t expansionDurationNanos,
+    std::int64_t uploadDurationNanos,
+    std::int64_t renderSubmitDurationNanos,
+    std::int64_t totalDurationNanos) noexcept
+{
+    diagnostics_.expansionDurationLastNanos = expansionDurationNanos;
+    diagnostics_.expansionDurationHighWaterNanos = std::max(
+        diagnostics_.expansionDurationHighWaterNanos, expansionDurationNanos);
+    diagnostics_.uploadDurationLastNanos = uploadDurationNanos;
+    diagnostics_.uploadDurationHighWaterNanos = std::max(
+        diagnostics_.uploadDurationHighWaterNanos, uploadDurationNanos);
+    diagnostics_.renderSubmitDurationLastNanos = renderSubmitDurationNanos;
+    diagnostics_.renderSubmitDurationHighWaterNanos = std::max(
+        diagnostics_.renderSubmitDurationHighWaterNanos, renderSubmitDurationNanos);
+    diagnostics_.totalDurationLastNanos = totalDurationNanos;
+    diagnostics_.totalDurationHighWaterNanos = std::max(
+        diagnostics_.totalDurationHighWaterNanos, totalDurationNanos);
+    ++diagnostics_.stageDurationSampleCount;
 }
 
 } // namespace BMMQ

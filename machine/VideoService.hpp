@@ -57,6 +57,21 @@ struct VideoServiceDiagnostics {
     std::size_t presenterTextureUploadCount = 0;
     std::size_t presenterRenderCount = 0;
     std::string presenterRendererName;
+    std::size_t presenterDirectIndexedFrameCount = 0;
+    std::size_t presenterArgbFrameCount = 0;
+    std::size_t presenterTextureLockCount = 0;
+    std::uint32_t presenterRendererFlags = 0;
+    bool presenterRendererAccelerated = false;
+    bool presenterRenderTargetSupported = false;
+    std::int64_t presenterExpansionDurationLastNanos = 0;
+    std::int64_t presenterExpansionDurationHighWaterNanos = 0;
+    std::int64_t presenterUploadDurationLastNanos = 0;
+    std::int64_t presenterUploadDurationHighWaterNanos = 0;
+    std::int64_t presenterRenderSubmitDurationLastNanos = 0;
+    std::int64_t presenterRenderSubmitDurationHighWaterNanos = 0;
+    std::int64_t presenterTotalDurationLastNanos = 0;
+    std::int64_t presenterTotalDurationHighWaterNanos = 0;
+    std::size_t presenterStageDurationSampleCount = 0;
     std::size_t publishedDebugFrameCount = 0;
     std::size_t publishedRealtimeFrameCount = 0;
     std::size_t publishedDebugPixelBytes = 0;
@@ -564,6 +579,14 @@ public:
         }
 
         VideoFramePacket processed = makeFramePacket(std::move(*frame));
+        const bool presenterAcceptsIndexed = presenter_ != nullptr &&
+            presenter_->capabilities().acceptsIndexedSurface;
+        const bool requiresArgb = !processed.surface.validForDimensions(processed.width, processed.height) ||
+            !presenterAcceptsIndexed || !processors_.empty() || !captures_.empty();
+        if (requiresArgb && !materializeVideoFrameArgb(processed)) {
+            ++diagnostics_.compatibilityFallbackCount;
+            return std::nullopt;
+        }
         for (auto& processor : processors_) {
             if (!isLiveCompatible(processor->capabilities())) {
                 ++diagnostics_.compatibilityFallbackCount;
@@ -618,9 +641,14 @@ public:
     [[nodiscard]] std::optional<VideoFramePacket> consumeHeadlessFrame()
     {
         if (auto processed = consumeAndProcessFrame()) {
+            (void)materializeVideoFrameArgb(*processed);
             return processed;
         }
-        return lastProcessedFrame_;
+        auto fallback = lastProcessedFrame_;
+        if (fallback.has_value()) {
+            (void)materializeVideoFrameArgb(*fallback);
+        }
+        return fallback;
     }
 
     // recordPresentOutcome: update diagnostics and lifecycle state after an
@@ -763,6 +791,21 @@ private:
             diagnostics_.presenterTextureUploadCount = presenterDiagnostics.textureUploadCount;
             diagnostics_.presenterRenderCount = presenterDiagnostics.presentCount;
             diagnostics_.presenterRendererName = std::string(presenterDiagnostics.rendererName);
+            diagnostics_.presenterDirectIndexedFrameCount = presenterDiagnostics.directIndexedFrameCount;
+            diagnostics_.presenterArgbFrameCount = presenterDiagnostics.argbFrameCount;
+            diagnostics_.presenterTextureLockCount = presenterDiagnostics.textureLockCount;
+            diagnostics_.presenterRendererFlags = presenterDiagnostics.rendererFlags;
+            diagnostics_.presenterRendererAccelerated = presenterDiagnostics.rendererAccelerated;
+            diagnostics_.presenterRenderTargetSupported = presenterDiagnostics.renderTargetSupported;
+            diagnostics_.presenterExpansionDurationLastNanos = presenterDiagnostics.expansionDurationLastNanos;
+            diagnostics_.presenterExpansionDurationHighWaterNanos = presenterDiagnostics.expansionDurationHighWaterNanos;
+            diagnostics_.presenterUploadDurationLastNanos = presenterDiagnostics.uploadDurationLastNanos;
+            diagnostics_.presenterUploadDurationHighWaterNanos = presenterDiagnostics.uploadDurationHighWaterNanos;
+            diagnostics_.presenterRenderSubmitDurationLastNanos = presenterDiagnostics.renderSubmitDurationLastNanos;
+            diagnostics_.presenterRenderSubmitDurationHighWaterNanos = presenterDiagnostics.renderSubmitDurationHighWaterNanos;
+            diagnostics_.presenterTotalDurationLastNanos = presenterDiagnostics.totalDurationLastNanos;
+            diagnostics_.presenterTotalDurationHighWaterNanos = presenterDiagnostics.totalDurationHighWaterNanos;
+            diagnostics_.presenterStageDurationSampleCount = presenterDiagnostics.stageDurationSampleCount;
             
                     // Phase 39A: copy presenter timing metrics
                     diagnostics_.presenterPresentDurationLastNanos = presenterDiagnostics.presenterPresentDurationLastNanos;

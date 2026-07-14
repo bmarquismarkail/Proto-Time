@@ -167,7 +167,10 @@ int main()
         if (!consumed.has_value()) {
             return;
         }
-        const auto frame = BMMQ::makeFramePacket(std::move(*consumed));
+        auto frame = BMMQ::makeFramePacket(std::move(*consumed));
+        if (!BMMQ::materializeVideoFrameArgb(frame)) {
+            return;
+        }
         checksum += frame.pixels.empty() ? 0u : frame.pixels.front();
     });
     passed = enforce({"video_frame_age_p99", percentile(videoDurations, 0.99),

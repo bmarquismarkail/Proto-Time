@@ -312,6 +312,28 @@ void writeDiagnosticsSample(std::ostream& output,
     output << ",\"_5_to_10ms\":" << stats.videoPresenterPresentDuration5To10msCount;
     output << ",\"over_10ms\":" << stats.videoPresenterPresentDurationOver10msCount;
     output << "}";
+    output << ",\"presenter_pipeline\":{";
+    output << "\"sample_count\":" << stats.videoPresenterStageDurationSampleCount;
+    output << ",\"direct_indexed_frames\":" << stats.videoPresenterDirectIndexedFrameCount;
+    output << ",\"argb_frames\":" << stats.videoPresenterArgbFrameCount;
+    output << ",\"texture_locks\":" << stats.videoPresenterTextureLockCount;
+    output << ",\"renderer_flags\":" << stats.videoPresenterRendererFlags;
+    output << ",\"renderer_accelerated\":"
+           << (stats.videoPresenterRendererAccelerated ? "true" : "false");
+    output << ",\"render_target_supported\":"
+           << (stats.videoPresenterRenderTargetSupported ? "true" : "false");
+    output << ",\"expansion_last_ns\":" << stats.videoPresenterExpansionDurationLastNanos;
+    output << ",\"expansion_high_water_ns\":"
+           << stats.videoPresenterExpansionDurationHighWaterNanos;
+    output << ",\"upload_last_ns\":" << stats.videoPresenterUploadDurationLastNanos;
+    output << ",\"upload_high_water_ns\":" << stats.videoPresenterUploadDurationHighWaterNanos;
+    output << ",\"render_submit_last_ns\":"
+           << stats.videoPresenterRenderSubmitDurationLastNanos;
+    output << ",\"render_submit_high_water_ns\":"
+           << stats.videoPresenterRenderSubmitDurationHighWaterNanos;
+    output << ",\"total_last_ns\":" << stats.videoPresenterTotalDurationLastNanos;
+    output << ",\"total_high_water_ns\":" << stats.videoPresenterTotalDurationHighWaterNanos;
+    output << "}";
     output << "}";
 
     output << ",\"audio\":{";

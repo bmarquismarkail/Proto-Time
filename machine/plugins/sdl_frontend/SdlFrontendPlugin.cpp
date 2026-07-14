@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cstddef>
 #include <condition_variable>
+#include <new>
 
     enum class ControlAction : uint8_t {
         PauseToggle = 0,
@@ -329,6 +330,21 @@ public:
 
     [[nodiscard]] const std::optional<BMMQ::SdlFrameBuffer>& lastFrame() const noexcept override
     {
+        if (!lastFrame_.has_value() && lastPresentationFrame_.has_value()) {
+            try {
+                BMMQ::VideoFramePacket materialized = *lastPresentationFrame_;
+                if (BMMQ::materializeVideoFrameArgb(materialized)) {
+                    BMMQ::SdlFrameBuffer compatFrame;
+                    compatFrame.width = materialized.width;
+                    compatFrame.height = materialized.height;
+                    compatFrame.generation = materialized.generation;
+                    compatFrame.pixels = std::move(materialized.pixels);
+                    lastFrame_ = std::move(compatFrame);
+                }
+            } catch (const std::bad_alloc&) {
+                lastFrame_.reset();
+            }
+        }
         return lastFrame_;
     }
 
@@ -387,7 +403,7 @@ public:
                 syncVideoTransportStats();
                 syncAudioTransportStats();
                 const bool hasVideoWork = config_.enableVideo &&
-                    (frameDirty_ || lastFrame_.has_value() ||
+                    (frameDirty_ || hasLastFrameData() ||
                      (videoService_ != nullptr && videoService_->hasPendingRealtimeFrame()));
                 const bool hasAudioStateRs = config_.enableAudio && lastAudioState_.has_value();
                 const bool hadAudioPreviewRs = config_.enableAudio && lastAudioPreview_.has_value();
@@ -417,7 +433,7 @@ public:
             const bool realtimeFramePending =
                 videoService_ != nullptr && videoService_->hasPendingRealtimeFrame();
             hadFrame = config_.enableVideo &&
-                (lastFrame_.has_value() || realtimeFramePending);
+                (hasLastFrameData() || realtimeFramePending);
             hasAudioState   = config_.enableAudio && lastAudioState_.has_value();
             hadAudioPreview = config_.enableAudio && lastAudioPreview_.has_value();
             visibilityChanged =
@@ -978,7 +994,7 @@ public:
                 carriesVideoState &&
                 (event.type == BMMQ::MachineEventType::VBlank ||
                  (event.type == BMMQ::MachineEventType::VideoScanlineReady && needsDebugModel) ||
-                 (event.type == BMMQ::MachineEventType::MemoryWriteObserved && !lastFrame_.has_value()));
+                 (event.type == BMMQ::MachineEventType::MemoryWriteObserved && !hasLastFrameData()));
 
             if (shouldSampleVideoState) {
                 const bool deferPresentForAudioLowWater =
@@ -1060,6 +1076,7 @@ public:
                     }
                 } else {
                     lastFrame_.reset();
+                    lastPresentationFrame_.reset();
                     frameDirty_ = false;
                     scanlineVideoDebugModel_.reset();
                 }
@@ -1075,8 +1092,12 @@ public:
                         message += " scanline=" + std::to_string(*lastVideoDebugModel_->scanlineIndex);
                     }
                 }
-                if (lastFrame_.has_value()) {
-                    message += " frame=" + std::to_string(lastFrame_->width) + "x" + std::to_string(lastFrame_->height);
+                if (hasLastFrameData()) {
+                    const int width = lastPresentationFrame_.has_value()
+                        ? lastPresentationFrame_->width : lastFrame_->width;
+                    const int height = lastPresentationFrame_.has_value()
+                        ? lastPresentationFrame_->height : lastFrame_->height;
+                    message += " frame=" + std::to_string(width) + "x" + std::to_string(height);
                 }
                 appendLog(std::move(message));
             } else if (submittedVideoFrame) {
@@ -1544,7 +1565,7 @@ private:
                 const bool realtimeFramePending =
                     videoService_ != nullptr && videoService_->hasPendingRealtimeFrame();
                 const bool hadFrame = config_.enableVideo &&
-                    (lastFrame_.has_value() || realtimeFramePending);
+                    (hasLastFrameData() || realtimeFramePending);
                 const bool visibilityChanged =
                     windowVisible_.load(std::memory_order_acquire) !=
                     windowVisibilityRequested_.load(std::memory_order_acquire);
@@ -2126,7 +2147,7 @@ private:
 
     [[nodiscard]] bool shouldDeferVideoFrameForAudioLowWater() const noexcept
     {
-        if (!config_.enableAudio || audioService_ == nullptr || !audioOutputReady() || !lastFrame_.has_value()) {
+        if (!config_.enableAudio || audioService_ == nullptr || !audioOutputReady() || !hasLastFrameData()) {
             return false;
         }
         if (videoService_ != nullptr &&
@@ -2508,6 +2529,21 @@ private:
         stats_.videoPresenterTextureUploadCount = diagnostics.presenterTextureUploadCount;
         stats_.videoPresenterRenderCount = diagnostics.presenterRenderCount;
         stats_.videoPresenterRendererName = diagnostics.presenterRendererName;
+        stats_.videoPresenterDirectIndexedFrameCount = diagnostics.presenterDirectIndexedFrameCount;
+        stats_.videoPresenterArgbFrameCount = diagnostics.presenterArgbFrameCount;
+        stats_.videoPresenterTextureLockCount = diagnostics.presenterTextureLockCount;
+        stats_.videoPresenterRendererFlags = diagnostics.presenterRendererFlags;
+        stats_.videoPresenterRendererAccelerated = diagnostics.presenterRendererAccelerated;
+        stats_.videoPresenterRenderTargetSupported = diagnostics.presenterRenderTargetSupported;
+        stats_.videoPresenterExpansionDurationLastNanos = diagnostics.presenterExpansionDurationLastNanos;
+        stats_.videoPresenterExpansionDurationHighWaterNanos = diagnostics.presenterExpansionDurationHighWaterNanos;
+        stats_.videoPresenterUploadDurationLastNanos = diagnostics.presenterUploadDurationLastNanos;
+        stats_.videoPresenterUploadDurationHighWaterNanos = diagnostics.presenterUploadDurationHighWaterNanos;
+        stats_.videoPresenterRenderSubmitDurationLastNanos = diagnostics.presenterRenderSubmitDurationLastNanos;
+        stats_.videoPresenterRenderSubmitDurationHighWaterNanos = diagnostics.presenterRenderSubmitDurationHighWaterNanos;
+        stats_.videoPresenterTotalDurationLastNanos = diagnostics.presenterTotalDurationLastNanos;
+        stats_.videoPresenterTotalDurationHighWaterNanos = diagnostics.presenterTotalDurationHighWaterNanos;
+        stats_.videoPresenterStageDurationSampleCount = diagnostics.presenterStageDurationSampleCount;
         stats_.videoPublishedDebugFrameCount = diagnostics.publishedDebugFrameCount;
         stats_.videoPublishedRealtimeFrameCount = diagnostics.publishedRealtimeFrameCount;
         stats_.videoPublishedDebugPixelBytes = diagnostics.publishedDebugPixelBytes;
@@ -2596,12 +2632,13 @@ private:
 
     void updateLastFrameFromProcessedFrame(const BMMQ::VideoFramePacket& frame)
     {
-        BMMQ::SdlFrameBuffer compatFrame;
-        compatFrame.width = frame.width;
-        compatFrame.height = frame.height;
-        compatFrame.generation = frame.generation;
-        compatFrame.pixels = frame.pixels;
-        lastFrame_ = std::move(compatFrame);
+        lastPresentationFrame_ = frame;
+        lastFrame_.reset();
+    }
+
+    [[nodiscard]] bool hasLastFrameData() const noexcept
+    {
+        return lastPresentationFrame_.has_value() || lastFrame_.has_value();
     }
 
     void applyWindowVisibilityRequest() noexcept
@@ -2904,6 +2941,7 @@ private:
     std::size_t audioBatchPacketCount_ = 0u;
     std::optional<BMMQ::DigitalInputStateView> lastInputState_;
     mutable std::optional<BMMQ::SdlFrameBuffer> lastFrame_;
+    mutable std::optional<BMMQ::VideoFramePacket> lastPresentationFrame_;
     bool frameDirty_ = false;
     // std::atomic<bool>: written under sharedStateMutex_ on multiple paths but read
     // lock-free inside the renderServiceWaitMutex_ condvar block (line ~1104) to

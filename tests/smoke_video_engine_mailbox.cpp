@@ -145,7 +145,8 @@ int main()
     assert(packedOverwrite.overwroteOldFrame);
     auto packedLatest = packedEngine.tryConsumeLatestFrame();
     assert(packedLatest.has_value());
-    const auto decodedLatest = BMMQ::makeFramePacket(std::move(*packedLatest));
+    auto decodedLatest = BMMQ::makeFramePacket(std::move(*packedLatest));
+    assert(BMMQ::materializeVideoFrameArgb(decodedLatest));
     assert(decodedLatest.generation == 51u);
     assert(decodedLatest.pixels == std::vector<std::uint32_t>(8u, 0xFF445566u));
     assert(packedEngine.stats().publishedRealtimePixelBytes == packedPayloadBytes * 2u);

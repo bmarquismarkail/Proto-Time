@@ -42,17 +42,36 @@ struct VideoFramePacket {
     uint64_t generation = 0;
     uint64_t lifecycleEpoch = 1;
     std::vector<uint32_t> pixels;
+    RealtimeVideoSurface surface;
 
     [[nodiscard]] bool empty() const noexcept
     {
-        return pixels.empty();
+        const auto expected = static_cast<std::size_t>(std::max(width, 0)) *
+                              static_cast<std::size_t>(std::max(height, 0));
+        return pixels.size() != expected && !surface.validForDimensions(width, height);
     }
 
     [[nodiscard]] std::size_t pixelCount() const noexcept
     {
-        return pixels.size();
+        return pixels.empty()
+            ? (empty() ? 0u : static_cast<std::size_t>(width) * static_cast<std::size_t>(height))
+            : pixels.size();
     }
 };
+
+[[nodiscard]] inline bool materializeVideoFrameArgb(VideoFramePacket& frame)
+{
+    const auto expected = static_cast<std::size_t>(std::max(frame.width, 0)) *
+                          static_cast<std::size_t>(std::max(frame.height, 0));
+    if (frame.pixels.size() == expected) {
+        return true;
+    }
+    if (!decodeVideoSurface(frame.surface, frame.width, frame.height, frame.pixels)) {
+        return false;
+    }
+    frame.surface = {};
+    return true;
+}
 
 struct VideoPresentPacket {
     int width = 160;
@@ -120,6 +139,7 @@ struct VideoPresenterConfig {
     present.generation = frame.generation;
     present.lifecycleEpoch = frame.lifecycleEpoch;
     present.pixels = std::move(frame.pixels);
+    present.surface = std::move(frame.surface);
     return present;
 }
 
@@ -132,11 +152,8 @@ struct VideoPresenterConfig {
     frame.source = packet.source;
     frame.generation = packet.generation;
     frame.lifecycleEpoch = packet.lifecycleEpoch;
-    if (!packet.pixels.empty()) {
-        frame.pixels = std::move(packet.pixels);
-    } else {
-        (void)decodeVideoSurface(packet.surface, frame.width, frame.height, frame.pixels);
-    }
+    frame.pixels = std::move(packet.pixels);
+    frame.surface = std::move(packet.surface);
     return frame;
 }
 

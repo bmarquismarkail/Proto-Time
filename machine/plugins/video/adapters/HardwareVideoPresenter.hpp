@@ -39,9 +39,15 @@ public:
 private:
     bool ensureRenderer(int frameWidth, int frameHeight) noexcept;
     bool ensureTextures(int frameWidth, int frameHeight) noexcept;
+    bool uploadLockedTexture(const VideoFramePacket& frame,
+                             std::int64_t& expansionDurationNanos) noexcept;
     bool fallbackToSoftwareRenderer(int frameWidth, int frameHeight,
                                     VideoPresenterFallbackReason reason) noexcept;
     void updatePresentDurationMetric(std::int64_t durationNanos) noexcept;
+    void updateStageDurationMetrics(std::int64_t expansionDurationNanos,
+                                    std::int64_t uploadDurationNanos,
+                                    std::int64_t renderSubmitDurationNanos,
+                                    std::int64_t totalDurationNanos) noexcept;
 
     VideoPresenterConfig config_{};
     std::string lastError_{};
@@ -59,15 +65,12 @@ private:
     uint32_t initializedBackendFlags_ = 0;
     int textureWidth_ = 0;
     int textureHeight_ = 0;
-    bool renderTargetAvailable_ = false;
+    std::uint32_t rendererFlags_ = 0;
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
     ::SDL_Window* window_ = nullptr;
     ::SDL_Renderer* renderer_ = nullptr;
     // uploadTexture_ receives CPU-produced frame pixels.
     ::SDL_Texture* uploadTexture_ = nullptr;
-    // renderTarget_ is the optional GPU-composited target texture.
-    // The upload texture is copied into it before presenting when supported.
-    ::SDL_Texture* renderTarget_ = nullptr;
 #endif
 };
 
