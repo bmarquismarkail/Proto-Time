@@ -35,13 +35,18 @@ from the transport microbenchmark. It runs a real Game Boy machine on an
 emulation thread paced by `TimingEngine`, observes guest-generated VBlank
 events, builds and publishes production packed video packets, drains them on a
 separate headless render lane, reconstructs the frame, and records presentation.
+Its deterministic test ROM polls JOYP and changes the background palette, so
+render-lane input injection is observed as an actual guest-produced pixel change.
 
 The gate requires:
 
 - 30 guest-scheduled frames published and presented;
 - zero latest-mailbox overwrites and stale lifecycle-epoch drops;
-- publication-to-headless-presentation p99 below 16 ms;
+- publication-to-presentation-start frame residence p99 below 16 ms;
+- headless presenter duration p99 below 16 ms;
 - ideal guest-VBlank-schedule-to-presentation p99 below 16 ms.
+- six render-lane input transitions visually reflected by guest CPU/PPU output,
+  with input-to-presented-frame p99 below 16 ms.
 
 The wall-clock limits are disabled under TSAN, while frame counts, lifecycle
 correctness, and overwrite requirements remain enforced.
@@ -67,10 +72,10 @@ the emulation-lane publish operation itself takes no mutex.
   a lock. Code review and TSAN cover synchronization structure, while the audio
   and video p99 gates detect resulting stalls. The production callback and video
   mailbox functions remain the code paths exercised by this benchmark.
-- **Input-to-visual response and visible/audible quality:** the automated gate
-  enforces host-to-machine input handoff and byte-exact video output. End-to-end
-  game response and subjective pops/stutter still require representative ROMs
-  and physical host devices, as specified by the scenario matrix in the plan.
+- **Visible/audible quality:** the automated gate enforces byte-exact video output
+  and end-to-end input-to-frame response with a deterministic benchmark ROM.
+  Subjective pops/stutter and physical-device latency still require representative
+  ROMs and host devices, as specified by the scenario matrix in the plan.
 
 The benchmark is intentionally part of default CTest so threshold regressions
 are release-blocking rather than informational.
