@@ -433,11 +433,14 @@ int main() {
         assert(pkt->contractVersion == BMMQ::RealtimeVideoPacket::kContractVersion);
         assert(pkt->width == kW);
         assert(pkt->height == kH);
-        assert(pkt->argbPixels.size() == static_cast<std::size_t>(kW) * static_cast<std::size_t>(kH));
+        assert(pkt->pixelCount() == static_cast<std::size_t>(kW) * static_cast<std::size_t>(kH));
+        assert(pkt->payloadBytes() < pkt->pixelCount() * sizeof(std::uint32_t));
         // pixel data must match the full videoDebugFrameModel path
         const auto full = machine.videoDebugFrameModel({kW, kH});
         assert(full.has_value());
-        assert(full->argbPixels == pkt->argbPixels);
+        std::vector<std::uint32_t> decoded;
+        assert(BMMQ::unpackVideoPixels(pkt->packedPixels, pkt->pixelCount(), decoded));
+        assert(full->argbPixels == decoded);
         assert(pkt->displayEnabled == full->displayEnabled);
         assert(pkt->inVBlank == full->inVBlank);
     }

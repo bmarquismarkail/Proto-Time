@@ -11,6 +11,7 @@
 
 #include "../VideoDebugModel.hpp"
 #include "../RuntimeContext.hpp"
+#include "video/PackedVideoPixels.hpp"
 
 namespace BMMQ {
 
@@ -83,7 +84,7 @@ enum class MachineEventType : uint8_t {
 };
 
 struct RealtimeVideoPacket {
-    static constexpr std::uint16_t kContractVersion = 1u;
+    static constexpr std::uint16_t kContractVersion = 2u;
     std::uint16_t contractVersion = kContractVersion;
     MachineEventType eventType = MachineEventType::VBlank;
     int width = 0;
@@ -139,18 +140,24 @@ struct RealtimeVideoPacket {
         std::uint64_t mode4GeneralPathUsedCount = 0;
         std::uint64_t tmsGraphicsPathUsedCount = 0;
     } vdpMode4SimpleBackground{};
-    std::vector<std::uint32_t> argbPixels;
+    PackedVideoPixels packedPixels;
 
     [[nodiscard]] bool empty() const noexcept
     {
         return width <= 0 ||
                height <= 0 ||
-               argbPixels.size() != static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+               !packedPixels.validForPixelCount(static_cast<std::size_t>(width) *
+                                                static_cast<std::size_t>(height));
     }
 
     [[nodiscard]] std::size_t pixelCount() const noexcept
     {
-        return argbPixels.size();
+        return empty() ? 0u : static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+    }
+
+    [[nodiscard]] std::size_t payloadBytes() const noexcept
+    {
+        return packedPixels.payloadBytes();
     }
 };
 
@@ -309,8 +316,8 @@ struct ParallelStateView {
     std::string_view detail = "placeholder";
 };
 
-// Compact representation of a memory region for real-time video.
-// Today this can carry full VRAM/OAM snapshots; future writers can narrow it to actual dirty spans.
+// Legacy tooling snapshot representation. The production real-time path uses
+// RealtimeVideoPacket::packedPixels; this type is retained for MachineView clients.
 struct VideoDirtyRegion {
     uint16_t start = 0;
     uint16_t size = 0;
@@ -321,8 +328,8 @@ struct VideoDirtyRegion {
     }
 };
 
-// Slim video packet: memory-region payload plus minimal LCD state, without an ARGB frame copy.
-// Dirty regions may currently cover full VRAM/OAM until write-span tracking is available.
+// Legacy tooling packet. Dirty regions currently cover full VRAM/OAM and are
+// intentionally not used by the emulation-to-render transport.
 struct SlimVideoPacket {
     static constexpr std::uint16_t kContractVersion = 1u;
     std::uint16_t contractVersion = kContractVersion;

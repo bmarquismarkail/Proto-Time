@@ -213,14 +213,17 @@ public:
         return submitPresentPacket(makePresentPacket(VideoFramePacket(frame)));
     }
 
-    [[nodiscard]] VideoSubmitResult submitPresentPacket(const VideoPresentPacket& frame)
+    [[nodiscard]] VideoSubmitResult submitPresentPacket(VideoPresentPacket frame)
     {
         if (frame.empty()) {
             return {};
         }
 
-        auto stamped = frame;
+        auto stamped = std::move(frame);
         stamped.publishedAtNs = steadyClockNs();
+        const auto publishedSource = stamped.source;
+        const auto publishedPayloadBytes = stamped.payloadBytes();
+        const auto publishedGeneration = stamped.generation;
         lastValidFrame_ = stamped;
 
         // Write frame to the producer's private slot (never touched by consumer).
@@ -238,14 +241,14 @@ public:
 
         // Stats
         ++stats_.publishedFrameCount;
-        if (frame.source == VideoFrameSource::RealtimeSnapshot) {
+        if (publishedSource == VideoFrameSource::RealtimeSnapshot) {
             ++stats_.publishedRealtimeFrameCount;
-            stats_.publishedRealtimePixelBytes += frame.pixelCount() * sizeof(std::uint32_t);
+            stats_.publishedRealtimePixelBytes += publishedPayloadBytes;
         } else {
             ++stats_.publishedDebugFrameCount;
-            stats_.publishedDebugPixelBytes += frame.pixelCount() * sizeof(std::uint32_t);
+            stats_.publishedDebugPixelBytes += publishedPayloadBytes;
         }
-        stats_.publishedPixelBytes += frame.pixelCount() * sizeof(std::uint32_t);
+        stats_.publishedPixelBytes += publishedPayloadBytes;
 
         if (overwroteOldFrame) {
             ++stats_.overwriteCount;
@@ -259,7 +262,7 @@ public:
 
         stats_.mailboxDepth = overwroteOldFrame ? 1u : 1u;
         stats_.mailboxHighWaterMark = std::max(stats_.mailboxHighWaterMark, static_cast<std::size_t>(1u));
-        stats_.lastPublishedGeneration = frame.generation;
+        stats_.lastPublishedGeneration = publishedGeneration;
         return VideoSubmitResult{.accepted = true, .overwroteOldFrame = overwroteOldFrame};
     }
 
@@ -283,7 +286,7 @@ public:
         }
 
         mailboxConsumerSlot_ = static_cast<int>(taken & kMailboxSlotMask);
-        auto frame = mailboxSlots_[mailboxConsumerSlot_];
+        auto frame = std::move(mailboxSlots_[mailboxConsumerSlot_]);
 
         ++stats_.consumedFrameCount;
         stats_.mailboxDepth = 0u;

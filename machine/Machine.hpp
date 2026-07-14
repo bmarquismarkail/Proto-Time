@@ -220,7 +220,7 @@ public:
         packet.displayEnabled = model->displayEnabled;
         packet.inVBlank = model->inVBlank;
         packet.scanlineIndex = model->scanlineIndex;
-        packet.argbPixels = model->argbPixels;
+        packet.packedPixels = packVideoPixels(model->argbPixels);
         return packet;
     }
     virtual std::optional<RealtimeAudioPacket> realtimeAudioPacket() const {

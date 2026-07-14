@@ -479,7 +479,7 @@ public:
         packet.displayEnabled = model.displayEnabled;
         packet.inVBlank = model.inVBlank;
         packet.scanlineIndex = model.scanlineIndex;
-        packet.argbPixels = std::move(model.argbPixels);
+        packet.packedPixels = BMMQ::packVideoPixels(model.argbPixels);
         return packet;
     }
 };

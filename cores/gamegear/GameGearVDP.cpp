@@ -1076,7 +1076,7 @@ BMMQ::RealtimeVideoPacket GameGearVDP::buildRealtimeFrame(
     packet.vdpRenderBodyTiming = out.renderBodyTiming;
     packet.vdpMode4BackgroundAttributes = out.mode4BackgroundAttributes;
     packet.vdpMode4SimpleBackground = out.mode4SimpleBackground;
-    packet.argbPixels = std::move(out.argbPixels);
+    packet.packedPixels = BMMQ::packVideoPixels(out.argbPixels);
     return packet;
 }
 

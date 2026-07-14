@@ -674,8 +674,11 @@ int main()
             if (pkt.width != 160 || pkt.height != 144) {
                 return fail("buildRealtimeFrame: wrong dimensions");
             }
-            if (pkt.argbPixels.size() != 160u * 144u) {
-                return fail("buildRealtimeFrame: argbPixels size mismatch when display off");
+            if (pkt.pixelCount() != 160u * 144u || pkt.empty()) {
+                return fail("buildRealtimeFrame: packed pixel count mismatch when display off");
+            }
+            if (pkt.payloadBytes() >= pkt.pixelCount() * sizeof(std::uint32_t)) {
+                return fail("buildRealtimeFrame: packed payload did not reduce transport bytes");
             }
             if (pkt.contractVersion != BMMQ::RealtimeVideoPacket::kContractVersion) {
                 return fail("buildRealtimeFrame: wrong contractVersion");
@@ -695,8 +698,11 @@ int main()
             if (!pkt.displayEnabled) {
                 return fail("buildRealtimeFrame: displayEnabled should be true after enabling display");
             }
-            if (pkt.argbPixels.size() != 160u * 144u) {
-                return fail("buildRealtimeFrame: argbPixels size mismatch when display on");
+            if (pkt.pixelCount() != 160u * 144u || pkt.empty()) {
+                return fail("buildRealtimeFrame: packed pixel count mismatch when display on");
+            }
+            if (pkt.payloadBytes() >= pkt.pixelCount() * sizeof(std::uint32_t)) {
+                return fail("buildRealtimeFrame: packed payload did not reduce transport bytes");
             }
         }
 
@@ -712,7 +718,9 @@ int main()
         {
             const auto modelPkt = rtVdp.buildFrameModel({160, 144});
             const auto realtimePkt = rtVdp.buildRealtimeFrame({160, 144});
-            if (modelPkt.argbPixels != realtimePkt.argbPixels) {
+            std::vector<std::uint32_t> decoded;
+            if (!BMMQ::unpackVideoPixels(realtimePkt.packedPixels, realtimePkt.pixelCount(), decoded) ||
+                modelPkt.argbPixels != decoded) {
                 return fail("buildRealtimeFrame: pixel output differs from buildFrameModel");
             }
             if (modelPkt.displayEnabled != realtimePkt.displayEnabled) {

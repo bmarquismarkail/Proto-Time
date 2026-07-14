@@ -225,7 +225,11 @@ int main()
 
     const auto modelFrame = vdp.buildFrameModel({160, 144});
     const auto realtimeFrame = vdp.buildRealtimeFrame({160, 144});
-    if (modelFrame.argbPixels != realtimeFrame.argbPixels) {
+    std::vector<std::uint32_t> decodedRealtimeFrame;
+    if (!BMMQ::unpackVideoPixels(realtimeFrame.packedPixels,
+                                 realtimeFrame.pixelCount(),
+                                 decodedRealtimeFrame) ||
+        modelFrame.argbPixels != decodedRealtimeFrame) {
         return fail("simple tile-run buildFrameModel and buildRealtimeFrame pixels differ");
     }
 

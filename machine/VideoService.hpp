@@ -435,7 +435,7 @@ public:
                                                    debugConsumerActive));
     }
 
-    [[nodiscard]] bool submitRealtimeVideoPacket(const MachineEvent& event, const RealtimeVideoPacket& packet)
+    [[nodiscard]] bool submitRealtimeVideoPacket(const MachineEvent& event, RealtimeVideoPacket packet)
     {
         std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
         if (event.type == MachineEventType::RomLoaded) {
@@ -482,8 +482,8 @@ public:
         present.generation = packet.generation != 0u ? packet.generation : engine_.currentGeneration();
         present.lifecycleEpoch = lifecycleEpoch_;
         present.source = VideoFrameSource::RealtimeSnapshot;
-        present.pixels = packet.argbPixels;
-        const auto submitResult = engine_.submitPresentPacket(present);
+        present.packedPixels = std::move(packet.packedPixels);
+        const auto submitResult = engine_.submitPresentPacket(std::move(present));
         syncEngineDiagnostics();
         return submitResult.accepted;
     }

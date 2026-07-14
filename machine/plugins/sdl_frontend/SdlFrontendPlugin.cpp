@@ -222,6 +222,23 @@ public:
 
     [[nodiscard]] const std::optional<BMMQ::SdlFrameBuffer>& lastFrame() const noexcept override
     {
+        if (lastPackedFrame_.has_value()) {
+            try {
+                BMMQ::SdlFrameBuffer compatFrame;
+                compatFrame.width = lastPackedFrame_->width;
+                compatFrame.height = lastPackedFrame_->height;
+                compatFrame.generation = lastPackedFrame_->generation;
+                if (BMMQ::unpackVideoPixels(lastPackedFrame_->packedPixels,
+                                            lastPackedFrame_->pixelCount(),
+                                            compatFrame.pixels)) {
+                    lastFrame_ = std::move(compatFrame);
+                    lastPackedFrame_.reset();
+                }
+            } catch (...) {
+                // Preserve the last successfully reconstructed frame. This
+                // compatibility accessor is noexcept by plugin contract.
+            }
+        }
         return lastFrame_;
     }
 
@@ -333,6 +350,8 @@ public:
                         frameDirty_ = false;
                         videoPresentDeferredForAudioLowWater_ = false;
                         lastRenderSummary_ = "Presented (headless)";
+                    } else {
+                        updateLastFrameFromProcessedFrame(*processedFrame);
                     }
                 } else {
                     ++stats_.renderServicePresentFailureCount;
@@ -1343,6 +1362,7 @@ private:
                         }
                         processedFrame = videoService_->consumeAndProcessFrame();
                         if (processedFrame.has_value()) {
+                            updateLastFrameFromProcessedFrame(*processedFrame);
                             ++stats_.renderServicePresentCallsOutsideLock;
                         } else {
                             // headless: consumeAndProcessFrame set state internally; treat as success
@@ -1993,8 +2013,6 @@ private:
         model.displayEnabled = packet.displayEnabled;
         model.inVBlank = packet.inVBlank;
         model.scanlineIndex = packet.scanlineIndex;
-        model.argbPixels = packet.argbPixels;
-        model.semantics.resize(model.argbPixels.size());
         return model;
     }
 
@@ -2347,7 +2365,8 @@ private:
         }
     }
 
-    // Update lastFrame_ shadow copy from a successfully submitted RealtimeVideoPacket.
+    // Mark a successfully submitted frame as pending without expanding its compact
+    // payload on the emulation thread. The render lane fills pixels after consume.
     // Called from trySubmitRealtimeVideoPacket / trySubmitPrebuiltRealtimeVideoPacket
     // while sharedStateMutex_ is held, so the per-iteration engine poll in
     // syncVideoTransportStats() is no longer needed.
@@ -2356,13 +2375,26 @@ private:
         if (videoService_ == nullptr) {
             return;
         }
-        BMMQ::SdlFrameBuffer compatFrame;
-        compatFrame.width = packet.width;
-        compatFrame.height = packet.height;
-        compatFrame.generation = packet.generation;
-        compatFrame.pixels = packet.argbPixels;
-        lastFrame_ = std::move(compatFrame);
+        if (!lastFrame_.has_value()) {
+            BMMQ::SdlFrameBuffer compatFrame;
+            compatFrame.width = packet.width;
+            compatFrame.height = packet.height;
+            compatFrame.generation = packet.generation;
+            lastFrame_ = std::move(compatFrame);
+        }
+        lastPackedFrame_ = packet;
         lastSyncedVideoFramePublication_ = videoService_->engine().stats().publishedFrameCount;
+    }
+
+    void updateLastFrameFromProcessedFrame(const BMMQ::VideoFramePacket& frame)
+    {
+        BMMQ::SdlFrameBuffer compatFrame;
+        compatFrame.width = frame.width;
+        compatFrame.height = frame.height;
+        compatFrame.generation = frame.generation;
+        compatFrame.pixels = frame.pixels;
+        lastFrame_ = std::move(compatFrame);
+        lastPackedFrame_.reset();
     }
 
     void applyWindowVisibilityRequest() noexcept
@@ -2662,7 +2694,8 @@ private:
     std::uint64_t audioBatchLastFrameCounter_ = 0u;
     std::size_t audioBatchPacketCount_ = 0u;
     std::optional<BMMQ::DigitalInputStateView> lastInputState_;
-    std::optional<BMMQ::SdlFrameBuffer> lastFrame_;
+    mutable std::optional<BMMQ::SdlFrameBuffer> lastFrame_;
+    mutable std::optional<BMMQ::RealtimeVideoPacket> lastPackedFrame_;
     std::size_t lastSyncedVideoFramePublication_ = 0;
     bool frameDirty_ = false;
     // std::atomic<bool>: written under sharedStateMutex_ on multiple paths but read
