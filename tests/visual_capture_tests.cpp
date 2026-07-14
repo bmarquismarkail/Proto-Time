@@ -9,6 +9,7 @@
 
 #include "cores/gameboy/video/GameBoyVisualExtractor.hpp"
 #include "machine/VisualCaptureWriter.hpp"
+#include "machine/BackgroundTaskService.hpp"
 #include "machine/VisualOverrideService.hpp"
 #include "machine/VisualTypes.hpp"
 #include "tests/visual_test_helpers.hpp"
@@ -103,6 +104,26 @@ int main()
     assert(captureWriteError.find("width=0") != std::string::npos);
     assert(captureWriteError.find("height=8") != std::string::npos);
     assert(captureWriteError.find("stride=0") != std::string::npos);
+
+    // Production capture writes run on the categorized background lane and
+    // endCapture is the durability fence for PNGs and manifests.
+    {
+        BMMQ::BackgroundTaskService backgroundTasks(8u, 2u);
+        backgroundTasks.start();
+        BMMQ::VisualOverrideService asynchronousCapture;
+        asynchronousCapture.setBackgroundTaskService(&backgroundTasks);
+        const auto asyncDir = root / "async-capture";
+        assert(asynchronousCapture.beginCapture(asyncDir, "gameboy"));
+        assert(asynchronousCapture.observe(*resource));
+        asynchronousCapture.endCapture();
+        assert(asynchronousCapture.captureStats().uniqueResourcesDumped == 1u);
+        assert(std::filesystem::exists(asyncDir / "manifest.stub.json"));
+        const auto stats = backgroundTasks.stats();
+        const auto category = static_cast<std::size_t>(BMMQ::BackgroundJobCategory::VisualCapture);
+        assert(stats.categories[category].submitted == 1u);
+        assert(stats.categories[category].completed == 1u);
+        backgroundTasks.shutdown();
+    }
 
     std::filesystem::remove_all(root);
     return 0;

@@ -27,6 +27,9 @@ struct EmulatorConfig {
     std::string audioBackend = "sdl";
     std::uint32_t audioReadyQueueChunks = 3;
     std::uint32_t audioBatchChunks = 1;
+    std::uint32_t backgroundWorkers = 0;
+    std::uint32_t backgroundQueueCapacity = 1024;
+    bool debugSnapshotsEnabled = false;
     std::vector<std::filesystem::path> visualPackPaths;
     std::optional<std::filesystem::path> visualCapturePath;
     bool visualPackReload = false;
@@ -50,6 +53,9 @@ struct CommandLineConfigOverrides {
     std::optional<std::string> audioBackend;
     std::optional<std::uint32_t> audioReadyQueueChunks;
     std::optional<std::uint32_t> audioBatchChunks;
+    std::optional<std::uint32_t> backgroundWorkers;
+    std::optional<std::uint32_t> backgroundQueueCapacity;
+    std::optional<bool> debugSnapshotsEnabled;
     std::optional<std::vector<std::filesystem::path>> visualPackPaths;
     std::optional<std::filesystem::path> visualCapturePath;
     std::optional<bool> visualPackReload;

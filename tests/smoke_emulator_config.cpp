@@ -86,6 +86,9 @@ int main()
         CHECK_TRUE(defaults.audioBackend == "sdl");
         CHECK_TRUE(defaults.audioReadyQueueChunks == 3u);
         CHECK_TRUE(defaults.audioBatchChunks == 1u);
+        CHECK_TRUE(defaults.backgroundWorkers == 0u);
+        CHECK_TRUE(defaults.backgroundQueueCapacity == 1024u);
+        CHECK_TRUE(!defaults.debugSnapshotsEnabled);
         CHECK_TRUE(defaults.visualPackPaths.empty());
         CHECK_TRUE(!defaults.visualCapturePath.has_value());
         CHECK_TRUE(!defaults.visualPackReload);
@@ -116,6 +119,11 @@ int main()
         "ready_queue_chunks = 8\n"
         "batch_chunks = 4\n"
         "\n"
+        "[background]\n"
+        "workers = 3\n"
+        "queue_capacity = 77\n"
+        "debug_snapshots = true\n"
+        "\n"
         "[visual]\n"
         "pack = packs/base.json\n"
         "texture_pack = packs/compat.json\n"
@@ -142,6 +150,9 @@ int main()
     CHECK_TRUE(fileConfig.audioBackend == "file");
     CHECK_TRUE(fileConfig.audioReadyQueueChunks == 8u);
     CHECK_TRUE(fileConfig.audioBatchChunks == 4u);
+    CHECK_TRUE(fileConfig.backgroundWorkers == 3u);
+    CHECK_TRUE(fileConfig.backgroundQueueCapacity == 77u);
+    CHECK_TRUE(fileConfig.debugSnapshotsEnabled);
     CHECK_TRUE(fileConfig.visualPackPaths.size() == 2u);
     CHECK_TRUE(fileConfig.visualPackPaths[0] == tempDir / "packs/base.json");
     CHECK_TRUE(fileConfig.visualPackPaths[1] == tempDir / "packs/compat.json");
@@ -166,6 +177,9 @@ int main()
     overrides.audioBackend = "dummy";
     overrides.audioReadyQueueChunks = 6u;
     overrides.audioBatchChunks = 3u;
+    overrides.backgroundWorkers = 2u;
+    overrides.backgroundQueueCapacity = 55u;
+    overrides.debugSnapshotsEnabled = false;
     overrides.visualPackPaths = std::vector<std::filesystem::path>{
         std::filesystem::path("cli-pack-a.json"),
         std::filesystem::path("cli-pack-b.json"),
@@ -192,6 +206,9 @@ int main()
     CHECK_TRUE(fileConfig.audioBackend == "dummy");
     CHECK_TRUE(fileConfig.audioReadyQueueChunks == 6u);
     CHECK_TRUE(fileConfig.audioBatchChunks == 3u);
+    CHECK_TRUE(fileConfig.backgroundWorkers == 2u);
+    CHECK_TRUE(fileConfig.backgroundQueueCapacity == 55u);
+    CHECK_TRUE(!fileConfig.debugSnapshotsEnabled);
     CHECK_TRUE(fileConfig.visualPackPaths.size() == 2u);
     CHECK_TRUE(fileConfig.visualPackPaths[0] == "cli-pack-a.json");
     CHECK_TRUE(fileConfig.visualPackPaths[1] == "cli-pack-b.json");
@@ -315,6 +332,9 @@ int main()
                              "--audio-backend", "dummy",
                              "--audio-ready-queue-chunks", "12",
                              "--audio-batch-chunks", "5",
+                             "--background-workers", "4",
+                             "--background-queue-capacity", "99",
+                             "--debug-snapshots",
                              "--visual-pack", "cli-pack-a.json",
                              "--texture-pack", "cli-pack-b.json",
                              "--visual-capture", "cli-capture",
@@ -329,6 +349,9 @@ int main()
     CHECK_TRUE(resolved.audioBackend == "dummy");
     CHECK_TRUE(resolved.audioReadyQueueChunks == 12u);
     CHECK_TRUE(resolved.audioBatchChunks == 5u);
+    CHECK_TRUE(resolved.backgroundWorkers == 4u);
+    CHECK_TRUE(resolved.backgroundQueueCapacity == 99u);
+    CHECK_TRUE(resolved.debugSnapshotsEnabled);
     CHECK_TRUE(resolved.visualPackPaths.size() == 2u);
     CHECK_TRUE(resolved.visualPackPaths[0] == "cli-pack-a.json");
     CHECK_TRUE(resolved.visualPackPaths[1] == "cli-pack-b.json");

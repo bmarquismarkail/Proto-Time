@@ -33,6 +33,8 @@
 #include "emulator/EmulatorConfig.hpp"
 #include "emulator/EmulatorHost.hpp"
 #include "machine/BackgroundTaskService.hpp"
+#include "machine/DebugSnapshotService.hpp"
+#include "machine/ImageDecoder.hpp"
 #include "machine/plugins/SdlFrontendPluginLoader.hpp"
 #include "machine/TimingService.hpp"
 #include "cores/gameboy/GameBoyMachine.hpp"
@@ -73,6 +75,11 @@ void printUsage(std::string_view program)
               << "  --audio-ready-queue-chunks <n>\n"
               << "  --audio-batch-chunks <n>\n"
               << "                     Audio output ready-queue chunk depth (1-64, default: 3)\n"
+              << "  --background-workers <n>\n"
+              << "                     Background worker count; 0 selects the reserved-core default\n"
+              << "  --background-queue-capacity <n>\n"
+              << "                     Maximum queued background jobs (default: 1024)\n"
+              << "  --debug-snapshots  Enable optional background debug snapshots\n"
               << "  --visual-pack <path>\n"
               << "                     Load a visual override pack.json; repeat to load multiple packs\n"
               << "  --visual-capture <dir>\n"
@@ -149,7 +156,8 @@ void writeDiagnosticsSample(std::ostream& output,
                             std::uint64_t emulatedCycles,
                             std::uint32_t cpuClockHz,
                             const BMMQ::SdlFrontendStats* frontendStats,
-                            const BMMQ::TimingStats& timingStats) noexcept
+                            const BMMQ::TimingStats& timingStats,
+                            const BMMQ::BackgroundTaskStats& backgroundStats) noexcept
 {
     using namespace std::chrono;
     const auto elapsedNs = duration_cast<nanoseconds>(now - startedAt).count();
@@ -504,6 +512,32 @@ void writeDiagnosticsSample(std::ostream& output,
     output << "}";
     output << "}";
 
+    output << ",\"background_tasks\":{";
+    output << "\"worker_count\":" << backgroundStats.workerCount;
+    output << ",\"submitted\":" << backgroundStats.tasksSubmitted;
+    output << ",\"completed\":" << backgroundStats.tasksCompleted;
+    output << ",\"pending\":" << backgroundStats.tasksPending;
+    output << ",\"rejected\":" << backgroundStats.tasksRejected;
+    output << ",\"cancelled\":" << backgroundStats.tasksCancelled;
+    output << ",\"high_water_pending\":" << backgroundStats.tasksHighWaterPending;
+    output << ",\"categories\":{";
+    for (std::size_t index = 0; index < backgroundStats.categories.size(); ++index) {
+        if (index != 0u) output << ',';
+        const auto category = static_cast<BMMQ::BackgroundJobCategory>(index);
+        const auto& categoryStats = backgroundStats.categories[index];
+        output << '\"' << BMMQ::backgroundJobCategoryName(category) << "\":{";
+        output << "\"submitted\":" << categoryStats.submitted;
+        output << ",\"completed\":" << categoryStats.completed;
+        output << ",\"rejected\":" << categoryStats.rejected;
+        output << ",\"cancelled\":" << categoryStats.cancelled;
+        output << ",\"queue_wait_total_ns\":" << categoryStats.queueWaitTotalNanos;
+        output << ",\"queue_wait_high_water_ns\":" << categoryStats.queueWaitHighWaterNanos;
+        output << ",\"execution_total_ns\":" << categoryStats.executionTotalNanos;
+        output << ",\"execution_high_water_ns\":" << categoryStats.executionHighWaterNanos;
+        output << '}';
+    }
+    output << "}}";
+
     output << ",\"timing\":{";
     output << "\"frontend_ticks_scheduled\":" << stats.timingFrontendTicksScheduled;
     output << ",\"frontend_ticks_executed\":" << stats.timingFrontendTicksExecuted;
@@ -533,14 +567,23 @@ int main(int argc, char** argv)
         std::signal(SIGTERM, handleSignal);
 #endif
 
-        BMMQ::BackgroundTaskService backgroundTaskService;
+        const std::optional<std::size_t> backgroundWorkers = options.backgroundWorkers == 0u
+            ? std::nullopt
+            : std::optional<std::size_t>(options.backgroundWorkers);
+        BMMQ::BackgroundTaskService backgroundTaskService(
+            static_cast<std::size_t>(options.backgroundQueueCapacity), backgroundWorkers);
         backgroundTaskService.start();
+        BMMQ::ImageDecoder imageDecoder(&backgroundTaskService);
+        BMMQ::DebugSnapshotService debugSnapshotService;
+        debugSnapshotService.setBackgroundTaskService(&backgroundTaskService);
 
         auto bootstrapped = BMMQ::bootstrapMachine(options);
         auto& machine = *bootstrapped.machine;
         const auto& descriptor = bootstrapped.descriptor;
         const auto romSize = bootstrapped.romSize;
         machine.videoService().setBackgroundTaskService(&backgroundTaskService);
+        machine.visualOverrideService().setBackgroundTaskService(&backgroundTaskService);
+        machine.visualOverrideService().setImageDecoder(&imageDecoder);
         if (auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get());
             gameBoyMachine != nullptr) {
             gameBoyMachine->setBackgroundTaskService(&backgroundTaskService);
@@ -583,6 +626,9 @@ int main(int argc, char** argv)
             try {
                 frontendPlugin = BMMQ::loadSdlFrontendPlugin(pluginPath, config);
                 frontend = frontendPlugin.get();
+                if (options.debugSnapshotsEnabled) {
+                    frontend->setDebugSnapshotService(&debugSnapshotService);
+                }
                 machine.pluginManager().add(std::move(frontendPlugin));
                 machine.pluginManager().initialize(machine.mutableView());
                 frontend->requestWindowVisibility(true);
@@ -694,7 +740,8 @@ int main(int argc, char** argv)
             }
 
             machine.visualOverrideService().recordAsyncProbeSubmission();
-            const bool queued = backgroundTaskService.submit([&visualReloadPollState, &machine]() {
+            const bool queued = backgroundTaskService.submit(BMMQ::BackgroundJobCategory::VisualReload,
+                [&visualReloadPollState, &machine]() {
                 bool changed = false;
                 {
                     std::lock_guard<std::mutex> lock(visualReloadPollState.mutex);
@@ -714,11 +761,10 @@ int main(int argc, char** argv)
                 }
 
                 if (changed) {
-                    machine.visualOverrideService().recordAsyncProbeChangeDetected();
                     visualReloadPollState.reloadRequested.store(true, std::memory_order_release);
                 }
                 visualReloadPollState.pollInFlight.store(false, std::memory_order_release);
-            });
+                });
 
             if (!queued) {
                 visualReloadPollState.pollInFlight.store(false, std::memory_order_release);
@@ -770,11 +816,19 @@ int main(int argc, char** argv)
                                    emulatedCycles,
                                    cpuClockHz,
                                    frontendStats.has_value() ? &*frontendStats : nullptr,
-                                   timingStats);
+                                   timingStats,
+                                   backgroundTaskService.stats());
             diagnosticsReport.flush();
         };
 
         auto pollVisualPackReload = [&]() {
+            if (machine.visualOverrideService().pollBackgroundWork()) {
+                machine.visualOverrideService().recordAsyncProbeReloadApplied();
+                refreshVisualReloadWatchList();
+            }
+            if (const auto warning = machine.visualOverrideService().takeReloadWarning(); warning.has_value()) {
+                std::cerr << "warning: " << *warning << '\n';
+            }
             if (!options.visualPackReload) {
                 return;
             }
@@ -782,16 +836,10 @@ int main(int argc, char** argv)
             if (!visualReloadPollState.reloadRequested.exchange(false, std::memory_order_acq_rel)) {
                 return;
             }
+            machine.visualOverrideService().recordAsyncProbeChangeDetected();
 
-            const bool reloaded = machine.visualOverrideService().reloadChangedPacks();
-            if (reloaded) {
-                machine.visualOverrideService().recordAsyncProbeReloadApplied();
-            }
-            refreshVisualReloadWatchList();
-            if (!reloaded) {
-                if (const auto warning = machine.visualOverrideService().takeReloadWarning(); warning.has_value()) {
-                    std::cerr << "warning: " << *warning << '\n';
-                }
+            if (!machine.visualOverrideService().requestReloadChangedPacks()) {
+                visualReloadPollState.reloadRequested.store(true, std::memory_order_release);
             }
         };
 
@@ -980,6 +1028,9 @@ int main(int argc, char** argv)
         }
 
         serviceFrontend();
+        if (machine.visualOverrideService().capturing()) {
+            machine.visualOverrideService().endCapture();
+        }
         emitDiagnostics(SteadyClock::now(), true);
         if (!options.visualPackPaths.empty() || options.visualCapturePath.has_value()) {
             (void)machine.visualOverrideService().captureStats();
@@ -995,7 +1046,9 @@ int main(int argc, char** argv)
         }
         // Explicitly detach the frontend while still on the SDL-owning host
         // thread, before machine/service destruction begins.
+        (void)backgroundTaskService.waitUntilIdle(std::chrono::seconds(10));
         machine.pluginManager().shutdown(machine.mutableView());
+        machine.flushPendingBackgroundWork();
         backgroundTaskService.shutdown();
         return EXIT_SUCCESS;
     } catch (const std::invalid_argument& ex) {

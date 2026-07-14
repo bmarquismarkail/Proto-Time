@@ -266,6 +266,7 @@ public:
     virtual std::string stopSummary() const {
         return {};
     }
+    virtual void flushPendingBackgroundWork() {}
 
 private:
     void bindVisualOverrideEvents()

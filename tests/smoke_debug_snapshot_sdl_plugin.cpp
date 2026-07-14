@@ -101,15 +101,13 @@ int main(int argc, char** argv)
         // Drain them by calling serviceFrontend() which calls tryConsumeVideo().
         (void)frontend->serviceFrontend();
 
-        // The service should have seen at least one video submission.
+        // Game Gear has no immutable VideoStateView debug adapter yet, so the
+        // frontend drops optional debug work instead of rendering it inline.
         const auto s = svc.stats();
-        assert(s.videoSubmissions >= 1u);
+        assert(s.videoSubmissions == 0u);
         const auto frontendStats = frontend->stats();
-        assert(frontendStats.videoDebugFrameBuildSkippedNoConsumerCount == 0u);
-        if (frontendStats.videoBuildDebugFrameCallCount != 0u) {
-            assert(frontendStats.videoDebugFrameBuildExecutedCount > 0u);
-            assert(frontendStats.videoBuildDebugFrameDebugConsumerActiveCount > 0u);
-        }
+        assert(frontendStats.videoBuildDebugFrameCallCount == 0u);
+        assert(frontendStats.videoDebugFrameBuildExecutedCount == 0u);
 
         // The plugin should now have a cached video debug model from the drain.
         // (Some may have been submitted and consumed.)

@@ -939,10 +939,16 @@ public:
         const bool needsDebugModel = debugSnapshotService_ != nullptr;
         std::optional<BMMQ::VideoDebugFrameModel> prebuiltDebugModel;
         if (carriesVideoStateEarly && needsDebugModel) {
-            prebuiltDebugModel = view.videoDebugFrameModel({
+            const BMMQ::VideoDebugRenderRequest request{
                 .frameWidth = std::max(config_.frameWidth, 1),
                 .frameHeight = std::max(config_.frameHeight, 1),
-            });
+            };
+            const auto* adapter = view.machine.visualDebugAdapter();
+            auto state = view.videoState();
+            if (!state.has_value() ||
+                !debugSnapshotService_->submitVideoState(std::move(*state), adapter, request)) {
+                videoDebugModelBuildSkipCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
+            }
         } else if (carriesVideoStateEarly) {
             videoDebugModelBuildSkipCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
         }

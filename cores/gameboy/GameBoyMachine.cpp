@@ -46,17 +46,18 @@ constexpr std::array<BMMQ::IoRegionDescriptor, 7> kIoRegions{{
     return extension != ".sms"; // Game Boy ROMs allow saves, SMS typically doesn't
 }
 
-inline void flushSaveSnapshotViaBackground(
+[[nodiscard]] inline std::optional<CartridgeSaveManager::SaveSnapshot> flushSaveSnapshotViaBackground(
     BMMQ::BackgroundTaskService& backgroundTaskService,
     CartridgeSaveManager::SaveSnapshot snapshot)
 {
     auto sharedSnapshot = std::make_shared<CartridgeSaveManager::SaveSnapshot>(std::move(snapshot));
-    const bool queued = backgroundTaskService.submit([sharedSnapshot]() {
+    const bool queued = backgroundTaskService.submit(BMMQ::BackgroundJobCategory::SaveFlush, [sharedSnapshot]() {
         CartridgeSaveManager::flushSnapshot(*sharedSnapshot);
     });
     if (!queued) {
-        CartridgeSaveManager::flushSnapshot(*sharedSnapshot);
+        return std::move(*sharedSnapshot);
     }
+    return std::nullopt;
 }
 
 class StateWriter {
@@ -1124,9 +1125,16 @@ void GameBoyMachine::step() {
         if (impl_->backgroundTaskService == nullptr) {
             (void)flushCartridgeSave();
         } else {
-            auto extracted = impl_->saveManager.extractDirtySaveSnapshot(impl_->cartridge_);
-            if (extracted.has_value()) {
-                flushSaveSnapshotViaBackground(*impl_->backgroundTaskService, std::move(*extracted));
+            if (impl_->pendingSaveSnapshot.has_value()) {
+                impl_->pendingSaveSnapshot = flushSaveSnapshotViaBackground(
+                    *impl_->backgroundTaskService, std::move(*impl_->pendingSaveSnapshot));
+            }
+            if (!impl_->pendingSaveSnapshot.has_value()) {
+                auto extracted = impl_->saveManager.extractDirtySaveSnapshot(impl_->cartridge_);
+                if (extracted.has_value()) {
+                    impl_->pendingSaveSnapshot = flushSaveSnapshotViaBackground(
+                        *impl_->backgroundTaskService, std::move(*extracted));
+                }
             }
         }
     }
@@ -1151,9 +1159,16 @@ void GameBoyMachine::step() {
     // Periodic save flush
     if ((impl_->stepCounter % 4096u) == 0u) {
         if (impl_->backgroundTaskService != nullptr) {
-            auto extracted = impl_->saveManager.extractDirtySaveSnapshot(impl_->cartridge_);
-            if (extracted.has_value()) {
-                flushSaveSnapshotViaBackground(*impl_->backgroundTaskService, std::move(*extracted));
+            if (impl_->pendingSaveSnapshot.has_value()) {
+                impl_->pendingSaveSnapshot = flushSaveSnapshotViaBackground(
+                    *impl_->backgroundTaskService, std::move(*impl_->pendingSaveSnapshot));
+            }
+            if (!impl_->pendingSaveSnapshot.has_value()) {
+                auto extracted = impl_->saveManager.extractDirtySaveSnapshot(impl_->cartridge_);
+                if (extracted.has_value()) {
+                    impl_->pendingSaveSnapshot = flushSaveSnapshotViaBackground(
+                        *impl_->backgroundTaskService, std::move(*extracted));
+                }
             }
         }
     }
@@ -1302,6 +1317,15 @@ bool GameBoyMachine::flushCartridgeSave() {
     if (!extracted.has_value()) return false;
     GB::CartridgeSaveManager::flushSnapshot(std::move(*extracted));
     return true;
+}
+
+void GameBoyMachine::flushPendingBackgroundWork()
+{
+    if (impl_->pendingSaveSnapshot.has_value()) {
+        CartridgeSaveManager::flushSnapshot(*impl_->pendingSaveSnapshot);
+        impl_->pendingSaveSnapshot.reset();
+    }
+    (void)flushCartridgeSave();
 }
 
 uint16_t GameBoyMachine::readRegisterPair(std::string_view id) const {

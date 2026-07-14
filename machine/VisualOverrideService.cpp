@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
@@ -13,6 +14,7 @@
 #include <variant>
 
 #include "ImageDecoder.hpp"
+#include "BackgroundTaskService.hpp"
 #include "PngDecode.hpp"
 #include "VisualPackLimits.hpp"
 
@@ -160,6 +162,108 @@ bool VisualOverrideService::reloadChangedPacks()
     return true;
 }
 
+bool VisualOverrideService::requestReloadChangedPacks()
+{
+    ++diagnostics_.packReloadChecks;
+    if (backgroundTaskService_ == nullptr || packs_.empty() || pendingReload_.has_value()) {
+        ++diagnostics_.packReloadsSkipped;
+        return false;
+    }
+
+    auto promise = std::make_shared<std::promise<ReloadResult>>();
+    pendingReload_.emplace(promise->get_future());
+    const auto packs = packs_;
+    const auto baseGeneration = generation_;
+    const bool queued = backgroundTaskService_->submit(BackgroundJobCategory::VisualReload,
+        [packs, baseGeneration, promise]() mutable {
+            ReloadResult result;
+            result.baseGeneration = baseGeneration;
+            for (const auto& loadedPack : packs) {
+                const auto manifestTime = fileWriteTime(loadedPack.manifestPath);
+                if (manifestTime == loadedPack.manifestWriteTime && !watchedAssetChanged(loadedPack)) {
+                    result.packs.push_back(loadedPack);
+                    continue;
+                }
+                auto loaded = loadVisualPackManifest(loadedPack.manifestPath);
+                if (!loaded.manifest.has_value()) {
+                    result.error = "visual pack reload failed: " + loadedPack.manifestPath.string() + ": " + loaded.error;
+                    promise->set_value(std::move(result));
+                    return;
+                }
+                result.invalidRulesSkipped += loaded.invalidRulesSkipped;
+                result.missingReplacementImages += loaded.missingReplacementImages;
+                LoadedPack replacement;
+                replacement.manifest = std::move(*loaded.manifest);
+                replacement.manifestPath = loadedPack.manifestPath;
+                replacement.manifestWriteTime = fileWriteTime(loadedPack.manifestPath);
+                replacement.assetStamps = collectAssetStamps(replacement.manifest);
+                result.packs.push_back(std::move(replacement));
+                result.changed = true;
+            }
+            promise->set_value(std::move(result));
+        });
+    if (!queued) {
+        pendingReload_.reset();
+        ++diagnostics_.asyncReloadRejected;
+        return false;
+    }
+    return true;
+}
+
+bool VisualOverrideService::pollBackgroundWork()
+{
+    bool changed = false;
+    if (pendingReload_.has_value() &&
+        pendingReload_->wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+        auto result = pendingReload_->get();
+        pendingReload_.reset();
+        if (!result.error.empty()) {
+            ++diagnostics_.packReloadsFailed;
+            lastError_ = std::move(result.error);
+            if (lastReloadWarning_ != lastError_) {
+                pendingReloadWarning_ = lastError_;
+                lastReloadWarning_ = lastError_;
+            } else {
+                ++diagnostics_.suppressedReloadWarnings;
+            }
+        } else if (result.changed && result.baseGeneration == generation_) {
+            packs_ = std::move(result.packs);
+            diagnostics_.invalidRulesSkipped += result.invalidRulesSkipped;
+            diagnostics_.missingReplacementImages += result.missingReplacementImages;
+            diagnostics_.rulesLoaded = countLoadedRules(packs_);
+            ++diagnostics_.packReloadsSucceeded;
+            ++generation_;
+            clearResolutionCaches();
+            pendingReloadWarning_.reset();
+            lastReloadWarning_.clear();
+            lastError_.clear();
+            changed = true;
+        } else {
+            ++diagnostics_.packReloadsSkipped;
+        }
+    }
+
+    std::vector<CaptureCompletion> completed;
+    {
+        std::lock_guard<std::mutex> lock(captureCompletions_->mutex);
+        completed.swap(captureCompletions_->completed);
+    }
+    for (auto& completion : completed) {
+        if (!completion.success) {
+            captureSeen_.erase(completion.key);
+            lastError_ = std::move(completion.error);
+            continue;
+        }
+        captureEntries_.push_back(VisualCaptureEntry{completion.descriptor, completion.relativePath});
+        if (const auto it = observedResourceIndices_.find(completion.key); it != observedResourceIndices_.end()) {
+            observedResources_[it->second].imagePath = completion.relativePath;
+        }
+        captureManifestDirty_ = true;
+        ++captureStats_.uniqueResourcesDumped;
+    }
+    return changed;
+}
+
 std::optional<ResolvedVisualOverride> VisualOverrideService::resolve(const VisualResourceDescriptor& descriptor)
 {
     if (!enabled_ || descriptor.contentHash == 0u) {
@@ -256,6 +360,10 @@ bool VisualOverrideService::beginCapture(const std::filesystem::path& directory,
 
 void VisualOverrideService::endCapture() noexcept
 {
+    if (backgroundTaskService_ != nullptr) {
+        (void)backgroundTaskService_->waitUntilIdle(std::chrono::seconds(10));
+        (void)pollBackgroundWork();
+    }
     if (captureManifestDirty_) {
         (void)writeCaptureManifest();
         (void)writeAuthorReport();
@@ -283,13 +391,45 @@ bool VisualOverrideService::observe(const DecodedVisualResource& resource)
     const auto fileName = kind + "_" + toHexVisualHash(resource.descriptor.contentHash) + "_" +
         std::to_string(resource.descriptor.width) + "x" + std::to_string(resource.descriptor.height) + ".png";
     const auto resourceDir = captureDirectory_ / kind;
+    const auto relativePath = kind + "/" + fileName;
+    if (backgroundTaskService_ != nullptr) {
+        auto completions = captureCompletions_;
+        auto taskResource = resource;
+        const bool queued = backgroundTaskService_->submit(BackgroundJobCategory::VisualCapture,
+            [completions, resourceDir, fileName, relativePath, key, taskResource = std::move(taskResource)]() mutable {
+                CaptureCompletion completion{
+                    .descriptor = taskResource.descriptor,
+                    .key = key,
+                    .relativePath = relativePath,
+                    .error = {},
+                    .success = false,
+                };
+                std::lock_guard<std::mutex> writerLock(completions->writerMutex);
+                std::error_code ec;
+                std::filesystem::create_directories(resourceDir, ec);
+                if (ec) {
+                    completion.error = "unable to create visual capture resource directory";
+                } else {
+                    completion.success = VisualCaptureWriter::writeDecodedResourcePng(
+                        resourceDir / fileName, taskResource, completion.error);
+                }
+                std::lock_guard<std::mutex> completionLock(completions->mutex);
+                completions->completed.push_back(std::move(completion));
+            });
+        if (!queued) {
+            captureSeen_.erase(key);
+            ++diagnostics_.asyncCaptureRejected;
+        }
+        return queued;
+    }
+
     std::error_code ec;
     std::filesystem::create_directories(resourceDir, ec);
     if (ec) {
         lastError_ = "unable to create visual capture resource directory";
+        captureSeen_.erase(key);
         return false;
     }
-    const auto relativePath = kind + "/" + fileName;
     if (!VisualCaptureWriter::writeDecodedResourcePng(resourceDir / fileName, resource, lastError_)) {
         return false;
     }
@@ -334,9 +474,14 @@ void VisualOverrideService::setImageDecoder(ImageDecoder* decoder) noexcept
     imageDecoder_ = decoder;
 }
 
+void VisualOverrideService::setBackgroundTaskService(BackgroundTaskService* service) noexcept
+{
+    backgroundTaskService_ = service;
+}
+
 const VisualCaptureStats& VisualOverrideService::captureStats() const noexcept
 {
-    if (captureManifestDirty_) {
+    if (backgroundTaskService_ == nullptr && captureManifestDirty_) {
         (void)writeCaptureManifest();
         (void)writeAuthorReport();
     }
@@ -691,6 +836,54 @@ std::optional<VisualReplacementImage> VisualOverrideService::loadPng(const std::
         return cached->second.image;
     }
 
+    if (imageDecoder_ != nullptr) {
+        auto pending = pendingImageDecodes_.find(key);
+        if (pending == pendingImageDecodes_.end()) {
+            ++diagnostics_.asyncDecodeSubmissions;
+            pendingImageDecodes_.emplace(key, PendingImageDecode{
+                .future = imageDecoder_->decodeFileAsync(path),
+                .generation = generation_,
+            });
+            ++diagnostics_.asyncDecodePollsNotReady;
+            return std::nullopt;
+        }
+        if (pending->second.future.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+            ++diagnostics_.asyncDecodePollsNotReady;
+            return std::nullopt;
+        }
+        ++diagnostics_.asyncDecodePollsReady;
+        const auto submittedGeneration = pending->second.generation;
+        auto result = pending->second.future.get();
+        pendingImageDecodes_.erase(pending);
+        if (submittedGeneration != generation_) {
+            return std::nullopt;
+        }
+        if (!result.success) {
+            lastError_ = std::move(result.error);
+            if (lastError_ == "background decode queue full") {
+                ++diagnostics_.asyncDecodeRejected;
+            }
+            return std::nullopt;
+        }
+        VisualReplacementImage image{
+            .width = result.image.width,
+            .height = result.image.height,
+            .argbPixels = std::move(result.image.argbPixels),
+        };
+        const auto imageBytes = image.argbPixels.size() * sizeof(uint32_t);
+        if (!evictImageCacheFor(imageBytes)) {
+            lastError_ = "replacement image cache budget exceeded";
+            return std::nullopt;
+        }
+        imageCache_.emplace(key, CachedReplacementImage{
+            .image = image,
+            .bytes = imageBytes,
+            .lastUseSerial = ++imageCacheUseSerial_,
+        });
+        imageCacheBytes_ += imageBytes;
+        return image;
+    }
+
     std::error_code sizeEc;
     const auto fileSize = std::filesystem::file_size(path, sizeEc);
     if (!sizeEc && fileSize > VisualPackLimits::kMaxPngBytes) {
@@ -705,45 +898,7 @@ std::optional<VisualReplacementImage> VisualOverrideService::loadPng(const std::
     }
     std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
 
-    // Phase 32: Try async decode if available
-    if (imageDecoder_ != nullptr && !bytes.empty()) {
-        DecodeSnapshot snapshot{};
-        snapshot.decodeId = key;
-        snapshot.pngData = bytes;
-        ++diagnostics_.asyncDecodeSubmissions;
-        auto future = imageDecoder_->decodeAsync(snapshot);
-
-        // Wait with tight timeout for MVP
-        if (ImageDecoder::waitDecodeResult(future, std::chrono::milliseconds(10))) {
-            ++diagnostics_.asyncDecodePollsReady;
-            auto result = future.get();
-            if (result.success) {
-                // Convert to VisualReplacementImage
-                VisualReplacementImage replacement{
-                    .width = result.image.width,
-                    .height = result.image.height,
-                    .argbPixels = std::move(result.image.argbPixels),
-                };
-
-                // Cache and return
-                const auto bytesUsed = replacement.argbPixels.size() * sizeof(uint32_t);
-                if (evictImageCacheFor(bytesUsed)) {
-                    imageCacheBytes_ += bytesUsed;
-                    imageCache_.emplace(key, CachedReplacementImage{
-                        .image = replacement,
-                        .bytes = bytesUsed,
-                        .lastUseSerial = ++imageCacheUseSerial_,
-                    });
-                    return replacement;
-                }
-            }
-        } else {
-            ++diagnostics_.asyncDecodePollsNotReady;
-            // Timeout; fallback to sync (below)
-        }
-    }
-
-    // Fallback: synchronous decode using the same decoder as async path.
+    // Control/test fallback when no production background decoder is wired.
     auto decoded = decodePngToRgba(bytes);
     if (!decoded.success) {
         if (!decoded.error.empty()) {

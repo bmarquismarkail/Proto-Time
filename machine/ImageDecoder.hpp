@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <future>
+#include <filesystem>
 #include <memory>
 #include <string>
 
@@ -27,6 +28,7 @@ public:
     // Returns a future that will contain the decoded image or error.
     // The future is ready after decode completes on background thread.
     std::future<DecodeResult> decodeAsync(const DecodeSnapshot& snapshot);
+    std::future<DecodeResult> decodeFileAsync(const std::filesystem::path& path);
 
     // Wait synchronously for a future (with optional timeout)
     // Called by emulation thread when it needs the decoded result immediately.
@@ -40,6 +42,7 @@ public:
         std::size_t decodeSuccesses = 0;
         std::size_t decodeFailures = 0;
         std::size_t decodeSynchronouslyFallbacks = 0;
+        std::size_t decodeRejected = 0;
     };
 
     [[nodiscard]] Statistics stats() const noexcept;
@@ -50,12 +53,13 @@ private:
         std::atomic<std::size_t> decodeSuccesses{0};
         std::atomic<std::size_t> decodeFailures{0};
         std::atomic<std::size_t> decodeSynchronouslyFallbacks{0};
+        std::atomic<std::size_t> decodeRejected{0};
     };
 
     [[nodiscard]] static Statistics snapshotStatistics(const AtomicStatistics& stats) noexcept;
 
     BackgroundTaskService* bgTaskService_;
-    AtomicStatistics stats_{};
+    std::shared_ptr<AtomicStatistics> stats_ = std::make_shared<AtomicStatistics>();
 };
 
 } // namespace BMMQ

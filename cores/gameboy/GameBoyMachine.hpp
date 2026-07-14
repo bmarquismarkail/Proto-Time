@@ -96,6 +96,7 @@ public:
 
     // Save management
     bool flushCartridgeSave();
+    void flushPendingBackgroundWork() override;
     void setBackgroundTaskService(BMMQ::BackgroundTaskService* service) noexcept {
         impl_->backgroundTaskService = service;
     }
@@ -148,6 +149,7 @@ private:
         GB::CartridgeSaveManager saveManager;
         BMMQ::PluginManager pluginManager;
         BMMQ::BackgroundTaskService* backgroundTaskService = nullptr;
+        std::optional<GB::CartridgeSaveManager::SaveSnapshot> pendingSaveSnapshot;
         bool romLoaded = false;
         uint32_t romHash = 0u;
         std::optional<std::filesystem::path> pendingRomSourcePath;

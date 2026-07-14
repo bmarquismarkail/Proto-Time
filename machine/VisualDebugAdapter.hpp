@@ -12,6 +12,7 @@
 namespace BMMQ {
 
 class Machine;
+struct VideoStateView;
 
 struct VisualTileSemanticContext {
     std::string_view semanticLabel{};
@@ -36,6 +37,12 @@ public:
     [[nodiscard]] virtual std::optional<VideoDebugFrameModel> buildFrameModel(
         const Machine& machine,
         const VideoDebugRenderRequest& request) const = 0;
+    [[nodiscard]] virtual std::optional<VideoDebugFrameModel> buildFrameModelFromState(
+        const VideoStateView&,
+        const VideoDebugRenderRequest&) const
+    {
+        return std::nullopt;
+    }
     [[nodiscard]] virtual std::optional<DecodedVisualResource> decodeTile(
         const std::vector<std::uint8_t>& vram,
         std::uint8_t bgp,

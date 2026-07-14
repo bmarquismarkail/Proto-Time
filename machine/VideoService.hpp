@@ -887,7 +887,7 @@ private:
             auto captures = captures_;
             auto captureDispatchMutex = captureDispatchMutex_;
             auto frameCopy = frame;
-            const bool queued = backgroundTaskService_->submit([
+            const bool queued = backgroundTaskService_->submit(BackgroundJobCategory::VideoCapture, [
                 captures = std::move(captures),
                 captureDispatchMutex = std::move(captureDispatchMutex),
                 frameCopy = std::move(frameCopy)]() mutable {
@@ -901,6 +901,7 @@ private:
                 return;
             }
             ++diagnostics_.captureBackgroundFallbackCount;
+            return;
         }
 
         std::lock_guard<std::mutex> lock(*captureDispatchMutex_);

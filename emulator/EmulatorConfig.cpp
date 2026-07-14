@@ -181,6 +181,18 @@ void applyConfigValue(EmulatorConfig& config,
         } else {
             throw std::invalid_argument("Unknown config key: " + label);
         }
+    } else if (section == "background") {
+        if (key == "workers") {
+            const auto parsed = std::min<std::uint64_t>(parseUnsigned(text, label), 256u);
+            config.backgroundWorkers = static_cast<std::uint32_t>(parsed);
+        } else if (key == "queue_capacity") {
+            const auto parsed = std::clamp<std::uint64_t>(parseUnsigned(text, label), 1u, 65536u);
+            config.backgroundQueueCapacity = static_cast<std::uint32_t>(parsed);
+        } else if (key == "debug_snapshots") {
+            config.debugSnapshotsEnabled = parseBool(text, label);
+        } else {
+            throw std::invalid_argument("Unknown config key: " + label);
+        }
     } else {
         throw std::invalid_argument("Unknown config section: " + std::string(section));
     }
@@ -215,7 +227,7 @@ EmulatorConfig loadEmulatorConfig(const std::filesystem::path& path)
             }
             section = trim(std::string_view(text).substr(1, text.size() - 2));
             if (section != "emulator" && section != "video" && section != "timing" &&
-                section != "audio" && section != "visual") {
+                section != "audio" && section != "visual" && section != "background") {
                 throw std::invalid_argument("Unknown config section: " + section);
             }
             continue;
@@ -302,6 +314,16 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     if (overrides.audioBatchChunks.has_value()) {
         config.audioBatchChunks =
             static_cast<std::uint32_t>(std::clamp<std::uint32_t>(*overrides.audioBatchChunks, 1u, 16u));
+    }
+    if (overrides.backgroundWorkers.has_value()) {
+        config.backgroundWorkers = std::min<std::uint32_t>(*overrides.backgroundWorkers, 256u);
+    }
+    if (overrides.backgroundQueueCapacity.has_value()) {
+        config.backgroundQueueCapacity =
+            std::clamp<std::uint32_t>(*overrides.backgroundQueueCapacity, 1u, 65536u);
+    }
+    if (overrides.debugSnapshotsEnabled.has_value()) {
+        config.debugSnapshotsEnabled = *overrides.debugSnapshotsEnabled;
     }
     if (overrides.visualPackPaths.has_value()) {
         config.visualPackPaths = *overrides.visualPackPaths;
@@ -442,6 +464,21 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
             parsed = std::min(parsed, static_cast<std::uint64_t>(16u));
             arguments.overrides.audioBatchChunks =
                 static_cast<std::uint32_t>(std::max<std::uint64_t>(1u, parsed));
+        } else if (arg == "--background-workers") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--background-workers requires a non-negative integer");
+            }
+            const auto parsed = std::min<std::uint64_t>(parseUnsigned(argv[++i], "--background-workers"), 256u);
+            arguments.overrides.backgroundWorkers = static_cast<std::uint32_t>(parsed);
+        } else if (arg == "--background-queue-capacity") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--background-queue-capacity requires a positive integer");
+            }
+            const auto parsed = std::clamp<std::uint64_t>(
+                parseUnsigned(argv[++i], "--background-queue-capacity"), 1u, 65536u);
+            arguments.overrides.backgroundQueueCapacity = static_cast<std::uint32_t>(parsed);
+        } else if (arg == "--debug-snapshots") {
+            arguments.overrides.debugSnapshotsEnabled = true;
         } else if (arg == "--visual-pack" || arg == "--texture-pack") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument(arg + " requires a path");

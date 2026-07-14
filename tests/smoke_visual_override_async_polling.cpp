@@ -10,6 +10,7 @@
 #include <thread>
 
 #include "machine/VisualOverrideService.hpp"
+#include "machine/BackgroundTaskService.hpp"
 #include "tests/visual_test_helpers.hpp"
 
 namespace {
@@ -117,6 +118,36 @@ int main()
         assert(diags.asyncProbeSubmissions == 5u);
         assert(diags.asyncProbeChangesDetected == 5u);
         assert(diags.asyncProbeReloadApplies == 5u);
+    }
+
+    // Test 5: manifest parsing and immutable pack replacement occur off-lane.
+    {
+        const auto root = std::filesystem::temp_directory_path() / "bmmq_visual_async_reload_smoke";
+        std::filesystem::remove_all(root);
+        std::filesystem::create_directories(root);
+        const auto manifestPath = root / "pack.json";
+        Visual::writeTextFile(manifestPath, makeTestManifest());
+
+        BMMQ::BackgroundTaskService backgroundTasks(8u, 2u);
+        backgroundTasks.start();
+        BMMQ::VisualOverrideService service;
+        service.setBackgroundTaskService(&backgroundTasks);
+        assert(service.loadPackManifest(manifestPath));
+        const auto originalGeneration = service.generation();
+        std::filesystem::last_write_time(
+            manifestPath,
+            std::filesystem::last_write_time(manifestPath) + std::chrono::seconds(2));
+
+        assert(service.requestReloadChangedPacks());
+        assert(backgroundTasks.waitUntilIdle(std::chrono::seconds(2)));
+        assert(service.pollBackgroundWork());
+        assert(service.generation() == originalGeneration + 1u);
+        const auto stats = backgroundTasks.stats();
+        const auto category = static_cast<std::size_t>(BMMQ::BackgroundJobCategory::VisualReload);
+        assert(stats.categories[category].submitted == 1u);
+        assert(stats.categories[category].completed == 1u);
+        backgroundTasks.shutdown();
+        std::filesystem::remove_all(root);
     }
 
     return 0;

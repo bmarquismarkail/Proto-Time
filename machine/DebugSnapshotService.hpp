@@ -10,6 +10,7 @@
 #include "machine/DebugSnapshotTypes.hpp"
 #include "machine/VideoDebugModel.hpp"
 #include "machine/plugins/IoPlugin.hpp"
+#include "machine/VisualDebugAdapter.hpp"
 
 namespace BMMQ {
 
@@ -23,9 +24,8 @@ class BackgroundTaskService;
 /// tryConsumeAudio() inside serviceFrontend() to drain the queues and update
 /// its own cached copies without waiting on the emulation thread.
 ///
-/// Each queue is bounded (default 4 slots).  Overflow increments the stats
-/// counter and returns false; the caller should fall back to the synchronous
-/// in-place update path.
+/// Each queue is bounded (default 4 slots). Overflow or background saturation
+/// increments diagnostics and returns false; optional debug work is dropped.
 class DebugSnapshotService {
 public:
     static constexpr std::size_t kDefaultVideoCapacity = 4u;
@@ -50,6 +50,10 @@ public:
     /// Returns true on success, false if the queue is full (overflow).
     /// Calling with nullopt is a no-op (returns true without enqueuing).
     bool submitVideoModel(std::optional<VideoDebugFrameModel> model);
+    bool submitVideoState(
+        VideoStateView state,
+        const IVisualDebugAdapter* adapter,
+        VideoDebugRenderRequest request);
 
     /// Submit an audio state snapshot for deferred consumption by the render thread.
     /// Returns true on success, false if the queue is full (overflow).

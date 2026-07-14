@@ -267,18 +267,29 @@ struct GameGearMachine::Impl {
             return;
         }
 
+        if (pendingSaveSnapshot.has_value()) {
+            auto shared = std::make_shared<GameGearSaveManager::SaveSnapshot>(std::move(*pendingSaveSnapshot));
+            if (backgroundTaskService->submit(BMMQ::BackgroundJobCategory::SaveFlush, [shared]() {
+                    GameGearSaveManager::flushSnapshot(*shared);
+                })) {
+                pendingSaveSnapshot.reset();
+            } else {
+                pendingSaveSnapshot = std::move(*shared);
+                return;
+            }
+        }
+
         auto extracted = saveManager.extractDirtySaveSnapshot(*cart);
         if (!extracted.has_value()) {
             return;
         }
 
-        auto snapshot = std::move(*extracted);
-        auto fallbackSnapshot = snapshot;
-        const bool queued = backgroundTaskService->submit([snapshot = std::move(snapshot)]() mutable {
-            GameGearSaveManager::flushSnapshot(snapshot);
+        auto shared = std::make_shared<GameGearSaveManager::SaveSnapshot>(std::move(*extracted));
+        const bool queued = backgroundTaskService->submit(BMMQ::BackgroundJobCategory::SaveFlush, [shared]() {
+            GameGearSaveManager::flushSnapshot(*shared);
         });
         if (!queued) {
-            GameGearSaveManager::flushSnapshot(fallbackSnapshot);
+            pendingSaveSnapshot = std::move(*shared);
         }
     }
 
@@ -291,6 +302,7 @@ struct GameGearMachine::Impl {
     PluginManager pluginManager;
     GameGearSaveManager saveManager;
     BMMQ::BackgroundTaskService* backgroundTaskService = nullptr;
+    std::optional<GameGearSaveManager::SaveSnapshot> pendingSaveSnapshot;
     Plugin::DefaultStepPolicy defaultPolicy;
     Plugin::IExecutorPolicyPlugin* activePolicy = &defaultPolicy;
     bool romLoaded = false;
@@ -701,6 +713,15 @@ std::string GameGearMachine::stopSummary() const {
 bool GameGearMachine::flushCartridgeSave() {
     if (!impl->cart) return false;
     return impl->saveManager.flush(*impl->cart);
+}
+
+void GameGearMachine::flushPendingBackgroundWork()
+{
+    if (impl->pendingSaveSnapshot.has_value()) {
+        GameGearSaveManager::flushSnapshot(*impl->pendingSaveSnapshot);
+        impl->pendingSaveSnapshot.reset();
+    }
+    (void)flushCartridgeSave();
 }
 
 void GameGearMachine::setBackgroundTaskService(BMMQ::BackgroundTaskService* service) noexcept {
