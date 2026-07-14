@@ -9,6 +9,8 @@
 #include "SdlAudioOutput.hpp"
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <condition_variable>
@@ -126,6 +128,79 @@ public:
         Lifecycle,
     };
 
+    struct AudioFrontendProducerStats {
+        std::size_t events = 0u;
+        std::size_t realtimePacketsAccepted = 0u;
+        std::size_t realtimePacketsSkipped = 0u;
+        std::size_t stateSnapshotsBuilt = 0u;
+        std::uint64_t stateSnapshotDurationLastNs = 0u;
+        std::uint64_t stateSnapshotDurationHighWaterNs = 0u;
+        std::size_t previewsBuilt = 0u;
+        std::size_t packetSamplesLast = 0u;
+        std::size_t packetSamplesMin = 0u;
+        std::size_t packetSamplesMax = 0u;
+        std::uint32_t packetSampleRateLast = 0u;
+        std::uint8_t packetChannelCountLast = 0u;
+        std::uint64_t psgChunksEmittedLast = 0u;
+        std::uint64_t psgSamplesGeneratedTotalLast = 0u;
+        std::uint32_t psgChunkSamplesLast = 0u;
+        std::uint32_t psgChunkSamplesMin = 0u;
+        std::uint32_t psgChunkSamplesMax = 0u;
+        std::uint32_t psgPendingSamplesLast = 0u;
+        std::size_t batchConfiguredChunks = 1u;
+        std::size_t batchFlushCount = 0u;
+        std::size_t batchFlushSamplesLast = 0u;
+        std::size_t batchFlushSamplesMin = 0u;
+        std::size_t batchFlushSamplesMax = 0u;
+        std::size_t batchPacketsAccumulated = 0u;
+        std::size_t batchPacketsFlushed = 0u;
+        std::size_t batchFlushReasonTargetCount = 0u;
+        std::size_t batchFlushReasonFormatChangeCount = 0u;
+        std::size_t batchFlushReasonLifecycleCount = 0u;
+        std::size_t batchCurrentSamples = 0u;
+    };
+
+    struct AudioFrontendUpdate {
+        AudioFrontendProducerStats stats{};
+        std::optional<BMMQ::AudioStateView> state{};
+        std::optional<BMMQ::SdlAudioPreviewBuffer> preview{};
+        bool replaceState = false;
+        bool replacePreview = false;
+    };
+
+    class AudioFrontendMailbox final {
+    public:
+        void publish(AudioFrontendUpdate update) noexcept
+        {
+            slots_[producerSlot_] = std::move(update);
+            const auto published = static_cast<std::uint8_t>(kDirty | producerSlot_);
+            const auto previous = shared_.exchange(published, std::memory_order_acq_rel);
+            producerSlot_ = static_cast<std::uint8_t>(previous & kSlotMask);
+        }
+
+        [[nodiscard]] std::optional<AudioFrontendUpdate> tryConsumeLatest() noexcept
+        {
+            const auto current = shared_.load(std::memory_order_acquire);
+            if ((current & kDirty) == 0u) {
+                return std::nullopt;
+            }
+            const auto previous = shared_.exchange(consumerSlot_, std::memory_order_acq_rel);
+            if ((previous & kDirty) == 0u) {
+                return std::nullopt;
+            }
+            consumerSlot_ = static_cast<std::uint8_t>(previous & kSlotMask);
+            return std::move(slots_[consumerSlot_]);
+        }
+
+    private:
+        static constexpr std::uint8_t kDirty = 0x80u;
+        static constexpr std::uint8_t kSlotMask = 0x03u;
+        std::array<AudioFrontendUpdate, 3u> slots_{};
+        std::atomic<std::uint8_t> shared_{2u};
+        std::uint8_t producerSlot_ = 0u;
+        std::uint8_t consumerSlot_ = 1u;
+    };
+
     [[nodiscard]] const BMMQ::SdlFrontendConfig& config() const noexcept override
     {
         return config_;
@@ -134,6 +209,7 @@ public:
     [[nodiscard]] BMMQ::SdlFrontendStats stats() const noexcept override
     {
         std::scoped_lock<std::mutex> lock(sharedStateMutex_);
+        consumePendingAudioFrontendUpdateLocked();
         stats_.renderServiceState = renderServiceState_.load(std::memory_order_acquire);
         if (lifecycleCoordinator_ != nullptr) {
             const auto transition = lifecycleCoordinator_->lastTransitionResult();
@@ -234,11 +310,15 @@ public:
 
     [[nodiscard]] const std::optional<BMMQ::AudioStateView>& lastAudioState() const noexcept override
     {
+        std::scoped_lock<std::mutex> lock(sharedStateMutex_);
+        consumePendingAudioFrontendUpdateLocked();
         return lastAudioState_;
     }
 
     [[nodiscard]] const std::optional<BMMQ::SdlAudioPreviewBuffer>& lastAudioPreview() const noexcept override
     {
+        std::scoped_lock<std::mutex> lock(sharedStateMutex_);
+        consumePendingAudioFrontendUpdateLocked();
         return lastAudioPreview_;
     }
 
@@ -312,6 +392,7 @@ public:
         bool audioActive     = false;
         {
             std::unique_lock<std::mutex> lock(sharedStateMutex_);
+            consumePendingAudioFrontendUpdateLocked();
             ++stats_.serviceCalls;
             stats_.renderServiceState = renderServiceState_.load(std::memory_order_acquire);
             syncTimingStats();
@@ -792,7 +873,8 @@ public:
         lifecycleCoordinator_ = &view.mutableMachine.lifecycleCoordinator();
         audioService_ = &view.audioService();
         clearAudioPacketBatch();
-        stats_.audioBatchConfiguredChunks = std::max<std::size_t>(config_.audioBatchChunks, 1u);
+        audioProducerStats_.batchConfiguredChunks =
+            std::max<std::size_t>(config_.audioBatchChunks, 1u);
         audioService_->setBackendPausedOrClosed(true);
         inputService_ = &view.inputService();
         if (config_.enableInput) {
@@ -813,6 +895,9 @@ public:
     {
         ++stats_.detachCount;
         flushAudioPacketBatch(AudioBatchFlushReason::Lifecycle);
+        AudioFrontendUpdate audioUpdate;
+        audioUpdate.stats = audioProducerStats_;
+        audioFrontendMailbox_.publish(std::move(audioUpdate));
         shutdownBackend();
         audioService_ = nullptr;
         if (config_.enableInput && inputService_ != nullptr) {
@@ -1037,10 +1122,9 @@ public:
             return;
         }
 
-        // Pre-build audio sources OUTSIDE the lock.
-        // Machine state is owned by the emulation thread (the caller), so reading
-        // view.realtimeAudioPacket() / view.audioState() before acquiring
-        // sharedStateMutex_ is safe — same guarantee as the video event path.
+        // Build audio sources on the emulation lane before publishing the frontend
+        // update. Machine state is owned by this caller, so snapshotting it here is
+        // safe and does not require frontend synchronization.
         //
         // Phase 38A: view.audioState() is lazy — only called when the realtime
         // packet is absent or has a stale contract version, i.e. the fallback path.
@@ -1059,18 +1143,17 @@ public:
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now() - audioT0).count());
 
-        // Phase 38A: hoist buildAudioPreview(RealtimeAudioPacket) before the lock.
+        // Phase 38A: build the compact realtime preview before mailbox publication.
         // The const overload reads only from its argument + audioService_/config_
         // (both written only in onAttach/onDetach, serial with this call) — safe.
-        // The AudioStateView overload mutates audioPhase_ and stays inside the lock.
+        // The fallback AudioStateView overload also runs on this single producer.
         std::optional<BMMQ::SdlAudioPreviewBuffer> prebuiltRealtimePreview;
         if (realtimePacketValid) {
             prebuiltRealtimePreview = buildAudioPreview(*prebuiltRealtimePacket);
         }
 
-        // Call appendRecentPcm BEFORE acquiring sharedStateMutex_.
         // appendRecentPcm() is internally thread-safe (SPSC ring buffer + atomic
-        // notify to the audio worker); no outer lock is required.
+        // notify to the audio worker); no frontend lock is required.
         // audioService_ is set in onAttach and cleared in onDetach, both called
         // from the emulation thread — serial with onAudioEvent, no race.
         if (audioService_ != nullptr) {
@@ -1083,60 +1166,61 @@ public:
             }
         }
 
-        std::scoped_lock<std::mutex> lock(sharedStateMutex_);
-        ++stats_.audioEvents;
+        // Publish frontend-only preview and diagnostic state through a latest-only
+        // SPSC mailbox. The emulation lane must never wait for the main/UI thread.
+        AudioFrontendUpdate frontendUpdate;
+        ++audioProducerStats_.events;
         if (realtimePacketValid) {
-            ++stats_.audioRealtimePacketsAccepted;
+            ++audioProducerStats_.realtimePacketsAccepted;
             const auto packetSamples = prebuiltRealtimePacket->pcmSamples.size();
-            stats_.audioRealtimePacketSamplesLast = packetSamples;
-            if (stats_.audioRealtimePacketSamplesMin == 0u || packetSamples < stats_.audioRealtimePacketSamplesMin) {
-                stats_.audioRealtimePacketSamplesMin = packetSamples;
+            audioProducerStats_.packetSamplesLast = packetSamples;
+            if (audioProducerStats_.packetSamplesMin == 0u || packetSamples < audioProducerStats_.packetSamplesMin) {
+                audioProducerStats_.packetSamplesMin = packetSamples;
             }
-            stats_.audioRealtimePacketSamplesMax =
-                std::max(stats_.audioRealtimePacketSamplesMax, packetSamples);
-            stats_.audioRealtimePacketSampleRateLast = prebuiltRealtimePacket->sampleRate;
-            stats_.audioRealtimePacketChannelCountLast = prebuiltRealtimePacket->channelCount;
-            stats_.audioRealtimePacketPsgChunksEmittedLast = prebuiltRealtimePacket->psgChunksEmitted;
-            stats_.audioRealtimePacketPsgSamplesGeneratedTotalLast =
+            audioProducerStats_.packetSamplesMax =
+                std::max(audioProducerStats_.packetSamplesMax, packetSamples);
+            audioProducerStats_.packetSampleRateLast = prebuiltRealtimePacket->sampleRate;
+            audioProducerStats_.packetChannelCountLast = prebuiltRealtimePacket->channelCount;
+            audioProducerStats_.psgChunksEmittedLast = prebuiltRealtimePacket->psgChunksEmitted;
+            audioProducerStats_.psgSamplesGeneratedTotalLast =
                 prebuiltRealtimePacket->psgSamplesGeneratedTotal;
-            stats_.audioRealtimePacketPsgChunkSamplesLast = prebuiltRealtimePacket->psgChunkSamplesLast;
-            stats_.audioRealtimePacketPsgChunkSamplesMin = prebuiltRealtimePacket->psgChunkSamplesMin;
-            stats_.audioRealtimePacketPsgChunkSamplesMax = prebuiltRealtimePacket->psgChunkSamplesMax;
-            stats_.audioRealtimePacketPsgPendingSamplesLast = prebuiltRealtimePacket->psgPendingSamples;
-            // Pre-built outside the lock (Phase 38A); just move into place.
-            lastAudioPreview_ = std::move(prebuiltRealtimePreview);
-            ++stats_.audioPreviewsBuilt;
-            ++audioPreviewGeneration_;
-            // appendRecentPcm already dispatched above, outside the lock.
-            lastAudioState_.reset();
+            audioProducerStats_.psgChunkSamplesLast = prebuiltRealtimePacket->psgChunkSamplesLast;
+            audioProducerStats_.psgChunkSamplesMin = prebuiltRealtimePacket->psgChunkSamplesMin;
+            audioProducerStats_.psgChunkSamplesMax = prebuiltRealtimePacket->psgChunkSamplesMax;
+            audioProducerStats_.psgPendingSamplesLast = prebuiltRealtimePacket->psgPendingSamples;
+            ++audioProducerStats_.previewsBuilt;
+            frontendUpdate.replaceState = true;
+            frontendUpdate.replacePreview = true;
+            frontendUpdate.preview = std::move(prebuiltRealtimePreview);
         } else if (audioFrameReadyEvent && prebuiltRealtimePacket.has_value()) {
             flushAudioPacketBatch(AudioBatchFlushReason::FormatChange);
-            ++stats_.audioRealtimePacketsSkipped;
-            lastAudioPreview_.reset();
+            ++audioProducerStats_.realtimePacketsSkipped;
+            frontendUpdate.replacePreview = true;
         } else if (audioFrameReadyEvent && prebuiltAudioState.has_value()) {
-            // Use the pre-built audio state (built outside the lock).
-            ++stats_.audioStateSnapshotsBuilt;
-            stats_.audioStateSnapshotDurationLastNs = audioElapsedNs;
-            stats_.audioStateSnapshotDurationHighWaterNs =
-                std::max(stats_.audioStateSnapshotDurationHighWaterNs, audioElapsedNs);
-            lastAudioState_ = prebuiltAudioState;
-            lastAudioPreview_ = buildAudioPreview(*lastAudioState_);
-            ++stats_.audioPreviewsBuilt;
-            ++audioPreviewGeneration_;
-            // appendRecentPcm already dispatched above, outside the lock.
+            ++audioProducerStats_.stateSnapshotsBuilt;
+            audioProducerStats_.stateSnapshotDurationLastNs = audioElapsedNs;
+            audioProducerStats_.stateSnapshotDurationHighWaterNs =
+                std::max(audioProducerStats_.stateSnapshotDurationHighWaterNs, audioElapsedNs);
+            ++audioProducerStats_.previewsBuilt;
+            frontendUpdate.replaceState = true;
+            frontendUpdate.replacePreview = true;
+            frontendUpdate.state = prebuiltAudioState;
+            frontendUpdate.preview = buildAudioPreview(*prebuiltAudioState);
             if (debugSnapshotService_ != nullptr) {
-                (void)debugSnapshotService_->submitAudioState(lastAudioState_);
+                (void)debugSnapshotService_->submitAudioState(prebuiltAudioState);
             }
         } else if (audioFrameReadyEvent) {
             flushAudioPacketBatch(AudioBatchFlushReason::Lifecycle);
-            ++stats_.audioRealtimePacketsSkipped;
-            lastAudioPreview_.reset();
+            ++audioProducerStats_.realtimePacketsSkipped;
+            frontendUpdate.replacePreview = true;
             if (audioService_ != nullptr && audioService_->canPerformReset()) {
                 (void)audioService_->resetStats();
                 (void)audioService_->resetStream();
             }
         }
 
+        frontendUpdate.stats = audioProducerStats_;
+        audioFrontendMailbox_.publish(std::move(frontendUpdate));
         (void)event;
     }
 
@@ -1236,6 +1320,52 @@ private:
         renderServiceState_.store(state, std::memory_order_release);
     }
 
+    void consumePendingAudioFrontendUpdateLocked() const noexcept
+    {
+        auto update = audioFrontendMailbox_.tryConsumeLatest();
+        if (!update.has_value()) {
+            return;
+        }
+
+        const auto& source = update->stats;
+        stats_.audioEvents = source.events;
+        stats_.audioRealtimePacketsAccepted = source.realtimePacketsAccepted;
+        stats_.audioRealtimePacketsSkipped = source.realtimePacketsSkipped;
+        stats_.audioStateSnapshotsBuilt = source.stateSnapshotsBuilt;
+        stats_.audioStateSnapshotDurationLastNs = source.stateSnapshotDurationLastNs;
+        stats_.audioStateSnapshotDurationHighWaterNs = source.stateSnapshotDurationHighWaterNs;
+        stats_.audioPreviewsBuilt = source.previewsBuilt;
+        stats_.audioRealtimePacketSamplesLast = source.packetSamplesLast;
+        stats_.audioRealtimePacketSamplesMin = source.packetSamplesMin;
+        stats_.audioRealtimePacketSamplesMax = source.packetSamplesMax;
+        stats_.audioRealtimePacketSampleRateLast = source.packetSampleRateLast;
+        stats_.audioRealtimePacketChannelCountLast = source.packetChannelCountLast;
+        stats_.audioRealtimePacketPsgChunksEmittedLast = source.psgChunksEmittedLast;
+        stats_.audioRealtimePacketPsgSamplesGeneratedTotalLast = source.psgSamplesGeneratedTotalLast;
+        stats_.audioRealtimePacketPsgChunkSamplesLast = source.psgChunkSamplesLast;
+        stats_.audioRealtimePacketPsgChunkSamplesMin = source.psgChunkSamplesMin;
+        stats_.audioRealtimePacketPsgChunkSamplesMax = source.psgChunkSamplesMax;
+        stats_.audioRealtimePacketPsgPendingSamplesLast = source.psgPendingSamplesLast;
+        stats_.audioBatchConfiguredChunks = source.batchConfiguredChunks;
+        stats_.audioBatchFlushCount = source.batchFlushCount;
+        stats_.audioBatchFlushSamplesLast = source.batchFlushSamplesLast;
+        stats_.audioBatchFlushSamplesMin = source.batchFlushSamplesMin;
+        stats_.audioBatchFlushSamplesMax = source.batchFlushSamplesMax;
+        stats_.audioBatchPacketsAccumulated = source.batchPacketsAccumulated;
+        stats_.audioBatchPacketsFlushed = source.batchPacketsFlushed;
+        stats_.audioBatchFlushReasonTargetCount = source.batchFlushReasonTargetCount;
+        stats_.audioBatchFlushReasonFormatChangeCount = source.batchFlushReasonFormatChangeCount;
+        stats_.audioBatchFlushReasonLifecycleCount = source.batchFlushReasonLifecycleCount;
+        stats_.audioBatchCurrentSamples = source.batchCurrentSamples;
+
+        if (update->replaceState) {
+            lastAudioState_ = std::move(update->state);
+        }
+        if (update->replacePreview) {
+            lastAudioPreview_ = std::move(update->preview);
+        }
+    }
+
     void clearAudioPacketBatch()
     {
         audioBatchSamples_.clear();
@@ -1243,29 +1373,30 @@ private:
         audioBatchChannelCount_ = 0u;
         audioBatchLastFrameCounter_ = 0u;
         audioBatchPacketCount_ = 0u;
-        stats_.audioBatchCurrentSamples = 0u;
+        audioProducerStats_.batchCurrentSamples = 0u;
     }
 
     void noteAudioBatchFlush(std::size_t sampleCount,
                              std::size_t packetCount,
                              AudioBatchFlushReason reason)
     {
-        ++stats_.audioBatchFlushCount;
-        stats_.audioBatchFlushSamplesLast = sampleCount;
-        if (stats_.audioBatchFlushSamplesMin == 0u || sampleCount < stats_.audioBatchFlushSamplesMin) {
-            stats_.audioBatchFlushSamplesMin = sampleCount;
+        ++audioProducerStats_.batchFlushCount;
+        audioProducerStats_.batchFlushSamplesLast = sampleCount;
+        if (audioProducerStats_.batchFlushSamplesMin == 0u || sampleCount < audioProducerStats_.batchFlushSamplesMin) {
+            audioProducerStats_.batchFlushSamplesMin = sampleCount;
         }
-        stats_.audioBatchFlushSamplesMax = std::max(stats_.audioBatchFlushSamplesMax, sampleCount);
-        stats_.audioBatchPacketsFlushed += packetCount;
+        audioProducerStats_.batchFlushSamplesMax =
+            std::max(audioProducerStats_.batchFlushSamplesMax, sampleCount);
+        audioProducerStats_.batchPacketsFlushed += packetCount;
         switch (reason) {
         case AudioBatchFlushReason::Target:
-            ++stats_.audioBatchFlushReasonTargetCount;
+            ++audioProducerStats_.batchFlushReasonTargetCount;
             break;
         case AudioBatchFlushReason::FormatChange:
-            ++stats_.audioBatchFlushReasonFormatChangeCount;
+            ++audioProducerStats_.batchFlushReasonFormatChangeCount;
             break;
         case AudioBatchFlushReason::Lifecycle:
-            ++stats_.audioBatchFlushReasonLifecycleCount;
+            ++audioProducerStats_.batchFlushReasonLifecycleCount;
             break;
         }
     }
@@ -1298,9 +1429,9 @@ private:
         audioBatchLastFrameCounter_ = packet.frameCounter;
         audioBatchSamples_.insert(audioBatchSamples_.end(), packet.pcmSamples.begin(), packet.pcmSamples.end());
         ++audioBatchPacketCount_;
-        ++stats_.audioBatchPacketsAccumulated;
-        stats_.audioBatchCurrentSamples = audioBatchSamples_.size();
-        stats_.audioBatchConfiguredChunks = configuredChunks;
+        ++audioProducerStats_.batchPacketsAccumulated;
+        audioProducerStats_.batchCurrentSamples = audioBatchSamples_.size();
+        audioProducerStats_.batchConfiguredChunks = configuredChunks;
 
         const auto targetSamples = configuredChunks * std::max<std::size_t>(packet.pcmSamples.size(), 1u);
         if (configuredChunks <= 1u || audioBatchSamples_.size() >= targetSamples) {
@@ -2794,8 +2925,10 @@ private:
     bool backendReady_ = false;
     std::optional<BMMQ::VideoDebugFrameModel> lastVideoDebugModel_;
     std::optional<BMMQ::VideoDebugFrameModel> scanlineVideoDebugModel_;
-    std::optional<BMMQ::AudioStateView> lastAudioState_;
-    std::optional<BMMQ::SdlAudioPreviewBuffer> lastAudioPreview_;
+    mutable std::optional<BMMQ::AudioStateView> lastAudioState_;
+    mutable std::optional<BMMQ::SdlAudioPreviewBuffer> lastAudioPreview_;
+    mutable AudioFrontendMailbox audioFrontendMailbox_{};
+    AudioFrontendProducerStats audioProducerStats_{};
     std::vector<int16_t> audioBatchSamples_;
     std::uint32_t audioBatchSampleRate_ = 0u;
     std::uint8_t audioBatchChannelCount_ = 0u;
@@ -2858,7 +2991,6 @@ private:
     std::string lastBackendError_;
     uint32_t initializedBackendFlags_ = 0;
     double audioPhase_ = 0.0;
-    uint64_t audioPreviewGeneration_ = 0;
     BMMQ::AudioService* audioService_ = nullptr;
     BMMQ::InputService* inputService_ = nullptr;
     BMMQ::VideoService* videoService_ = nullptr;
