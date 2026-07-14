@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <chrono>
+#include <cstring>
 #include <limits>
 
 #include "../SimdPixelOps.hpp"
@@ -59,6 +60,7 @@ VideoPluginCapabilities SdlVideoPresenter::capabilities() const noexcept
         .deterministic = false,
         .headlessSafe = false,
         .requiresHostThreadAffinity = true,
+        .acceptsIndexedSurface = true,
     };
 }
 
@@ -160,6 +162,7 @@ bool SdlVideoPresenter::present(const VideoFramePacket& frame) noexcept
         lastError_ = "empty video frame";
         return false;
     }
+    const auto totalStart = std::chrono::steady_clock::now();
 
     if (config_.showWindowOnPresent) {
         requestWindowVisibility(true);
@@ -181,21 +184,30 @@ bool SdlVideoPresenter::present(const VideoFramePacket& frame) noexcept
         return false;
     }
 
-    // Phase 8: use SIMD-accelerated upload path
-    bool uploadOk = config_uses_rgb565_
-        ? uploadTextureRgb565(frame)
-        : uploadTextureArgb8888(frame);
-    if (!uploadOk) {
+    std::int64_t expansionDurationNanos = 0;
+    const auto uploadStart = std::chrono::steady_clock::now();
+    const auto uploadFrame = [&]() {
+        return config_uses_rgb565_
+            ? uploadTextureRgb565(frame, expansionDurationNanos)
+            : uploadTextureArgb8888(frame, expansionDurationNanos);
+    };
+    if (!uploadFrame()) {
         return false;
     }
+    const auto uploadEnd = std::chrono::steady_clock::now();
+    const auto uploadDurationNanos =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(uploadEnd - uploadStart).count();
     ++diagnostics_.textureUploadCount;
 
+    const auto renderSubmitStart = std::chrono::steady_clock::now();
     if (SDL_RenderClear(renderer_) != 0) {
         const auto clearError = std::string(SDL_GetError());
-        if (!fallbackToSoftwareRenderer(frame.width, frame.height, VideoPresenterFallbackReason::RuntimePresentFailure)) {
+        if (!fallbackToSoftwareRenderer(frame.width, frame.height, VideoPresenterFallbackReason::RuntimePresentFailure) ||
+            !uploadFrame()) {
             lastError_ = clearError;
             return false;
         }
+        ++diagnostics_.textureUploadCount;
         if (SDL_RenderClear(renderer_) != 0) {
             lastError_ = SDL_GetError();
             return false;
@@ -203,21 +215,31 @@ bool SdlVideoPresenter::present(const VideoFramePacket& frame) noexcept
     }
     if (SDL_RenderCopy(renderer_, texture_, nullptr, nullptr) != 0) {
         const auto copyError = std::string(SDL_GetError());
-        if (!fallbackToSoftwareRenderer(frame.width, frame.height, VideoPresenterFallbackReason::RuntimePresentFailure)) {
+        if (!fallbackToSoftwareRenderer(frame.width, frame.height, VideoPresenterFallbackReason::RuntimePresentFailure) ||
+            !uploadFrame()) {
             lastError_ = copyError;
             return false;
         }
+        ++diagnostics_.textureUploadCount;
         if (SDL_RenderCopy(renderer_, texture_, nullptr, nullptr) != 0) {
             lastError_ = SDL_GetError();
             return false;
         }
     }
-    const auto presentStart = std::chrono::high_resolution_clock::now();
+    const auto renderSubmitEnd = std::chrono::steady_clock::now();
+    const auto renderSubmitDurationNanos =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(renderSubmitEnd - renderSubmitStart).count();
+    const auto presentStart = std::chrono::steady_clock::now();
     SDL_RenderPresent(renderer_);
-    const auto presentEnd = std::chrono::high_resolution_clock::now();
+    const auto presentEnd = std::chrono::steady_clock::now();
     const auto presentDurationNanos =
         std::chrono::duration_cast<std::chrono::nanoseconds>(presentEnd - presentStart).count();
     updatePresentDurationMetric(presentDurationNanos);
+    updateStageDurationMetrics(
+        expansionDurationNanos,
+        uploadDurationNanos,
+        renderSubmitDurationNanos,
+        std::chrono::duration_cast<std::chrono::nanoseconds>(presentEnd - totalStart).count());
     ++diagnostics_.presentCount;
     lastError_.clear();
     return true;
@@ -503,56 +525,130 @@ void SdlVideoPresenter::updatePresentDurationMetric(std::int64_t durationNanos) 
     diagnostics_.presenterPresentDurationP999Nanos = estimateAtRank(targetP999);
 }
 
-bool SdlVideoPresenter::uploadTextureRgb565(const VideoFramePacket& frame) noexcept
+void SdlVideoPresenter::updateStageDurationMetrics(
+    std::int64_t expansionDurationNanos,
+    std::int64_t uploadDurationNanos,
+    std::int64_t renderSubmitDurationNanos,
+    std::int64_t totalDurationNanos) noexcept
+{
+    diagnostics_.expansionDurationLastNanos = expansionDurationNanos;
+    diagnostics_.expansionDurationHighWaterNanos = std::max(
+        diagnostics_.expansionDurationHighWaterNanos, expansionDurationNanos);
+    diagnostics_.uploadDurationLastNanos = uploadDurationNanos;
+    diagnostics_.uploadDurationHighWaterNanos = std::max(
+        diagnostics_.uploadDurationHighWaterNanos, uploadDurationNanos);
+    diagnostics_.renderSubmitDurationLastNanos = renderSubmitDurationNanos;
+    diagnostics_.renderSubmitDurationHighWaterNanos = std::max(
+        diagnostics_.renderSubmitDurationHighWaterNanos, renderSubmitDurationNanos);
+    diagnostics_.totalDurationLastNanos = totalDurationNanos;
+    diagnostics_.totalDurationHighWaterNanos = std::max(
+        diagnostics_.totalDurationHighWaterNanos, totalDurationNanos);
+    ++diagnostics_.stageDurationSampleCount;
+}
+
+bool SdlVideoPresenter::uploadTextureRgb565(const VideoFramePacket& frame,
+                                            std::int64_t& expansionDurationNanos) noexcept
 {
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
-    const auto pixel_count = static_cast<std::size_t>(frame.width) * static_cast<std::size_t>(frame.height);
-    rgb565_buffer_.resize(pixel_count);
-
-    // Phase 8: SIMD-accelerated ARGB8888 -> RGB565 conversion
-    SimdPixelOps::convert_argb8888_to_rgb565(frame.pixels.data(),
-                                              rgb565_buffer_.data(),
-                                              pixel_count);
-
-    if (SDL_UpdateTexture(texture_, nullptr, rgb565_buffer_.data(),
-                          frame.width * static_cast<int>(sizeof(std::uint16_t))) != 0) {
-        const auto updateError = std::string(SDL_GetError());
-        if (!fallbackToSoftwareRenderer(frame.width, frame.height, VideoPresenterFallbackReason::RuntimePresentFailure)) {
-            lastError_ = updateError;
+    const auto copy = [&]() {
+        void* texturePixels = nullptr;
+        int pitch = 0;
+        if (SDL_LockTexture(texture_, nullptr, &texturePixels, &pitch) != 0) return false;
+        ++diagnostics_.textureLockCount;
+        if (pitch <= 0 || pitch % static_cast<int>(sizeof(std::uint16_t)) != 0) {
+            SDL_UnlockTexture(texture_);
+            lastError_ = "SDL texture pitch is not RGB565-aligned";
             return false;
         }
-        if (SDL_UpdateTexture(texture_, nullptr, rgb565_buffer_.data(),
-                              frame.width * static_cast<int>(sizeof(std::uint16_t))) != 0) {
-            lastError_ = SDL_GetError();
+        const auto expansionStart = std::chrono::steady_clock::now();
+        auto* destination = static_cast<std::uint16_t*>(texturePixels);
+        const auto stride = static_cast<std::size_t>(pitch) / sizeof(std::uint16_t);
+        bool converted = true;
+        if (!frame.pixels.empty()) {
+            for (int y = 0; y < frame.height; ++y) {
+                SimdPixelOps::convert_argb8888_to_rgb565(
+                    frame.pixels.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(frame.width),
+                    destination + static_cast<std::size_t>(y) * stride,
+                    static_cast<std::size_t>(frame.width));
+            }
+            ++diagnostics_.argbFrameCount;
+        } else {
+            converted = SimdPixelOps::convert_indexed_to_rgb565(
+                frame.surface, frame.width, frame.height, destination, stride);
+            if (converted) ++diagnostics_.directIndexedFrameCount;
+        }
+        expansionDurationNanos = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - expansionStart).count();
+        SDL_UnlockTexture(texture_);
+        return converted;
+    };
+    if (!copy()) {
+        const auto updateError = lastError_.empty() ? std::string(SDL_GetError()) : lastError_;
+        if (!fallbackToSoftwareRenderer(frame.width, frame.height, VideoPresenterFallbackReason::RuntimePresentFailure) ||
+            !ensureTexture(frame.width, frame.height) || !copy()) {
+            lastError_ = updateError;
             return false;
         }
     }
     return true;
 #else
     (void)frame;
+    expansionDurationNanos = 0;
     return false;
 #endif
 }
 
-bool SdlVideoPresenter::uploadTextureArgb8888(const VideoFramePacket& frame) noexcept
+bool SdlVideoPresenter::uploadTextureArgb8888(const VideoFramePacket& frame,
+                                              std::int64_t& expansionDurationNanos) noexcept
 {
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
-    if (SDL_UpdateTexture(texture_, nullptr, frame.pixels.data(),
-                          frame.width * static_cast<int>(sizeof(std::uint32_t))) != 0) {
-        const auto updateError = std::string(SDL_GetError());
-        if (!fallbackToSoftwareRenderer(frame.width, frame.height, VideoPresenterFallbackReason::RuntimePresentFailure)) {
-            lastError_ = updateError;
+    const auto copy = [&]() {
+        void* texturePixels = nullptr;
+        int pitch = 0;
+        if (SDL_LockTexture(texture_, nullptr, &texturePixels, &pitch) != 0) return false;
+        ++diagnostics_.textureLockCount;
+        if (pitch <= 0 || pitch % static_cast<int>(sizeof(std::uint32_t)) != 0) {
+            SDL_UnlockTexture(texture_);
+            lastError_ = "SDL texture pitch is not ARGB-aligned";
             return false;
         }
-        if (SDL_UpdateTexture(texture_, nullptr, frame.pixels.data(),
-                              frame.width * static_cast<int>(sizeof(std::uint32_t))) != 0) {
-            lastError_ = SDL_GetError();
+        const auto expansionStart = std::chrono::steady_clock::now();
+        bool copied = false;
+        if (!frame.pixels.empty()) {
+            const auto rowBytes = static_cast<std::size_t>(frame.width) * sizeof(std::uint32_t);
+            for (int y = 0; y < frame.height; ++y) {
+                std::memcpy(static_cast<std::uint8_t*>(texturePixels) + static_cast<std::size_t>(y) * pitch,
+                            frame.pixels.data() + static_cast<std::size_t>(y) * frame.width, rowBytes);
+            }
+            ++diagnostics_.argbFrameCount;
+            copied = true;
+        } else {
+            copied = decodeVideoSurfaceToArgb(frame.surface, frame.width, frame.height,
+                static_cast<std::uint32_t*>(texturePixels),
+                static_cast<std::size_t>(pitch) / sizeof(std::uint32_t));
+            if (copied && frame.surface.encoding != RealtimeVideoEncoding::Argb8888) {
+                ++diagnostics_.directIndexedFrameCount;
+            } else if (copied) {
+                ++diagnostics_.argbFrameCount;
+            }
+        }
+        expansionDurationNanos = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - expansionStart).count();
+        SDL_UnlockTexture(texture_);
+        return copied;
+    };
+    if (!copy()) {
+        const auto updateError = lastError_.empty() ? std::string(SDL_GetError()) : lastError_;
+        if (!fallbackToSoftwareRenderer(frame.width, frame.height, VideoPresenterFallbackReason::RuntimePresentFailure) ||
+            !ensureTexture(frame.width, frame.height) || !copy()) {
+            lastError_ = updateError;
             return false;
         }
     }
     return true;
 #else
     (void)frame;
+    expansionDurationNanos = 0;
     return false;
 #endif
 }

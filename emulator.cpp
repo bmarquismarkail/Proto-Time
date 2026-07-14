@@ -221,6 +221,12 @@ void writeDiagnosticsSample(std::ostream& output,
     output << ",\"debug_consumer_inactive_count\":" << stats.videoBuildDebugFrameDebugConsumerInactiveCount;
     output << ",\"skipped_no_consumer_count\":" << stats.videoDebugFrameBuildSkippedNoConsumerCount;
     output << ",\"executed_count\":" << stats.videoDebugFrameBuildExecutedCount;
+    output << ",\"visual_override_lookup_samples\":" << stats.videoVisualOverrideLookupSampleCount;
+    output << ",\"visual_override_lookup_total_ns\":" << stats.videoVisualOverrideLookupTotalNs;
+    output << ",\"visual_override_lookup_high_water_ns\":" << stats.videoVisualOverrideLookupHighWaterNs;
+    output << ",\"visual_override_apply_samples\":" << stats.videoVisualOverrideApplySampleCount;
+    output << ",\"visual_override_apply_total_ns\":" << stats.videoVisualOverrideApplyTotalNs;
+    output << ",\"visual_override_apply_high_water_ns\":" << stats.videoVisualOverrideApplyHighWaterNs;
     output << "}";
     output << ",\"vdp_render_body\":{";
     output << "\"sample_count\":" << stats.videoVdpRenderBodySampleCount;
@@ -314,6 +320,7 @@ void writeDiagnosticsSample(std::ostream& output,
     output << "}";
     output << ",\"presenter_pipeline\":{";
     output << "\"sample_count\":" << stats.videoPresenterStageDurationSampleCount;
+    output << ",\"simd_backend\":\"" << jsonEscape(stats.videoSimdBackendName) << "\"";
     output << ",\"direct_indexed_frames\":" << stats.videoPresenterDirectIndexedFrameCount;
     output << ",\"argb_frames\":" << stats.videoPresenterArgbFrameCount;
     output << ",\"texture_locks\":" << stats.videoPresenterTextureLockCount;

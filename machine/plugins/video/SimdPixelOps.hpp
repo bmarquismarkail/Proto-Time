@@ -3,39 +3,31 @@
 
 // Portable SIMD intrinsics for pixel format conversion and scanline compositing.
 //
-// Targets: x86 SSE2 / SSSE3 / SSE4.1 / AVX2 (auto-detected via compiler defines).
-// Fallbacks: scalar C++20 when no SIMD detected.
+// Targets: x86 SSE2 / SSE4.1 / AVX2 and ARM NEON, selected at runtime.
+// Fallback: scalar C++20. BMMQ_SIMD_FORCE_SCALAR provides a deterministic
+// scalar-only build for correctness and benchmark comparisons.
 //
 // All functions operate on contiguous uint32_t pixel arrays in ARGB8888 layout
 // (0xAARRGGBB, big-endian byte order within each 32-bit word).
 
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 
-#if defined(__has_include)
-#  if __has_include(<immintrin.h>)
-#    include <immintrin.h>
-#  endif
-#endif
-
-// Feature detection — prefer the highest available ISA.
-#if defined(BMMQ_SIMD_FORCE_SCALAR) && BMMQ_SIMD_FORCE_SCALAR
-#  define BMMQ_SIMD_SCALAR 1
-#elif defined(__AVX2__) && defined(__AVX__) && defined(__SSE4_2__)
-#  define BMMQ_SIMD_AVX2 1
-#elif defined(__SSE4_2__) && defined(__SSE4_1__) && defined(__SSSE3__)
-#  define BMMQ_SIMD_SSE4_1 1
-#elif defined(__SSSE3__)
-#  define BMMQ_SIMD_SSSE3 1
-#elif defined(__SSE2__)
-#  define BMMQ_SIMD_SSE2 1
-#else
-#  define BMMQ_SIMD_SCALAR 1
-#endif
+#include "RealtimeVideoSurface.hpp"
 
 namespace BMMQ {
 namespace SimdPixelOps {
+
+enum class Backend : std::uint8_t {
+    Scalar = 0,
+    Sse2,
+    Sse41,
+    Avx2,
+    Neon,
+};
+
+[[nodiscard]] Backend active_backend() noexcept;
+[[nodiscard]] const char* active_backend_name() noexcept;
 
 // ---------------------------------------------------------------------------
 // ARGB8888 -> RGB565 conversion
@@ -45,23 +37,23 @@ namespace SimdPixelOps {
 //
 // Processes pixels in vector-width chunks. Tail is handled with scalar fallback.
 
-[[nodiscard]] inline std::size_t argb8888_to_rgb565_vector_width() noexcept
-{
-#if BMMQ_SIMD_AVX2
-    return 8u;          // 256 bits -> 8 x uint32_t
-#elif BMMQ_SIMD_SSE4_1 || BMMQ_SIMD_SSSE3 || BMMQ_SIMD_SSE2
-    return 4u;          // 128 bits -> 4 x uint32_t
-#else
-    return 1u;          // scalar
-#endif
-}
+[[nodiscard]] std::size_t argb8888_to_rgb565_vector_width() noexcept;
 
 void convert_argb8888_to_rgb565(const std::uint32_t* src,
                                 std::uint16_t* dst,
                                 std::size_t pixel_count) noexcept;
 
+// Convert a packed indexed surface directly to RGB565. The palette is tiny
+// (4 entries for Indexed2, 32 for Indexed5), so it is converted once and the
+// packed indices expand directly into caller-owned texture storage.
+[[nodiscard]] bool convert_indexed_to_rgb565(const RealtimeVideoSurface& surface,
+                                             int width,
+                                             int height,
+                                             std::uint16_t* dst,
+                                             std::size_t destination_stride_pixels) noexcept;
+
 // ---------------------------------------------------------------------------
-// ARGB8888 -> ARGB8888 visual override (pixel replacement with alpha blend)
+// ARGB8888 -> ARGB8888 visual override pixel replacement
 // ---------------------------------------------------------------------------
 // Replace pixels in `dst` where `override_mask[i] != 0`, pulling replacement
 // color from `replacement` (a single ARGB8888 pixel applied to all masked positions).
@@ -77,17 +69,6 @@ void replace_pixels_with_color(const std::uint32_t* src,
 void replace_pixels_with_mask(const std::uint32_t* src,
                               const std::uint8_t* mask,
                               const std::uint32_t* replacements,
-                              std::uint32_t* dst,
-                              std::size_t pixel_count) noexcept;
-
-// ---------------------------------------------------------------------------
-// ARGB8888 scanline compositing (overlay one row onto another with alpha)
-// ---------------------------------------------------------------------------
-// Composite `overlay` pixels over `base` pixels where overlay alpha > 0.
-// Both arrays must have the same length. Writes result into `dst`.
-
-void composite_scanline_alpha(const std::uint32_t* base,
-                              const std::uint32_t* overlay,
                               std::uint32_t* dst,
                               std::size_t pixel_count) noexcept;
 

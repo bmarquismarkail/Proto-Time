@@ -66,6 +66,12 @@ struct VideoEngineStats {
     std::size_t buildDebugFrameUnknownReasonCount = 0;
     std::size_t buildDebugFrameDebugConsumerActiveCount = 0;
     std::size_t buildDebugFrameDebugConsumerInactiveCount = 0;
+    std::size_t visualOverrideLookupSampleCount = 0;
+    std::uint64_t visualOverrideLookupTotalNs = 0;
+    std::uint64_t visualOverrideLookupHighWaterNs = 0;
+    std::size_t visualOverrideApplySampleCount = 0;
+    std::uint64_t visualOverrideApplyTotalNs = 0;
+    std::uint64_t visualOverrideApplyHighWaterNs = 0;
 };
 
 struct VideoSubmitResult {
@@ -172,8 +178,12 @@ public:
         std::memcpy(frame.pixels.data(), model.argbPixels.data(),
                     copyCount * sizeof(std::uint32_t));
         if (notifyVisualComposition) {
-            std::vector<std::uint8_t> replacementMask(copyCount, 0u);
-            std::vector<std::uint32_t> replacementPixels(copyCount, 0u);
+            if (visualReplacementMask_.size() != copyCount) {
+                visualReplacementMask_.resize(copyCount);
+                visualReplacementPixels_.resize(copyCount);
+            }
+            std::fill(visualReplacementMask_.begin(), visualReplacementMask_.end(), 0u);
+            const auto lookupStartedAt = Clock::now();
             bool hasReplacement = false;
             for (std::size_t i = 0; i < copyCount && i < model.semantics.size(); ++i) {
                 const auto& semantic = model.semantics[i];
@@ -185,18 +195,31 @@ public:
                                                                           semantic.sampleY,
                                                                           generation);
                     replacement.has_value()) {
-                    replacementMask[i] = 1u;
-                    replacementPixels[i] = *replacement;
+                    visualReplacementMask_[i] = 1u;
+                    visualReplacementPixels_[i] = *replacement;
                     hasReplacement = true;
                 }
             }
+            const auto lookupDuration = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - lookupStartedAt).count());
+            ++stats_.visualOverrideLookupSampleCount;
+            stats_.visualOverrideLookupTotalNs += lookupDuration;
+            stats_.visualOverrideLookupHighWaterNs = std::max(
+                stats_.visualOverrideLookupHighWaterNs, lookupDuration);
 
             if (hasReplacement) {
+                const auto applyStartedAt = Clock::now();
                 SimdPixelOps::replace_pixels_with_mask(model.argbPixels.data(),
-                                                       replacementMask.data(),
-                                                       replacementPixels.data(),
+                                                       visualReplacementMask_.data(),
+                                                       visualReplacementPixels_.data(),
                                                        frame.pixels.data(),
                                                        copyCount);
+                const auto applyDuration = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - applyStartedAt).count());
+                ++stats_.visualOverrideApplySampleCount;
+                stats_.visualOverrideApplyTotalNs += applyDuration;
+                stats_.visualOverrideApplyHighWaterNs = std::max(
+                    stats_.visualOverrideApplyHighWaterNs, applyDuration);
             }
         }
 
@@ -785,6 +808,8 @@ private:
     VideoEngineConfig config_{};
     VisualOverrideService* visualOverrideService_ = nullptr;
     mutable std::unordered_map<std::string, VisualResourceCacheEntry> visualResourceCache_{};
+    mutable std::vector<std::uint8_t> visualReplacementMask_{};
+    mutable std::vector<std::uint32_t> visualReplacementPixels_{};
     std::optional<VideoPresentPacket> lastValidFrame_{};
     mutable VideoEngineStats stats_{};
     std::uint64_t currentGeneration_ = 0;

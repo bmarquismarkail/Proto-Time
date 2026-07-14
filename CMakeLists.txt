@@ -24,12 +24,11 @@ add_library(time-simd-pixel-ops STATIC
     machine/plugins/video/SimdPixelOps.cpp
 )
 set_target_properties(time-simd-pixel-ops PROPERTIES POSITION_INDEPENDENT_CODE ON)
-if (CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|i[3-6]86")
-    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-        target_compile_options(time-simd-pixel-ops PRIVATE -msse4.2)
-    endif()
-endif()
-
+add_library(time-simd-pixel-ops-scalar STATIC
+    machine/plugins/video/SimdPixelOps.cpp
+)
+target_compile_definitions(time-simd-pixel-ops-scalar PRIVATE BMMQ_SIMD_FORCE_SCALAR=1)
+set_target_properties(time-simd-pixel-ops-scalar PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if (BMMQ_ENABLE_TSAN)
     if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         add_compile_options(-fsanitize=thread -fno-omit-frame-pointer -g)
@@ -511,6 +510,15 @@ add_test(NAME smoke-trace-executor COMMAND time-smoke-trace-executor)
 add_executable(time-smoke-simd-pixel-ops tests/smoke_simd_pixel_ops.cpp)
 target_link_libraries(time-smoke-simd-pixel-ops time-simd-pixel-ops)
 add_test(NAME smoke-simd-pixel-ops COMMAND time-smoke-simd-pixel-ops)
+add_executable(time-smoke-simd-pixel-ops-scalar tests/smoke_simd_pixel_ops.cpp)
+target_compile_definitions(time-smoke-simd-pixel-ops-scalar PRIVATE BMMQ_EXPECT_SCALAR=1)
+target_link_libraries(time-smoke-simd-pixel-ops-scalar time-simd-pixel-ops-scalar)
+add_test(NAME smoke-simd-pixel-ops-scalar COMMAND time-smoke-simd-pixel-ops-scalar)
+
+add_executable(time-perf-simd-pixel-ops tests/perf_simd_pixel_ops.cpp)
+target_link_libraries(time-perf-simd-pixel-ops time-simd-pixel-ops)
+add_test(NAME perf-simd-pixel-ops COMMAND time-perf-simd-pixel-ops)
+set_tests_properties(perf-simd-pixel-ops PROPERTIES LABELS performance)
 
 # Timing engine smoke test
 add_executable(time-smoke-timing-engine tests/smoke_timing_engine.cpp)

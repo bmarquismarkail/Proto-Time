@@ -240,97 +240,6 @@ static bool test_replace_pixels_with_mask()
 }
 
 // ---------------------------------------------------------------------------
-// Test: composite_scanline_alpha
-// ---------------------------------------------------------------------------
-static bool test_composite_scanline_alpha()
-{
-    constexpr std::size_t kPixelCount = 1000;
-    std::vector<std::uint32_t> base(kPixelCount);
-    std::vector<std::uint32_t> overlay(kPixelCount);
-    std::vector<std::uint32_t> dst_simd(kPixelCount);
-    std::vector<std::uint32_t> dst_ref(kPixelCount);
-
-    for (std::size_t i = 0; i < kPixelCount; ++i) {
-        base[i] = random_argb();
-        overlay[i] = random_argb();
-    }
-
-    composite_scanline_alpha(base.data(), overlay.data(), dst_simd.data(), kPixelCount);
-
-    for (std::size_t i = 0; i < kPixelCount; ++i) {
-        const auto o = overlay[i];
-        const auto oa = (o >> 24u) & 0xFFu;
-        if (oa == 0u) {
-            dst_ref[i] = base[i];
-        } else {
-            const auto b = base[i];
-            const auto or_c = static_cast<std::uint32_t>((o >> 16u) & 0xFFu);
-            const auto og_c = static_cast<std::uint32_t>((o >> 8u) & 0xFFu);
-            const auto ob_c = static_cast<std::uint32_t>(o & 0xFFu);
-            const auto br_c = static_cast<std::uint32_t>((b >> 16u) & 0xFFu);
-            const auto bg_c = static_cast<std::uint32_t>((b >> 8u) & 0xFFu);
-            const auto bb_c = static_cast<std::uint32_t>(b & 0xFFu);
-            const auto inv_oa = 255u - oa;
-
-            const auto ra = (or_c * oa + br_c * inv_oa + 128u) / 255u;
-            const auto ga = (og_c * oa + bg_c * inv_oa + 128u) / 255u;
-            const auto ba = (ob_c * oa + bb_c * inv_oa + 128u) / 255u;
-
-            dst_ref[i] = (oa << 24u) | (ra << 16u) | (ga << 8u) | ba;
-        }
-    }
-
-    // Check for exact or near-exact match (SIMD approximation may differ by 1 in blending)
-    int max_channel_diff = 0;
-    for (std::size_t i = 0; i < kPixelCount; ++i) {
-        const auto sim_alpha = (dst_simd[i] >> 24u) & 0xFFu;
-        const auto ref_alpha = (dst_ref[i] >> 24u) & 0xFFu;
-        if (sim_alpha != ref_alpha) {
-            std::cerr << "FAIL: alpha mismatch at " << i << std::endl;
-            return false;
-        }
-        for (int shift : {16, 8, 0}) {
-            const auto sim_channel = static_cast<int>((dst_simd[i] >> static_cast<unsigned>(shift)) & 0xFFu);
-            const auto ref_channel = static_cast<int>((dst_ref[i] >> static_cast<unsigned>(shift)) & 0xFFu);
-            max_channel_diff = std::max(max_channel_diff, std::abs(sim_channel - ref_channel));
-        }
-    }
-
-    // Allow per-channel difference of up to 1 due to SIMD approximation
-    if (max_channel_diff > 1) {
-        std::cerr << "FAIL: composite_scanline_alpha max channel diff too large: " << max_channel_diff << std::endl;
-        return false;
-    }
-
-    // Edge cases
-    composite_scanline_alpha(nullptr, nullptr, nullptr, 0);
-
-    // Fully transparent overlay -> should equal base
-    std::fill(overlay.begin(), overlay.end(), 0x00000000u);
-    composite_scanline_alpha(base.data(), overlay.data(), dst_simd.data(), kPixelCount);
-    if (dst_simd != base) {
-        std::cerr << "FAIL: fully transparent overlay should equal base" << std::endl;
-        return false;
-    }
-
-    // Fully opaque overlay -> should equal overlay
-    for (std::size_t i = 0; i < kPixelCount; ++i) {
-        overlay[i] = 0xFF000000u | (overlay[i] & 0x00FFFFFFu);
-    }
-    composite_scanline_alpha(base.data(), overlay.data(), dst_simd.data(), kPixelCount);
-    for (std::size_t i = 0; i < kPixelCount; ++i) {
-        const auto sim_rgb = dst_simd[i] & 0x00FFFFFFu;
-        const auto ref_rgb = overlay[i] & 0x00FFFFFFu;
-        if (sim_rgb != ref_rgb) {
-            std::cerr << "FAIL: fully opaque mismatch at " << i << std::endl;
-            return false;
-        }
-    }
-
-    return true;
-}
-
-// ---------------------------------------------------------------------------
 // Test: fill_pixels
 // ---------------------------------------------------------------------------
 static bool test_fill_pixels()
@@ -421,8 +330,31 @@ static bool test_vector_width()
         std::cerr << "FAIL: vector_width should be >= 1" << std::endl;
         return false;
     }
-    std::cout << "SIMD vector width for ARGB->RGB565: " << vw << " pixels" << std::endl;
+    std::cout << "SIMD backend: " << active_backend_name()
+              << ", ARGB->RGB565 width: " << vw << " pixels" << std::endl;
+#if defined(BMMQ_EXPECT_SCALAR)
+    if (active_backend() != Backend::Scalar || vw != 1u) {
+        std::cerr << "FAIL: forced scalar build selected " << active_backend_name() << std::endl;
+        return false;
+    }
+#endif
     return true;
+}
+
+static bool test_indexed_to_rgb565_with_pitch()
+{
+    BMMQ::RealtimeVideoSurface surface;
+    surface.encoding = BMMQ::RealtimeVideoEncoding::Indexed2;
+    surface.strideBytes = 1u;
+    surface.indexedBytes = {0xE4u, 0x1Bu};
+    surface.paletteArgb = {0xFF000000u, 0xFFFF0000u, 0xFF00FF00u, 0xFF0000FFu};
+    std::vector<std::uint16_t> destination(12u, 0xCAFEu);
+    if (!convert_indexed_to_rgb565(surface, 4, 2, destination.data(), 6u)) return false;
+    const std::array<std::uint16_t, 4> expected0{0x0000u, 0xF800u, 0x07E0u, 0x001Fu};
+    const std::array<std::uint16_t, 4> expected1{0x001Fu, 0x07E0u, 0xF800u, 0x0000u};
+    return std::equal(expected0.begin(), expected0.end(), destination.begin()) &&
+        std::equal(expected1.begin(), expected1.end(), destination.begin() + 6) &&
+        destination[4] == 0xCAFEu && destination[5] == 0xCAFEu;
 }
 
 // ---------------------------------------------------------------------------
@@ -442,7 +374,7 @@ int main()
         {"argb8888_to_rgb565", test_argb8888_to_rgb565},
         {"replace_pixels_with_color", test_replace_pixels_with_color},
         {"replace_pixels_with_mask", test_replace_pixels_with_mask},
-        {"composite_scanline_alpha", test_composite_scanline_alpha},
+        {"indexed_to_rgb565_with_pitch", test_indexed_to_rgb565_with_pitch},
         {"fill_pixels", test_fill_pixels},
         {"count_different_pixels", test_count_different_pixels},
     };

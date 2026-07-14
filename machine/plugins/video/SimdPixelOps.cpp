@@ -1,6 +1,43 @@
 #include "SimdPixelOps.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cstring>
+
+#if defined(__i386__) || defined(__x86_64__) || defined(_M_IX86) || defined(_M_X64)
+#  define BMMQ_SIMD_BUILD_X86 1
+#  include <immintrin.h>
+#  if defined(_MSC_VER)
+#    include <intrin.h>
+#  endif
+#else
+#  define BMMQ_SIMD_BUILD_X86 0
+#endif
+
+#if BMMQ_SIMD_BUILD_X86 && ((defined(__GNUC__) || defined(__clang__)) || defined(__AVX2__))
+#  define BMMQ_SIMD_BUILD_AVX2 1
+#else
+#  define BMMQ_SIMD_BUILD_AVX2 0
+#endif
+
+#if defined(__ARM_NEON) || defined(__ARM_NEON__) || defined(__aarch64__) || defined(_M_ARM64)
+#  define BMMQ_SIMD_BUILD_NEON 1
+#  include <arm_neon.h>
+#else
+#  define BMMQ_SIMD_BUILD_NEON 0
+#endif
+
+#if (defined(__GNUC__) || defined(__clang__)) && BMMQ_SIMD_BUILD_X86
+#  define BMMQ_TARGET_SSE2 __attribute__((target("sse2")))
+#  define BMMQ_TARGET_SSSE3 __attribute__((target("ssse3")))
+#  define BMMQ_TARGET_SSE41 __attribute__((target("sse4.1")))
+#  define BMMQ_TARGET_AVX2 __attribute__((target("avx2")))
+#else
+#  define BMMQ_TARGET_SSE2
+#  define BMMQ_TARGET_SSSE3
+#  define BMMQ_TARGET_SSE41
+#  define BMMQ_TARGET_AVX2
+#endif
 
 namespace BMMQ {
 namespace SimdPixelOps {
@@ -57,41 +94,6 @@ void replace_pixels_mask_scalar(const std::uint32_t* src,
     }
 }
 
-void composite_scanline_scalar(const std::uint32_t* base,
-                               const std::uint32_t* overlay,
-                               std::uint32_t* dst,
-                               std::size_t pixel_count) noexcept
-{
-    for (std::size_t i = 0; i < pixel_count; ++i) {
-        const auto o = overlay[i];
-        const auto oa = (o >> 24u) & 0xFFu;
-        if (oa == 0u) {
-            dst[i] = base[i];
-        } else {
-            const auto b = base[i];
-            // Per-channel alpha blend: result = overlay * alpha / 255 + base * (255 - alpha) / 255
-            const auto or_c = (o >> 16u) & 0xFFu;
-            const auto og_c = (o >> 8u) & 0xFFu;
-            const auto ob_c = o & 0xFFu;
-            const auto br_c = (b >> 16u) & 0xFFu;
-            const auto bg_c = (b >> 8u) & 0xFFu;
-            const auto bb_c = b & 0xFFu;
-
-            const auto ra = static_cast<std::uint32_t>(
-                (static_cast<std::uint32_t>(or_c) * oa +
-                 static_cast<std::uint32_t>(br_c) * (255u - oa) + 128u) / 255u);
-            const auto ga = static_cast<std::uint32_t>(
-                (static_cast<std::uint32_t>(og_c) * oa +
-                 static_cast<std::uint32_t>(bg_c) * (255u - oa) + 128u) / 255u);
-            const auto ba = static_cast<std::uint32_t>(
-                (static_cast<std::uint32_t>(ob_c) * oa +
-                 static_cast<std::uint32_t>(bb_c) * (255u - oa) + 128u) / 255u);
-
-            dst[i] = (oa << 24u) | (ra << 16u) | (ga << 8u) | ba;
-        }
-    }
-}
-
 void fill_pixels_scalar(std::uint32_t* dst,
                         std::uint32_t color,
                         std::size_t pixel_count) noexcept
@@ -105,10 +107,9 @@ void fill_pixels_scalar(std::uint32_t* dst,
 // SSE2 implementations
 // ---------------------------------------------------------------------------
 
-#if BMMQ_SIMD_SSE2 || BMMQ_SIMD_SSSE3 || BMMQ_SIMD_SSE4_1 || BMMQ_SIMD_AVX2
-#include <immintrin.h>
+#if BMMQ_SIMD_BUILD_X86
 
-void convert_argb8888_to_rgb565_sse2(const std::uint32_t* src,
+BMMQ_TARGET_SSE2 void convert_argb8888_to_rgb565_sse2(const std::uint32_t* src,
                                      std::uint16_t* dst,
                                      std::size_t pixel_count) noexcept
 {
@@ -125,17 +126,12 @@ void convert_argb8888_to_rgb565_sse2(const std::uint32_t* src,
             _mm_or_si128(_mm_slli_epi32(r, 11), _mm_slli_epi32(g, 5)),
             b);
 
-#if BMMQ_SIMD_SSE4_1 || BMMQ_SIMD_AVX2
-        auto packed = _mm_packus_epi32(rgb565, _mm_setzero_si128());
-        _mm_storel_epi64(reinterpret_cast<__m128i*>(dst + i * 4), packed);
-#else
         alignas(16) std::uint32_t tmp[4];
         _mm_store_si128(reinterpret_cast<__m128i*>(tmp), rgb565);
         dst[i * 4 + 0] = static_cast<std::uint16_t>(tmp[0]);
         dst[i * 4 + 1] = static_cast<std::uint16_t>(tmp[1]);
         dst[i * 4 + 2] = static_cast<std::uint16_t>(tmp[2]);
         dst[i * 4 + 3] = static_cast<std::uint16_t>(tmp[3]);
-#endif
     }
 
     // Tail
@@ -144,8 +140,27 @@ void convert_argb8888_to_rgb565_sse2(const std::uint32_t* src,
     }
 }
 
-#if BMMQ_SIMD_SSSE3 || BMMQ_SIMD_SSE4_1 || BMMQ_SIMD_AVX2
-void replace_pixels_ssse3(const std::uint32_t* src,
+BMMQ_TARGET_SSE41 void convert_argb8888_to_rgb565_sse41(const std::uint32_t* src,
+                                                        std::uint16_t* dst,
+                                                        std::size_t pixel_count) noexcept
+{
+    const auto vec_count = pixel_count / 4u;
+    for (std::size_t i = 0; i < vec_count; ++i) {
+        const auto pix = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src + i * 4u));
+        const auto r = _mm_and_si128(_mm_srli_epi32(pix, 19), _mm_set1_epi32(0x1F));
+        const auto g = _mm_and_si128(_mm_srli_epi32(pix, 10), _mm_set1_epi32(0x3F));
+        const auto b = _mm_and_si128(_mm_srli_epi32(pix, 3), _mm_set1_epi32(0x1F));
+        const auto packed32 = _mm_or_si128(
+            _mm_or_si128(_mm_slli_epi32(r, 11), _mm_slli_epi32(g, 5)), b);
+        const auto packed16 = _mm_packus_epi32(packed32, _mm_setzero_si128());
+        _mm_storel_epi64(reinterpret_cast<__m128i*>(dst + i * 4u), packed16);
+    }
+    for (std::size_t i = vec_count * 4u; i < pixel_count; ++i) {
+        dst[i] = argb8888_to_rgb565_single(src[i]);
+    }
+}
+
+BMMQ_TARGET_SSSE3 void replace_pixels_ssse3(const std::uint32_t* src,
                           const std::uint8_t* mask,
                           std::uint32_t* dst,
                           std::uint32_t replacement_color,
@@ -179,7 +194,7 @@ void replace_pixels_ssse3(const std::uint32_t* src,
     }
 }
 
-void replace_pixels_mask_ssse3(const std::uint32_t* src,
+BMMQ_TARGET_SSSE3 void replace_pixels_mask_ssse3(const std::uint32_t* src,
                                const std::uint8_t* mask,
                                const std::uint32_t* replacements,
                                std::uint32_t* dst,
@@ -208,112 +223,7 @@ void replace_pixels_mask_ssse3(const std::uint32_t* src,
     }
 }
 
-// Helper to load 4 bytes as __m128i (used in replace_pixels_ssse3 above)
-[[nodiscard]] inline __m128i _mm_loadu_si32(const std::uint8_t* p) noexcept
-{
-    return _mm_loadl_epi64(reinterpret_cast<const __m128i*>(p));
-}
-#endif // SSSE3+
-
-#if BMMQ_SIMD_SSE4_1 || BMMQ_SIMD_AVX2
-void composite_scanline_sse41(const std::uint32_t* base,
-                              const std::uint32_t* overlay,
-                              std::uint32_t* dst,
-                              std::size_t pixel_count) noexcept
-{
-    // Process 4 pixels at a time
-    const auto vec_count = pixel_count / 4u;
-    const auto alpha_mask = _mm_set1_epi32(0xFF000000);
-    for (std::size_t i = 0; i < vec_count; ++i) {
-        auto b = _mm_loadu_si128(reinterpret_cast<const __m128i*>(base + i * 4));
-        auto o = _mm_loadu_si128(reinterpret_cast<const __m128i*>(overlay + i * 4));
-
-        // Extract overlay alpha (bits 24-31) -> replicate to all channels
-        auto oa = _mm_srli_epi32(o, 24);                       // 0x000000AA
-        // Blend: result_channel = (overlay_channel * alpha + base_channel * (255 - alpha) + 128) / 255
-        // Using SSE4.1 pblendv to select between base (alpha==0) and blended (alpha>0)
-
-        // Extract color channels from overlay
-        auto or_vec = _mm_and_si128(_mm_srli_epi32(o, 16), _mm_set1_epi32(0x000000FF));
-        auto og_vec = _mm_and_si128(_mm_srli_epi32(o, 8), _mm_set1_epi32(0x000000FF));
-        auto ob_vec = _mm_and_si128(o, _mm_set1_epi32(0x000000FF));
-
-        // Extract color channels from base
-        auto br_vec = _mm_and_si128(_mm_srli_epi32(b, 16), _mm_set1_epi32(0x000000FF));
-        auto bg_vec = _mm_and_si128(_mm_srli_epi32(b, 8), _mm_set1_epi32(0x000000FF));
-        auto bb_vec = _mm_and_si128(b, _mm_set1_epi32(0x000000FF));
-
-        // inv_alpha = 255 - alpha (for each channel, alpha is same in all)
-        auto inv_oa = _mm_sub_epi32(_mm_set1_epi32(255), oa);
-
-        // Multiply: overlay_c * alpha + base_c * inv_alpha + 128
-        // Use pmulhuw on packed words for efficiency, but since we have dwords, use mul+shr
-        auto r_num = _mm_add_epi32(
-            _mm_add_epi32(
-                _mm_mullo_epi32(or_vec, oa),
-                _mm_mullo_epi32(br_vec, inv_oa)),
-            _mm_set1_epi32(128));
-
-        auto g_num = _mm_add_epi32(
-            _mm_add_epi32(
-                _mm_mullo_epi32(og_vec, oa),
-                _mm_mullo_epi32(bg_vec, inv_oa)),
-            _mm_set1_epi32(128));
-
-        auto b_num = _mm_add_epi32(
-            _mm_add_epi32(
-                _mm_mullo_epi32(ob_vec, oa),
-                _mm_mullo_epi32(bb_vec, inv_oa)),
-            _mm_set1_epi32(128));
-
-        auto r_blend = _mm_srli_epi32(_mm_add_epi32(r_num, _mm_srli_epi32(r_num, 8)), 8);
-        auto g_blend = _mm_srli_epi32(_mm_add_epi32(g_num, _mm_srli_epi32(g_num, 8)), 8);
-        auto b_blend = _mm_srli_epi32(_mm_add_epi32(b_num, _mm_srli_epi32(b_num, 8)), 8);
-
-        r_blend = _mm_and_si128(r_blend, _mm_set1_epi32(0x000000FF));
-        g_blend = _mm_and_si128(g_blend, _mm_set1_epi32(0x000000FF));
-        b_blend = _mm_and_si128(b_blend, _mm_set1_epi32(0x000000FF));
-
-        auto result = _mm_or_si128(
-            _mm_and_si128(o, alpha_mask),
-            _mm_or_si128(
-                _mm_slli_epi32(r_blend, 16),
-                _mm_or_si128(_mm_slli_epi32(g_blend, 8), b_blend)));
-
-        // Where overlay alpha == 0, use base instead
-        auto zero_mask = _mm_cmpeq_epi32(oa, _mm_setzero_si128());
-        result = _mm_blendv_epi8(result, b, zero_mask);
-
-        _mm_storeu_si128(reinterpret_cast<__m128i*>(dst + i * 4), result);
-    }
-
-    // Tail
-    for (std::size_t i = vec_count * 4u; i < pixel_count; ++i) {
-        const auto o = overlay[i];
-        const auto oa = (o >> 24u) & 0xFFu;
-        if (oa == 0u) {
-            dst[i] = base[i];
-        } else {
-            const auto b_px = base[i];
-            const auto or_c = static_cast<std::uint32_t>((o >> 16u) & 0xFFu);
-            const auto og_c = static_cast<std::uint32_t>((o >> 8u) & 0xFFu);
-            const auto ob_c = static_cast<std::uint32_t>(o & 0xFFu);
-            const auto br_c = static_cast<std::uint32_t>((b_px >> 16u) & 0xFFu);
-            const auto bg_c = static_cast<std::uint32_t>((b_px >> 8u) & 0xFFu);
-            const auto bb_c = static_cast<std::uint32_t>(b_px & 0xFFu);
-            const auto inv_oa = 255u - oa;
-
-            const auto ra = (or_c * oa + br_c * inv_oa + 128u) / 255u;
-            const auto ga = (og_c * oa + bg_c * inv_oa + 128u) / 255u;
-            const auto ba = (ob_c * oa + bb_c * inv_oa + 128u) / 255u;
-
-            dst[i] = (oa << 24u) | (ra << 16u) | (ga << 8u) | ba;
-        }
-    }
-}
-#endif // SSE4.1+
-
-void fill_pixels_sse2(std::uint32_t* dst,
+BMMQ_TARGET_SSE2 void fill_pixels_sse2(std::uint32_t* dst,
                       std::uint32_t color,
                       std::size_t pixel_count) noexcept
 {
@@ -335,8 +245,8 @@ void fill_pixels_sse2(std::uint32_t* dst,
 // AVX2 implementations (wider vectors)
 // ---------------------------------------------------------------------------
 
-#if BMMQ_SIMD_AVX2
-void convert_argb8888_to_rgb565_avx2(const std::uint32_t* src,
+#if BMMQ_SIMD_BUILD_AVX2
+BMMQ_TARGET_AVX2 void convert_argb8888_to_rgb565_avx2(const std::uint32_t* src,
                                      std::uint16_t* dst,
                                      std::size_t pixel_count) noexcept
 {
@@ -366,7 +276,7 @@ void convert_argb8888_to_rgb565_avx2(const std::uint32_t* src,
     }
 }
 
-void replace_pixels_avx2(const std::uint32_t* src,
+BMMQ_TARGET_AVX2 void replace_pixels_avx2(const std::uint32_t* src,
                          const std::uint8_t* mask,
                          std::uint32_t* dst,
                          std::uint32_t replacement_color,
@@ -374,10 +284,6 @@ void replace_pixels_avx2(const std::uint32_t* src,
 {
     const auto vec_count = pixel_count / 8u;
     const auto repl_vec = _mm256_set1_epi32(replacement_color);
-    const auto shuffle_mask = _mm256_setr_epi8(
-        0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3,
-        4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7);
-
     for (std::size_t i = 0; i < vec_count; ++i) {
         auto pix = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src + i * 8));
 
@@ -402,7 +308,7 @@ void replace_pixels_avx2(const std::uint32_t* src,
     }
 }
 
-void replace_pixels_mask_avx2(const std::uint32_t* src,
+BMMQ_TARGET_AVX2 void replace_pixels_mask_avx2(const std::uint32_t* src,
                               const std::uint8_t* mask,
                               const std::uint32_t* replacements,
                               std::uint32_t* dst,
@@ -433,90 +339,7 @@ void replace_pixels_mask_avx2(const std::uint32_t* src,
     }
 }
 
-void composite_scanline_avx2(const std::uint32_t* base,
-                             const std::uint32_t* overlay,
-                             std::uint32_t* dst,
-                             std::size_t pixel_count) noexcept
-{
-    const auto vec_count = pixel_count / 8u;
-    const auto alpha_mask_vec = _mm256_set1_epi32(0xFF000000);
-
-    for (std::size_t i = 0; i < vec_count; ++i) {
-        auto b = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(base + i * 8));
-        auto o = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(overlay + i * 8));
-
-        auto oa = _mm256_srli_epi32(o, 24);
-        auto or_vec = _mm256_and_si256(_mm256_srli_epi32(o, 16), _mm256_set1_epi32(0x000000FF));
-        auto og_vec = _mm256_and_si256(_mm256_srli_epi32(o, 8), _mm256_set1_epi32(0x000000FF));
-        auto ob_vec = _mm256_and_si256(o, _mm256_set1_epi32(0x000000FF));
-
-        auto br_vec = _mm256_and_si256(_mm256_srli_epi32(b, 16), _mm256_set1_epi32(0x000000FF));
-        auto bg_vec = _mm256_and_si256(_mm256_srli_epi32(b, 8), _mm256_set1_epi32(0x000000FF));
-        auto bb_vec = _mm256_and_si256(b, _mm256_set1_epi32(0x000000FF));
-
-        auto inv_oa = _mm256_sub_epi32(_mm256_set1_epi32(255), oa);
-
-        auto r_num = _mm256_add_epi32(
-            _mm256_add_epi32(
-                _mm256_mullo_epi32(or_vec, oa),
-                _mm256_mullo_epi32(br_vec, inv_oa)),
-            _mm256_set1_epi32(128));
-        auto g_num = _mm256_add_epi32(
-            _mm256_add_epi32(
-                _mm256_mullo_epi32(og_vec, oa),
-                _mm256_mullo_epi32(bg_vec, inv_oa)),
-            _mm256_set1_epi32(128));
-        auto b_num = _mm256_add_epi32(
-            _mm256_add_epi32(
-                _mm256_mullo_epi32(ob_vec, oa),
-                _mm256_mullo_epi32(bb_vec, inv_oa)),
-            _mm256_set1_epi32(128));
-
-        auto r_blend = _mm256_srli_epi32(_mm256_add_epi32(r_num, _mm256_srli_epi32(r_num, 8)), 8);
-        auto g_blend = _mm256_srli_epi32(_mm256_add_epi32(g_num, _mm256_srli_epi32(g_num, 8)), 8);
-        auto b_blend = _mm256_srli_epi32(_mm256_add_epi32(b_num, _mm256_srli_epi32(b_num, 8)), 8);
-
-        r_blend = _mm256_and_si256(r_blend, _mm256_set1_epi32(0x000000FF));
-        g_blend = _mm256_and_si256(g_blend, _mm256_set1_epi32(0x000000FF));
-        b_blend = _mm256_and_si256(b_blend, _mm256_set1_epi32(0x000000FF));
-
-        auto result = _mm256_or_si256(
-            _mm256_and_si256(o, alpha_mask_vec),
-            _mm256_or_si256(
-                _mm256_slli_epi32(r_blend, 16),
-                _mm256_or_si256(_mm256_slli_epi32(g_blend, 8), b_blend)));
-
-        auto zero_mask = _mm256_cmpeq_epi32(oa, _mm256_setzero_si256());
-        result = _mm256_blendv_epi8(result, b, zero_mask);
-
-        _mm256_storeu_si256(reinterpret_cast<__m256i*>(dst + i * 8), result);
-    }
-
-    for (std::size_t i = vec_count * 8u; i < pixel_count; ++i) {
-        const auto o = overlay[i];
-        const auto oa = (o >> 24u) & 0xFFu;
-        if (oa == 0u) {
-            dst[i] = base[i];
-        } else {
-            const auto b_px = base[i];
-            const auto or_c = static_cast<std::uint32_t>((o >> 16u) & 0xFFu);
-            const auto og_c = static_cast<std::uint32_t>((o >> 8u) & 0xFFu);
-            const auto ob_c = static_cast<std::uint32_t>(o & 0xFFu);
-            const auto br_c = static_cast<std::uint32_t>((b_px >> 16u) & 0xFFu);
-            const auto bg_c = static_cast<std::uint32_t>((b_px >> 8u) & 0xFFu);
-            const auto bb_c = static_cast<std::uint32_t>(b_px & 0xFFu);
-            const auto inv_oa = 255u - oa;
-
-            const auto ra = (or_c * oa + br_c * inv_oa + 128u) / 255u;
-            const auto ga = (og_c * oa + bg_c * inv_oa + 128u) / 255u;
-            const auto ba = (ob_c * oa + bb_c * inv_oa + 128u) / 255u;
-
-            dst[i] = (oa << 24u) | (ra << 16u) | (ga << 8u) | ba;
-        }
-    }
-}
-
-void fill_pixels_avx2(std::uint32_t* dst,
+BMMQ_TARGET_AVX2 void fill_pixels_avx2(std::uint32_t* dst,
                       std::uint32_t color,
                       std::size_t pixel_count) noexcept
 {
@@ -531,110 +354,10 @@ void fill_pixels_avx2(std::uint32_t* dst,
         dst[i] = color;
     }
 }
-#endif // AVX2
+#endif // BMMQ_SIMD_BUILD_AVX2
 
-} // namespace (anonymous)
-
-// ===========================================================================
-// Public function implementations
-// ===========================================================================
-
-void convert_argb8888_to_rgb565(const std::uint32_t* src,
-                                std::uint16_t* dst,
-                                std::size_t pixel_count) noexcept
-{
-    if (pixel_count == 0u) {
-        return;
-    }
-
-#if BMMQ_SIMD_AVX2
-    convert_argb8888_to_rgb565_avx2(src, dst, pixel_count);
-#elif BMMQ_SIMD_SSE4_1 || BMMQ_SIMD_SSSE3 || BMMQ_SIMD_SSE2
-    convert_argb8888_to_rgb565_sse2(src, dst, pixel_count);
-#else
-    convert_argb8888_to_rgb565_scalar(src, dst, pixel_count);
-#endif
-}
-
-void replace_pixels_with_color(const std::uint32_t* src,
-                               const std::uint8_t* mask,
-                               std::uint32_t* dst,
-                               std::uint32_t replacement_color,
-                               std::size_t pixel_count) noexcept
-{
-    if (pixel_count == 0u) {
-        return;
-    }
-
-#if BMMQ_SIMD_AVX2
-    replace_pixels_avx2(src, mask, dst, replacement_color, pixel_count);
-#elif BMMQ_SIMD_SSSE3 || BMMQ_SIMD_SSE4_1 || BMMQ_SIMD_AVX2
-    replace_pixels_ssse3(src, mask, dst, replacement_color, pixel_count);
-#else
-    replace_pixels_scalar(src, mask, dst, replacement_color, pixel_count);
-#endif
-}
-
-void replace_pixels_with_mask(const std::uint32_t* src,
-                              const std::uint8_t* mask,
-                              const std::uint32_t* replacements,
-                              std::uint32_t* dst,
-                              std::size_t pixel_count) noexcept
-{
-    if (pixel_count == 0u) {
-        return;
-    }
-
-#if BMMQ_SIMD_AVX2
-    replace_pixels_mask_avx2(src, mask, replacements, dst, pixel_count);
-#elif BMMQ_SIMD_SSSE3 || BMMQ_SIMD_SSE4_1 || BMMQ_SIMD_AVX2
-    replace_pixels_mask_ssse3(src, mask, replacements, dst, pixel_count);
-#else
-    replace_pixels_mask_scalar(src, mask, replacements, dst, pixel_count);
-#endif
-}
-
-void composite_scanline_alpha(const std::uint32_t* base,
-                              const std::uint32_t* overlay,
-                              std::uint32_t* dst,
-                              std::size_t pixel_count) noexcept
-{
-    if (pixel_count == 0u) {
-        return;
-    }
-
-#if BMMQ_SIMD_AVX2
-    composite_scanline_avx2(base, overlay, dst, pixel_count);
-#elif BMMQ_SIMD_SSE4_1 || BMMQ_SIMD_AVX2
-    composite_scanline_sse41(base, overlay, dst, pixel_count);
-#else
-    composite_scanline_scalar(base, overlay, dst, pixel_count);
-#endif
-}
-
-void fill_pixels(std::uint32_t* dst,
-                 std::uint32_t color,
-                 std::size_t pixel_count) noexcept
-{
-    if (pixel_count == 0u) {
-        return;
-    }
-
-#if BMMQ_SIMD_AVX2
-    fill_pixels_avx2(dst, color, pixel_count);
-#elif BMMQ_SIMD_SSE2 || BMMQ_SIMD_SSSE3 || BMMQ_SIMD_SSE4_1 || BMMQ_SIMD_AVX2
-    fill_pixels_sse2(dst, color, pixel_count);
-#else
-    fill_pixels_scalar(dst, color, pixel_count);
-#endif
-}
-
-// ---------------------------------------------------------------------------
-// Pixel comparison: count differing pixels between two ARGB8888 frames
-// ---------------------------------------------------------------------------
-
-#if BMMQ_SIMD_SSE2 || BMMQ_SIMD_SSSE3 || BMMQ_SIMD_SSE4_1 || BMMQ_SIMD_AVX2
-void count_different_pixels_sse2(const std::uint32_t* a,
+#if BMMQ_SIMD_BUILD_X86
+BMMQ_TARGET_SSE2 void count_different_pixels_sse2(const std::uint32_t* a,
                                  const std::uint32_t* b,
                                  std::size_t pixel_count,
                                  std::size_t& diff) noexcept
@@ -646,8 +369,9 @@ void count_different_pixels_sse2(const std::uint32_t* a,
         auto vb = _mm_loadu_si128(reinterpret_cast<const __m128i*>(b + i * 4));
 
         auto eq = _mm_cmpeq_epi32(va, vb);
-        const auto equal_mask = static_cast<unsigned>(_mm_movemask_ps(_mm_castsi128_ps(eq)));
-        diff += 4u - static_cast<std::size_t>(__builtin_popcount(equal_mask & 0x0Fu));
+        const auto equalMask = static_cast<unsigned>(_mm_movemask_ps(_mm_castsi128_ps(eq))) & 0x0Fu;
+        diff += 4u - static_cast<std::size_t>((equalMask & 1u) + ((equalMask >> 1u) & 1u) +
+                                              ((equalMask >> 2u) & 1u) + ((equalMask >> 3u) & 1u));
     }
 
     for (std::size_t i = vec_count * 4u; i < pixel_count; ++i) {
@@ -656,10 +380,8 @@ void count_different_pixels_sse2(const std::uint32_t* a,
         }
     }
 }
-#endif // SSE2+
-
-#if BMMQ_SIMD_AVX2
-void count_different_pixels_avx2(const std::uint32_t* a,
+#if BMMQ_SIMD_BUILD_AVX2
+BMMQ_TARGET_AVX2 void count_different_pixels_avx2(const std::uint32_t* a,
                                  const std::uint32_t* b,
                                  std::size_t pixel_count,
                                  std::size_t& diff) noexcept
@@ -671,8 +393,12 @@ void count_different_pixels_avx2(const std::uint32_t* a,
         auto vb = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(b + i * 8));
 
         auto eq = _mm256_cmpeq_epi32(va, vb);
-        const auto equal_mask = static_cast<unsigned>(_mm256_movemask_ps(_mm256_castsi256_ps(eq)));
-        diff += 8u - static_cast<std::size_t>(__builtin_popcount(equal_mask & 0xFFu));
+        auto equalMask = static_cast<unsigned>(_mm256_movemask_ps(_mm256_castsi256_ps(eq))) & 0xFFu;
+        std::size_t equalCount = 0u;
+        for (unsigned lane = 0u; lane < 8u; ++lane) {
+            equalCount += (equalMask >> lane) & 1u;
+        }
+        diff += 8u - equalCount;
     }
 
     for (std::size_t i = vec_count * 8u; i < pixel_count; ++i) {
@@ -681,7 +407,8 @@ void count_different_pixels_avx2(const std::uint32_t* a,
         }
     }
 }
-#endif // AVX2
+#endif
+#endif // BMMQ_SIMD_BUILD_X86
 
 void count_different_pixels_scalar(const std::uint32_t* a,
                                    const std::uint32_t* b,
@@ -695,20 +422,272 @@ void count_different_pixels_scalar(const std::uint32_t* a,
     }
 }
 
-std::size_t count_different_pixels(const std::uint32_t* a,
-                                   const std::uint32_t* b,
-                                   std::size_t pixel_count) noexcept
+#if BMMQ_SIMD_BUILD_NEON
+void convert_argb8888_to_rgb565_neon(const std::uint32_t* src,
+                                     std::uint16_t* dst,
+                                     std::size_t pixelCount) noexcept
 {
-    std::size_t diff = 0;
+    std::size_t i = 0u;
+    const auto mask5 = vdupq_n_u32(0x1Fu);
+    const auto mask6 = vdupq_n_u32(0x3Fu);
+    for (; i + 4u <= pixelCount; i += 4u) {
+        const auto pixels = vld1q_u32(src + i);
+        const auto red = vandq_u32(vshrq_n_u32(pixels, 19), mask5);
+        const auto green = vandq_u32(vshrq_n_u32(pixels, 10), mask6);
+        const auto blue = vandq_u32(vshrq_n_u32(pixels, 3), mask5);
+        const auto packed = vorrq_u32(vorrq_u32(vshlq_n_u32(red, 11), vshlq_n_u32(green, 5)), blue);
+        vst1_u16(dst + i, vmovn_u32(packed));
+    }
+    convert_argb8888_to_rgb565_scalar(src + i, dst + i, pixelCount - i);
+}
 
-#if BMMQ_SIMD_AVX2
-    count_different_pixels_avx2(a, b, pixel_count, diff);
-#elif BMMQ_SIMD_SSE2 || BMMQ_SIMD_SSSE3 || BMMQ_SIMD_SSE4_1 || BMMQ_SIMD_AVX2
-    count_different_pixels_sse2(a, b, pixel_count, diff);
-#else
-    count_different_pixels_scalar(a, b, pixel_count, diff);
+void replace_pixels_mask_neon(const std::uint32_t* src,
+                              const std::uint8_t* mask,
+                              const std::uint32_t* replacements,
+                              std::uint32_t* dst,
+                              std::size_t pixelCount) noexcept
+{
+    std::size_t i = 0u;
+    for (; i + 4u <= pixelCount; i += 4u) {
+        const std::uint32_t maskLanes[4] = {
+            mask[i] != 0u ? ~0u : 0u, mask[i + 1u] != 0u ? ~0u : 0u,
+            mask[i + 2u] != 0u ? ~0u : 0u, mask[i + 3u] != 0u ? ~0u : 0u};
+        const auto select = vld1q_u32(maskLanes);
+        vst1q_u32(dst + i, vbslq_u32(select, vld1q_u32(replacements + i), vld1q_u32(src + i)));
+    }
+    replace_pixels_mask_scalar(src + i, mask + i, replacements + i, dst + i, pixelCount - i);
+}
+
+void replace_pixels_neon(const std::uint32_t* src,
+                         const std::uint8_t* mask,
+                         std::uint32_t* dst,
+                         std::uint32_t replacementColor,
+                         std::size_t pixelCount) noexcept
+{
+    std::size_t i = 0u;
+    const auto replacement = vdupq_n_u32(replacementColor);
+    for (; i + 4u <= pixelCount; i += 4u) {
+        const std::uint32_t maskLanes[4] = {
+            mask[i] != 0u ? ~0u : 0u, mask[i + 1u] != 0u ? ~0u : 0u,
+            mask[i + 2u] != 0u ? ~0u : 0u, mask[i + 3u] != 0u ? ~0u : 0u};
+        vst1q_u32(dst + i, vbslq_u32(vld1q_u32(maskLanes), replacement, vld1q_u32(src + i)));
+    }
+    replace_pixels_scalar(src + i, mask + i, dst + i, replacementColor, pixelCount - i);
+}
+
+void fill_pixels_neon(std::uint32_t* dst, std::uint32_t color, std::size_t pixelCount) noexcept
+{
+    std::size_t i = 0u;
+    const auto pixels = vdupq_n_u32(color);
+    for (; i + 4u <= pixelCount; i += 4u) {
+        vst1q_u32(dst + i, pixels);
+    }
+    fill_pixels_scalar(dst + i, color, pixelCount - i);
+}
 #endif
 
+[[nodiscard]] Backend detectBackend() noexcept
+{
+#if defined(BMMQ_SIMD_FORCE_SCALAR) && BMMQ_SIMD_FORCE_SCALAR
+    return Backend::Scalar;
+#elif BMMQ_SIMD_BUILD_NEON
+    return Backend::Neon;
+#elif BMMQ_SIMD_BUILD_X86 && (defined(__GNUC__) || defined(__clang__))
+    __builtin_cpu_init();
+    if (BMMQ_SIMD_BUILD_AVX2 && __builtin_cpu_supports("avx2")) {
+        return Backend::Avx2;
+    }
+    if (__builtin_cpu_supports("sse4.1") && __builtin_cpu_supports("ssse3")) {
+        return Backend::Sse41;
+    }
+    if (__builtin_cpu_supports("sse2")) {
+        return Backend::Sse2;
+    }
+    return Backend::Scalar;
+#elif BMMQ_SIMD_BUILD_X86 && defined(_MSC_VER)
+    int registers[4]{};
+    __cpuid(registers, 1);
+    const bool sse2 = (registers[3] & (1 << 26)) != 0;
+    const bool ssse3 = (registers[2] & (1 << 9)) != 0;
+    const bool sse41 = (registers[2] & (1 << 19)) != 0;
+    const bool avx = (registers[2] & (1 << 28)) != 0;
+    const bool osxsave = (registers[2] & (1 << 27)) != 0;
+    bool avx2 = false;
+#if BMMQ_SIMD_BUILD_AVX2
+    if (avx && osxsave && (_xgetbv(0) & 0x6u) == 0x6u) {
+        __cpuidex(registers, 7, 0);
+        avx2 = (registers[1] & (1 << 5)) != 0;
+    }
+#endif
+    return avx2 ? Backend::Avx2 : (sse41 && ssse3 ? Backend::Sse41 :
+           (sse2 ? Backend::Sse2 : Backend::Scalar));
+#else
+    return Backend::Scalar;
+#endif
+}
+
+[[nodiscard]] Backend selectedBackend() noexcept
+{
+    static const Backend backend = detectBackend();
+    return backend;
+}
+
+} // namespace (anonymous)
+
+Backend active_backend() noexcept
+{
+    return selectedBackend();
+}
+
+const char* active_backend_name() noexcept
+{
+    switch (selectedBackend()) {
+    case Backend::Sse2: return "sse2";
+    case Backend::Sse41: return "sse4.1";
+    case Backend::Avx2: return "avx2";
+    case Backend::Neon: return "neon";
+    case Backend::Scalar:
+    default: return "scalar";
+    }
+}
+
+std::size_t argb8888_to_rgb565_vector_width() noexcept
+{
+    return selectedBackend() == Backend::Avx2 ? 8u :
+        (selectedBackend() == Backend::Scalar ? 1u : 4u);
+}
+
+void convert_argb8888_to_rgb565(const std::uint32_t* src,
+                                std::uint16_t* dst,
+                                std::size_t pixelCount) noexcept
+{
+    if (pixelCount == 0u) return;
+    switch (selectedBackend()) {
+#if BMMQ_SIMD_BUILD_AVX2
+    case Backend::Avx2: convert_argb8888_to_rgb565_avx2(src, dst, pixelCount); return;
+#endif
+#if BMMQ_SIMD_BUILD_X86
+    case Backend::Sse41: convert_argb8888_to_rgb565_sse41(src, dst, pixelCount); return;
+    case Backend::Sse2: convert_argb8888_to_rgb565_sse2(src, dst, pixelCount); return;
+#endif
+#if BMMQ_SIMD_BUILD_NEON
+    case Backend::Neon: convert_argb8888_to_rgb565_neon(src, dst, pixelCount); return;
+#endif
+    default: convert_argb8888_to_rgb565_scalar(src, dst, pixelCount); return;
+    }
+}
+
+bool convert_indexed_to_rgb565(const RealtimeVideoSurface& surface,
+                               int width,
+                               int height,
+                               std::uint16_t* dst,
+                               std::size_t destinationStridePixels) noexcept
+{
+    if (dst == nullptr || !surface.validForDimensions(width, height) ||
+        destinationStridePixels < static_cast<std::size_t>(width) ||
+        surface.encoding == RealtimeVideoEncoding::Argb8888) {
+        return false;
+    }
+    std::array<std::uint16_t, 256> palette{};
+    convert_argb8888_to_rgb565(surface.paletteArgb.data(), palette.data(), surface.paletteArgb.size());
+    const auto bits = static_cast<std::uint8_t>(surface.encoding);
+    const auto mask = static_cast<std::uint16_t>((std::uint16_t{1u} << bits) - 1u);
+    for (int y = 0; y < height; ++y) {
+        const auto sourceRow = static_cast<std::size_t>(y) * surface.strideBytes;
+        auto* destinationRow = dst + static_cast<std::size_t>(y) * destinationStridePixels;
+        std::size_t bitOffset = 0u;
+        for (int x = 0; x < width; ++x) {
+            const auto byteOffset = sourceRow + bitOffset / 8u;
+            const auto shift = static_cast<unsigned>(bitOffset % 8u);
+            std::uint16_t encoded = surface.indexedBytes[byteOffset];
+            if (shift + bits > 8u) {
+                encoded |= static_cast<std::uint16_t>(surface.indexedBytes[byteOffset + 1u]) << 8u;
+            }
+            const auto index = static_cast<std::size_t>((encoded >> shift) & mask);
+            if (index >= surface.paletteArgb.size()) return false;
+            destinationRow[static_cast<std::size_t>(x)] = palette[index];
+            bitOffset += bits;
+        }
+    }
+    return true;
+}
+
+void replace_pixels_with_color(const std::uint32_t* src,
+                               const std::uint8_t* mask,
+                               std::uint32_t* dst,
+                               std::uint32_t replacementColor,
+                               std::size_t pixelCount) noexcept
+{
+    if (pixelCount == 0u) return;
+    switch (selectedBackend()) {
+#if BMMQ_SIMD_BUILD_AVX2
+    case Backend::Avx2: replace_pixels_avx2(src, mask, dst, replacementColor, pixelCount); return;
+#endif
+#if BMMQ_SIMD_BUILD_X86
+    case Backend::Sse41: replace_pixels_ssse3(src, mask, dst, replacementColor, pixelCount); return;
+#endif
+#if BMMQ_SIMD_BUILD_NEON
+    case Backend::Neon: replace_pixels_neon(src, mask, dst, replacementColor, pixelCount); return;
+#endif
+    default: replace_pixels_scalar(src, mask, dst, replacementColor, pixelCount); return;
+    }
+}
+
+void replace_pixels_with_mask(const std::uint32_t* src,
+                              const std::uint8_t* mask,
+                              const std::uint32_t* replacements,
+                              std::uint32_t* dst,
+                              std::size_t pixelCount) noexcept
+{
+    if (pixelCount == 0u) return;
+    switch (selectedBackend()) {
+#if BMMQ_SIMD_BUILD_AVX2
+    case Backend::Avx2: replace_pixels_mask_avx2(src, mask, replacements, dst, pixelCount); return;
+#endif
+#if BMMQ_SIMD_BUILD_X86
+    case Backend::Sse41: replace_pixels_mask_ssse3(src, mask, replacements, dst, pixelCount); return;
+#endif
+#if BMMQ_SIMD_BUILD_NEON
+    case Backend::Neon: replace_pixels_mask_neon(src, mask, replacements, dst, pixelCount); return;
+#endif
+    default: replace_pixels_mask_scalar(src, mask, replacements, dst, pixelCount); return;
+    }
+}
+
+void fill_pixels(std::uint32_t* dst, std::uint32_t color, std::size_t pixelCount) noexcept
+{
+    if (pixelCount == 0u) return;
+    switch (selectedBackend()) {
+#if BMMQ_SIMD_BUILD_AVX2
+    case Backend::Avx2: fill_pixels_avx2(dst, color, pixelCount); return;
+#endif
+#if BMMQ_SIMD_BUILD_X86
+    case Backend::Sse41:
+    case Backend::Sse2: fill_pixels_sse2(dst, color, pixelCount); return;
+#endif
+#if BMMQ_SIMD_BUILD_NEON
+    case Backend::Neon: fill_pixels_neon(dst, color, pixelCount); return;
+#endif
+    default: fill_pixels_scalar(dst, color, pixelCount); return;
+    }
+}
+
+std::size_t count_different_pixels(const std::uint32_t* a,
+                                   const std::uint32_t* b,
+                                   std::size_t pixelCount) noexcept
+{
+    std::size_t diff = 0;
+    if (pixelCount == 0u) return diff;
+    switch (selectedBackend()) {
+#if BMMQ_SIMD_BUILD_AVX2
+    case Backend::Avx2: count_different_pixels_avx2(a, b, pixelCount, diff); break;
+#endif
+#if BMMQ_SIMD_BUILD_X86
+    case Backend::Sse41:
+    case Backend::Sse2: count_different_pixels_sse2(a, b, pixelCount, diff); break;
+#endif
+    default: count_different_pixels_scalar(a, b, pixelCount, diff); break;
+    }
     return diff;
 }
 

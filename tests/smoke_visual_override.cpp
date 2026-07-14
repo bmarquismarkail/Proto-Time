@@ -163,6 +163,11 @@ int main()
     });
     auto replacedFrame = buildFrame(*videoService, state, 2u);
     assert(replacedFrame.pixels[0] == 0xFFFF0000u);
+    const auto& overrideStats = videoService->engine().stats();
+    assert(overrideStats.visualOverrideLookupSampleCount == 1u);
+    assert(overrideStats.visualOverrideLookupTotalNs >= overrideStats.visualOverrideLookupHighWaterNs);
+    assert(overrideStats.visualOverrideApplySampleCount == 1u);
+    assert(overrideStats.visualOverrideApplyTotalNs >= overrideStats.visualOverrideApplyHighWaterNs);
     assert(!visualEvents.empty());
     assert(visualEvents.front() == BMMQ::MachineEventType::FrameCompositionStarted);
     assert(visualEvents.back() == BMMQ::MachineEventType::FrameCompositionCompleted);

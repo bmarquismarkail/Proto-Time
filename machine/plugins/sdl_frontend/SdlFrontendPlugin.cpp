@@ -2529,6 +2529,7 @@ private:
         stats_.videoPresenterTextureUploadCount = diagnostics.presenterTextureUploadCount;
         stats_.videoPresenterRenderCount = diagnostics.presenterRenderCount;
         stats_.videoPresenterRendererName = diagnostics.presenterRendererName;
+        stats_.videoSimdBackendName = diagnostics.simdBackendName;
         stats_.videoPresenterDirectIndexedFrameCount = diagnostics.presenterDirectIndexedFrameCount;
         stats_.videoPresenterArgbFrameCount = diagnostics.presenterArgbFrameCount;
         stats_.videoPresenterTextureLockCount = diagnostics.presenterTextureLockCount;
@@ -2582,6 +2583,12 @@ private:
             diagnostics.buildDebugFrameDebugConsumerActiveCount;
         stats_.videoBuildDebugFrameDebugConsumerInactiveCount =
             diagnostics.buildDebugFrameDebugConsumerInactiveCount;
+        stats_.videoVisualOverrideLookupSampleCount = diagnostics.visualOverrideLookupSampleCount;
+        stats_.videoVisualOverrideLookupTotalNs = diagnostics.visualOverrideLookupTotalNs;
+        stats_.videoVisualOverrideLookupHighWaterNs = diagnostics.visualOverrideLookupHighWaterNs;
+        stats_.videoVisualOverrideApplySampleCount = diagnostics.visualOverrideApplySampleCount;
+        stats_.videoVisualOverrideApplyTotalNs = diagnostics.visualOverrideApplyTotalNs;
+        stats_.videoVisualOverrideApplyHighWaterNs = diagnostics.visualOverrideApplyHighWaterNs;
         stats_.videoDebugFrameBuildSkippedNoConsumerCount =
             diagnostics.videoDebugFrameBuildSkippedNoConsumerCount;
         stats_.videoDebugFrameBuildExecutedCount =

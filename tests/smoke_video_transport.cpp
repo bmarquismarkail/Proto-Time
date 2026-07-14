@@ -55,6 +55,27 @@ int main()
     assert(service.diagnostics().activePresenterMode == BMMQ::VideoPresenterMode::Software);
     assert(service.diagnostics().presenterTextureUploadCount >= 1u);
     assert(service.diagnostics().presenterRenderCount >= 1u);
+    assert(!service.diagnostics().simdBackendName.empty());
+    {
+        std::array<std::uint32_t, 4> palette{
+            0xFF000000u, 0xFF555555u, 0xFFAAAAAAu, 0xFFFFFFFFu};
+        std::vector<std::uint8_t> indices(64u);
+        for (std::size_t index = 0; index < indices.size(); ++index) {
+            indices[index] = static_cast<std::uint8_t>(index & 3u);
+        }
+        BMMQ::RealtimeVideoPacket indexedPacket;
+        indexedPacket.width = 8;
+        indexedPacket.height = 8;
+        indexedPacket.displayEnabled = true;
+        indexedPacket.generation = 13u;
+        indexedPacket.surface = BMMQ::makeIndexedVideoSurface(
+            indices, 8, 8, BMMQ::RealtimeVideoEncoding::Indexed2, palette);
+        assert(service.publishRealtimeVideoPacket({.packet = std::move(indexedPacket)}));
+        assert(service.presentOneFrame());
+        assert(service.diagnostics().presenterDirectIndexedFrameCount >= 1u);
+        assert(service.diagnostics().presenterTextureLockCount >= 2u);
+        assert(service.diagnostics().presenterStageDurationSampleCount >= 2u);
+    }
         assert(service.diagnostics().presenterPresentDurationSampleCount >= 1u);
         assert(service.diagnostics().presenterPresentDurationP95Nanos >=
             service.diagnostics().presenterPresentDurationP50Nanos);

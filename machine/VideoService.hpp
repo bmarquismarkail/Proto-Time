@@ -57,6 +57,7 @@ struct VideoServiceDiagnostics {
     std::size_t presenterTextureUploadCount = 0;
     std::size_t presenterRenderCount = 0;
     std::string presenterRendererName;
+    std::string simdBackendName;
     std::size_t presenterDirectIndexedFrameCount = 0;
     std::size_t presenterArgbFrameCount = 0;
     std::size_t presenterTextureLockCount = 0;
@@ -131,6 +132,12 @@ struct VideoServiceDiagnostics {
     std::size_t buildDebugFrameUnknownReasonCount = 0;
     std::size_t buildDebugFrameDebugConsumerActiveCount = 0;
     std::size_t buildDebugFrameDebugConsumerInactiveCount = 0;
+    std::size_t visualOverrideLookupSampleCount = 0;
+    std::uint64_t visualOverrideLookupTotalNs = 0;
+    std::uint64_t visualOverrideLookupHighWaterNs = 0;
+    std::size_t visualOverrideApplySampleCount = 0;
+    std::uint64_t visualOverrideApplyTotalNs = 0;
+    std::uint64_t visualOverrideApplyHighWaterNs = 0;
     std::size_t videoDebugFrameBuildSkippedNoConsumerCount = 0;
     std::size_t videoDebugFrameBuildExecutedCount = 0;
     std::size_t captureBackgroundSubmitCount = 0;
@@ -781,6 +788,7 @@ private:
         diagnostics_.lifecycleEpochBumpCount = lifecycleEpochBumpCount_;
         diagnostics_.configuredPresenterMode = presenterConfig_.mode;
         diagnostics_.configuredPresenterPolicy = presenterPolicy_;
+        diagnostics_.simdBackendName = SimdPixelOps::active_backend_name();
         if (presenter_ != nullptr) {
             const auto presenterDiagnostics = presenter_->diagnostics();
             diagnostics_.activePresenterMode = presenterDiagnostics.activeMode;
@@ -858,6 +866,12 @@ private:
         diagnostics_.buildDebugFrameDebugConsumerActiveCount = engineStats.buildDebugFrameDebugConsumerActiveCount;
         diagnostics_.buildDebugFrameDebugConsumerInactiveCount =
             engineStats.buildDebugFrameDebugConsumerInactiveCount;
+        diagnostics_.visualOverrideLookupSampleCount = engineStats.visualOverrideLookupSampleCount;
+        diagnostics_.visualOverrideLookupTotalNs = engineStats.visualOverrideLookupTotalNs;
+        diagnostics_.visualOverrideLookupHighWaterNs = engineStats.visualOverrideLookupHighWaterNs;
+        diagnostics_.visualOverrideApplySampleCount = engineStats.visualOverrideApplySampleCount;
+        diagnostics_.visualOverrideApplyTotalNs = engineStats.visualOverrideApplyTotalNs;
+        diagnostics_.visualOverrideApplyHighWaterNs = engineStats.visualOverrideApplyHighWaterNs;
         diagnostics_.videoDebugFrameBuildSkippedNoConsumerCount =
             videoDebugFrameBuildSkippedNoConsumerCount_;
         diagnostics_.videoDebugFrameBuildExecutedCount = videoDebugFrameBuildExecutedCount_;

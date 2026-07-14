@@ -100,6 +100,7 @@ struct SdlFrontendStats {
     std::size_t videoPresenterTextureUploadCount = 0;
     std::size_t videoPresenterRenderCount = 0;
     std::string videoPresenterRendererName;
+    std::string videoSimdBackendName;
     std::size_t videoPresenterDirectIndexedFrameCount = 0;
     std::size_t videoPresenterArgbFrameCount = 0;
     std::size_t videoPresenterTextureLockCount = 0;
@@ -180,6 +181,12 @@ struct SdlFrontendStats {
     std::size_t videoBuildDebugFrameUnknownReasonCount = 0;
     std::size_t videoBuildDebugFrameDebugConsumerActiveCount = 0;
     std::size_t videoBuildDebugFrameDebugConsumerInactiveCount = 0;
+    std::size_t videoVisualOverrideLookupSampleCount = 0;
+    std::uint64_t videoVisualOverrideLookupTotalNs = 0;
+    std::uint64_t videoVisualOverrideLookupHighWaterNs = 0;
+    std::size_t videoVisualOverrideApplySampleCount = 0;
+    std::uint64_t videoVisualOverrideApplyTotalNs = 0;
+    std::uint64_t videoVisualOverrideApplyHighWaterNs = 0;
     std::size_t videoDebugFrameBuildSkippedNoConsumerCount = 0;
     std::size_t videoDebugFrameBuildExecutedCount = 0;
     std::size_t videoVdpRenderBodySampleCount = 0;
