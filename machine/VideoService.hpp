@@ -438,7 +438,8 @@ public:
                                                    debugConsumerActive));
     }
 
-    [[nodiscard]] bool submitRealtimeVideoPacket(const MachineEvent& event, RealtimeVideoPacket packet)
+    [[nodiscard]] bool submitRealtimeVideoPacket(const MachineEvent& event,
+                                                 RealtimeVideoSubmission submission)
     {
         if (event.type == MachineEventType::RomLoaded) {
             std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
@@ -449,19 +450,20 @@ public:
             resetScanlineCapture();
             return true;
         }
-        if (event.type == MachineEventType::VideoScanlineReady) {
+        if (event.type != MachineEventType::VBlank) {
             return false;
         }
-        return publishRealtimeVideoPacket(std::move(packet));
+        return publishRealtimeVideoPacket(std::move(submission));
     }
 
     // Emulation-lane steady-state publication. This function intentionally
     // performs only validation, scalar metadata assignment, vector moves, and
     // atomic mailbox operations. Lifecycle/configuration code remains on the
     // non-real-time mutex-protected control plane.
-    [[nodiscard]] bool publishRealtimeVideoPacket(RealtimeVideoPacket packet) noexcept
+    [[nodiscard]] bool publishRealtimeVideoPacket(RealtimeVideoSubmission submission) noexcept
     {
-        if (packet.empty() ||
+        auto& packet = submission.packet;
+        if (packet.eventType != MachineEventType::VBlank || packet.empty() ||
             packet.contractVersion != RealtimeVideoPacket::kContractVersion) {
             return false;
         }
@@ -469,7 +471,7 @@ public:
             packet.generation = realtimeGeneration_.load(std::memory_order_acquire);
         }
         return realtimeMailbox_.publish(
-            std::move(packet),
+            std::move(submission),
             realtimeLifecycleEpoch_.load(std::memory_order_acquire));
     }
 
@@ -480,7 +482,7 @@ public:
 
     // Render-lane diagnostics handoff. The compact pixel payload is deliberately
     // omitted; timing metadata is consumed under the frontend's render lock.
-    [[nodiscard]] std::optional<RealtimeVideoPacket> takeConsumedRealtimeMetadata() noexcept
+    [[nodiscard]] std::optional<RealtimeVideoDiagnostics> takeConsumedRealtimeMetadata() noexcept
     {
         auto metadata = std::move(lastConsumedRealtimeMetadata_);
         lastConsumedRealtimeMetadata_.reset();
@@ -512,7 +514,7 @@ public:
                 ++diagnostics_.staleEpochDropCount;
                 continue;
             }
-            lastConsumedRealtimeMetadata_ = metadataOnly(published->packet);
+            lastConsumedRealtimeMetadata_ = std::move(published->diagnostics);
             VideoPresentPacket present;
             present.width = published->packet.width;
             present.height = published->packet.height;
@@ -520,7 +522,7 @@ public:
             present.generation = published->packet.generation;
             present.lifecycleEpoch = published->lifecycleEpoch;
             present.publishedAtNs = published->publishedAtNs;
-            present.packedPixels = std::move(published->packet.packedPixels);
+            present.surface = std::move(published->packet.surface);
             frame = std::move(present);
             break;
         }
@@ -710,24 +712,6 @@ private:
                caps.deterministic &&
                !caps.nonRealtimeOnly &&
                !caps.requiresHostThreadAffinity;
-    }
-
-    [[nodiscard]] static RealtimeVideoPacket metadataOnly(
-        const RealtimeVideoPacket& packet) noexcept
-    {
-        RealtimeVideoPacket metadata;
-        metadata.contractVersion = packet.contractVersion;
-        metadata.eventType = packet.eventType;
-        metadata.width = packet.width;
-        metadata.height = packet.height;
-        metadata.displayEnabled = packet.displayEnabled;
-        metadata.inVBlank = packet.inVBlank;
-        metadata.scanlineIndex = packet.scanlineIndex;
-        metadata.generation = packet.generation;
-        metadata.vdpRenderBodyTiming = packet.vdpRenderBodyTiming;
-        metadata.vdpMode4BackgroundAttributes = packet.vdpMode4BackgroundAttributes;
-        metadata.vdpMode4SimpleBackground = packet.vdpMode4SimpleBackground;
-        return metadata;
     }
 
     void setState(VideoLifecycleState state) noexcept
@@ -1011,7 +995,7 @@ private:
     mutable std::atomic<std::size_t> lifecycleContractDeniedCalls_{0};
     std::size_t videoDebugFrameBuildSkippedNoConsumerCount_ = 0;
     std::size_t videoDebugFrameBuildExecutedCount_ = 0;
-    std::optional<RealtimeVideoPacket> lastConsumedRealtimeMetadata_{};
+    std::optional<RealtimeVideoDiagnostics> lastConsumedRealtimeMetadata_{};
     std::optional<VideoFramePacket> lastProcessedFrame_{};
 };
 

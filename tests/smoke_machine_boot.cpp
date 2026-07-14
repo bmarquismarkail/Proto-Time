@@ -430,19 +430,23 @@ int main() {
         constexpr int kH = 144;
         const auto pkt = machine.realtimeVideoPacket({kW, kH});
         assert(pkt.has_value());
-        assert(pkt->contractVersion == BMMQ::RealtimeVideoPacket::kContractVersion);
-        assert(pkt->width == kW);
-        assert(pkt->height == kH);
-        assert(pkt->pixelCount() == static_cast<std::size_t>(kW) * static_cast<std::size_t>(kH));
-        assert(pkt->payloadBytes() < pkt->pixelCount() * sizeof(std::uint32_t));
+        const auto& frame = pkt->packet;
+        assert(frame.contractVersion == BMMQ::RealtimeVideoPacket::kContractVersion);
+        assert(frame.width == kW);
+        assert(frame.height == kH);
+        assert(frame.pixelCount() == static_cast<std::size_t>(kW) * static_cast<std::size_t>(kH));
+        assert(frame.payloadBytes() < frame.pixelCount() * sizeof(std::uint32_t));
+        assert(frame.surface.encoding == BMMQ::RealtimeVideoEncoding::Indexed2);
+        assert(frame.surface.paletteArgb.size() == 4u);
+        assert(frame.uploadHintCount == 1u);
         // pixel data must match the full videoDebugFrameModel path
         const auto full = machine.videoDebugFrameModel({kW, kH});
         assert(full.has_value());
         std::vector<std::uint32_t> decoded;
-        assert(BMMQ::unpackVideoPixels(pkt->packedPixels, pkt->pixelCount(), decoded));
+        assert(BMMQ::decodeVideoSurface(frame.surface, frame.width, frame.height, decoded));
         assert(full->argbPixels == decoded);
-        assert(pkt->displayEnabled == full->displayEnabled);
-        assert(pkt->inVBlank == full->inVBlank);
+        assert(frame.displayEnabled == full->displayEnabled);
+        assert(frame.inVBlank == full->inVBlank);
     }
 
     return 0;

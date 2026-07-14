@@ -44,7 +44,7 @@ public:
     uint64_t audioFrameCounter() const override;
     std::optional<VideoDebugFrameModel> videoDebugFrameModel(
         const VideoDebugRenderRequest& request) const override;
-    std::optional<RealtimeVideoPacket> realtimeVideoPacket(
+    std::optional<RealtimeVideoSubmission> realtimeVideoPacket(
         const VideoDebugRenderRequest& request) const override;
     std::optional<RealtimeAudioPacket> realtimeAudioPacket() const override;
     uint32_t clockHz() const override;

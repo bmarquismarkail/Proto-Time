@@ -9,21 +9,22 @@
 #include <thread>
 #include <vector>
 
-#include "machine/plugins/video/PackedVideoPixels.hpp"
+#include "machine/plugins/video/RealtimeVideoSurface.hpp"
 #include "machine/plugins/video/RealtimeVideoMailbox.hpp"
 
 namespace {
 
-BMMQ::RealtimeVideoPacket makePacket(std::uint64_t generation)
+BMMQ::RealtimeVideoSubmission makePacket(std::uint64_t generation)
 {
     BMMQ::RealtimeVideoPacket packet;
     packet.width = 8;
     packet.height = 8;
     packet.displayEnabled = true;
     packet.generation = generation;
-    std::vector<std::uint32_t> pixels(64u, 0xFF000000u | static_cast<std::uint32_t>(generation));
-    packet.packedPixels = BMMQ::packVideoPixels(pixels);
-    return packet;
+    packet.surface = BMMQ::makeArgbVideoSurface(
+        std::vector<std::uint32_t>(64u, 0xFF000000u | static_cast<std::uint32_t>(generation)),
+        packet.width, packet.height);
+    return {.packet = std::move(packet)};
 }
 
 } // namespace
@@ -38,6 +39,11 @@ int main()
     assert(first.has_value());
     assert(first->packet.generation == 1u);
     assert(first->lifecycleEpoch == 7u);
+    assert(first->packet.lifecycleEpoch == 7u);
+    assert(first->packet.producedAtNs != 0u);
+    assert(first->diagnostics.width == 8);
+    assert(first->diagnostics.height == 8);
+    assert(first->diagnostics.displayEnabled);
     assert(!mailbox.hasPending());
 
     constexpr std::uint64_t kPublications = 10'000u;

@@ -88,11 +88,14 @@ template <typename Operation>
     packet.height = 144;
     packet.generation = generation;
     packet.source = BMMQ::VideoFrameSource::RealtimeSnapshot;
-    std::vector<std::uint32_t> pixels(static_cast<std::size_t>(packet.width * packet.height), colorA);
-    for (std::size_t i = 1u; i < pixels.size(); i += 2u) {
-        pixels[i] = colorB;
+    std::vector<std::uint8_t> indices(static_cast<std::size_t>(packet.width * packet.height), 0u);
+    for (std::size_t i = 1u; i < indices.size(); i += 2u) {
+        indices[i] = 1u;
     }
-    packet.packedPixels = BMMQ::packVideoPixels(pixels);
+    const std::array<std::uint32_t, 2u> palette{colorA, colorB};
+    packet.surface = BMMQ::makeIndexedVideoSurface(
+        indices, packet.width, packet.height,
+        BMMQ::RealtimeVideoEncoding::Indexed2, palette);
     return packet;
 }
 
@@ -229,9 +232,9 @@ int main()
     const auto frameA = machine.realtimeVideoPacket({160, 144});
     const auto frameB = twin.realtimeVideoPacket({160, 144});
     const bool deterministic = frameA.has_value() && frameB.has_value() &&
-        frameA->packedPixels.bitsPerPixel == frameB->packedPixels.bitsPerPixel &&
-        frameA->packedPixels.paletteArgb == frameB->packedPixels.paletteArgb &&
-        frameA->packedPixels.indices == frameB->packedPixels.indices;
+        frameA->packet.surface.encoding == frameB->packet.surface.encoding &&
+        frameA->packet.surface.paletteArgb == frameB->packet.surface.paletteArgb &&
+        frameA->packet.surface.indexedBytes == frameB->packet.surface.indexedBytes;
     std::cout << "gate deterministic_video_bytes result="
               << (deterministic ? "pass" : "FAIL") << '\n';
     passed = deterministic && passed;

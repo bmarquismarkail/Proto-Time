@@ -85,7 +85,7 @@ public:
     // Video debug
     std::optional<BMMQ::VideoDebugFrameModel> videoDebugFrameModel(
         const BMMQ::VideoDebugRenderRequest& request) const override;
-    std::optional<BMMQ::RealtimeVideoPacket> realtimeVideoPacket(
+    std::optional<BMMQ::RealtimeVideoSubmission> realtimeVideoPacket(
         const BMMQ::VideoDebugRenderRequest& request) const override;
     std::optional<BMMQ::VideoStateView> videoStateSnapshot() const override;
     std::optional<BMMQ::RealtimeAudioPacket> realtimeAudioPacket() const override;

@@ -13,7 +13,7 @@ constexpr std::uint32_t kDarkest = 0xFF081820u;
 std::vector<std::uint32_t> decode(const BMMQ::RealtimeVideoPacket& frame)
 {
     std::vector<std::uint32_t> pixels;
-    assert(BMMQ::unpackVideoPixels(frame.packedPixels, frame.pixelCount(), pixels));
+    assert(BMMQ::decodeVideoSurface(frame.surface, frame.width, frame.height, pixels));
     return pixels;
 }
 
@@ -51,7 +51,7 @@ void testCompletedScanlinesKeepTheirOwnScrollState()
     assert(ppu.takeScanlineReady());
 
     const auto frame = ppu.buildRealtimeFrame({.frameWidth = 160, .frameHeight = 144});
-    const auto pixels = decode(frame);
+    const auto pixels = decode(frame.packet);
     assert(pixels[0] == kLightest);
     assert(pixels[160] == kDarkest);
 }
@@ -80,7 +80,7 @@ void testHBlankScrollWriteAffectsNextScanlineOnly()
     assert(ppu.takeScanlineReady());
 
     const auto frame = ppu.buildRealtimeFrame({.frameWidth = 160, .frameHeight = 144});
-    const auto pixels = decode(frame);
+    const auto pixels = decode(frame.packet);
     assert(pixels[0] == kLightest);
     assert(pixels[160] == kDarkest);
 }
@@ -110,7 +110,7 @@ void testOamWriteAfterSpriteSearchAffectsNextScanlineOnly()
     assert(ppu.takeScanlineReady());
 
     const auto frame = ppu.buildRealtimeFrame({.frameWidth = 160, .frameHeight = 144});
-    const auto pixels = decode(frame);
+    const auto pixels = decode(frame.packet);
     assert(pixels[0] == kLightest);
     assert(pixels[160] == kDarkest);
 }

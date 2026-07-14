@@ -649,7 +649,7 @@ std::optional<VideoDebugFrameModel> GameGearMachine::videoDebugFrameModel(
     return impl->vdp.buildFrameModel(request);
 }
 
-std::optional<RealtimeVideoPacket> GameGearMachine::realtimeVideoPacket(
+std::optional<RealtimeVideoSubmission> GameGearMachine::realtimeVideoPacket(
     const VideoDebugRenderRequest& request) const
 {
     return impl->vdp.buildRealtimeFrame(request);

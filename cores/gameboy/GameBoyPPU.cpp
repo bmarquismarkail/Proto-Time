@@ -19,6 +19,7 @@ void GameBoyPPU::reset() {
     vblankPending_ = false;
     lastReadyScanline_ = 0;
     framePixels_.fill(paletteColor(0));
+    frameColorIndices_.fill(0u);
     capturedScanlines_.fill(false);
     hasCapturedScanlines_ = false;
     lastLy_ = 0;
@@ -31,6 +32,15 @@ uint32_t GameBoyPPU::paletteColor(uint8_t shade) noexcept {
     case 2: return 0xFF346856u; // Dark
     default: return 0xFF081820u; // Darkest
     }
+}
+
+uint8_t GameBoyPPU::paletteIndex(uint32_t argb) noexcept {
+    for (uint8_t shade = 0u; shade < 4u; ++shade) {
+        if (paletteColor(shade) == argb) {
+            return shade;
+        }
+    }
+    return 0u;
 }
 
 uint8_t GameBoyPPU::mapPaletteShade(uint8_t paletteReg, uint8_t colorIndex) noexcept {
@@ -260,6 +270,9 @@ void GameBoyPPU::captureScanline(int screenY) {
     std::copy_n(model.argbPixels.begin() + static_cast<std::ptrdiff_t>(rowOffset),
                 static_cast<std::size_t>(kDisplayWidth),
                 framePixels_.begin() + static_cast<std::ptrdiff_t>(rowOffset));
+    for (std::size_t x = 0u; x < static_cast<std::size_t>(kDisplayWidth); ++x) {
+        frameColorIndices_[rowOffset + x] = paletteIndex(model.argbPixels[rowOffset + x]);
+    }
     capturedScanlines_[static_cast<std::size_t>(screenY)] = true;
     hasCapturedScanlines_ = true;
 }
@@ -305,18 +318,34 @@ BMMQ::VideoDebugFrameModel GameBoyPPU::buildFrameModel(const BMMQ::VideoDebugRen
     return model;
 }
 
-BMMQ::RealtimeVideoPacket GameBoyPPU::buildRealtimeFrame(const BMMQ::VideoDebugRenderRequest& request) const {
-    auto model = buildFrameModel(request);
-
+BMMQ::RealtimeVideoSubmission GameBoyPPU::buildRealtimeFrame(const BMMQ::VideoDebugRenderRequest& request) const {
     BMMQ::RealtimeVideoPacket packet;
     packet.contractVersion = BMMQ::RealtimeVideoPacket::kContractVersion;
-    packet.width = model.width;
-    packet.height = model.height;
-    packet.displayEnabled = model.displayEnabled;
-    packet.inVBlank = model.inVBlank;
-    packet.scanlineIndex = model.scanlineIndex;
-    packet.packedPixels = BMMQ::packVideoPixels(model.argbPixels);
-    return packet;
+    packet.width = std::max(request.frameWidth, 1);
+    packet.height = std::max(request.frameHeight, 1);
+    packet.displayEnabled = memoryMap != nullptr && (memoryMap->read(0xFF40u) & 0x80u) != 0u;
+    packet.inVBlank = ly_ >= 144u;
+    packet.scanlineIndex = ly_;
+
+    static constexpr std::array<std::uint32_t, 4u> kPalette{
+        0xFFE0F8D0u, 0xFF88C070u, 0xFF346856u, 0xFF081820u,
+    };
+    if (packet.width == kDisplayWidth && packet.height == kDisplayHeight && hasCapturedScanlines_) {
+        packet.surface = BMMQ::makeIndexedVideoSurface(
+            frameColorIndices_, packet.width, packet.height,
+            BMMQ::RealtimeVideoEncoding::Indexed2, kPalette);
+    } else {
+        auto model = buildFrameModel(request);
+        std::vector<std::uint8_t> indices(model.argbPixels.size(), 0u);
+        std::transform(model.argbPixels.begin(), model.argbPixels.end(), indices.begin(), paletteIndex);
+        packet.surface = BMMQ::makeIndexedVideoSurface(
+            indices, packet.width, packet.height,
+            BMMQ::RealtimeVideoEncoding::Indexed2, kPalette);
+    }
+    packet.uploadHints[0] = {0u, 0u, static_cast<std::uint16_t>(packet.width),
+                             static_cast<std::uint16_t>(packet.height)};
+    packet.uploadHintCount = 1u;
+    return BMMQ::RealtimeVideoSubmission{.packet = std::move(packet)};
 }
 
 void GameBoyPPU::step(uint32_t cpuCycles) {
@@ -332,6 +361,7 @@ void GameBoyPPU::step(uint32_t cpuCycles) {
         vblankPending_ = false;
         lastReadyScanline_ = 0;
         framePixels_.fill(paletteColor(0));
+        frameColorIndices_.fill(0u);
         capturedScanlines_.fill(false);
         hasCapturedScanlines_ = false;
         lastLy_ = 0;

@@ -14,17 +14,19 @@ int main()
 {
     // Production video transport is self-contained, lossless, and materially
     // smaller than an ARGB framebuffer for the palettes used by 8-bit cores.
-    const std::vector<std::uint32_t> sourcePixels = {
-        0xFF000000u, 0xFFFFFFFFu, 0xFF00FF00u, 0xFF000000u,
-        0xFFFFFFFFu, 0xFF00FF00u, 0xFF000000u, 0xFFFFFFFFu,
-    };
-    const auto packed = BMMQ::packVideoPixels(sourcePixels);
-    assert(packed.validForPixelCount(sourcePixels.size()));
-    assert(packed.bitsPerPixel == 2u);
-    assert(packed.payloadBytes() < sourcePixels.size() * sizeof(std::uint32_t));
+    const std::vector<std::uint8_t> sourceIndices = {0u, 1u, 2u, 0u, 1u, 2u, 0u, 1u};
+    const std::vector<std::uint32_t> palette = {0xFF000000u, 0xFFFFFFFFu, 0xFF00FF00u};
+    const auto surface = BMMQ::makeIndexedVideoSurface(
+        sourceIndices, 4, 2, BMMQ::RealtimeVideoEncoding::Indexed2, palette);
+    assert(surface.validForDimensions(4, 2));
+    assert(surface.encoding == BMMQ::RealtimeVideoEncoding::Indexed2);
+    assert(surface.payloadBytes() < sourceIndices.size() * sizeof(std::uint32_t));
     std::vector<std::uint32_t> decodedPixels;
-    assert(BMMQ::unpackVideoPixels(packed, sourcePixels.size(), decodedPixels));
-    assert(decodedPixels == sourcePixels);
+    assert(BMMQ::decodeVideoSurface(surface, 4, 2, decodedPixels));
+    assert(decodedPixels == std::vector<std::uint32_t>({
+        palette[0], palette[1], palette[2], palette[0],
+        palette[1], palette[2], palette[0], palette[1],
+    }));
 
     // VideoDirtyRegion defaults
     BMMQ::VideoDirtyRegion region;

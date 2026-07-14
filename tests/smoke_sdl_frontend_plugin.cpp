@@ -364,6 +364,7 @@ int main(int argc, char** argv)
     assert(stats.videoRealtimePacketsAccepted >= stats.framesPrepared);
     // Phase 25: realtime packets are built outside sharedStateMutex_ in onVideoEvent(); counter must track this
     assert(stats.videoRealtimePacketsBuiltOutsideLock >= stats.videoRealtimePacketsAccepted);
+    assert(stats.videoRealtimeRenderFromMemoryWriteCount == 0u);
     assert(stats.videoDebugModelBuildSkipCount <= stats.videoEvents);
     // The host thread presents outside sharedStateMutex_; the retired internal
     // render worker must not execute SDL work.

@@ -38,7 +38,10 @@ BMMQ::VideoPresentPacket makePackedPacket(std::uint64_t generation, std::uint32_
     packet.height = 2;
     packet.generation = generation;
     packet.source = BMMQ::VideoFrameSource::RealtimeSnapshot;
-    packet.packedPixels = BMMQ::packVideoPixels(std::vector<std::uint32_t>(8u, color));
+    const std::array<std::uint32_t, 1u> palette{color};
+    packet.surface = BMMQ::makeIndexedVideoSurface(
+        std::vector<std::uint8_t>(8u, 0u), packet.width, packet.height,
+        BMMQ::RealtimeVideoEncoding::Indexed2, palette);
     return packet;
 }
 

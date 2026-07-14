@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "SimdPixelOps.hpp"
-#include "PackedVideoPixels.hpp"
+#include "RealtimeVideoSurface.hpp"
 
 namespace BMMQ {
 
@@ -63,13 +63,13 @@ struct VideoPresentPacket {
     uint64_t lifecycleEpoch = 1;
     uint64_t publishedAtNs = 0;
     std::vector<uint32_t> pixels;
-    PackedVideoPixels packedPixels;
+    RealtimeVideoSurface surface;
 
     [[nodiscard]] bool empty() const noexcept
     {
         const auto expected = static_cast<std::size_t>(std::max(width, 0)) *
                               static_cast<std::size_t>(std::max(height, 0));
-        return pixels.size() != expected && !packedPixels.validForPixelCount(expected);
+        return pixels.size() != expected && !surface.validForDimensions(width, height);
     }
 
     [[nodiscard]] std::size_t pixelCount() const noexcept
@@ -82,7 +82,7 @@ struct VideoPresentPacket {
 
     [[nodiscard]] std::size_t payloadBytes() const noexcept
     {
-        return pixels.empty() ? packedPixels.payloadBytes() : pixels.size() * sizeof(std::uint32_t);
+        return pixels.empty() ? surface.payloadBytes() : pixels.size() * sizeof(std::uint32_t);
     }
 };
 
@@ -135,9 +135,7 @@ struct VideoPresenterConfig {
     if (!packet.pixels.empty()) {
         frame.pixels = std::move(packet.pixels);
     } else {
-        (void)unpackVideoPixels(packet.packedPixels,
-                                static_cast<std::size_t>(frame.width) * static_cast<std::size_t>(frame.height),
-                                frame.pixels);
+        (void)decodeVideoSurface(packet.surface, frame.width, frame.height, frame.pixels);
     }
     return frame;
 }

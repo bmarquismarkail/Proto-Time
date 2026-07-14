@@ -670,7 +670,8 @@ int main()
 
         // Display off by default: pixel buffer still allocated, displayEnabled=false
         {
-            const auto pkt = rtVdp.buildRealtimeFrame({160, 144});
+            const auto submission = rtVdp.buildRealtimeFrame({160, 144});
+            const auto& pkt = submission.packet;
             if (pkt.width != 160 || pkt.height != 144) {
                 return fail("buildRealtimeFrame: wrong dimensions");
             }
@@ -683,6 +684,10 @@ int main()
             if (pkt.contractVersion != BMMQ::RealtimeVideoPacket::kContractVersion) {
                 return fail("buildRealtimeFrame: wrong contractVersion");
             }
+            if (pkt.surface.encoding != BMMQ::RealtimeVideoEncoding::Indexed5 ||
+                pkt.surface.paletteArgb.size() != 32u || pkt.uploadHintCount != 1u) {
+                return fail("buildRealtimeFrame: wrong indexed surface contract");
+            }
         }
 
         // Enable display (register 1 bit 6) and verify pixel buffer populated
@@ -694,7 +699,8 @@ int main()
         rtVdp.writeControlPort(0x40u);
         rtVdp.writeControlPort(0x81u); // cmd = 0x80 | reg_index(1) => register write reg 1 = 0x40
         {
-            const auto pkt = rtVdp.buildRealtimeFrame({160, 144});
+            const auto submission = rtVdp.buildRealtimeFrame({160, 144});
+            const auto& pkt = submission.packet;
             if (!pkt.displayEnabled) {
                 return fail("buildRealtimeFrame: displayEnabled should be true after enabling display");
             }
@@ -708,7 +714,8 @@ int main()
 
         // Verify inVBlank matches scanline state (default scanline=0, not in vblank)
         {
-            const auto pkt = rtVdp.buildRealtimeFrame({160, 144});
+            const auto submission = rtVdp.buildRealtimeFrame({160, 144});
+            const auto& pkt = submission.packet;
             if (pkt.inVBlank) {
                 return fail("buildRealtimeFrame: inVBlank should be false at scanline 0");
             }
@@ -717,9 +724,13 @@ int main()
         // Verify pixel output matches buildFrameModel for the same VDP state
         {
             const auto modelPkt = rtVdp.buildFrameModel({160, 144});
-            const auto realtimePkt = rtVdp.buildRealtimeFrame({160, 144});
+            const auto realtimeSubmission = rtVdp.buildRealtimeFrame({160, 144});
+            const auto& realtimePkt = realtimeSubmission.packet;
             std::vector<std::uint32_t> decoded;
-            if (!BMMQ::unpackVideoPixels(realtimePkt.packedPixels, realtimePkt.pixelCount(), decoded) ||
+            if (!BMMQ::decodeVideoSurface(realtimePkt.surface,
+                                          realtimePkt.width,
+                                          realtimePkt.height,
+                                          decoded) ||
                 modelPkt.argbPixels != decoded) {
                 return fail("buildRealtimeFrame: pixel output differs from buildFrameModel");
             }

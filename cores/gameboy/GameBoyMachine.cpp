@@ -1244,7 +1244,7 @@ std::optional<BMMQ::VideoDebugFrameModel> GameBoyMachine::videoDebugFrameModel(
     return gameBoyVisualDebugAdapter().buildFrameModel(*this, request);
 }
 
-std::optional<BMMQ::RealtimeVideoPacket> GameBoyMachine::realtimeVideoPacket(
+std::optional<BMMQ::RealtimeVideoSubmission> GameBoyMachine::realtimeVideoPacket(
     const BMMQ::VideoDebugRenderRequest& request) const
 {
     return impl_->ppu.buildRealtimeFrame(request);

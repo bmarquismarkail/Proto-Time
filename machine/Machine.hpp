@@ -209,8 +209,8 @@ public:
         }
         return adapter->buildFrameModel(*this, request);
     }
-    virtual std::optional<RealtimeVideoPacket> realtimeVideoPacket(const VideoDebugRenderRequest& request) const {
-        const auto model = videoDebugFrameModel(request);
+    virtual std::optional<RealtimeVideoSubmission> realtimeVideoPacket(const VideoDebugRenderRequest& request) const {
+        auto model = videoDebugFrameModel(request);
         if (!model.has_value()) {
             return std::nullopt;
         }
@@ -220,8 +220,8 @@ public:
         packet.displayEnabled = model->displayEnabled;
         packet.inVBlank = model->inVBlank;
         packet.scanlineIndex = model->scanlineIndex;
-        packet.packedPixels = packVideoPixels(model->argbPixels);
-        return packet;
+        packet.surface = makeArgbVideoSurface(std::move(model->argbPixels), packet.width, packet.height);
+        return RealtimeVideoSubmission{.packet = std::move(packet)};
     }
     virtual std::optional<VideoStateView> videoStateSnapshot() const {
         return std::nullopt;
@@ -297,8 +297,9 @@ inline std::optional<VideoStateView> queryVideoStateSnapshot(const Machine& mach
     return machine.videoStateSnapshot();
 }
 
-inline std::optional<RealtimeVideoPacket> queryRealtimeVideoPacket(const Machine& machine,
-                                                                   const VideoDebugRenderRequest& request) {
+inline std::optional<RealtimeVideoSubmission> queryRealtimeVideoPacket(
+    const Machine& machine,
+    const VideoDebugRenderRequest& request) {
     return machine.realtimeVideoPacket(request);
 }
 

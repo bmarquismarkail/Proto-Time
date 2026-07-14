@@ -20,6 +20,7 @@ static_assert(std::atomic<std::size_t>::is_always_lock_free,
 
 struct PublishedRealtimeVideoPacket {
     RealtimeVideoPacket packet{};
+    RealtimeVideoDiagnostics diagnostics{};
     std::uint64_t lifecycleEpoch = 1u;
     std::uint64_t publishedAtNs = 0u;
 };
@@ -60,18 +61,29 @@ public:
     RealtimeVideoMailbox(const RealtimeVideoMailbox&) = delete;
     RealtimeVideoMailbox& operator=(const RealtimeVideoMailbox&) = delete;
 
-    [[nodiscard]] bool publish(RealtimeVideoPacket packet, std::uint64_t lifecycleEpoch) noexcept
+    [[nodiscard]] bool publish(RealtimeVideoSubmission submission,
+                               std::uint64_t lifecycleEpoch) noexcept
     {
+        auto& packet = submission.packet;
         if (packet.empty()) {
             return false;
         }
 
         const auto payloadBytes = packet.payloadBytes();
         const auto generation = packet.generation;
+        const auto publishedAtNs = steadyClockNs();
+        submission.diagnostics.width = packet.width;
+        submission.diagnostics.height = packet.height;
+        submission.diagnostics.displayEnabled = packet.displayEnabled;
+        submission.diagnostics.inVBlank = packet.inVBlank;
+        submission.diagnostics.scanlineIndex = packet.scanlineIndex;
+        packet.lifecycleEpoch = lifecycleEpoch;
+        packet.producedAtNs = publishedAtNs;
         slots_[producerSlot_] = PublishedRealtimeVideoPacket{
             .packet = std::move(packet),
+            .diagnostics = std::move(submission.diagnostics),
             .lifecycleEpoch = lifecycleEpoch,
-            .publishedAtNs = steadyClockNs(),
+            .publishedAtNs = publishedAtNs,
         };
 
         const auto toShare = static_cast<std::uint8_t>(kDirty | producerSlot_);

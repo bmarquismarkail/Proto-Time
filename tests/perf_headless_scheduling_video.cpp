@@ -252,8 +252,8 @@ public:
             return;
         }
         const auto generation = published_.load(std::memory_order_relaxed) + 1u;
-        packet->generation = generation;
-        packet->eventType = event.type;
+        packet->packet.generation = generation;
+        packet->packet.eventType = event.type;
         const auto started = clockNs(Clock::now());
         if (!videoService_.publishRealtimeVideoPacket(std::move(*packet))) {
             failed_.store(true, std::memory_order_release);

@@ -329,23 +329,6 @@ public:
 
     [[nodiscard]] const std::optional<BMMQ::SdlFrameBuffer>& lastFrame() const noexcept override
     {
-        if (lastPackedFrame_.has_value()) {
-            try {
-                BMMQ::SdlFrameBuffer compatFrame;
-                compatFrame.width = lastPackedFrame_->width;
-                compatFrame.height = lastPackedFrame_->height;
-                compatFrame.generation = lastPackedFrame_->generation;
-                if (BMMQ::unpackVideoPixels(lastPackedFrame_->packedPixels,
-                                            lastPackedFrame_->pixelCount(),
-                                            compatFrame.pixels)) {
-                    lastFrame_ = std::move(compatFrame);
-                    lastPackedFrame_.reset();
-                }
-            } catch (...) {
-                // Preserve the last successfully reconstructed frame. This
-                // compatibility accessor is noexcept by plugin contract.
-            }
-        }
         return lastFrame_;
     }
 
@@ -459,7 +442,7 @@ public:
                         accumulateVdpRenderBodyTiming(metadata->vdpRenderBodyTiming);
                         accumulateVdpMode4BackgroundAttributes(metadata->vdpMode4BackgroundAttributes);
                         accumulateVdpMode4SimpleBackground(metadata->vdpMode4SimpleBackground);
-                        lastVideoDebugModel_ = debugModelFromRealtimePacket(*metadata);
+                        lastVideoDebugModel_ = debugModelFromRealtimeDiagnostics(*metadata);
                         scanlineVideoDebugModel_.reset();
                     }
                     if (!processedFrame.has_value()) {
@@ -479,7 +462,7 @@ public:
                         accumulateVdpRenderBodyTiming(metadata->vdpRenderBodyTiming);
                         accumulateVdpMode4BackgroundAttributes(metadata->vdpMode4BackgroundAttributes);
                         accumulateVdpMode4SimpleBackground(metadata->vdpMode4SimpleBackground);
-                        lastVideoDebugModel_ = debugModelFromRealtimePacket(*metadata);
+                        lastVideoDebugModel_ = debugModelFromRealtimeDiagnostics(*metadata);
                         scanlineVideoDebugModel_.reset();
                     }
                     if (headlessFrame.has_value()) {
@@ -923,9 +906,8 @@ public:
             event.type == BMMQ::MachineEventType::VBlank ||
             event.type == BMMQ::MachineEventType::VideoScanlineReady;
 
-        std::optional<BMMQ::RealtimeVideoPacket> prebuiltRealtime;
-        if (carriesVideoStateEarly &&
-            event.type != BMMQ::MachineEventType::VideoScanlineReady) {
+        std::optional<BMMQ::RealtimeVideoSubmission> prebuiltRealtime;
+        if (event.type == BMMQ::MachineEventType::VBlank) {
             prebuiltRealtime = view.realtimeVideoPacket({
                 .frameWidth = std::max(config_.frameWidth, 1),
                 .frameHeight = std::max(config_.frameHeight, 1),
@@ -957,9 +939,9 @@ public:
             config_.enableVideo &&
             videoService_ != nullptr &&
             prebuiltRealtime.has_value() &&
-            prebuiltRealtime->contractVersion == BMMQ::RealtimeVideoPacket::kContractVersion &&
-            !prebuiltRealtime->empty()) {
-            prebuiltRealtime->eventType = event.type;
+            prebuiltRealtime->packet.contractVersion == BMMQ::RealtimeVideoPacket::kContractVersion &&
+            !prebuiltRealtime->packet.empty()) {
+            prebuiltRealtime->packet.eventType = event.type;
             if (videoService_->publishRealtimeVideoPacket(std::move(*prebuiltRealtime))) {
                 videoFastPathEventCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
                 videoFastPathPacketBuiltCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
@@ -1003,10 +985,10 @@ public:
                     event.type == BMMQ::MachineEventType::VBlank && shouldDeferVideoFrameForAudioLowWater();
 
                 bool realtimeSubmitted = false;
-                if (prebuiltRealtime.has_value()) {
+                if (event.type == BMMQ::MachineEventType::VBlank && prebuiltRealtime.has_value()) {
                     ++stats_.videoRealtimePacketsBuiltOutsideLock;
                     realtimeSubmitted = trySubmitPrebuiltRealtimeVideoPacket(event, std::move(*prebuiltRealtime));
-                } else {
+                } else if (event.type == BMMQ::MachineEventType::VBlank) {
                     realtimeSubmitted = trySubmitRealtimeVideoPacket(event, view);
                 }
 
@@ -1581,7 +1563,7 @@ private:
                             accumulateVdpRenderBodyTiming(metadata->vdpRenderBodyTiming);
                             accumulateVdpMode4BackgroundAttributes(metadata->vdpMode4BackgroundAttributes);
                             accumulateVdpMode4SimpleBackground(metadata->vdpMode4SimpleBackground);
-                            lastVideoDebugModel_ = debugModelFromRealtimePacket(*metadata);
+                            lastVideoDebugModel_ = debugModelFromRealtimeDiagnostics(*metadata);
                             scanlineVideoDebugModel_.reset();
                         }
                         if (processedFrame.has_value()) {
@@ -1600,7 +1582,7 @@ private:
                             accumulateVdpRenderBodyTiming(metadata->vdpRenderBodyTiming);
                             accumulateVdpMode4BackgroundAttributes(metadata->vdpMode4BackgroundAttributes);
                             accumulateVdpMode4SimpleBackground(metadata->vdpMode4SimpleBackground);
-                            lastVideoDebugModel_ = debugModelFromRealtimePacket(*metadata);
+                            lastVideoDebugModel_ = debugModelFromRealtimeDiagnostics(*metadata);
                             scanlineVideoDebugModel_.reset();
                         }
                         if (headlessFrame.has_value()) {
@@ -2207,38 +2189,36 @@ private:
     [[nodiscard]] bool trySubmitRealtimeVideoPacket(const BMMQ::MachineEvent& event,
                                                     const BMMQ::MachineView& view)
     {
-        if (videoService_ == nullptr || event.type == BMMQ::MachineEventType::VideoScanlineReady) {
+        if (videoService_ == nullptr || event.type != BMMQ::MachineEventType::VBlank) {
             ++stats_.videoRealtimePacketsSkipped;
             return false;
         }
 
-        auto packet = view.realtimeVideoPacket({
+        auto submission = view.realtimeVideoPacket({
             .frameWidth = std::max(config_.frameWidth, 1),
             .frameHeight = std::max(config_.frameHeight, 1),
         });
-        if (!packet.has_value()) {
+        if (!submission.has_value()) {
             ++stats_.videoRealtimePacketsSkipped;
             return false;
         }
-        if (packet->contractVersion != BMMQ::RealtimeVideoPacket::kContractVersion) {
+        auto& packet = submission->packet;
+        if (packet.contractVersion != BMMQ::RealtimeVideoPacket::kContractVersion) {
             ++stats_.videoRealtimePacketsSkipped;
             return false;
         }
 
-        packet->eventType = event.type;
-        packet->generation = videoService_->engine().currentGeneration();
-        if (!videoService_->submitRealtimeVideoPacket(event, *packet)) {
+        packet.eventType = event.type;
+        packet.generation = videoService_->engine().currentGeneration();
+        const auto debugModel = debugModelFromRealtimePacket(packet);
+        if (!videoService_->submitRealtimeVideoPacket(event, std::move(*submission))) {
             ++stats_.videoRealtimePacketsSkipped;
             return false;
         }
 
         ++stats_.videoRealtimePacketsAccepted;
-        accumulateVdpRenderBodyTiming(packet->vdpRenderBodyTiming);
-        accumulateVdpMode4BackgroundAttributes(packet->vdpMode4BackgroundAttributes);
-        accumulateVdpMode4SimpleBackground(packet->vdpMode4SimpleBackground);
-        updateLastFrameFromPacket(*packet);
         if (event.type == BMMQ::MachineEventType::VBlank) {
-            lastVideoDebugModel_ = debugModelFromRealtimePacket(*packet);
+            lastVideoDebugModel_ = debugModel;
             scanlineVideoDebugModel_.reset();
         }
         return true;
@@ -2255,15 +2235,28 @@ private:
         return model;
     }
 
+    [[nodiscard]] static BMMQ::VideoDebugFrameModel debugModelFromRealtimeDiagnostics(
+        const BMMQ::RealtimeVideoDiagnostics& diagnostics)
+    {
+        BMMQ::VideoDebugFrameModel model;
+        model.width = diagnostics.width;
+        model.height = diagnostics.height;
+        model.displayEnabled = diagnostics.displayEnabled;
+        model.inVBlank = diagnostics.inVBlank;
+        model.scanlineIndex = diagnostics.scanlineIndex;
+        return model;
+    }
+
     // trySubmitPrebuiltRealtimeVideoPacket: called while sharedStateMutex_ is held.
     // The packet was built OUTSIDE the lock; this function only deposits it and updates bookkeeping.
     [[nodiscard]] bool trySubmitPrebuiltRealtimeVideoPacket(const BMMQ::MachineEvent& event,
-                                                            BMMQ::RealtimeVideoPacket packet)
+                                                            BMMQ::RealtimeVideoSubmission submission)
     {
-        if (videoService_ == nullptr || event.type == BMMQ::MachineEventType::VideoScanlineReady) {
+        if (videoService_ == nullptr || event.type != BMMQ::MachineEventType::VBlank) {
             ++stats_.videoRealtimePacketsSkipped;
             return false;
         }
+        auto& packet = submission.packet;
         if (packet.contractVersion != BMMQ::RealtimeVideoPacket::kContractVersion) {
             ++stats_.videoRealtimePacketsSkipped;
             return false;
@@ -2271,24 +2264,21 @@ private:
 
         packet.eventType = event.type;
         packet.generation = videoService_->engine().currentGeneration();
-        if (!videoService_->submitRealtimeVideoPacket(event, packet)) {
+        const auto debugModel = debugModelFromRealtimePacket(packet);
+        if (!videoService_->submitRealtimeVideoPacket(event, std::move(submission))) {
             ++stats_.videoRealtimePacketsSkipped;
             return false;
         }
 
         ++stats_.videoRealtimePacketsAccepted;
-        accumulateVdpRenderBodyTiming(packet.vdpRenderBodyTiming);
-        accumulateVdpMode4BackgroundAttributes(packet.vdpMode4BackgroundAttributes);
-        accumulateVdpMode4SimpleBackground(packet.vdpMode4SimpleBackground);
-        updateLastFrameFromPacket(packet);
         if (event.type == BMMQ::MachineEventType::VBlank) {
-            lastVideoDebugModel_ = debugModelFromRealtimePacket(packet);
+            lastVideoDebugModel_ = debugModel;
             scanlineVideoDebugModel_.reset();
         }
         return true;
     }
 
-    void accumulateVdpRenderBodyTiming(const BMMQ::RealtimeVideoPacket::VdpRenderBodyTiming& timing) noexcept
+    void accumulateVdpRenderBodyTiming(const BMMQ::RealtimeVideoDiagnostics::VdpRenderBodyTiming& timing) noexcept
     {
         if (timing.totalNs == 0u) {
             return;
@@ -2311,7 +2301,7 @@ private:
     }
 
     void accumulateVdpMode4BackgroundAttributes(
-        const BMMQ::RealtimeVideoPacket::VdpMode4BackgroundAttributeStats& attrs) noexcept
+        const BMMQ::RealtimeVideoDiagnostics::VdpMode4BackgroundAttributeStats& attrs) noexcept
     {
         if (attrs.tileCellsProcessed == 0u) {
             return;
@@ -2329,7 +2319,7 @@ private:
     }
 
     void accumulateVdpMode4SimpleBackground(
-        const BMMQ::RealtimeVideoPacket::VdpMode4SimpleBackgroundStats& stats) noexcept
+        const BMMQ::RealtimeVideoDiagnostics::VdpMode4SimpleBackgroundStats& stats) noexcept
     {
         if (stats.simplePathFrameCount == 0u &&
             stats.mode4SimplePathUsedCount == 0u &&
@@ -2604,27 +2594,6 @@ private:
         }
     }
 
-    // Mark a successfully submitted frame as pending without expanding its compact
-    // payload on the emulation thread. The render lane fills pixels after consume.
-    // Called from trySubmitRealtimeVideoPacket / trySubmitPrebuiltRealtimeVideoPacket
-    // while sharedStateMutex_ is held, so the per-iteration engine poll in
-    // syncVideoTransportStats() is no longer needed.
-    void updateLastFrameFromPacket(const BMMQ::RealtimeVideoPacket& packet) noexcept
-    {
-        if (videoService_ == nullptr) {
-            return;
-        }
-        if (!lastFrame_.has_value()) {
-            BMMQ::SdlFrameBuffer compatFrame;
-            compatFrame.width = packet.width;
-            compatFrame.height = packet.height;
-            compatFrame.generation = packet.generation;
-            lastFrame_ = std::move(compatFrame);
-        }
-        lastPackedFrame_ = packet;
-        lastSyncedVideoFramePublication_ = videoService_->engine().stats().publishedFrameCount;
-    }
-
     void updateLastFrameFromProcessedFrame(const BMMQ::VideoFramePacket& frame)
     {
         BMMQ::SdlFrameBuffer compatFrame;
@@ -2633,7 +2602,6 @@ private:
         compatFrame.generation = frame.generation;
         compatFrame.pixels = frame.pixels;
         lastFrame_ = std::move(compatFrame);
-        lastPackedFrame_.reset();
     }
 
     void applyWindowVisibilityRequest() noexcept
@@ -2936,8 +2904,6 @@ private:
     std::size_t audioBatchPacketCount_ = 0u;
     std::optional<BMMQ::DigitalInputStateView> lastInputState_;
     mutable std::optional<BMMQ::SdlFrameBuffer> lastFrame_;
-    mutable std::optional<BMMQ::RealtimeVideoPacket> lastPackedFrame_;
-    std::size_t lastSyncedVideoFramePublication_ = 0;
     bool frameDirty_ = false;
     // std::atomic<bool>: written under sharedStateMutex_ on multiple paths but read
     // lock-free inside the renderServiceWaitMutex_ condvar block (line ~1104) to

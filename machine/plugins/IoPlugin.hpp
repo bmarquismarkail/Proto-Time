@@ -2,6 +2,7 @@
 #define BMMQ_IO_PLUGIN_HPP
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstddef>
 #include <optional>
@@ -11,7 +12,7 @@
 
 #include "../VideoDebugModel.hpp"
 #include "../RuntimeContext.hpp"
-#include "video/PackedVideoPixels.hpp"
+#include "video/RealtimeVideoSurface.hpp"
 
 namespace BMMQ {
 
@@ -40,9 +41,11 @@ uint32_t queryAudioSampleRate(const Machine& machine);
 uint8_t queryAudioChannelCount(const Machine& machine);
 uint64_t queryAudioFrameCounter(const Machine& machine);
 struct RealtimeVideoPacket;
+struct RealtimeVideoSubmission;
 struct RealtimeAudioPacket;
-std::optional<RealtimeVideoPacket> queryRealtimeVideoPacket(const Machine& machine,
-                                                            const VideoDebugRenderRequest& request);
+std::optional<RealtimeVideoSubmission> queryRealtimeVideoPacket(
+    const Machine& machine,
+    const VideoDebugRenderRequest& request);
 std::optional<RealtimeAudioPacket> queryRealtimeAudioPacket(const Machine& machine);
 struct SlimVideoPacket;
 struct SlimAudioPacket;
@@ -85,16 +88,19 @@ enum class MachineEventType : uint8_t {
     FrameCompositionCompleted = 19,
 };
 
-struct RealtimeVideoPacket {
-    static constexpr std::uint16_t kContractVersion = 2u;
-    std::uint16_t contractVersion = kContractVersion;
-    MachineEventType eventType = MachineEventType::VBlank;
+struct VideoUploadRegion {
+    std::uint16_t x = 0u;
+    std::uint16_t y = 0u;
+    std::uint16_t width = 0u;
+    std::uint16_t height = 0u;
+};
+
+struct RealtimeVideoDiagnostics {
     int width = 0;
     int height = 0;
     bool displayEnabled = false;
     bool inVBlank = false;
     std::optional<std::uint16_t> scanlineIndex;
-    std::uint64_t generation = 0;
     struct VdpRenderBodyTiming {
         std::uint64_t totalNs = 0;
         std::uint64_t setupNs = 0;
@@ -105,14 +111,6 @@ struct RealtimeVideoPacket {
         std::uint64_t spriteProbeNs = 0;
         std::uint64_t spriteOverlayNs = 0;
         std::uint64_t otherNs = 0;
-        // --- Phase 81B: simple-background sub-path breakdown (diagnostics only) ---
-        // Measured as cumulative nanoseconds within the simple-mode pixel loop.
-        // Approximation: bitplane_decode_ns measures VRAM-plane reads plus unmask
-        // arithmetic inside each cell row-col loop (lines ~670-706). The remaining
-        // time is split between palette lookup+framebuffer write and miscellaneous
-        // loop control / name-table read overhead; exact separation depends on
-        // branch-prediction effects so report them as coarse buckets rather than
-        // precise boundaries.
         std::uint64_t simple_bitplaneDecodeNs = 0;
         std::uint64_t simple_paletteFbWriteNs = 0;
         std::uint64_t simple_loopOtherNs = 0;
@@ -142,14 +140,29 @@ struct RealtimeVideoPacket {
         std::uint64_t mode4GeneralPathUsedCount = 0;
         std::uint64_t tmsGraphicsPathUsedCount = 0;
     } vdpMode4SimpleBackground{};
-    PackedVideoPixels packedPixels;
+};
+
+struct RealtimeVideoPacket {
+    static constexpr std::uint16_t kContractVersion = 3u;
+    std::uint16_t contractVersion = kContractVersion;
+    MachineEventType eventType = MachineEventType::VBlank;
+    int width = 0;
+    int height = 0;
+    bool displayEnabled = false;
+    bool inVBlank = false;
+    std::optional<std::uint16_t> scanlineIndex;
+    std::uint64_t generation = 0;
+    std::uint64_t lifecycleEpoch = 1u;
+    std::uint64_t producedAtNs = 0u;
+    RealtimeVideoSurface surface;
+    std::array<VideoUploadRegion, 8u> uploadHints{};
+    std::uint8_t uploadHintCount = 0u;
 
     [[nodiscard]] bool empty() const noexcept
     {
         return width <= 0 ||
                height <= 0 ||
-               !packedPixels.validForPixelCount(static_cast<std::size_t>(width) *
-                                                static_cast<std::size_t>(height));
+               !surface.validForDimensions(width, height);
     }
 
     [[nodiscard]] std::size_t pixelCount() const noexcept
@@ -159,8 +172,13 @@ struct RealtimeVideoPacket {
 
     [[nodiscard]] std::size_t payloadBytes() const noexcept
     {
-        return packedPixels.payloadBytes();
+        return surface.payloadBytes();
     }
+};
+
+struct RealtimeVideoSubmission {
+    RealtimeVideoPacket packet{};
+    RealtimeVideoDiagnostics diagnostics{};
 };
 
 struct RealtimeAudioPacket {
@@ -319,7 +337,7 @@ struct ParallelStateView {
 };
 
 // Legacy tooling snapshot representation. The production real-time path uses
-// RealtimeVideoPacket::packedPixels; this type is retained for MachineView clients.
+// RealtimeVideoPacket::surface; this type is retained for MachineView clients.
 struct VideoDirtyRegion {
     uint16_t start = 0;
     uint16_t size = 0;
@@ -463,7 +481,7 @@ struct MachineView {
         return queryVideoDebugFrameModel(machine, request);
     }
 
-    [[nodiscard]] std::optional<RealtimeVideoPacket> realtimeVideoPacket(
+    [[nodiscard]] std::optional<RealtimeVideoSubmission> realtimeVideoPacket(
         const VideoDebugRenderRequest& request) const
     {
         return queryRealtimeVideoPacket(machine, request);

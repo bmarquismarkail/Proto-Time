@@ -50,7 +50,7 @@ public:
     void latchHCounter() noexcept;
     [[nodiscard]] BMMQ::VideoDebugFrameModel buildFrameModel(
         const BMMQ::VideoDebugRenderRequest& request) const;
-    [[nodiscard]] BMMQ::RealtimeVideoPacket buildRealtimeFrame(
+    [[nodiscard]] BMMQ::RealtimeVideoSubmission buildRealtimeFrame(
         const BMMQ::VideoDebugRenderRequest& request) const;
     [[nodiscard]] std::vector<uint8_t> exportState() const;
     void importState(const std::vector<uint8_t>& state);
@@ -63,15 +63,16 @@ private:
     static constexpr std::size_t kVramSize = 0x4000u;
 
     struct PixelRenderOutput {
-        BMMQ::RealtimeVideoPacket::VdpRenderBodyTiming renderBodyTiming{};
-        BMMQ::RealtimeVideoPacket::VdpMode4BackgroundAttributeStats mode4BackgroundAttributes{};
-        BMMQ::RealtimeVideoPacket::VdpMode4SimpleBackgroundStats mode4SimpleBackground{};
+        BMMQ::RealtimeVideoDiagnostics::VdpRenderBodyTiming renderBodyTiming{};
+        BMMQ::RealtimeVideoDiagnostics::VdpMode4BackgroundAttributeStats mode4BackgroundAttributes{};
+        BMMQ::RealtimeVideoDiagnostics::VdpMode4SimpleBackgroundStats mode4SimpleBackground{};
         int width = 0;
         int height = 0;
         bool displayEnabled = false;
         bool inVBlank = false;
         uint8_t scanlineIndex = 0u;
-        std::vector<uint32_t> argbPixels;
+        std::array<std::uint32_t, 32u> paletteArgb{};
+        std::vector<std::uint8_t> colorIndices;
     };
     [[nodiscard]] PixelRenderOutput renderFramePixels(
         const BMMQ::VideoDebugRenderRequest& request) const;
