@@ -1250,6 +1250,43 @@ std::optional<BMMQ::RealtimeVideoPacket> GameBoyMachine::realtimeVideoPacket(
     return impl_->ppu.buildRealtimeFrame(request);
 }
 
+std::optional<BMMQ::VideoStateView> GameBoyMachine::videoStateSnapshot() const
+{
+    BMMQ::VideoStateView state;
+    for (const auto& region : describeIoRegions()) {
+        if (region.category != BMMQ::PluginCategory::Video) {
+            continue;
+        }
+        if (region.label == "VRAM") {
+            state.vramRegion = region;
+        } else if (region.label == "OAM") {
+            state.oamRegion = region;
+        } else if (region.label == "LCD Registers") {
+            state.registerRegion = region;
+        }
+    }
+    if (state.vramRegion.size == 0u || state.oamRegion.size == 0u || state.registerRegion.size == 0u) {
+        return std::nullopt;
+    }
+
+    const auto vram = impl_->memoryMap.vramSpan();
+    const auto oam = impl_->memoryMap.oamSpan();
+    state.vram.assign(vram.begin(), vram.end());
+    state.oam.assign(oam.begin(), oam.end());
+    state.lcdc = impl_->memoryMap.read(0xFF40u);
+    state.stat = impl_->memoryMap.read(0xFF41u);
+    state.scy = impl_->memoryMap.read(0xFF42u);
+    state.scx = impl_->memoryMap.read(0xFF43u);
+    state.ly = impl_->memoryMap.read(0xFF44u);
+    state.lyc = impl_->memoryMap.read(0xFF45u);
+    state.bgp = impl_->memoryMap.read(0xFF47u);
+    state.obp0 = impl_->memoryMap.read(0xFF48u);
+    state.obp1 = impl_->memoryMap.read(0xFF49u);
+    state.wy = impl_->memoryMap.read(0xFF4Au);
+    state.wx = impl_->memoryMap.read(0xFF4Bu);
+    return state;
+}
+
 std::optional<BMMQ::RealtimeAudioPacket> GameBoyMachine::realtimeAudioPacket() const {
     BMMQ::RealtimeAudioPacket packet;
     packet.sampleRate = impl_->apu.sampleRate();

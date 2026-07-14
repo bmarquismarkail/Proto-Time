@@ -223,6 +223,9 @@ public:
         packet.packedPixels = packVideoPixels(model->argbPixels);
         return packet;
     }
+    virtual std::optional<VideoStateView> videoStateSnapshot() const {
+        return std::nullopt;
+    }
     virtual std::optional<RealtimeAudioPacket> realtimeAudioPacket() const {
         RealtimeAudioPacket packet;
         packet.sampleRate = audioSampleRate();
@@ -288,6 +291,10 @@ inline std::optional<uint32_t> queryDigitalInputMask(const Machine& machine) {
 inline std::optional<VideoDebugFrameModel> queryVideoDebugFrameModel(const Machine& machine,
                                                                      const VideoDebugRenderRequest& request) {
     return machine.videoDebugFrameModel(request);
+}
+
+inline std::optional<VideoStateView> queryVideoStateSnapshot(const Machine& machine) {
+    return machine.videoStateSnapshot();
 }
 
 inline std::optional<RealtimeVideoPacket> queryRealtimeVideoPacket(const Machine& machine,

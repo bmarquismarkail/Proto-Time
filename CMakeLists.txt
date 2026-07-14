@@ -279,6 +279,14 @@ target_link_libraries(time-perf-gamegear-vdp-bench time-gamegear-core)
 add_test(NAME perf_gamegear_vdp_bench COMMAND time-perf-gamegear-vdp-bench)
 set_tests_properties(perf_gamegear_vdp_bench PROPERTIES TIMEOUT 120)
 
+add_executable(time-perf-concurrency-success-gates tests/perf_concurrency_success_gates.cpp)
+target_link_libraries(time-perf-concurrency-success-gates time-gameboy-interpreter-core)
+add_test(NAME perf_concurrency_success_gates COMMAND time-perf-concurrency-success-gates)
+set_tests_properties(perf_concurrency_success_gates PROPERTIES
+    LABELS "performance;concurrency"
+    TIMEOUT 120
+)
+
 add_executable(time-smoke-gamegear-vdp-cram tests/smoke_gamegear_vdp_cram.cpp)
 target_link_libraries(time-smoke-gamegear-vdp-cram time-gamegear-core)
 add_test(NAME smoke-gamegear-vdp-cram COMMAND time-smoke-gamegear-vdp-cram)

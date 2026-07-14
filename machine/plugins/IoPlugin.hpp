@@ -22,6 +22,8 @@ class VideoService;
 class VisualOverrideService;
 class TimingService;
 struct CpuFeedback;
+struct VideoStateView;
+std::optional<VideoStateView> queryVideoStateSnapshot(const Machine& machine);
 std::optional<uint32_t> queryDigitalInputMask(const Machine& machine);
 std::optional<VideoDebugFrameModel> queryVideoDebugFrameModel(const Machine& machine,
                                                               const VideoDebugRenderRequest& request);
@@ -425,6 +427,9 @@ struct MachineView {
     }
 
     [[nodiscard]] std::optional<VideoStateView> videoState() const {
+        if (auto snapshot = queryVideoStateSnapshot(machine); snapshot.has_value()) {
+            return snapshot;
+        }
         const auto vramRegion = findRegion(PluginCategory::Video, "VRAM");
         const auto oamRegion = findRegion(PluginCategory::Video, "OAM");
         const auto registerRegion = findRegion(PluginCategory::Video, "LCD Registers");
