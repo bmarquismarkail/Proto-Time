@@ -62,6 +62,7 @@ void printUsage(std::string_view program)
               << "  --plugin <path>    Optional SDL frontend shared object override\n"
               << "  --steps <count>    Stop after a fixed number of instruction steps\n"
               << "  --scale <n>        SDL window scale factor (default: 3)\n"
+              << "  --cpu-mode <mode>  CPU execution mode: baseline or block (Game Boy)\n"
               << "  --unthrottled      Run unthrottled (no wall-clock pacing)\n"
               << "  --speed <mult>     Start with speed multiplier (e.g. 2.0)\n"
               << "  --pause            Start paused (use single-step to advance)\n"
@@ -157,7 +158,9 @@ void writeDiagnosticsSample(std::ostream& output,
                             std::uint32_t cpuClockHz,
                             const BMMQ::SdlFrontendStats* frontendStats,
                             const BMMQ::TimingStats& timingStats,
-                            const BMMQ::BackgroundTaskStats& backgroundStats) noexcept
+                            const BMMQ::BackgroundTaskStats& backgroundStats,
+                            const GameBoyMachine::BlockCacheStats* blockCacheStats,
+                            std::string_view cpuMode) noexcept
 {
     using namespace std::chrono;
     const auto elapsedNs = duration_cast<nanoseconds>(now - startedAt).count();
@@ -192,6 +195,21 @@ void writeDiagnosticsSample(std::ostream& output,
     output << ",\"effective_cycles_per_second\":" << effectiveCyclesPerSecond;
     output << ",\"active_timing_profile\":\""
            << jsonEscape(BMMQ::timingPolicyProfileName(timingStats.activeProfile)) << "\"";
+
+    output << ",\"cpu_block_cache\":{";
+    output << "\"supported\":" << (blockCacheStats != nullptr ? "true" : "false");
+    output << ",\"mode\":\"" << jsonEscape(cpuMode) << "\"";
+    if (blockCacheStats != nullptr) {
+        output << ",\"hits\":" << blockCacheStats->hits.load();
+        output << ",\"misses\":" << blockCacheStats->misses.load();
+        output << ",\"translations\":" << blockCacheStats->translations.load();
+        output << ",\"translated_instructions\":" << blockCacheStats->translatedInstructions.load();
+        output << ",\"invalidations\":" << blockCacheStats->invalidations.load();
+        output << ",\"guard_failures\":" << blockCacheStats->guardFailures.load();
+        output << ",\"chain_continuations\":" << blockCacheStats->chainContinuations.load();
+        output << ",\"unsupported_fallbacks\":" << blockCacheStats->unsupportedFallbacks.load();
+    }
+    output << "}";
 
     output << ",\"render_service\":{";
     output << "\"state\":" << static_cast<unsigned int>(stats.renderServiceState);
@@ -581,6 +599,15 @@ int main(int argc, char** argv)
         auto& machine = *bootstrapped.machine;
         const auto& descriptor = bootstrapped.descriptor;
         const auto romSize = bootstrapped.romSize;
+        BMMQ::Plugin::VisibleStatePreservingStepPolicy blockExecutionPolicy;
+        if (options.cpuMode == "block") {
+            auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get());
+            if (gameBoyMachine == nullptr) {
+                throw std::runtime_error("CPU block mode requires the Game Boy core");
+            }
+            gameBoyMachine->attachExecutorPolicy(blockExecutionPolicy);
+            gameBoyMachine->setBlockCacheEnabled(true);
+        }
         machine.videoService().setBackgroundTaskService(&backgroundTaskService);
         machine.visualOverrideService().setBackgroundTaskService(&backgroundTaskService);
         machine.visualOverrideService().setImageDecoder(&imageDecoder);
@@ -639,6 +666,7 @@ int main(int argc, char** argv)
         }
 
         std::cout << "Core: " << descriptor.id << '\n';
+        std::cout << "CPU mode: " << options.cpuMode << '\n';
         std::cout << "Loaded ROM: " << options.romPath << " ("
             << romSize << " bytes)\n";
         if (options.bootRomPath.has_value()) {
@@ -809,6 +837,11 @@ int main(int argc, char** argv)
             if (frontend != nullptr) {
                 frontendStats = frontend->stats();
             }
+            std::optional<GameBoyMachine::BlockCacheStats> blockCacheStats;
+            if (auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(&machine);
+                gameBoyMachine != nullptr) {
+                blockCacheStats = gameBoyMachine->blockCacheStats();
+            }
 
             writeDiagnosticsSample(diagnosticsReport,
                                    runStartedAt,
@@ -817,7 +850,9 @@ int main(int argc, char** argv)
                                    cpuClockHz,
                                    frontendStats.has_value() ? &*frontendStats : nullptr,
                                    timingStats,
-                                   backgroundTaskService.stats());
+                                   backgroundTaskService.stats(),
+                                   blockCacheStats.has_value() ? &*blockCacheStats : nullptr,
+                                   options.cpuMode);
             diagnosticsReport.flush();
         };
 

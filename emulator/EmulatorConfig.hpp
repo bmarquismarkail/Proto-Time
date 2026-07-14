@@ -17,6 +17,7 @@ struct EmulatorConfig {
     std::optional<std::uint64_t> stepLimit;
     std::uint32_t windowScale = 3;
     bool headless = false;
+    std::string cpuMode = "baseline";
     bool unthrottled = false;
     double speedMultiplier = 1.0;
     bool startPaused = false;
@@ -43,6 +44,7 @@ struct CommandLineConfigOverrides {
     std::optional<std::uint64_t> stepLimit;
     std::optional<std::uint32_t> windowScale;
     std::optional<bool> headless;
+    std::optional<std::string> cpuMode;
     std::optional<bool> unthrottled;
     std::optional<double> speedMultiplier;
     std::optional<bool> startPaused;

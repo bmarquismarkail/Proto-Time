@@ -1,140 +1,176 @@
 #ifndef BLOCKTRANSLATOR_HPP
 #define BLOCKTRANSLATOR_HPP
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
+#include <limits>
 #include <memory>
-#include <atomic>
-#include <functional>
-#include <mutex>
-#include <optional>
-#include <map>
 #include <vector>
-#include <string>
 
 namespace BMMQ {
 
-// Native instruction handler type
-using NativeInstructionHandler = std::function<void()>;
-
-// Block translator interface
-class BlockTranslator {
-public:
-    virtual ~BlockTranslator() = default;
-    virtual bool canTranslate(int opcodeLength) const = 0;
-    virtual void setNativeHandler(uint8_t opcodeLength, NativeInstructionHandler handler) = 0;
-    virtual void clear() = 0;
-    virtual std::vector<NativeInstructionHandler> getHandlers() const = 0;
+enum class TranslatedBlockExitReason : std::uint8_t {
+    SequentialLimit,
+    ControlFlow,
+    InterruptSensitive,
+    PageBoundary,
+    Unsupported,
 };
 
-// Concrete block translator implementation for Game Boy
-template <typename AddressType = std::uint16_t, typename DataType = std::vector<std::uint8_t>, typename RegType = std::uint16_t>
-class BlockTranslatorImpl : public BlockTranslator {
-private:
-    std::map<std::uint8_t, NativeInstructionHandler> nativeOpcodeHandlers_;
-    std::map<AddressType, DataType> cachedBlocks_;
-    std::atomic<std::uint64_t> generation_{0};
-    std::atomic<std::uint64_t> translationCount_{0};
-    std::atomic<std::uint64_t> cacheHitCount_{0};
-    std::atomic<std::uint64_t> cacheMissCount_{0};
-    mutable std::mutex mutex_;
+template <typename AddressType = std::uint16_t, typename DataType = std::uint8_t>
+struct TranslatedInstruction {
+    AddressType address = 0;
+    std::array<DataType, 3> bytes{};
+    std::uint8_t length = 0;
+};
 
+template <typename AddressType = std::uint16_t, typename DataType = std::uint8_t>
+struct TranslatedBlockEntry {
+    AddressType start = 0;
+    AddressType end = 0;
+    std::uint64_t mappingGeneration = 0;
+    std::vector<TranslatedInstruction<AddressType, DataType>> instructions;
+    TranslatedBlockExitReason exitReason = TranslatedBlockExitReason::SequentialLimit;
+    bool valid = true;
+};
+
+struct ThreadedBlockCacheStats {
+    std::uint64_t hits = 0;
+    std::uint64_t misses = 0;
+    std::uint64_t translations = 0;
+    std::uint64_t translatedInstructions = 0;
+    std::uint64_t invalidations = 0;
+    std::uint64_t guardFailures = 0;
+    std::uint64_t chainContinuations = 0;
+    std::uint64_t unsupportedFallbacks = 0;
+    std::array<std::uint64_t, 5> exits{};
+};
+
+// Emulation-thread-owned cache. Direct PC slots make a sequential successor a
+// constant-time threaded dispatch without sharing mutable guest state.
+template <typename AddressType = std::uint16_t, typename DataType = std::uint8_t>
+class ThreadedBlockCache {
 public:
-    BlockTranslatorImpl() = default;
-
-    // Set handler for a specific opcode length
-    bool canTranslate(int opcodeLength) const override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return nativeOpcodeHandlers_.find(static_cast<std::uint8_t>(opcodeLength)) != nativeOpcodeHandlers_.end();
-    }
-
-    void setNativeHandler(uint8_t opcodeLength, NativeInstructionHandler handler) override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        nativeOpcodeHandlers_[opcodeLength] = std::move(handler);
-    }
-
-    void clear() override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        nativeOpcodeHandlers_.clear();
-        cachedBlocks_.clear();
-    }
-
-    // Get all registered handlers
-    std::vector<NativeInstructionHandler> getHandlers() const override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        std::vector<NativeInstructionHandler> handlers;
-        handlers.reserve(nativeOpcodeHandlers_.size());
-        for (const auto& [opcode, handler] : nativeOpcodeHandlers_) {
-            handlers.push_back(handler);
-        }
-        return handlers;
-    }
-
-    // Try to get cached block
-    std::optional<DataType> getCachedBlock(AddressType address) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto it = cachedBlocks_.find(address);
-        if (it != cachedBlocks_.end()) {
-            cacheHitCount_.fetch_add(1, std::memory_order_relaxed);
-            return it->second;
-        }
-        cacheMissCount_.fetch_add(1, std::memory_order_relaxed);
-        return std::nullopt;
-    }
-
-    // Cache a block
-    void cacheBlock(AddressType address, DataType data, int opcodeLength) {
-        (void)opcodeLength; // unused
-        std::lock_guard<std::mutex> lock(mutex_);
-        cachedBlocks_[address] = std::move(data);
-        translationCount_.fetch_add(1, std::memory_order_relaxed);
-    }
-
-    // Get statistics
-    struct TranslationStats {
-        std::uint64_t translations = 0;
-        std::uint64_t cacheHits = 0;
-        std::uint64_t cacheMisses = 0;
+    using Instruction = TranslatedInstruction<AddressType, DataType>;
+    using Block = TranslatedBlockEntry<AddressType, DataType>;
+    struct Lookup {
+        const Block* block = nullptr;
+        std::size_t instructionIndex = 0;
+        explicit operator bool() const noexcept { return block != nullptr; }
     };
 
-    TranslationStats getStats() const {
-        return TranslationStats{
-            .translations = translationCount_.load(),
-            .cacheHits = cacheHitCount_.load(),
-            .cacheMisses = cacheMissCount_.load()
-        };
+    static constexpr std::size_t kAddressCount =
+        static_cast<std::size_t>(std::numeric_limits<AddressType>::max()) + 1u;
+
+    explicit ThreadedBlockCache(std::size_t maxBlocks = 4096u)
+        : maxBlocks_(std::max<std::size_t>(maxBlocks, 1u))
+    {
     }
 
-    // Invalidate a specific block
-    void invalidateBlock(AddressType address) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        cachedBlocks_.erase(address);
+    [[nodiscard]] Lookup lookup(AddressType address) noexcept
+    {
+        auto slot = slots_[static_cast<std::size_t>(address)];
+        if (slot.block == nullptr || !slot.block->valid ||
+            slot.block->mappingGeneration != mappingGeneration_) {
+            ++stats_.misses;
+            return {};
+        }
+        ++stats_.hits;
+        if (slot.instructionIndex != 0u) ++stats_.chainContinuations;
+        return {slot.block, slot.instructionIndex};
     }
 
-    // Invalidate blocks in a range
-    void invalidateRange(AddressType start, AddressType end) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto first = cachedBlocks_.lower_bound(start);
-        auto last = cachedBlocks_.upper_bound(end);
-        while (first != last) {
-            if (first->first > end) break;
-            cachedBlocks_.erase(first++);
+    void insert(Block block)
+    {
+        if (block.instructions.empty()) return;
+        if (blocks_.size() >= maxBlocks_) clearEntries();
+        block.mappingGeneration = mappingGeneration_;
+        auto stored = std::make_unique<Block>(std::move(block));
+        auto* pointer = stored.get();
+        for (std::size_t index = 0; index < pointer->instructions.size(); ++index) {
+            const auto address = pointer->instructions[index].address;
+            slots_[static_cast<std::size_t>(address)] = Slot{pointer, index};
+        }
+        ++stats_.translations;
+        stats_.translatedInstructions += pointer->instructions.size();
+        ++stats_.exits[static_cast<std::size_t>(pointer->exitReason)];
+        blocks_.push_back(std::move(stored));
+    }
+
+    void invalidateRange(AddressType start, AddressType end) noexcept
+    {
+        const auto rangeStart = static_cast<std::uint64_t>(start);
+        const auto rangeEnd = static_cast<std::uint64_t>(end);
+        for (auto& block : blocks_) {
+            if (!block->valid) continue;
+            if (static_cast<std::uint64_t>(block->start) <= rangeEnd &&
+                static_cast<std::uint64_t>(block->end) >= rangeStart) {
+                invalidateBlock(*block);
+            }
         }
     }
 
-    // Invalidate all blocks
-    void invalidateAll() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        cachedBlocks_.clear();
+    void invalidate(AddressType address, bool guardFailure = false) noexcept
+    {
+        auto slot = slots_[static_cast<std::size_t>(address)];
+        if (slot.block != nullptr && slot.block->valid) {
+            invalidateBlock(*slot.block);
+        }
+        if (guardFailure) ++stats_.guardFailures;
     }
 
-    // Increment generation (for cache coherency)
-    void incrementGeneration() {
-        generation_.fetch_add(1, std::memory_order_relaxed);
+    void invalidateAll() noexcept
+    {
+        for (auto& block : blocks_) {
+            if (block->valid) {
+                block->valid = false;
+                ++stats_.invalidations;
+            }
+        }
+        slots_.fill(Slot{});
+        ++mappingGeneration_;
     }
 
-    std::uint64_t generation() const {
-        return generation_.load();
+    void noteUnsupportedFallback() noexcept { ++stats_.unsupportedFallbacks; }
+    [[nodiscard]] ThreadedBlockCacheStats stats() const noexcept { return stats_; }
+    [[nodiscard]] std::uint64_t mappingGeneration() const noexcept { return mappingGeneration_; }
+    [[nodiscard]] std::size_t size() const noexcept { return blocks_.size(); }
+
+    void clear() noexcept
+    {
+        clearEntries();
+        stats_ = {};
+        ++mappingGeneration_;
     }
+
+private:
+    struct Slot {
+        Block* block = nullptr;
+        std::size_t instructionIndex = 0;
+    };
+
+    void invalidateBlock(Block& block) noexcept
+    {
+        block.valid = false;
+        ++stats_.invalidations;
+        for (std::size_t index = 0; index < block.instructions.size(); ++index) {
+            auto& slot = slots_[static_cast<std::size_t>(block.instructions[index].address)];
+            if (slot.block == &block) slot = {};
+        }
+    }
+
+    void clearEntries() noexcept
+    {
+        slots_.fill(Slot{});
+        blocks_.clear();
+    }
+
+    std::array<Slot, kAddressCount> slots_{};
+    std::vector<std::unique_ptr<Block>> blocks_{};
+    std::size_t maxBlocks_ = 0;
+    std::uint64_t mappingGeneration_ = 0;
+    ThreadedBlockCacheStats stats_{};
 };
 
 } // namespace BMMQ

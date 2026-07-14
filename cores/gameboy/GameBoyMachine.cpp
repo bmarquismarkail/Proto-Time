@@ -574,7 +574,9 @@ const BMMQ::SaveStateChunk& requireChunk(const BMMQ::SaveStateFile& state, std::
 }
 
 // Game Boy runtime context — mirrors GameGearRuntimeContext pattern.
-class GameBoyRuntimeContext final : public BMMQ::RuntimeContext {
+class GameBoyRuntimeContext final : public BMMQ::RuntimeContext,
+                                    public BMMQ::ITranslationCapability,
+                                    public BMMQ::IInvalidationCapability {
 public:
     GameBoyRuntimeContext(LR3592_PluginRuntime& runtime,
                           GameBoyMemoryMap& memoryMap,
@@ -617,8 +619,16 @@ public:
         if (!romLoaded_) {
             throw std::runtime_error("ROM is not loaded");
         }
+        if (fastExecutionAllowed() && runtime_.cpu().tryExecuteTranslatedBlock()) {
+            return runtime_.getLastFeedback();
+        }
         runtime_.cpu().fetchInto(cachedFetchBlock_);
-        return step(cachedFetchBlock_);
+        const auto feedback = step(cachedFetchBlock_);
+        if (fastExecutionAllowed() &&
+            feedback.executionPath == BMMQ::ExecutionPathHint::CpuOptimizedFastPath) {
+            runtime_.cpu().populateBlockCache(cachedFetchBlock_);
+        }
+        return feedback;
     }
 
     uint8_t read8(uint16_t address) const override {
@@ -738,6 +748,11 @@ public:
         return *activePolicy_;
     }
 
+    BMMQ::ITranslationCapability* translationCapability() override { return this; }
+    BMMQ::IInvalidationCapability* invalidationCapability() override { return this; }
+    const BMMQ::ITranslationCapability* translationCapability() const override { return this; }
+    const BMMQ::IInvalidationCapability* invalidationCapability() const override { return this; }
+
     void refreshExecutionMode() {
         allowFastPath_ = activePolicy_ != nullptr &&
             activePolicy_->guarantee() != BMMQ::ExecutionGuarantee::BaselineFaithful;
@@ -803,6 +818,7 @@ GameBoyMachine::GameBoyMachine() : impl_(std::make_unique<Impl>()) {
             ((address >= 0xFF00u && address < 0xFF80u) || address == 0xFFFFu)
                 ? impl_->memoryMap.read(address)
                 : value);
+        impl_->cpu.cpu().invalidateBlockCacheForWrite(address);
         impl_->cpu.cpu().syncCachedIoRegisterWrite(address, observedValue);
         if (address == 0xFF00u) {
             impl_->input.writeRegister(value);
@@ -830,9 +846,6 @@ GameBoyMachine::GameBoyMachine() : impl_(std::make_unique<Impl>()) {
         }
         if (address < 0x8000u || (address >= 0xA000u && address < 0xC000u)) {
             impl_->cartridge_.write(address, value);
-        }
-        if (address < 0x8000u) {
-            impl_->cpu.cpu().invalidateAllBlockCache();
         }
         if (address == 0xFF40u) {
             if (impl_->pluginManager.initialized()) {
@@ -945,6 +958,7 @@ void GameBoyMachine::loadRom(const std::vector<uint8_t>& bytes) {
 
     // Initialize DMG startup registers
     auto& core = impl_->cpu.cpu();
+    core.invalidateAllBlockCache();
     core.setIme(false);
     core.setStopFlag(false);
     core.clearHaltFlag();
@@ -1025,6 +1039,7 @@ void GameBoyMachine::loadExternalBootRom(const std::vector<uint8_t>& bytes) {
     impl_->memoryMap.mapBootRom(bytes.data(), bytes.size());
     impl_->memoryMap.setIoRegisterRaw(0xFF50u, 0x00u);
     impl_->context->writeRegister16(GB::RegisterId::PC, 0x0000u);
+    impl_->cpu.cpu().invalidateAllBlockCache();
 }
 
 void GameBoyMachine::setRomSourcePath(const std::optional<std::filesystem::path>& path) {
@@ -1071,14 +1086,7 @@ void GameBoyMachine::step() {
     // In the new architecture, boot ROM is handled by memory map intercept
     // The CPU's handleMemoryWrite will catch FF50 writes
 
-    auto fetchBlock = impl_->context->fetch();
-    if (!impl_->context->fastExecutionAllowed() ||
-        !impl_->cpu.cpu().tryExecuteFromCache(fetchBlock)) {
-        impl_->context->step(fetchBlock);
-        if (impl_->context->fastExecutionAllowed()) {
-            impl_->cpu.cpu().populateBlockCache(fetchBlock);
-        }
-    }
+    impl_->context->step();
     ++impl_->stepCounter;
     const auto& feedback = impl_->context->getLastFeedback();
 
@@ -1373,9 +1381,14 @@ void GameBoyMachine::setJoypadState(uint8_t value) {
 GameBoyMachine::BlockCacheStats GameBoyMachine::blockCacheStats() const {
     const auto stats = impl_->cpu.cpu().blockCacheStats();
     return BlockCacheStats{
-        stats.hits.load(std::memory_order_relaxed),
-        stats.misses.load(std::memory_order_relaxed),
-        stats.invalidations.load(std::memory_order_relaxed)
+        stats.hits,
+        stats.misses,
+        stats.invalidations,
+        stats.translations,
+        stats.translatedInstructions,
+        stats.guardFailures,
+        stats.chainContinuations,
+        stats.unsupportedFallbacks
     };
 }
 

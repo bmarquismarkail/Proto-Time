@@ -77,6 +77,7 @@ int main()
         CHECK_TRUE(!defaults.stepLimit.has_value());
         CHECK_TRUE(defaults.windowScale == 3u);
         CHECK_TRUE(!defaults.headless);
+        CHECK_TRUE(defaults.cpuMode == "baseline");
         CHECK_TRUE(!defaults.unthrottled);
         CHECK_TRUE(std::abs(defaults.speedMultiplier - 1.0) < 0.000001);
         CHECK_TRUE(!defaults.startPaused);
@@ -103,6 +104,7 @@ int main()
         "plugin = plugins/frontend.so\n"
         "steps = 1000000\n"
         "headless = yes\n"
+        "cpu_mode = block\n"
         "\n"
         "[video]\n"
         "scale = 5\n"
@@ -139,6 +141,7 @@ int main()
     CHECK_TRUE(fileConfig.stepLimit == 1000000u);
     CHECK_TRUE(fileConfig.windowScale == 5u);
     CHECK_TRUE(fileConfig.headless);
+    CHECK_TRUE(fileConfig.cpuMode == "block");
     CHECK_TRUE(fileConfig.unthrottled);
     CHECK_TRUE(std::abs(fileConfig.speedMultiplier - 2.5) < 0.000001);
     CHECK_TRUE(fileConfig.startPaused);
@@ -167,6 +170,7 @@ int main()
     overrides.stepLimit = 42u;
     overrides.windowScale = 1u;
     overrides.headless = false;
+    overrides.cpuMode = std::string("baseline");
     overrides.unthrottled = false;
     overrides.speedMultiplier = 0.5;
     overrides.startPaused = false;
@@ -195,6 +199,7 @@ int main()
     CHECK_TRUE(fileConfig.stepLimit == 42u);
     CHECK_TRUE(fileConfig.windowScale == 1u);
     CHECK_TRUE(!fileConfig.headless);
+    CHECK_TRUE(fileConfig.cpuMode == "baseline");
     CHECK_TRUE(!fileConfig.unthrottled);
     CHECK_TRUE(std::abs(fileConfig.speedMultiplier - 0.5) < 0.000001);
     CHECK_TRUE(!fileConfig.startPaused);
@@ -217,6 +222,29 @@ int main()
 
     CHECK_TRUE(throwsInvalidArgumentContaining("ROM path was provided more than once", [] {
         (void)parseArgs({"timeEmulator", "--rom", "a.gb", "b.gb"});
+    }));
+
+    {
+        const auto arguments = parseArgs({
+            "timeEmulator", "--core", "gameboy", "--rom", "game.gb",
+            "--cpu-mode", "block"});
+        CHECK_TRUE(arguments.overrides.cpuMode == "block");
+    }
+
+    CHECK_TRUE(throwsInvalidArgumentContaining("Unknown CPU mode", [] {
+        BMMQ::EmulatorConfig config;
+        config.machineKind = std::string("gameboy");
+        config.romPath = "game.gb";
+        config.cpuMode = "jit";
+        BMMQ::validateEmulatorConfig(config);
+    }));
+
+    CHECK_TRUE(throwsInvalidArgumentContaining("only by the gameboy core", [] {
+        BMMQ::EmulatorConfig config;
+        config.machineKind = std::string("gamegear");
+        config.romPath = "game.gg";
+        config.cpuMode = "block";
+        BMMQ::validateEmulatorConfig(config);
     }));
 
     CHECK_TRUE(throwsInvalidArgumentContaining("Missing core selection", [] {

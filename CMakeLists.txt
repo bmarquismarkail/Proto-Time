@@ -537,6 +537,14 @@ target_link_libraries(time-smoke-slim-packets time-gameboy-interpreter-core)
 add_test(NAME smoke-slim-packets COMMAND time-smoke-slim-packets)
 add_test(NAME smoke-block-cache COMMAND time-smoke-block-cache)
 
+add_executable(time-perf-gameboy-block-cache tests/perf_gameboy_block_cache.cpp)
+target_link_libraries(time-perf-gameboy-block-cache time-gameboy-interpreter-core)
+add_test(NAME perf-gameboy-block-cache COMMAND time-perf-gameboy-block-cache)
+set_tests_properties(perf-gameboy-block-cache PROPERTIES
+    LABELS "performance;concurrency"
+    TIMEOUT 120
+)
+
 # Save-state smoke tests for Game Boy memory map, APU, and input.
 add_executable(time-smoke-memory-map-state tests/smoke_memory_map_state.cpp)
 target_link_libraries(time-smoke-memory-map-state time-gameboy-interpreter-core)

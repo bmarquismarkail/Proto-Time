@@ -1800,6 +1800,7 @@ void LR3592_DMG::loadProgram(const std::vector<DataType>& program,
                              AddressType startAddress)
 {
     mem.backingStore().load(std::span<const DataType>(program.data(), program.size()), startAddress);
+    invalidateBlockCacheForWrite(startAddress, program.size());
 }
 
 BMMQ::executionBlock<AddressType, DataType, AddressType>
@@ -2301,44 +2302,36 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
 
 
 
-bool LR3592_DMG::tryExecuteFromCache(BMMQ::fetchBlock<AddressType, DataType>& fetchData)
+bool LR3592_DMG::tryExecuteTranslatedBlock()
 {
     if (!blockCacheEnabled_) {
         return false;
     }
 
-    const auto& blocks = fetchData.getblockData();
-    if (blocks.empty() || blocks.front().data.empty()) {
+    const auto pcAddress = pcRegister_ != nullptr ? pcRegister_->value : AddressType{0};
+    if (stopFlag || (dmaActive && !isHramAddress(pcAddress))) return false;
+    const DataType pending = static_cast<DataType>(
+        (readCachedRegister(hardwareRegisters_.interruptFlags) &
+         readCachedRegister(hardwareRegisters_.ie)) & kInterruptMask);
+    if (haltFlag || (ime && pending != 0u)) {
+        // fetchInto owns HALT-bug and interrupt-entry transitions.
         return false;
     }
 
-    const auto pcAddress = static_cast<AddressType>(fetchData.getbaseAddress());
-    if (!blockCache_.guardValid(pcAddress)) {
-        blockCache_.recordMiss();
+    const auto lookup = blockCache_.lookup(pcAddress);
+    if (!lookup) return false;
+    const auto& instruction = lookup.block->instructions[lookup.instructionIndex];
+    translatedFetchBlock_.setbaseAddress(pcAddress);
+    auto& data = translatedFetchBlock_.getblockData();
+    data.resize(1u);
+    data.front().offset = 0u;
+    data.front().data.assign(
+        instruction.bytes.begin(), instruction.bytes.begin() + instruction.length);
+    if (!tryFastExecute(translatedFetchBlock_)) {
+        blockCache_.invalidate(pcAddress, true);
+        blockCache_.noteUnsupportedFallback();
         return false;
     }
-
-    const auto cachedBlock = blockCache_.getBlock(pcAddress);
-    if (!cachedBlock.has_value()) {
-        blockCache_.recordMiss();
-        return false;
-    }
-
-    const auto& currentBytes = blocks.front().data;
-    if (cachedBlock->size() != currentBytes.size() ||
-        !std::equal(cachedBlock->begin(), cachedBlock->end(), currentBytes.begin())) {
-        blockCache_.invalidateGuard(pcAddress);
-        blockCache_.recordMiss();
-        return false;
-    }
-
-    if (!tryFastExecute(fetchData)) {
-        blockCache_.invalidateGuard(pcAddress);
-        blockCache_.recordMiss();
-        return false;
-    }
-
-    blockCache_.recordHit();
     return true;
 }
 
@@ -2353,8 +2346,55 @@ void LR3592_DMG::populateBlockCache(BMMQ::fetchBlock<AddressType, DataType>& fet
         return;
     }
 
-    const auto pcAddress = static_cast<AddressType>(fetchData.getbaseAddress());
-    blockCache_.setBlock(pcAddress, blocks.front().data, 0xDEADBEEFu);
+    constexpr std::size_t kMaxInstructions = 16u;
+    constexpr std::size_t kMaxBytes = 48u;
+    BMMQ::TranslatedBlockEntry<AddressType, DataType> translated;
+    translated.start = static_cast<AddressType>(fetchData.getbaseAddress());
+    AddressType address = translated.start;
+    std::size_t byteCount = 0u;
+    for (std::size_t index = 0; index < kMaxInstructions && byteCount < kMaxBytes; ++index) {
+        DataType opcode = 0u;
+        std::array<DataType, 3> bytes{};
+        std::uint8_t length = 0u;
+        if (index == 0u) {
+            length = static_cast<std::uint8_t>(std::min<std::size_t>(blocks.front().data.size(), bytes.size()));
+            std::copy_n(blocks.front().data.begin(), length, bytes.begin());
+            opcode = bytes[0];
+        } else {
+            mem.read(std::span<DataType>(&opcode, 1u), address);
+            const auto& entry = opcodeTable[opcode];
+            if (!entry.has_value() || entry->length() == 0u || entry->length() > bytes.size()) {
+                translated.exitReason = BMMQ::TranslatedBlockExitReason::Unsupported;
+                break;
+            }
+            length = entry->length();
+            if (static_cast<std::uint32_t>(address) + length - 1u > UINT16_MAX) {
+                translated.exitReason = BMMQ::TranslatedBlockExitReason::PageBoundary;
+                break;
+            }
+            mem.read(std::span<DataType>(bytes.data(), length), address);
+        }
+        if (length == 0u) break;
+        translated.instructions.push_back({.address = address, .bytes = bytes, .length = length});
+        byteCount += length;
+        translated.end = static_cast<AddressType>(address + length - 1u);
+
+        if (isControlFlowOpcode(opcode)) {
+            translated.exitReason = BMMQ::TranslatedBlockExitReason::ControlFlow;
+            break;
+        }
+        if (opcode == 0x10u || opcode == 0x76u || opcode == 0xF3u || opcode == 0xFBu) {
+            translated.exitReason = BMMQ::TranslatedBlockExitReason::InterruptSensitive;
+            break;
+        }
+        const auto next = static_cast<std::uint32_t>(address) + length;
+        if (next > UINT16_MAX || (next >> 8u) != (static_cast<std::uint32_t>(translated.start) >> 8u)) {
+            translated.exitReason = BMMQ::TranslatedBlockExitReason::PageBoundary;
+            break;
+        }
+        address = static_cast<AddressType>(next);
+    }
+    blockCache_.insert(std::move(translated));
 }
 
 void LR3592_DMG::invalidateBlockCacheForWrite(AddressType address, std::size_t size)
@@ -2403,9 +2443,9 @@ bool LR3592_DMG::blockCacheEnabled() const noexcept
     return blockCacheEnabled_;
 }
 
-BMMQ::CacheStats LR3592_DMG::blockCacheStats() const
+BMMQ::ThreadedBlockCacheStats LR3592_DMG::blockCacheStats() const
 {
-    return blockCache_.getStats();
+    return blockCache_.stats();
 }
 
 void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, AddressType>& block, BMMQ::fetchBlock<AddressType, DataType>& fb)

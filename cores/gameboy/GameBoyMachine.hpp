@@ -111,21 +111,40 @@ public:
     // Boot ROM (legacy alias)
     void loadBootRom(const std::vector<uint8_t>& bytes) { loadExternalBootRom(bytes); }
 
-    // Block cache stats (stub for compatibility)
+    // Emulation-lane translated block-cache diagnostics.
     struct BlockCacheStats {
         std::atomic<uint64_t> hits{0};
         std::atomic<uint64_t> misses{0};
         std::atomic<uint64_t> invalidations{0};
+        std::atomic<uint64_t> translations{0};
+        std::atomic<uint64_t> translatedInstructions{0};
+        std::atomic<uint64_t> guardFailures{0};
+        std::atomic<uint64_t> chainContinuations{0};
+        std::atomic<uint64_t> unsupportedFallbacks{0};
         BlockCacheStats() = default;
-        BlockCacheStats(uint64_t h, uint64_t m, uint64_t i)
-            : hits(h), misses(m), invalidations(i) {}
+        BlockCacheStats(uint64_t h, uint64_t m, uint64_t i,
+                        uint64_t t = 0, uint64_t ti = 0, uint64_t g = 0,
+                        uint64_t c = 0, uint64_t u = 0)
+            : hits(h), misses(m), invalidations(i), translations(t),
+              translatedInstructions(ti), guardFailures(g),
+              chainContinuations(c), unsupportedFallbacks(u) {}
         BlockCacheStats(const BlockCacheStats& other)
             : hits(other.hits.load()), misses(other.misses.load()),
-              invalidations(other.invalidations.load()) {}
+              invalidations(other.invalidations.load()),
+              translations(other.translations.load()),
+              translatedInstructions(other.translatedInstructions.load()),
+              guardFailures(other.guardFailures.load()),
+              chainContinuations(other.chainContinuations.load()),
+              unsupportedFallbacks(other.unsupportedFallbacks.load()) {}
         BlockCacheStats& operator=(const BlockCacheStats& other) {
             hits.store(other.hits.load());
             misses.store(other.misses.load());
             invalidations.store(other.invalidations.load());
+            translations.store(other.translations.load());
+            translatedInstructions.store(other.translatedInstructions.load());
+            guardFailures.store(other.guardFailures.load());
+            chainContinuations.store(other.chainContinuations.load());
+            unsupportedFallbacks.store(other.unsupportedFallbacks.load());
             return *this;
         }
     };

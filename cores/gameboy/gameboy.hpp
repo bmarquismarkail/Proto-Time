@@ -15,6 +15,7 @@
 #include "../../common_microcode.hpp"
 #include "../../inst_cycle/opcode.hpp"
 #include "../../inst_cycle/BlockCache.hpp"
+#include "../../inst_cycle/BlockTranslator.hpp"
 #include "../../inst_cycle/execute/executionBlock.hpp"
 #include "../../inst_cycle/fetch/fetchBlock.hpp"
 #include "../../memory/MemoryPool.hpp"
@@ -312,17 +313,18 @@ public:
                   BMMQ::executionBlock<AddressType, DataType, AddressType>& block);
   bool tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fetchData);
 
-  // Phase 10: guarded single-instruction block cache over the LR3592 fast interpreter.
-  bool tryExecuteFromCache(BMMQ::fetchBlock<AddressType, DataType>& fetchData);
+  // Phase 10: guarded multi-instruction threaded blocks over the LR3592 fast interpreter.
+  bool tryExecuteTranslatedBlock();
   void populateBlockCache(BMMQ::fetchBlock<AddressType, DataType>& fetchData);
   void invalidateBlockCacheForWrite(AddressType address, std::size_t size = 1);
   void invalidateAllBlockCache();
   void setBlockCacheEnabled(bool enabled);
   [[nodiscard]] bool blockCacheEnabled() const noexcept;
-  [[nodiscard]] BMMQ::CacheStats blockCacheStats() const;
+  [[nodiscard]] BMMQ::ThreadedBlockCacheStats blockCacheStats() const;
 
 private:
-  BMMQ::BlockCache<AddressType, std::vector<DataType>> blockCache_;
+  BMMQ::ThreadedBlockCache<AddressType, DataType> blockCache_;
+  BMMQ::fetchBlock<AddressType, DataType> translatedFetchBlock_;
   bool blockCacheEnabled_ = true;
 
 public:

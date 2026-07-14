@@ -136,9 +136,11 @@ int main() {
     assert(host.runtimeContext().attachedPolicyMetadata() != nullptr);
     assert(host.runtimeContext().attachedPolicyMetadata()->id == "bmmq.executor.policy.default-step");
     assert(!host.runtimeContext().capabilityProfile().interception);
+    assert(host.runtimeContext().capabilityProfile().translation);
+    assert(host.runtimeContext().capabilityProfile().invalidation);
     assert(host.runtimeContext().interceptionCapability() == nullptr);
-    assert(host.runtimeContext().translationCapability() == nullptr);
-    assert(host.runtimeContext().invalidationCapability() == nullptr);
+    assert(host.runtimeContext().translationCapability() != nullptr);
+    assert(host.runtimeContext().invalidationCapability() != nullptr);
     assert(host.runtimeContext().optimizationMetadataCapability() == nullptr);
     assert(host.runtimeContext().read8(0x0100) == 0x3E);
     assert(host.runtimeContext().read16(0x0101) == 0x0012);

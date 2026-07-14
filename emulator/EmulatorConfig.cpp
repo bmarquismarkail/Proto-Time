@@ -121,6 +121,8 @@ void applyConfigValue(EmulatorConfig& config,
             config.stepLimit = parseUnsigned(text, label);
         } else if (key == "headless") {
             config.headless = parseBool(text, label);
+        } else if (key == "cpu_mode") {
+            config.cpuMode = lowerAscii(text);
         } else {
             throw std::invalid_argument("Unknown config key: " + label);
         }
@@ -283,6 +285,9 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     if (overrides.headless.has_value()) {
         config.headless = *overrides.headless;
     }
+    if (overrides.cpuMode.has_value()) {
+        config.cpuMode = lowerAscii(*overrides.cpuMode);
+    }
     if (overrides.unthrottled.has_value()) {
         config.unthrottled = *overrides.unthrottled;
     }
@@ -344,6 +349,14 @@ void validateEmulatorConfig(const EmulatorConfig& config)
     const auto kind = parseMachineKind(*config.machineKind);
     auto instance = createMachine(kind);
     const auto& descriptor = instance.descriptor;
+
+    if (config.cpuMode != "baseline" && config.cpuMode != "block") {
+        throw std::invalid_argument("Unknown CPU mode: " + config.cpuMode +
+                                    ". Use baseline or block.");
+    }
+    if (config.cpuMode == "block" && kind != MachineKind::GameBoy) {
+        throw std::invalid_argument("CPU block mode is currently supported only by the gameboy core");
+    }
 
     if (config.romPath.empty()) {
         throw std::invalid_argument("Missing ROM path. Use --rom <file.gb>.");
@@ -416,6 +429,11 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
             }
         } else if (arg == "--unthrottled") {
             arguments.overrides.unthrottled = true;
+        } else if (arg == "--cpu-mode") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--cpu-mode requires baseline or block");
+            }
+            arguments.overrides.cpuMode = lowerAscii(argv[++i]);
         } else if (arg == "--speed") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--speed requires a numeric multiplier");
