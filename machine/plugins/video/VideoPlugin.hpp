@@ -34,6 +34,8 @@ struct VideoPresenterDiagnostics {
     bool renderTargetSupported = false;
     std::int64_t expansionDurationLastNanos = 0;
     std::int64_t expansionDurationHighWaterNanos = 0;
+    // Texture lock/unlock and backend upload overhead only. Pixel conversion
+    // and copying are reported separately by expansionDuration*.
     std::int64_t uploadDurationLastNanos = 0;
     std::int64_t uploadDurationHighWaterNanos = 0;
     std::int64_t renderSubmitDurationLastNanos = 0;

@@ -6,18 +6,18 @@ This plan is derived from the concurrency research in `time-deep-research-improv
 
 ---
 
-## Current State Assessment (as of 2026-05-15)
+## Current State Assessment (as of 2026-07-15)
 
 Proto-Time has already made significant progress toward the recommended architecture. The following table shows what is already implemented versus what still needs work:
 
 | Component | Research Recommendation | Current Status | Gap |
 |-----------|------------------------|----------------|-----|
-| **Audio callback** | Drain-only consumer of prepared FIFO | PARTIALLY DONE | `SdlAudioOutputBackend::drainAudioCallback()` calls `service_->drainReadyOutput()`, which is a drain path. But it also does epoch checking, stale-block skipping, and wake requests inside the callback — not pure zero-fill-on-underrun. The output transport worker thread already produces ready blocks via `produceReadyOutputBlock()`. |
-| **Audio FIFO** | SPSC lock-free ring buffer for raw PCM | PARTIALLY DONE | AudioEngine uses a lock-free MPMC-style ring buffer with atomic read/write indices. Output transport uses a ready-block queue (not truly SPSC — it has epoch-based invalidation). Not a wait-free SPSC as recommended. |
-| **Video presentation** | Latest-frame mailbox, depth-2, hardware-backed presenter | PARTIALLY DONE | VideoEngine has a SPSC-style mailbox with dirty-flag atomics and `drop_oldest` semantics. Depth is configurable (default 2 frames). BUT: SdlVideoPresenter uses `SDL_TEXTUREACCESS_STREAMING` + `SDL_UpdateTexture` + `SDL_RenderCopy`, which is not truly hardware-accelerated presentation — it's a software fallback path even when an accelerated renderer exists. |
+| **Audio callback** | Drain-only consumer of prepared FIFO | DONE | The SDL callback drains prepared device-rate samples and zero-fills underruns. Epoch handling, resampling, allocation, and worker wake policy stay outside the callback. |
+| **Audio FIFO** | SPSC lock-free transport for prepared samples | DONE | The audio worker proactively fills the bounded ready transport before playback; the callback performs only atomic queue operations and copies. |
+| **Video presentation** | Latest-frame mailbox and hardware-backed presenter | DONE | A true latest-only mailbox feeds a persistent locked streaming texture. Hardware mode requires an accelerated SDL renderer and falls back explicitly to the software presenter. |
 | **Timing/sleep** | Separate sleep quantum from instruction eligibility | DONE | TimingService/TimingEngine split with `executionSliceSeconds`, `frontendServiceSliceSeconds`, `minSleepQuantum`, adaptive sleep with spin windows. The timing jitter fix from the brief has been implemented. |
-| **Machine thread isolation** | Emulation thread owns guest state, never blocks on UI/audio/GPU | MOSTLY DONE | Guest stepping runs on its own lane while SDL setup, event pumping, presentation, and teardown remain on the process main thread. Realtime video publication is lock-free and rich MachineView copies are tooling-only. |
-| **Background task pool** | Work-stealing for non-real-time work | PARTIALLY DONE | BackgroundTaskService exists and is used for visual pack reload polling. Not a full work-stealing pool yet. |
+| **Machine thread isolation** | Emulation thread owns guest state, never blocks on UI/audio/GPU | DONE | Guest stepping runs on its own lane while SDL setup, event pumping, presentation, and teardown remain on the process main thread. Realtime video publication is lock-free and rich MachineView copies are tooling-only. |
+| **Background task pool** | Work-stealing for non-real-time work | DONE | The bounded work-stealing pool handles categorized non-real-time jobs, reports queue/steal/failure diagnostics, and never falls back inline onto deadline lanes. |
 | **Render/UI thread separation** | Host thread owns event pump and present, separate from machine loop | DONE | The process main thread is the SDL UI/render lane, as required by SDL thread affinity; guest emulation runs on a separate thread and publishes immutable frames. |
 | **Slim RT video/audio packets** | Narrow data contract for real-time paths | DONE | RealtimeVideoPacket v3 carries a complete independently decodable indexed surface: Indexed2 for Game Boy and Indexed5 for Game Gear's 32-entry CRAM. VDP diagnostics travel in a separate sidecar; VRAM/OAM snapshots remain tooling-only. |
 
@@ -59,15 +59,19 @@ Proto-Time has already made significant progress toward the recommended architec
 
 ## Implementation Roadmap (Ordered by Impact-to-Risk)
 
-### Phase 1: Stabilize Existing Timing (Low Risk, Already Mostly Done)
+### Phase 1: Stabilize Existing Timing (Low Risk)
 **Priority: Highest | Effort: 0-2 days | Risk: Low**
+
+**Status: Complete.** Slice decisions, bounded adaptive spin, authoritative
+sleep/wake histograms, overshoot, frontend-delay, and wake-burst diagnostics are
+implemented and exposed in the runtime diagnostics report.
 
 The timing service already has slice-based execution, frontend servicing thresholds, adaptive sleep with spin windows, and min-sleep-quantum guards. This is largely complete per the timing jitter fix brief.
 
-**Remaining tasks:**
-1. Verify `TimingEngine::recordExecutionSliceCycles()` properly returns `frontendServiceDue` and `executionSliceComplete` decisions based on `frontendServiceSliceSeconds` and `executionSliceSeconds`.
-2. Add a sleep-wake overshoot histogram to TimingStats (already partially present with `sleepOvershootCount`, `sleepOvershootHighWater`).
-3. Ensure the spin window doesn't burn CPU when not needed.
+**Completion contract:**
+1. `TimingEngine::recordExecutionSliceCycles()` returns tested `frontendServiceDue` and `executionSliceComplete` decisions.
+2. `TimingStats` records sleep-wake jitter buckets, overshoot count/last/high-water, and late streaks.
+3. Adaptive spin windows are profile-controlled, capped, and disabled by power/deterministic profiles.
 
 **Verification:** Run existing smoke tests. Audio should be steady in normal throttled mode. Frontend responsiveness acceptable.
 
@@ -76,12 +80,16 @@ The timing service already has slice-based execution, frontend servicing thresho
 ### Phase 2: Instrument Callback Timing and FIFO Occupancy (Low Risk)
 **Priority: Highest | Effort: 1-2 days | Risk: Low**
 
+**Status: Complete.** Callback percentiles and occupancy buckets are exposed,
+and successful production frame-build time is measured independently from the
+presenter stages.
+
 The codebase already has extensive stats tracking (`AudioOutputTransportStats`, `VideoServiceDiagnostics`, presenter duration percentiles, frame age histograms). The real-time diagnostics are well-established.
 
-**Remaining tasks:**
-1. Verify all callback duration percentiles (p50/p95/p99/p999) are being recorded and exposed through the diagnostics report path.
-2. Add ready-audio FIFO occupancy sampling at each callback tick.
-3. Ensure frame build time vs present time are separated in diagnostics.
+**Completion contract:**
+1. Callback duration percentiles (p50/p95/p99/p999) are recorded and exposed through the diagnostics report path.
+2. Ready-audio FIFO occupancy is sampled at each callback tick.
+3. Successful frame-build time is recorded separately from non-overlapping presenter stages.
 
 **Verification:** Run emulator with `--diagnostics-report /tmp/proto-time-diagnostics.json --diagnostics-interval-ms 500` and verify all latency histograms populate correctly.
 
@@ -90,12 +98,17 @@ The codebase already has extensive stats tracking (`AudioOutputTransportStats`, 
 ### Phase 3: Make Audio Callback Purely Drain-Only (Medium Risk)
 **Priority: Highest | Effort: 3-6 days | Risk: Medium**
 
-This is the single biggest improvement for audio quality. The callback in `SdlAudioOutputBackend::Impl::drainAudioCallback()` currently calls `service_->drainReadyOutput()`, which does epoch checking, stale-block skipping, and wake requests. These should be eliminated from the callback path.
+**Status: Complete.** The callback drains prepared device-rate blocks and
+zero-fills only. The worker owns epoch transitions, proactive production, and
+prefill policy.
 
-**Changes needed:**
-1. In `AudioService::drainReadyOutput()`: Remove epoch-based stale block skipping (handle this in the worker thread instead). Remove `audioCallbackWakeRequest_` store — let the worker manage its own wake logic based on FIFO occupancy.
-2. Ensure the output transport worker produces blocks proactively so the callback always has data (or silence to fill).
-3. Add a pre-fill buffer: start producing at least 2 ready blocks before the first callback fires.
+This is the single biggest improvement for audio quality. The retained contract
+keeps all reset, epoch, resampling, and scheduling work outside the callback.
+
+**Completion contract:**
+1. `AudioService::drainReadyOutput()` only pops, copies, and zero-fills.
+2. The output transport worker produces blocks proactively from FIFO occupancy.
+3. Playback begins only after the configured ready-block prefill target is met.
 
 **Code changes:**
 - `machine/AudioService.hpp`: Simplify `drainReadyOutput()` to only: pop block, copy samples, zero-fill remainder on underrun. No epoch checks, no wake requests.
@@ -112,7 +125,7 @@ This is the single biggest improvement for audio quality. The callback in `SdlAu
 
 SDL video and main event handling remain on the process main thread per SDL's development guidance. Guest emulation runs on a separate lane, preventing SDL upload/present work from stalling deterministic machine stepping.
 
-**Changes needed:**
+**Implemented scope:**
 1. Keep the process main thread as the SDL UI/render lane.
 2. Run step machine -> emit events -> check timing -> sleep on the emulation thread. No SDL video/event calls occur there.
 3. Video frames are published to the existing latest-only mailbox from the emulation thread. The main-thread UI lane consumes it.
@@ -131,16 +144,20 @@ SDL video and main event handling remain on the process main thread per SDL's de
 ### Phase 5: Convert Video Mailbox to True Latest-Only (Low Risk)
 **Priority: High | Effort: 1-2 days | Risk: Low**
 
-VideoEngine already implements a SPSC mailbox with dirty-flag atomics and overwrite semantics. The default `mailboxDepthFrames` is 2. This is already close to the recommended "latest-frame mailbox or depth-2 queue."
+**Status: Complete.** `RealtimeVideoMailbox` is a lock-free latest-only
+single-dirty-frame handoff with overwrite, consume, depth, and age diagnostics.
 
-**Changes needed:**
-1. Ensure `submitPresentPacket()` always overwrites (never queues) — it already does this via the atomic mailbox swap.
-2. Verify `tryConsumeLatestFrame()` returns the newest frame and never blocks.
-3. Consider reducing to depth 1 (true single-slot mailbox) if no visual artifacts appear.
+VideoEngine normalizes its configured mailbox depth to the retained latest-only
+contract; intermediate frames are overwritten rather than queued.
+
+**Completion contract:**
+1. `submitPresentPacket()` overwrites rather than queues.
+2. `tryConsumeLatestFrame()` returns the newest frame without blocking.
+3. The externally visible mailbox depth is one dirty latest frame.
 
 **Code changes:**
-- Minimal: possibly adjust default `mailboxDepthFrames` from 2 to 1 in `VideoEngineConfig`.
-- Add a diagnostic counter for mailbox overwrites vs consumes.
+- `VideoEngineConfig` normalizes `mailboxDepthFrames` to one.
+- Diagnostics distinguish overwrites, consumes, age, and high-water depth.
 
 **Verification:** Rapid pause/resume/load sequences should not show stale frames. Frame age histogram should cluster near zero.
 
@@ -153,7 +170,7 @@ VideoEngine already implements a SPSC mailbox with dirty-flag atomics and overwr
 
 The production contract now publishes a complete immutable indexed scanout surface at VBlank. It does not publish live VRAM/OAM views, PPU commands, or reconstruction deltas. This preserves deterministic PPU ownership on the emulation lane and remains correct when the latest-only mailbox overwrites intermediate frames.
 
-**Changes needed:**
+**Implemented scope:**
 1. For video: publish a self-contained indexed surface from the emulation thread. The SDL main-thread lane performs only color expansion, host processing, upload, and presentation.
 2. For audio: The `RealtimeAudioPacket` already carries PCM samples — this is acceptable for the real-time path. But avoid re-deriving full `AudioStateView` if only contiguous PCM is needed.
 
@@ -179,7 +196,7 @@ accelerated renderer, followed by a render copy to the window. A target texture
 is an offscreen composition destination; it does not replace the upload and adds
 an unnecessary copy when no composition pass is required.
 
-**Changes needed:**
+**Implemented scope:**
 1. Keep SDL video, event, upload, and presentation calls on the process main thread.
 2. Preserve the Phase 6 indexed surface through `VideoService` when no processor,
    capture, or non-indexed presenter requires ARGB materialization.
@@ -261,16 +278,14 @@ save retry with a shutdown durability fence, immutable-state debug processing,
 and overload behavior that does not move nonessential work back onto a deadline
 lane. See `.internal/docs/proto-time-phase-9-background-task-pool.md`.
 
-`BackgroundTaskService` exists but is a simple task queue, not a work-stealing pool.
-
-**Changes needed:**
-1. Implement a thread pool with one thread per available core (or configurable).
-2. Add work-stealing for load balancing.
-3. Move visual-pack decode, screenshot capture, save flushes, and debugger snapshots into this pool.
+**Completion contract:**
+1. Production sizing reserves capacity for deadline lanes, remains configurable, and is bounded.
+2. Workers use per-worker queues and stealing for load balancing.
+3. Visual-pack decode, capture, save flushes, and debugger snapshots use categorized background jobs.
 
 **Code changes:**
-- Replace `BackgroundTaskService` with a proper task pool implementation.
-- Update all call sites to use the new interface.
+- `BackgroundThreadPool` provides bounded per-worker queues and stealing.
+- `BackgroundTaskService` routes categorized jobs and exposes aggregate diagnostics.
 
 **Verification:** Run with visual packs loaded. Verify pack decoding doesn't cause emulation stuttering.
 
@@ -289,15 +304,15 @@ one guest instruction. See
 
 CPU acceleration should only come after the latency pipeline is stable. Proto-Time's Game Boy runtime already distinguishes a "fast execute" path from baseline stepping.
 
-**Changes needed:**
-1. Implement a basic-block cache with guard-checked invalidation.
-2. Cache decoded/translated blocks, chain them when safe.
-3. Invalidate on guest state changes that affect execution flow.
+**Implemented scope:**
+1. The basic-block cache uses guard-checked invalidation.
+2. Decoded byte blocks are cached and chained only when safe.
+3. Mapping changes and overlapping writes invalidate affected executable blocks.
 
 **Code changes:**
-- New file: `inst_cycle/BlockCache.hpp` — block storage and lookup.
-- New file: `inst_cycle/BlockTranslator.hpp` — translates guest instruction sequences to native code.
-- Modify `RuntimeContext::step()` to check block cache before baseline interpretation.
+- The Game Boy runtime owns immutable translated byte blocks and direct PC slots.
+- Mapping generations and page-indexed overlapping-write invalidation guard cached blocks.
+- Baseline fallback and per-instruction retirement preserve deterministic device timing.
 
 **Verification:** Instruction throughput increases 2-5x without breaking deterministic behavior. All smoke tests pass. TSAN clean.
 

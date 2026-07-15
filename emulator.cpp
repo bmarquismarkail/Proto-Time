@@ -31,6 +31,7 @@
 
 #include "emulator/AudioKpiStatus.hpp"
 #include "emulator/EmulatorConfig.hpp"
+#include "emulator/DiagnosticsJson.hpp"
 #include "emulator/EmulatorHost.hpp"
 #include "machine/BackgroundTaskService.hpp"
 #include "machine/DebugSnapshotService.hpp"
@@ -591,41 +592,13 @@ void writeDiagnosticsSample(std::ostream& output,
     output << "}";
     output << "}";
 
-    output << ",\"background_tasks\":{";
-    output << "\"worker_count\":" << backgroundStats.workerCount;
-    output << ",\"submitted\":" << backgroundStats.tasksSubmitted;
-    output << ",\"completed\":" << backgroundStats.tasksCompleted;
-    output << ",\"pending\":" << backgroundStats.tasksPending;
-    output << ",\"rejected\":" << backgroundStats.tasksRejected;
-    output << ",\"cancelled\":" << backgroundStats.tasksCancelled;
-    output << ",\"high_water_pending\":" << backgroundStats.tasksHighWaterPending;
-    output << ",\"categories\":{";
-    for (std::size_t index = 0; index < backgroundStats.categories.size(); ++index) {
-        if (index != 0u) output << ',';
-        const auto category = static_cast<BMMQ::BackgroundJobCategory>(index);
-        const auto& categoryStats = backgroundStats.categories[index];
-        output << '\"' << BMMQ::backgroundJobCategoryName(category) << "\":{";
-        output << "\"submitted\":" << categoryStats.submitted;
-        output << ",\"completed\":" << categoryStats.completed;
-        output << ",\"rejected\":" << categoryStats.rejected;
-        output << ",\"cancelled\":" << categoryStats.cancelled;
-        output << ",\"queue_wait_total_ns\":" << categoryStats.queueWaitTotalNanos;
-        output << ",\"queue_wait_high_water_ns\":" << categoryStats.queueWaitHighWaterNanos;
-        output << ",\"execution_total_ns\":" << categoryStats.executionTotalNanos;
-        output << ",\"execution_high_water_ns\":" << categoryStats.executionHighWaterNanos;
-        output << '}';
-    }
-    output << "}}";
+    output << ",\"background_tasks\":";
+    BMMQ::writeBackgroundTaskDiagnosticsJson(output, backgroundStats);
 
-    output << ",\"timing\":{";
-    output << "\"frontend_ticks_scheduled\":" << stats.timingFrontendTicksScheduled;
-    output << ",\"frontend_ticks_executed\":" << stats.timingFrontendTicksExecuted;
-    output << ",\"frontend_ticks_merged\":" << stats.timingFrontendTicksMerged;
-    output << ",\"wake_jitter_under_100us\":" << stats.timingSleepWakeJitterUnder100usCount;
-    output << ",\"wake_jitter_100_to_500us\":" << stats.timingSleepWakeJitter100To500usCount;
-    output << ",\"wake_jitter_500us_to_2ms\":" << stats.timingSleepWakeJitter500usTo2msCount;
-    output << ",\"wake_jitter_over_2ms\":" << stats.timingSleepWakeJitterOver2msCount;
-    output << "}";
+    // TimingService is authoritative in headless and SDL modes. Do not source
+    // these fields from the frontend's asynchronously mirrored stats snapshot.
+    output << ",\"timing\":";
+    BMMQ::writeTimingDiagnosticsJson(output, timingStats);
     output << "}\n";
 }
 

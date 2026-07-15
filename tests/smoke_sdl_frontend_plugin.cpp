@@ -270,6 +270,8 @@ int main(int argc, char** argv)
         frontend->stats().videoDebugFrameBuildSkippedNoConsumerCount;
     const auto videoDebugBuildExecutedBeforeManualPublish =
         frontend->stats().videoDebugFrameBuildExecutedCount;
+    const auto frameBuildSamplesBeforeManualPublish =
+        frontend->stats().videoFrameBuildDurationSampleCount;
     frontend->onVideoEvent(BMMQ::MachineEvent{
         BMMQ::MachineEventType::VBlank,
         BMMQ::PluginCategory::Video,
@@ -288,6 +290,11 @@ int main(int argc, char** argv)
            videoDebugBuildSkipNoConsumerBeforeManualPublish);
     assert(frontend->stats().videoDebugFrameBuildExecutedCount ==
            videoDebugBuildExecutedBeforeManualPublish);
+    const auto frameBuildStats = frontend->stats();
+    assert(frameBuildStats.videoFrameBuildDurationSampleCount ==
+           frameBuildSamplesBeforeManualPublish + 1u);
+    assert(frameBuildStats.videoFrameBuildDurationHighWaterNanos >=
+           frameBuildStats.videoFrameBuildDurationLastNanos);
     if (frontend->backendReady()) {
         assert(frontend->serviceFrontend());
     }

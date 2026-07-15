@@ -202,8 +202,12 @@ bool HardwareVideoPresenter::present(const VideoFramePacket& frame) noexcept
         }
     }
     const auto uploadEnd = std::chrono::steady_clock::now();
-    const auto uploadDurationNanos =
+    // Report upload as lock/unlock and backend overhead only. Pixel expansion
+    // has its own metric and must not be counted in both stage budgets.
+    const auto uploadStageDurationNanos =
         std::chrono::duration_cast<std::chrono::nanoseconds>(uploadEnd - uploadStart).count();
+    const auto uploadDurationNanos = std::max<std::int64_t>(
+        uploadStageDurationNanos - expansionDurationNanos, 0);
     ++diagnostics_.textureUploadCount;
     const auto renderSubmitStart = std::chrono::steady_clock::now();
     if (SDL_RenderClear(renderer_) != 0) {

@@ -283,6 +283,30 @@ public:
             videoFastPathVBlankRequestCountAtomic_.load(std::memory_order_relaxed);
         snapshot.framesPrepared +=
             videoFastPathFramesPreparedCountAtomic_.load(std::memory_order_relaxed);
+        snapshot.videoFrameBuildDurationSampleCount =
+            videoFrameBuildDurationSampleCountAtomic_.load(std::memory_order_relaxed);
+        snapshot.videoFrameBuildDurationLastNanos =
+            videoFrameBuildDurationLastNanosAtomic_.load(std::memory_order_relaxed);
+        snapshot.videoFrameBuildDurationHighWaterNanos =
+            videoFrameBuildDurationHighWaterNanosAtomic_.load(std::memory_order_relaxed);
+        snapshot.videoFrameBuildDurationUnder50usCount =
+            videoFrameBuildDurationUnder50usCountAtomic_.load(std::memory_order_relaxed);
+        snapshot.videoFrameBuildDuration50To100usCount =
+            videoFrameBuildDuration50To100usCountAtomic_.load(std::memory_order_relaxed);
+        snapshot.videoFrameBuildDuration100To250usCount =
+            videoFrameBuildDuration100To250usCountAtomic_.load(std::memory_order_relaxed);
+        snapshot.videoFrameBuildDuration250To500usCount =
+            videoFrameBuildDuration250To500usCountAtomic_.load(std::memory_order_relaxed);
+        snapshot.videoFrameBuildDuration500usTo1msCount =
+            videoFrameBuildDuration500usTo1msCountAtomic_.load(std::memory_order_relaxed);
+        snapshot.videoFrameBuildDuration1To2msCount =
+            videoFrameBuildDuration1To2msCountAtomic_.load(std::memory_order_relaxed);
+        snapshot.videoFrameBuildDuration2To5msCount =
+            videoFrameBuildDuration2To5msCountAtomic_.load(std::memory_order_relaxed);
+        snapshot.videoFrameBuildDuration5To10msCount =
+            videoFrameBuildDuration5To10msCountAtomic_.load(std::memory_order_relaxed);
+        snapshot.videoFrameBuildDurationOver10msCount =
+            videoFrameBuildDurationOver10msCountAtomic_.load(std::memory_order_relaxed);
         // Publication diagnostics are atomically accumulated by VideoService's
         // realtime mailbox. Querying them here is control-plane observation and
         // keeps onVideoEvent's steady-state path lock-free.
@@ -921,6 +945,13 @@ public:
             event.type == BMMQ::MachineEventType::MemoryWriteObserved ||
             event.type == BMMQ::MachineEventType::VBlank ||
             event.type == BMMQ::MachineEventType::VideoScanlineReady;
+        const bool needsDebugModel = debugSnapshotService_ != nullptr;
+        const bool measureFrameBuild =
+            event.type == BMMQ::MachineEventType::VBlank ||
+            (carriesVideoStateEarly && needsDebugModel);
+        const auto frameBuildStartedAt = measureFrameBuild
+            ? std::chrono::steady_clock::now()
+            : std::chrono::steady_clock::time_point{};
 
         std::optional<BMMQ::RealtimeVideoSubmission> prebuiltRealtime;
         if (event.type == BMMQ::MachineEventType::VBlank) {
@@ -936,7 +967,6 @@ public:
         // away in production mode (Phase 38B).
         // debugSnapshotService_ is set in onAttach/onDetach, both serial with
         // onVideoEvent on the emulation thread, so reading it here is safe.
-        const bool needsDebugModel = debugSnapshotService_ != nullptr;
         std::optional<BMMQ::VideoDebugFrameModel> prebuiltDebugModel;
         if (carriesVideoStateEarly && needsDebugModel) {
             const BMMQ::VideoDebugRenderRequest request{
@@ -974,6 +1004,7 @@ public:
                 renderServiceFramePending_.store(true, std::memory_order_release);
                 renderServiceWakeCv_.notify_all();
                 onVideoEventFrameNotifyOutsideLockCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
+                recordFrameBuildDuration(std::chrono::steady_clock::now() - frameBuildStartedAt);
                 return;
             }
             videoFastPathPacketSkippedCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
@@ -982,13 +1013,9 @@ public:
         // submittedVideoFrame is hoisted before the lock so it is visible to the
         // post-lock notification block (Phase 36A).
         bool submittedVideoFrame = false;
-        // T2.3 Phase 3: time the frame build section (lock-protected)
-        const auto frameBuildT0 = std::chrono::steady_clock::now();
         {
             std::unique_lock<std::mutex> lock(sharedStateMutex_);
             if (!config_.enableVideo) {
-                // T2.3: record early-return frame build time
-                recordFrameBuildDuration(std::chrono::steady_clock::now() - frameBuildT0);
                 return;
             }
             ++stats_.videoEvents;
@@ -1110,6 +1137,10 @@ public:
                 appendLog("sdl: scanline frame prepared");
             }
         } // sharedStateMutex_ released here
+
+        if (submittedVideoFrame && measureFrameBuild) {
+            recordFrameBuildDuration(std::chrono::steady_clock::now() - frameBuildStartedAt);
+        }
 
         // Phase 36A: notify the render service AFTER the lock has been released.
         // renderServiceFramePending_ is an atomic; renderServiceWakeCv_ is paired
@@ -2118,36 +2149,36 @@ private:
         stats_.timingProfileName = BMMQ::timingPolicyProfileName(timingStats.activeProfile);
     }
 
-    // T2.3 Phase 3: record frame build duration histogram
+    // Record completed frame builds without taking the frontend lock. The
+    // emulation lane is the sole writer; atomics allow main-thread snapshots.
     void recordFrameBuildDuration(std::chrono::nanoseconds duration) noexcept
     {
         const auto nanos = std::max<std::int64_t>(duration.count(), 0);
-        stats_.videoFrameBuildDurationLastNanos = nanos;
-        auto previous = stats_.videoFrameBuildDurationHighWaterNanos;
+        videoFrameBuildDurationLastNanosAtomic_.store(nanos, std::memory_order_relaxed);
+        auto previous = videoFrameBuildDurationHighWaterNanosAtomic_.load(std::memory_order_relaxed);
         while (nanos > previous &&
-               !__sync_bool_compare_and_swap(&stats_.videoFrameBuildDurationHighWaterNanos, previous, nanos)) {
-            previous = stats_.videoFrameBuildDurationHighWaterNanos;
+               !videoFrameBuildDurationHighWaterNanosAtomic_.compare_exchange_weak(
+                   previous, nanos, std::memory_order_relaxed)) {
         }
-        ++stats_.videoFrameBuildDurationSampleCount;
-        // Bucket into histogram categories
+        videoFrameBuildDurationSampleCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
         if (nanos < 50'000) {
-            ++stats_.videoFrameBuildDurationUnder50usCount;
+            videoFrameBuildDurationUnder50usCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
         } else if (nanos < 100'000) {
-            ++stats_.videoFrameBuildDuration50To100usCount;
+            videoFrameBuildDuration50To100usCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
         } else if (nanos < 250'000) {
-            ++stats_.videoFrameBuildDuration100To250usCount;
+            videoFrameBuildDuration100To250usCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
         } else if (nanos < 500'000) {
-            ++stats_.videoFrameBuildDuration250To500usCount;
+            videoFrameBuildDuration250To500usCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
         } else if (nanos < 1'000'000) {
-            ++stats_.videoFrameBuildDuration500usTo1msCount;
+            videoFrameBuildDuration500usTo1msCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
         } else if (nanos < 2'000'000) {
-            ++stats_.videoFrameBuildDuration1To2msCount;
+            videoFrameBuildDuration1To2msCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
         } else if (nanos < 5'000'000) {
-            ++stats_.videoFrameBuildDuration2To5msCount;
+            videoFrameBuildDuration2To5msCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
         } else if (nanos < 10'000'000) {
-            ++stats_.videoFrameBuildDuration5To10msCount;
+            videoFrameBuildDuration5To10msCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
         } else {
-            ++stats_.videoFrameBuildDurationOver10msCount;
+            videoFrameBuildDurationOver10msCountAtomic_.fetch_add(1u, std::memory_order_relaxed);
         }
     }
 
@@ -2990,6 +3021,18 @@ private:
     std::atomic<uint64_t> videoFastPathRenderRequestCountAtomic_{0};
     std::atomic<uint64_t> videoFastPathVBlankRequestCountAtomic_{0};
     std::atomic<uint64_t> videoFastPathFramesPreparedCountAtomic_{0};
+    std::atomic<std::size_t> videoFrameBuildDurationSampleCountAtomic_{0};
+    std::atomic<std::int64_t> videoFrameBuildDurationLastNanosAtomic_{0};
+    std::atomic<std::int64_t> videoFrameBuildDurationHighWaterNanosAtomic_{0};
+    std::atomic<std::size_t> videoFrameBuildDurationUnder50usCountAtomic_{0};
+    std::atomic<std::size_t> videoFrameBuildDuration50To100usCountAtomic_{0};
+    std::atomic<std::size_t> videoFrameBuildDuration100To250usCountAtomic_{0};
+    std::atomic<std::size_t> videoFrameBuildDuration250To500usCountAtomic_{0};
+    std::atomic<std::size_t> videoFrameBuildDuration500usTo1msCountAtomic_{0};
+    std::atomic<std::size_t> videoFrameBuildDuration1To2msCountAtomic_{0};
+    std::atomic<std::size_t> videoFrameBuildDuration2To5msCountAtomic_{0};
+    std::atomic<std::size_t> videoFrameBuildDuration5To10msCountAtomic_{0};
+    std::atomic<std::size_t> videoFrameBuildDurationOver10msCountAtomic_{0};
     // Phase 36B render-service wait-block shadow atomics.
     // These are incremented inside the renderServiceWaitMutex_ condvar block (or
     // just before it, under no lock), so they cannot be written directly to stats_
