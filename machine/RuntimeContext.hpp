@@ -88,9 +88,15 @@ public:
             return result;
         }
 
+        beginExecutionSlice(budget);
+        struct ExecutionSliceScope final {
+            RuntimeContext& context;
+            ~ExecutionSliceScope() { context.endExecutionSlice(); }
+        } scope{*this};
+
         while (result.progress.retiredInstructions < budget.maxInstructions &&
                result.progress.retiredCycles < budget.maxCycles) {
-            result.lastFeedback = step();
+            result.lastFeedback = stepWithinExecutionSlice();
             ++result.progress.retiredInstructions;
             const auto cycles = static_cast<std::uint64_t>(result.lastFeedback.retiredCycles);
             if (cycles > std::numeric_limits<std::uint64_t>::max() -
@@ -170,6 +176,14 @@ public:
     virtual const ITranslationCapability* translationCapability() const { return nullptr; }
     virtual const IInvalidationCapability* invalidationCapability() const { return nullptr; }
     virtual const IOptimizationMetadataCapability* optimizationMetadataCapability() const { return nullptr; }
+
+protected:
+    // Backends may retain slice-scoped dispatch state between instructions, but
+    // every step must still return before the retirement sink is invoked. The
+    // default path remains one ordinary RuntimeContext::step() per retirement.
+    virtual void beginExecutionSlice(const ExecutionBudget&) {}
+    virtual CpuFeedback stepWithinExecutionSlice() { return step(); }
+    virtual void endExecutionSlice() noexcept {}
 };
 
 } // namespace BMMQ

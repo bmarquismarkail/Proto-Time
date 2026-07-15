@@ -134,6 +134,9 @@ public:
         std::atomic<uint64_t> irGuardChecks{0};
         std::atomic<uint64_t> irGuardCheckNanos{0};
         std::atomic<uint64_t> irExecutionNanos{0};
+        std::atomic<uint64_t> irBlockEntries{0};
+        std::atomic<uint64_t> irBlockContinuations{0};
+        std::atomic<uint64_t> irBlockContinuationRejects{0};
         BlockCacheStats() = default;
         BlockCacheStats(uint64_t h, uint64_t m, uint64_t i,
                         uint64_t t = 0, uint64_t ti = 0, uint64_t g = 0,
@@ -142,7 +145,9 @@ public:
                         uint64_t irg = 0, uint64_t irf = 0,
                         uint64_t irli = 0, uint64_t irit = 0,
                         uint64_t irln = 0, uint64_t irgc = 0,
-                        uint64_t irgn = 0, uint64_t iren = 0)
+                        uint64_t irgn = 0, uint64_t iren = 0,
+                        uint64_t irbe = 0, uint64_t irbc = 0,
+                        uint64_t irbr = 0)
             : hits(h), misses(m), invalidations(i), translations(t),
               translatedInstructions(ti), guardFailures(g),
               chainContinuations(c), unsupportedFallbacks(u),
@@ -150,7 +155,8 @@ public:
               irGuardFailures(irg), irFallbacks(irf),
               irLoweredInstructions(irli), irIneligibleTranslations(irit),
               irLoweringNanos(irln), irGuardChecks(irgc), irGuardCheckNanos(irgn),
-              irExecutionNanos(iren) {}
+              irExecutionNanos(iren), irBlockEntries(irbe),
+              irBlockContinuations(irbc), irBlockContinuationRejects(irbr) {}
         BlockCacheStats(const BlockCacheStats& other)
             : hits(other.hits.load()), misses(other.misses.load()),
               invalidations(other.invalidations.load()),
@@ -168,7 +174,10 @@ public:
               irLoweringNanos(other.irLoweringNanos.load()),
               irGuardChecks(other.irGuardChecks.load()),
               irGuardCheckNanos(other.irGuardCheckNanos.load()),
-              irExecutionNanos(other.irExecutionNanos.load()) {}
+              irExecutionNanos(other.irExecutionNanos.load()),
+              irBlockEntries(other.irBlockEntries.load()),
+              irBlockContinuations(other.irBlockContinuations.load()),
+              irBlockContinuationRejects(other.irBlockContinuationRejects.load()) {}
         BlockCacheStats& operator=(const BlockCacheStats& other) {
             hits.store(other.hits.load());
             misses.store(other.misses.load());
@@ -188,6 +197,9 @@ public:
             irGuardChecks.store(other.irGuardChecks.load());
             irGuardCheckNanos.store(other.irGuardCheckNanos.load());
             irExecutionNanos.store(other.irExecutionNanos.load());
+            irBlockEntries.store(other.irBlockEntries.load());
+            irBlockContinuations.store(other.irBlockContinuations.load());
+            irBlockContinuationRejects.store(other.irBlockContinuationRejects.load());
             return *this;
         }
     };

@@ -328,6 +328,18 @@ deferred until a block-level backend can preserve synchronous per-instruction
 retirement with less dispatch and guard overhead. See
 `.internal/docs/proto-time-phase-11b-ir-hardening-measurement.md`.
 
+**Phase 11C status: Complete.** `RuntimeContext` now supports slice-scoped
+backend state while retaining a mandatory return through machine and host
+retirement after every guest instruction. The Game Boy portable backend validates
+full guards once at block entry, then uses an indexed cursor with mapping, helper,
+execution-state, validity, and PC checks between retirements. Overlapping writes,
+interrupt/HALT/DMA boundaries, observer exits, and slice budgets reject
+continuation before another instruction begins. New diagnostics and differential
+tests cover guard amortization and stale-code rejection. The synthetic IR result
+improves from approximately baseline speed to about 1.15x baseline, while the
+Phase 10 byte backend remains above 2x. See
+`.internal/docs/proto-time-phase-11c-block-level-backend.md`.
+
 Full just-in-time compilation is the highest upside but also the largest correctness burden. Defer until all other phases are stable.
 
 **Considerations:**

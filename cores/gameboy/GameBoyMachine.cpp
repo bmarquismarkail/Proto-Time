@@ -762,6 +762,23 @@ public:
         return allowFastPath_;
     }
 
+protected:
+    void beginExecutionSlice(const BMMQ::ExecutionBudget&) override {
+        runtime_.cpu().beginPortableIrExecutionSlice();
+    }
+
+    BMMQ::CpuFeedback stepWithinExecutionSlice() override {
+        if (fastExecutionAllowed() &&
+            runtime_.cpu().tryExecutePortableIrBlockInstruction()) {
+            return runtime_.getLastFeedback();
+        }
+        return step();
+    }
+
+    void endExecutionSlice() noexcept override {
+        runtime_.cpu().endPortableIrExecutionSlice();
+    }
+
 private:
     static uint16_t resolveEchoAddress(uint16_t address) {
         if (address >= 0xE000 && address <= 0xFDFF) {
@@ -1417,7 +1434,10 @@ GameBoyMachine::BlockCacheStats GameBoyMachine::blockCacheStats() const {
         stats.irLoweringNanos,
         stats.irGuardChecks,
         stats.irGuardCheckNanos,
-        stats.irExecutionNanos
+        stats.irExecutionNanos,
+        stats.irBlockEntries,
+        stats.irBlockContinuations,
+        stats.irBlockContinuationRejects
     };
 }
 

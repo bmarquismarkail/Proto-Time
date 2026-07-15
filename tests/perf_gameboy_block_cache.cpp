@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdint>
 #include <iostream>
+#include <stdexcept>
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
@@ -32,9 +33,22 @@ struct RunResult {
     std::uint64_t irGuardChecks = 0;
     std::uint64_t irGuardCheckNanos = 0;
     std::uint64_t irExecutionNanos = 0;
+    std::uint64_t irBlockEntries = 0;
+    std::uint64_t irBlockContinuations = 0;
+    std::uint64_t irBlockContinuationRejects = 0;
 };
 
 enum class Mode { Baseline, Block, Ir };
+
+class ContinueRetirementSink final : public BMMQ::InstructionRetirementSink {
+public:
+    BMMQ::InstructionRetirementDecision retireInstruction(
+        const BMMQ::CpuFeedback&,
+        const BMMQ::ExecutionSliceProgress&) override
+    {
+        return BMMQ::InstructionRetirementDecision::continueSlice();
+    }
+};
 
 RunResult run(Mode mode, std::size_t steps)
 {
@@ -49,16 +63,27 @@ RunResult run(Mode mode, std::size_t steps)
         machine.setBlockCacheEnabled(false);
     }
 
+    ContinueRetirementSink retirementSink;
     constexpr std::size_t kWarmupSteps = 4'096u;
-    for (std::size_t index = 0; index < kWarmupSteps; ++index) {
-        machine.runtimeContext().step();
+    const auto warmup = machine.runtimeContext().runSlice({
+        .maxInstructions = kWarmupSteps,
+        .stopOnSegmentBoundary = false,
+    }, retirementSink);
+    if (warmup.progress.retiredInstructions != kWarmupSteps) {
+        throw std::runtime_error("block-cache benchmark warmup ended early");
     }
+    assert(warmup.progress.retiredInstructions == kWarmupSteps);
 
     const auto started = std::chrono::steady_clock::now();
-    for (std::size_t index = 0; index < steps; ++index) {
-        machine.runtimeContext().step();
-    }
+    const auto measured = machine.runtimeContext().runSlice({
+        .maxInstructions = steps,
+        .stopOnSegmentBoundary = false,
+    }, retirementSink);
     const auto elapsed = std::chrono::steady_clock::now() - started;
+    if (measured.progress.retiredInstructions != steps) {
+        throw std::runtime_error("block-cache benchmark measurement ended early");
+    }
+    assert(measured.progress.retiredInstructions == steps);
     const auto stats = machine.blockCacheStats();
     return {
         std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count(),
@@ -70,6 +95,9 @@ RunResult run(Mode mode, std::size_t steps)
         stats.irGuardChecks.load(),
         stats.irGuardCheckNanos.load(),
         stats.irExecutionNanos.load(),
+        stats.irBlockEntries.load(),
+        stats.irBlockContinuations.load(),
+        stats.irBlockContinuationRejects.load(),
     };
 }
 
@@ -90,6 +118,9 @@ int main()
     std::uint64_t irGuardChecks = 0;
     std::uint64_t irGuardCheckNanos = 0;
     std::uint64_t irExecutionNanos = 0;
+    std::uint64_t irBlockEntries = 0;
+    std::uint64_t irBlockContinuations = 0;
+    std::uint64_t irBlockContinuationRejects = 0;
     for (std::size_t runIndex = 0; runIndex < kRuns; ++runIndex) {
         baseline.push_back(run(Mode::Baseline, kSteps).nanoseconds);
         const auto result = run(Mode::Block, kSteps);
@@ -104,6 +135,9 @@ int main()
         irGuardChecks += irResult.irGuardChecks;
         irGuardCheckNanos += irResult.irGuardCheckNanos;
         irExecutionNanos += irResult.irExecutionNanos;
+        irBlockEntries += irResult.irBlockEntries;
+        irBlockContinuations += irResult.irBlockContinuations;
+        irBlockContinuationRejects += irResult.irBlockContinuationRejects;
     }
     std::sort(baseline.begin(), baseline.end());
     std::sort(block.begin(), block.end());
@@ -137,6 +171,9 @@ int main()
               << " ir_lowered_instructions=" << irLoweredInstructions
               << " ir_guard_avg_ns=" << averageGuardNanos
               << " ir_execution_avg_ns=" << averageExecutionNanos
+              << " ir_block_entries=" << irBlockEntries
+              << " ir_block_continuations=" << irBlockContinuations
+              << " ir_block_continuation_rejects=" << irBlockContinuationRejects
               << " hits=" << hits
               << " chain_continuations=" << continuations << '\n';
 
@@ -148,6 +185,9 @@ int main()
     assert(irGuardChecks > 0u);
     assert(irGuardCheckNanos > 0u);
     assert(irExecutionNanos > 0u);
+    assert(irBlockEntries > 0u);
+    assert(irBlockContinuations > 0u);
+    assert(irBlockContinuations > irBlockEntries);
     assert(speedup >= 2.0);
     return 0;
 }

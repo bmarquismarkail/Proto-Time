@@ -218,6 +218,11 @@ void writeDiagnosticsSample(std::ostream& output,
         output << ",\"ir_guard_checks\":" << blockCacheStats->irGuardChecks.load();
         output << ",\"ir_guard_check_ns\":" << blockCacheStats->irGuardCheckNanos.load();
         output << ",\"ir_execution_ns\":" << blockCacheStats->irExecutionNanos.load();
+        output << ",\"ir_block_entries\":" << blockCacheStats->irBlockEntries.load();
+        output << ",\"ir_block_continuations\":"
+               << blockCacheStats->irBlockContinuations.load();
+        output << ",\"ir_block_continuation_rejects\":"
+               << blockCacheStats->irBlockContinuationRejects.load();
     }
     output << "}";
 

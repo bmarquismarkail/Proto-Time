@@ -178,6 +178,11 @@ void testEveryPortableIrGuardFailureIsClassified()
     code.byte = 0xFFu;
     assert(GB::IRExecution::validateGuards(*block, context) ==
            GB::IRExecution::GuardFailure::CodeBytes);
+    assert(GB::IRExecution::validateContinuationGuards(*block, 7u, 0u) ==
+           GB::IRExecution::GuardFailure::None);
+    assert(GB::IRExecution::validateContinuationGuards(
+               *block, 7u, GB::IRExecution::InterruptPending) ==
+           GB::IRExecution::GuardFailure::ExecutionState);
     code.byte = 0x00u;
     code.eligible = false;
     assert(GB::IRExecution::validateGuards(*block, context) ==

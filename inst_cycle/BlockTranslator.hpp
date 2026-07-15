@@ -59,6 +59,9 @@ struct ThreadedBlockCacheStats {
     std::uint64_t irGuardChecks = 0;
     std::uint64_t irGuardCheckNanos = 0;
     std::uint64_t irExecutionNanos = 0;
+    std::uint64_t irBlockEntries = 0;
+    std::uint64_t irBlockContinuations = 0;
+    std::uint64_t irBlockContinuationRejects = 0;
     std::array<std::uint64_t, 5> exits{};
 };
 
@@ -164,6 +167,9 @@ public:
         stats_.irGuardCheckNanos += elapsedNanos;
     }
     void noteIrIneligibleTranslation() noexcept { ++stats_.irIneligibleTranslations; }
+    void noteIrBlockEntry() noexcept { ++stats_.irBlockEntries; }
+    void noteIrBlockContinuation() noexcept { ++stats_.irBlockContinuations; }
+    void noteIrBlockContinuationReject() noexcept { ++stats_.irBlockContinuationRejects; }
     [[nodiscard]] ThreadedBlockCacheStats stats() const noexcept { return stats_; }
     [[nodiscard]] std::uint64_t mappingGeneration() const noexcept { return mappingGeneration_; }
     [[nodiscard]] std::size_t size() const noexcept { return blocks_.size(); }

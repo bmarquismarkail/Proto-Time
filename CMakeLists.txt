@@ -563,6 +563,13 @@ target_link_libraries(time-smoke-gameboy-ir-boundary-corpus
 add_test(NAME smoke-gameboy-ir-boundary-corpus
     COMMAND time-smoke-gameboy-ir-boundary-corpus)
 
+add_executable(time-smoke-gameboy-ir-block-backend
+    tests/smoke_gameboy_ir_block_backend.cpp)
+target_link_libraries(time-smoke-gameboy-ir-block-backend
+    time-gameboy-interpreter-core)
+add_test(NAME smoke-gameboy-ir-block-backend
+    COMMAND time-smoke-gameboy-ir-block-backend)
+
 add_executable(time-perf-gameboy-block-cache tests/perf_gameboy_block_cache.cpp)
 target_link_libraries(time-perf-gameboy-block-cache time-gameboy-interpreter-core)
 add_test(NAME perf-gameboy-block-cache COMMAND time-perf-gameboy-block-cache)

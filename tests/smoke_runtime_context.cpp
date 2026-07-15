@@ -37,6 +37,9 @@ struct AdvancedRuntimeContext final : BMMQ::RuntimeContext {
     AdvancedInvalidation invalidation;
     AdvancedOptimizationMetadata optimization;
     AdvancedPolicy policy;
+    std::uint64_t sliceBegins = 0u;
+    std::uint64_t sliceSteps = 0u;
+    std::uint64_t sliceEnds = 0u;
 
     FetchBlock fetch() override { return {}; }
     ExecutionBlock decode(FetchBlock&) override { return {}; }
@@ -70,6 +73,14 @@ struct AdvancedRuntimeContext final : BMMQ::RuntimeContext {
     const BMMQ::ITranslationCapability* translationCapability() const override { return &translation; }
     const BMMQ::IInvalidationCapability* invalidationCapability() const override { return &invalidation; }
     const BMMQ::IOptimizationMetadataCapability* optimizationMetadataCapability() const override { return &optimization; }
+
+protected:
+    void beginExecutionSlice(const BMMQ::ExecutionBudget&) override { ++sliceBegins; }
+    BMMQ::CpuFeedback stepWithinExecutionSlice() override {
+        ++sliceSteps;
+        return step();
+    }
+    void endExecutionSlice() noexcept override { ++sliceEnds; }
 };
 
 struct StopAfterThreeRetirements final : BMMQ::InstructionRetirementSink {
@@ -122,5 +133,8 @@ int main()
     assert(slice.progress.retiredCycles == 12u);
     assert(slice.lastFeedback.pcAfter == 3u);
     assert(slice.exitReason == BMMQ::ExecutionSliceExitReason::RetirementRequested);
+    assert(context.sliceBegins == 1u);
+    assert(context.sliceSteps == 3u);
+    assert(context.sliceEnds == 1u);
     return 0;
 }

@@ -260,6 +260,36 @@ GuardFailure validateGuards(const BMMQ::IR::Block& block,
     return GuardFailure::None;
 }
 
+GuardFailure validateContinuationGuards(
+    const BMMQ::IR::Block& block,
+    std::uint64_t mappingGeneration,
+    std::uint64_t executionState) noexcept
+{
+    for (const auto& guard : block.guards) {
+        switch (guard.kind) {
+        case BMMQ::IR::GuardKind::MappingGeneration:
+            if (guard.expected != mappingGeneration ||
+                block.mappingGeneration != mappingGeneration) {
+                return GuardFailure::MappingGeneration;
+            }
+            break;
+        case BMMQ::IR::GuardKind::HelperAbi:
+            if (guard.expected != kAbiVersion) return GuardFailure::HelperAbi;
+            break;
+        case BMMQ::IR::GuardKind::ExecutionState:
+            if ((executionState & guard.mask) != (guard.expected & guard.mask)) {
+                return GuardFailure::ExecutionState;
+            }
+            break;
+        case BMMQ::IR::GuardKind::CodeBytes:
+            // Entry validation established the bytes. Overlapping writes and
+            // mapping changes invalidate the owning Phase 10 block.
+            break;
+        }
+    }
+    return GuardFailure::None;
+}
+
 InstructionResult PortableExecutor::execute(const BMMQ::IR::GuestInstruction& instruction,
                                             const ExecutionAbiV1& abi)
 {

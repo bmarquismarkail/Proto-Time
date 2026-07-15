@@ -2322,7 +2322,8 @@ bool LR3592_DMG::tryExecuteTranslatedBlock()
 
     const auto lookup = blockCache_.lookup(pcAddress);
     if (!lookup) return false;
-    if (portableIrEnabled_ && lookup.block->intermediateRepresentation) {
+    if (portableIrEnabled_ && !portableIrExecutionSliceActive_ &&
+        lookup.block->intermediateRepresentation) {
         if (tryExecutePortableIr(*lookup.block, pcAddress, lookup.instructionIndex)) return true;
         if (!lookup.block->valid) return false;
     }
@@ -2546,6 +2547,16 @@ bool LR3592_DMG::tryExecutePortableIr(
         blockCache_.invalidate(pcAddress, true);
         return false;
     }
+    return executePortableIrInstruction(block, pcAddress, instructionIndex);
+}
+
+bool LR3592_DMG::executePortableIrInstruction(
+    const BMMQ::TranslatedBlockEntry<AddressType, DataType>& block,
+    AddressType pcAddress,
+    std::size_t instructionIndex)
+{
+    if (!block.intermediateRepresentation) return false;
+    const auto& irBlock = *block.intermediateRepresentation;
     if (instructionIndex >= irBlock.instructions.size() ||
         irBlock.instructions[instructionIndex].address != pcAddress) {
         blockCache_.noteIrFallback();
@@ -2575,6 +2586,114 @@ bool LR3592_DMG::tryExecutePortableIr(
         std::chrono::steady_clock::now() - executionStarted).count();
     blockCache_.noteIrExecution(static_cast<std::uint64_t>(executionNanos));
     return true;
+}
+
+bool LR3592_DMG::portableIrBlockContinuationValid() const noexcept
+{
+    if (!portableIrBlockSession_.has_value() || !portableIrEnabled_ || !blockCacheEnabled_) {
+        return false;
+    }
+    const auto& session = *portableIrBlockSession_;
+    if (session.block == nullptr || !session.block->valid ||
+        session.mappingGeneration != blockCache_.mappingGeneration() ||
+        session.block->mappingGeneration != session.mappingGeneration ||
+        !session.block->intermediateRepresentation) {
+        return false;
+    }
+    if (GB::IRExecution::validateContinuationGuards(
+            *session.block->intermediateRepresentation,
+            blockCache_.mappingGeneration(), irExecutionState()) !=
+        GB::IRExecution::GuardFailure::None) {
+        return false;
+    }
+    const auto& instructions = session.block->intermediateRepresentation->instructions;
+    if (session.nextInstructionIndex >= instructions.size() || pcRegister_ == nullptr) {
+        return false;
+    }
+    return instructions[session.nextInstructionIndex].address == pcRegister_->value;
+}
+
+void LR3592_DMG::resetPortableIrBlockSession() noexcept
+{
+    portableIrBlockSession_.reset();
+}
+
+void LR3592_DMG::beginPortableIrExecutionSlice() noexcept
+{
+    resetPortableIrBlockSession();
+    portableIrExecutionSliceActive_ = true;
+}
+
+bool LR3592_DMG::tryExecutePortableIrBlockInstruction()
+{
+    if (!portableIrEnabled_ || !blockCacheEnabled_) {
+        resetPortableIrBlockSession();
+        return false;
+    }
+
+    bool continuation = portableIrBlockSession_.has_value();
+    if (continuation && !portableIrBlockContinuationValid()) {
+        blockCache_.noteIrBlockContinuationReject();
+        resetPortableIrBlockSession();
+        return false;
+    }
+
+    if (!portableIrBlockSession_.has_value()) {
+        const auto pcAddress = pcRegister_ != nullptr ? pcRegister_->value : AddressType{0};
+        const auto lookup = blockCache_.lookup(pcAddress);
+        if (!lookup || !lookup.block->intermediateRepresentation) return false;
+
+        const auto guardStarted = std::chrono::steady_clock::now();
+        const auto guardFailure = irGuardFailure(*lookup.block->intermediateRepresentation);
+        const auto guardNanos = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - guardStarted).count();
+        blockCache_.noteIrGuardCheck(static_cast<std::uint64_t>(guardNanos));
+        if (guardFailure != GB::IRExecution::GuardFailure::None) {
+            blockCache_.noteIrGuardFailure();
+            if (guardFailure == GB::IRExecution::GuardFailure::ExecutionState) {
+                return false;
+            }
+            blockCache_.invalidate(pcAddress, true);
+            return false;
+        }
+        const auto& instructions = lookup.block->intermediateRepresentation->instructions;
+        if (lookup.instructionIndex >= instructions.size() ||
+            instructions[lookup.instructionIndex].address != pcAddress) {
+            blockCache_.noteIrFallback();
+            return false;
+        }
+        portableIrBlockSession_ = PortableIrBlockSession{
+            .block = lookup.block,
+            .nextInstructionIndex = lookup.instructionIndex,
+            .mappingGeneration = blockCache_.mappingGeneration(),
+        };
+        blockCache_.noteIrBlockEntry();
+    } else if (continuation) {
+        blockCache_.noteIrBlockContinuation();
+    }
+
+    const auto session = *portableIrBlockSession_;
+    const auto pcAddress = pcRegister_ != nullptr ? pcRegister_->value : AddressType{0};
+    if (!executePortableIrInstruction(
+            *session.block, pcAddress, session.nextInstructionIndex)) {
+        resetPortableIrBlockSession();
+        return false;
+    }
+
+    const auto& instructions = session.block->intermediateRepresentation->instructions;
+    const auto nextIndex = session.nextInstructionIndex + 1u;
+    if (feedback.segmentBoundaryHint || nextIndex >= instructions.size()) {
+        resetPortableIrBlockSession();
+    } else {
+        portableIrBlockSession_->nextInstructionIndex = nextIndex;
+    }
+    return true;
+}
+
+void LR3592_DMG::endPortableIrExecutionSlice() noexcept
+{
+    resetPortableIrBlockSession();
+    portableIrExecutionSliceActive_ = false;
 }
 
 void LR3592_DMG::populateBlockCache(BMMQ::fetchBlock<AddressType, DataType>& fetchData)
@@ -2690,6 +2809,7 @@ void LR3592_DMG::setBlockCacheEnabled(bool enabled)
         return;
     }
 
+    resetPortableIrBlockSession();
     blockCacheEnabled_ = enabled;
     if (!enabled) {
         blockCache_.clear();
@@ -2711,6 +2831,7 @@ void LR3592_DMG::setPortableIrEnabled(bool enabled) noexcept
     if (portableIrEnabled_ == enabled) {
         return;
     }
+    resetPortableIrBlockSession();
     portableIrEnabled_ = enabled;
     invalidateAllBlockCache();
 }

@@ -256,10 +256,21 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
       const BMMQ::IR::Block& block) const noexcept;
   [[nodiscard]] bool irBlockEligible(
       std::span<const BMMQ::TranslatedInstruction<AddressType, DataType>> instructions) const noexcept;
+  [[nodiscard]] bool executePortableIrInstruction(
+      const BMMQ::TranslatedBlockEntry<AddressType, DataType>& block,
+      AddressType pcAddress,
+      std::size_t instructionIndex);
   [[nodiscard]] bool tryExecutePortableIr(
       const BMMQ::TranslatedBlockEntry<AddressType, DataType>& block,
       AddressType pcAddress,
       std::size_t instructionIndex);
+  struct PortableIrBlockSession {
+    const BMMQ::TranslatedBlockEntry<AddressType, DataType>* block = nullptr;
+    std::size_t nextInstructionIndex = 0u;
+    std::uint64_t mappingGeneration = 0u;
+  };
+  [[nodiscard]] bool portableIrBlockContinuationValid() const noexcept;
+  void resetPortableIrBlockSession() noexcept;
   [[nodiscard]] bool lcdEnabled() const;
   [[nodiscard]] DataType currentPpuMode() const;
   [[nodiscard]] DataType joypadLowNibble() const;
@@ -331,6 +342,9 @@ public:
   void invalidateAllBlockCache();
   void setBlockCacheEnabled(bool enabled);
   void setPortableIrEnabled(bool enabled) noexcept;
+  void beginPortableIrExecutionSlice() noexcept;
+  [[nodiscard]] bool tryExecutePortableIrBlockInstruction();
+  void endPortableIrExecutionSlice() noexcept;
   [[nodiscard]] bool portableIrEnabled() const noexcept { return portableIrEnabled_; }
   [[nodiscard]] bool blockCacheEnabled() const noexcept;
   [[nodiscard]] BMMQ::ThreadedBlockCacheStats blockCacheStats() const;
@@ -341,6 +355,8 @@ private:
   bool blockCacheEnabled_ = true;
   bool portableIrEnabled_ = false;
   GB::IRExecution::PortableExecutor portableIrExecutor_{};
+  std::optional<PortableIrBlockSession> portableIrBlockSession_{};
+  bool portableIrExecutionSliceActive_ = false;
 
 public:
   void

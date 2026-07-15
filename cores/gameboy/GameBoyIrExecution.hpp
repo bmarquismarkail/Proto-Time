@@ -76,6 +76,10 @@ struct GuardContext {
 [[nodiscard]] GuardFailure validateGuards(
     const BMMQ::IR::Block& block,
     const GuardContext& context) noexcept;
+[[nodiscard]] GuardFailure validateContinuationGuards(
+    const BMMQ::IR::Block& block,
+    std::uint64_t mappingGeneration,
+    std::uint64_t executionState) noexcept;
 
 // Versioned helper table shared by the portable interpreter and future native
 // backends. All callbacks operate on the emulation lane and on opaque CPU state.
