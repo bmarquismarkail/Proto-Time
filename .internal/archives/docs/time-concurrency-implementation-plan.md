@@ -367,6 +367,18 @@ ROM sample had a 1.02x geometric-mean speedup versus 1.07x for Phase 10. Do not
 expand opcode coverage or add ARM64 for this thunk/predecoded-plan design. See
 `.internal/docs/proto-time-phase-11e-native-backend-spike.md`.
 
+**Phase 11 post-closure hardening status: Complete.** The production CPU focus
+returns to Phase 10. Cached byte execution now consumes immutable translated
+instruction spans directly instead of copying every instruction through a
+temporary `fetchBlock`. Its performance gate uses nine alternating-order paired
+runs, twice the former instruction count, a 2.05x median requirement, and a
+2.0x lower-quartile requirement. The measured paired median is 2.24x with a
+2.23x lower quartile. The corpus defaults to architecture-neutral baseline,
+block, and IR modes; native is explicit and capability-checked. Uniform
+`ROM too large` rejection is classified as unsupported rather than a backend
+failure, and irrelevant non-Game-Boy archives no longer produce discovery
+noise. Native opcode and architecture expansion remain frozen.
+
 Full just-in-time compilation is the highest upside but also the largest correctness burden. Defer until all other phases are stable.
 
 **Considerations:**

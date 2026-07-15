@@ -85,3 +85,23 @@ side-exit after every guest instruction. Compare that design against the Phase
 10 backend before adding coverage. Until then, Phase 10 is the production CPU
 acceleration path; portable IR and this native spike remain differential and
 architecture-contract references.
+
+## Post-closure hardening
+
+The immediate follow-up keeps that decision intact while strengthening the
+production path and its evidence:
+
+- Phase 10 executes immutable cached instruction bytes directly, removing the
+  per-instruction copy into a temporary `fetchBlock`.
+- The throughput gate now uses nine paired runs with alternating baseline/block
+  order and 500,000 measured instructions per backend. It requires a paired
+  median of at least 2.05x and a lower quartile of at least 2.0x. The first
+  validated result was 2.235x median and 2.225x lower quartile.
+- Corpus defaults remain portable (`baseline,block,ir`). Native runs require an
+  explicit mode selection and an x86-64 POSIX host.
+- A core-wide `ROM too large` rejection is reported as unsupported, not as a
+  backend error. Archives without Game Boy members are ignored rather than
+  flooding broad multi-system corpus scans with irrelevant issues.
+
+These changes do not reopen native expansion. Further CPU optimization should
+start from measured Phase 10 hot paths and realistic-ROM fallback frequency.

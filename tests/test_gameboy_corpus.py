@@ -31,6 +31,9 @@ def value(name):
 mode = value("--cpu-mode")
 steps = int(value("--steps"))
 diagnostics = Path(value("--diagnostics-report"))
+if os.environ.get("PROTO_TIME_CORPUS_TEST_UNSUPPORTED") == "1":
+    print("error: ROM too large")
+    raise SystemExit(1)
 fingerprint = "1111222233334444"
 if os.environ.get("PROTO_TIME_CORPUS_TEST_MISMATCH") == "1" and mode == "ir":
     fingerprint = "9999aaaabbbbcccc"
@@ -72,13 +75,14 @@ class CorpusToolTests(unittest.TestCase):
         data[0x134:0x139] = b"TEST\0"
         return bytes(data)
 
-    def invoke(self) -> int:
+    def invoke(self, *extra: str) -> int:
         return gameboy_corpus.main([
             "--rom-root", str(self.rom_root),
             "--emulator", str(self.emulator),
             "--output-dir", str(self.output),
             "--steps", "12",
             "--timeout", "5",
+            *extra,
         ])
 
     def only_run_dir(self) -> Path:
@@ -115,10 +119,13 @@ class CorpusToolTests(unittest.TestCase):
         summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
         results = json.loads((run_dir / "results.json").read_text(encoding="utf-8"))
         self.assertTrue(summary["success"])
-        self.assertEqual(summary["counts"], {"error": 0, "mismatch": 0, "pass": 1})
+        self.assertEqual(
+            summary["counts"],
+            {"error": 0, "mismatch": 0, "pass": 1, "unsupported": 0},
+        )
         self.assertEqual(
             [run["mode"] for run in results[0]["runs"]],
-            ["baseline", "block", "ir", "native"],
+            ["baseline", "block", "ir"],
         )
         self.assertEqual({run["state_fingerprint"] for run in results[0]["runs"]}, {"1111222233334444"})
         self.assertEqual(results[0]["performance"]["modes"]["ir"]["speedup_vs_baseline"], 1.0)
@@ -132,6 +139,20 @@ class CorpusToolTests(unittest.TestCase):
             self.assertEqual(self.invoke(), 1)
         summary = json.loads((self.only_run_dir() / "summary.json").read_text(encoding="utf-8"))
         self.assertEqual(summary["counts"]["mismatch"], 1)
+
+    def test_native_mode_is_explicit_and_capability_checked(self) -> None:
+        (self.rom_root / "game.gb").write_bytes(self.rom())
+        with mock.patch.object(gameboy_corpus, "native_backend_supported", return_value=False):
+            with self.assertRaisesRegex(SystemExit, "x86-64 POSIX"):
+                self.invoke("--modes", "baseline,native")
+
+    def test_uniform_core_rejection_is_unsupported(self) -> None:
+        (self.rom_root / "large.gbc").write_bytes(self.rom())
+        with mock.patch.dict(os.environ, {"PROTO_TIME_CORPUS_TEST_UNSUPPORTED": "1"}):
+            self.assertEqual(self.invoke(), 1)
+        summary = json.loads((self.only_run_dir() / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["counts"]["unsupported"], 1)
+        self.assertEqual(summary["counts"]["error"], 0)
 
 
 if __name__ == "__main__":

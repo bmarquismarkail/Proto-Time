@@ -62,7 +62,7 @@ void printUsage(std::string_view program)
               << "  --plugin <path>    Optional SDL frontend shared object override\n"
               << "  --steps <count>    Stop after a fixed number of instruction steps\n"
               << "  --scale <n>        SDL window scale factor (default: 3)\n"
-              << "  --cpu-mode <mode>  CPU execution mode: baseline, block, ir, or native (Game Boy)\n"
+              << "  --cpu-mode <mode>  CPU mode: baseline, block, ir, or native (experimental x86-64/POSIX)\n"
               << "  --cpu-detailed-timing\n"
               << "                     Enable intrusive IR guard/lowering/execution timers\n"
               << "  --unthrottled      Run unthrottled (no wall-clock pacing)\n"

@@ -1868,9 +1868,18 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
     if (blocks.empty() || blocks.front().data.empty()) {
         return false;
     }
+    return tryFastExecuteBytes(blocks.front().data);
+}
 
-    auto& data = blocks.front().data;
+bool LR3592_DMG::tryFastExecuteBytes(std::span<const DataType> data)
+{
+    if (data.empty()) return false;
     const DataType opcode = data[0];
+    const auto immediate8 = [&]() noexcept { return data[1]; };
+    const auto immediate16 = [&]() noexcept {
+        return static_cast<AddressType>(
+            data[1] | (static_cast<AddressType>(data[2]) << 8u));
+    };
     feedback.pcBefore = (pcRegister_ != nullptr)
         ? static_cast<uint32_t>(pcRegister_->value)
         : 0;
@@ -1898,7 +1907,7 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
         pendingCycleCharge_ = 0;
         if (retiredCycles == 0) {
             if (const auto& entry = opcodeTable[opcode]; entry.has_value()) {
-                const auto cycles = entry->cycles(blocks.front(), 0);
+                const auto cycles = opcodeCyclesFor(opcode);
                 const auto sequentialPc = static_cast<AddressType>(feedback.pcBefore + executedByteCount);
                 retiredCycles = (static_cast<AddressType>(feedback.pcAfter) != sequentialPc)
                     ? cycles.taken
@@ -1996,7 +2005,7 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
     case 0x11:
     case 0x21:
     case 0x31:
-        cachedR16(static_cast<DataType>((opcode >> 4u) & 0x03u)) = fetchImm16(blocks.front(), 0);
+        cachedR16(static_cast<DataType>((opcode >> 4u) & 0x03u)) = immediate16();
         return finalizeFast(3);
     case 0x03:
     case 0x13:
@@ -2015,7 +2024,7 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
         return finalizeFast(1);
     }
     case 0x08:
-        write16(mem, fetchImm16(blocks.front(), 0), static_cast<AddressType>(cpuRegisters_.sp->value));
+        write16(mem, immediate16(), static_cast<AddressType>(cpuRegisters_.sp->value));
         return finalizeFast(3);
     case 0x09:
     case 0x19:
@@ -2032,7 +2041,7 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
         return finalizeFast(1);
     }
     case 0x18: {
-        const int8_t offset = static_cast<int8_t>(fetchImm8(blocks.front(), 0));
+        const int8_t offset = static_cast<int8_t>(immediate8());
         const auto target = static_cast<AddressType>(static_cast<int32_t>(feedback.pcBefore) + 2 + offset);
         pcRegister_->value = static_cast<AddressType>(target - 2u);
         return finalizeFast(2);
@@ -2042,21 +2051,21 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
     case 0x30:
     case 0x38: {
         if (cachedConditionHolds(static_cast<DataType>((opcode >> 3u) & 0x03u))) {
-            const int8_t offset = static_cast<int8_t>(fetchImm8(blocks.front(), 0));
+            const int8_t offset = static_cast<int8_t>(immediate8());
             const auto target = static_cast<AddressType>(static_cast<int32_t>(feedback.pcBefore) + 2 + offset);
             pcRegister_->value = static_cast<AddressType>(target - 2u);
         }
         return finalizeFast(2);
     }
     case 0xC3:
-        pcRegister_->value = static_cast<AddressType>(fetchImm16(blocks.front(), 0) - 3u);
+        pcRegister_->value = static_cast<AddressType>(immediate16() - 3u);
         return finalizeFast(3);
     case 0xC2:
     case 0xCA:
     case 0xD2:
     case 0xDA:
         if (cachedConditionHolds(static_cast<DataType>((opcode >> 3u) & 0x03u))) {
-            pcRegister_->value = static_cast<AddressType>(fetchImm16(blocks.front(), 0) - 3u);
+            pcRegister_->value = static_cast<AddressType>(immediate16() - 3u);
         }
         return finalizeFast(3);
     case 0xC9:
@@ -2075,7 +2084,7 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
         }
         return finalizeFast(1);
     case 0xCD: {
-        const AddressType target = fetchImm16(blocks.front(), 0);
+        const AddressType target = immediate16();
         cachedPush16(static_cast<AddressType>(feedback.pcBefore + 3u));
         pcRegister_->value = static_cast<AddressType>(target - 3u);
         return finalizeFast(3);
@@ -2086,7 +2095,7 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
     case 0xDC:
         if (cachedConditionHolds(static_cast<DataType>((opcode >> 3u) & 0x03u))) {
             cachedPush16(static_cast<AddressType>(feedback.pcBefore + 3u));
-            pcRegister_->value = static_cast<AddressType>(fetchImm16(blocks.front(), 0) - 3u);
+            pcRegister_->value = static_cast<AddressType>(immediate16() - 3u);
         }
         return finalizeFast(3);
     case 0xC1:
@@ -2111,10 +2120,10 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
         pcRegister_->value = static_cast<AddressType>(cpuRegisters_.hl->value - 1u);
         return finalizeFast(1);
     case 0xE0:
-        write8(mem, static_cast<AddressType>(0xFF00u + fetchImm8(blocks.front(), 0)), cachedAccumulator());
+        write8(mem, static_cast<AddressType>(0xFF00u + immediate8()), cachedAccumulator());
         return finalizeFast(2);
     case 0xF0:
-        cachedAccumulator() = read8(mem, static_cast<AddressType>(0xFF00u + fetchImm8(blocks.front(), 0)));
+        cachedAccumulator() = read8(mem, static_cast<AddressType>(0xFF00u + immediate8()));
         return finalizeFast(2);
     case 0xE2:
         write8(mem, static_cast<AddressType>(0xFF00u + static_cast<DataType>(cpuRegisters_.bc->lo)), cachedAccumulator());
@@ -2123,7 +2132,7 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
         cachedAccumulator() = read8(mem, static_cast<AddressType>(0xFF00u + static_cast<DataType>(cpuRegisters_.bc->lo)));
         return finalizeFast(1);
     case 0xE8: {
-        const int8_t offset = static_cast<int8_t>(fetchImm8(blocks.front(), 0));
+        const int8_t offset = static_cast<int8_t>(immediate8());
         const AddressType original = cpuRegisters_.sp->value;
         cpuRegisters_.sp->value = static_cast<AddressType>(static_cast<int32_t>(original) + offset);
         const uint8_t low = static_cast<uint8_t>(original & 0xFFu);
@@ -2133,7 +2142,7 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
         return finalizeFast(2);
     }
     case 0xF8: {
-        const int8_t offset = static_cast<int8_t>(fetchImm8(blocks.front(), 0));
+        const int8_t offset = static_cast<int8_t>(immediate8());
         const AddressType sp = static_cast<AddressType>(cpuRegisters_.sp->value);
         const uint8_t low = static_cast<uint8_t>(sp & 0xFFu);
         const uint8_t imm = static_cast<uint8_t>(offset);
@@ -2146,10 +2155,10 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
         cpuRegisters_.sp->value = cpuRegisters_.hl->value;
         return finalizeFast(1);
     case 0xEA:
-        write8(mem, fetchImm16(blocks.front(), 0), cachedAccumulator());
+        write8(mem, immediate16(), cachedAccumulator());
         return finalizeFast(3);
     case 0xFA:
-        cachedAccumulator() = read8(mem, fetchImm16(blocks.front(), 0));
+        cachedAccumulator() = read8(mem, immediate16());
         return finalizeFast(3);
     case 0xF3:
         setIme(false);
@@ -2225,7 +2234,7 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
     case 0xEE:
     case 0xF6:
     case 0xFE:
-        executeMathOp(opcode, fetchImm8(blocks.front(), 0));
+        executeMathOp(opcode, immediate8());
         return finalizeFast(2);
     case 0xC7:
     case 0xCF:
@@ -2265,7 +2274,7 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
     }
 
     if ((opcode & 0xC7u) == 0x06u) {
-        cachedWriteR8(static_cast<DataType>((opcode >> 3u) & 0x07u), fetchImm8(blocks.front(), 0));
+        cachedWriteR8(static_cast<DataType>((opcode >> 3u) & 0x07u), immediate8());
         return finalizeFast(2);
     }
 
@@ -2328,13 +2337,8 @@ bool LR3592_DMG::tryExecuteTranslatedBlock()
         if (!lookup.block->valid) return false;
     }
     const auto& instruction = lookup.block->instructions[lookup.instructionIndex];
-    translatedFetchBlock_.setbaseAddress(pcAddress);
-    auto& data = translatedFetchBlock_.getblockData();
-    data.resize(1u);
-    data.front().offset = 0u;
-    data.front().data.assign(
-        instruction.bytes.begin(), instruction.bytes.begin() + instruction.length);
-    if (!tryFastExecute(translatedFetchBlock_)) {
+    if (!tryFastExecuteBytes(std::span<const DataType>(
+            instruction.bytes.data(), instruction.length))) {
         blockCache_.invalidate(pcAddress, true);
         blockCache_.noteUnsupportedFallback();
         return false;

@@ -113,12 +113,15 @@ RunResult run(Mode mode, std::size_t steps, bool detailedTiming = false)
 
 int main()
 {
-    constexpr std::size_t kSteps = 250'000u;
-    constexpr std::size_t kRuns = 5u;
+    constexpr std::size_t kSteps = 500'000u;
+    constexpr std::size_t kRuns = 9u;
+    constexpr double kRequiredSpeedup = 2.0;
+    constexpr double kMeasurementMargin = 0.05;
     std::vector<std::int64_t> baseline;
     std::vector<std::int64_t> block;
     std::vector<std::int64_t> ir;
     std::vector<std::int64_t> native;
+    std::vector<double> pairedBlockSpeedups;
     std::uint64_t hits = 0;
     std::uint64_t continuations = 0;
     std::uint64_t irExecutions = 0;
@@ -131,9 +134,22 @@ int main()
     std::uint64_t nativeExecutions = 0;
     const bool nativeSupported = GB::NativeExecution::supported();
     for (std::size_t runIndex = 0; runIndex < kRuns; ++runIndex) {
-        baseline.push_back(run(Mode::Baseline, kSteps).nanoseconds);
-        const auto result = run(Mode::Block, kSteps);
+        RunResult baselineResult;
+        RunResult result;
+        // Alternate pair order to cancel first-run, thermal, and frequency
+        // drift instead of comparing unrelated backend medians.
+        if ((runIndex & 1u) == 0u) {
+            baselineResult = run(Mode::Baseline, kSteps);
+            result = run(Mode::Block, kSteps);
+        } else {
+            result = run(Mode::Block, kSteps);
+            baselineResult = run(Mode::Baseline, kSteps);
+        }
+        baseline.push_back(baselineResult.nanoseconds);
         block.push_back(result.nanoseconds);
+        pairedBlockSpeedups.push_back(
+            static_cast<double>(baselineResult.nanoseconds) /
+            static_cast<double>(result.nanoseconds));
         hits += result.hits;
         continuations += result.continuations;
         const auto irResult = run(Mode::Ir, kSteps);
@@ -159,10 +175,13 @@ int main()
     std::sort(block.begin(), block.end());
     std::sort(ir.begin(), ir.end());
     std::sort(native.begin(), native.end());
+    std::sort(pairedBlockSpeedups.begin(), pairedBlockSpeedups.end());
     const auto baselineMedian = baseline[kRuns / 2u];
     const auto blockMedian = block[kRuns / 2u];
     const auto irMedian = ir[kRuns / 2u];
     const auto nativeMedian = nativeSupported ? native[kRuns / 2u] : 0;
+    const auto pairedSpeedupMedian = pairedBlockSpeedups[kRuns / 2u];
+    const auto pairedSpeedupLowerQuartile = pairedBlockSpeedups[kRuns / 4u];
     const double speedup = static_cast<double>(baselineMedian) /
                            static_cast<double>(blockMedian);
     const double irSpeedup = static_cast<double>(baselineMedian) /
@@ -190,6 +209,10 @@ int main()
     std::cout << "gameboy_block_cache baseline_median_ns=" << baselineMedian
               << " block_median_ns=" << blockMedian
               << " speedup=" << speedup
+              << " paired_speedup_median=" << pairedSpeedupMedian
+              << " paired_speedup_p25=" << pairedSpeedupLowerQuartile
+              << " required_paired_speedup="
+              << (kRequiredSpeedup + kMeasurementMargin)
               << " ir_median_ns=" << irMedian
               << " ir_speedup=" << irSpeedup
               << " native_median_ns=" << nativeMedian
@@ -222,6 +245,9 @@ int main()
     require(detailed.irLoweringNanos > 0u, "detailed lowering timer recorded no time");
     require(detailed.irGuardCheckNanos > 0u, "detailed guard timer recorded no time");
     require(detailed.irExecutionNanos > 0u, "detailed execution timer recorded no time");
-    require(speedup >= 2.0, "Phase 10 block-cache speedup fell below 2.0x");
+    require(pairedSpeedupMedian >= kRequiredSpeedup + kMeasurementMargin,
+            "Phase 10 paired median did not clear the 2.0x gate with measurement margin");
+    require(pairedSpeedupLowerQuartile >= kRequiredSpeedup,
+            "Phase 10 paired lower quartile fell below 2.0x");
     return 0;
 }

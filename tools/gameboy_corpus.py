@@ -16,6 +16,7 @@ import hashlib
 import json
 import math
 import os
+import platform
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
@@ -108,8 +109,6 @@ def discover_cases(root: Path, max_rom_bytes: int) -> tuple[list[CorpusCase], li
                     ),
                     key=lambda info: (info.filename.casefold(), info.filename),
                 )
-                if not members:
-                    issues.append(DiscoveryIssue(relative, "archive has no .gb or .gbc members"))
                 duplicate_names = {
                     name for name, count in Counter(info.filename for info in members).items()
                     if count > 1
@@ -250,7 +249,16 @@ def run_backend(
                 )
             outcome["exit_code"] = completed.returncode
             if completed.returncode != 0:
-                outcome["reason"] = f"emulator exited with status {completed.returncode}"
+                try:
+                    failure_output = log_path.read_text(
+                        encoding="utf-8", errors="replace")[-4096:].strip()
+                except OSError:
+                    failure_output = ""
+                if "error: ROM too large" in failure_output:
+                    outcome["reason"] = "unsupported ROM: ROM too large"
+                    outcome["unsupported"] = True
+                else:
+                    outcome["reason"] = f"emulator exited with status {completed.returncode}"
                 return outcome
         except subprocess.TimeoutExpired:
             outcome["reason"] = f"emulator exceeded {timeout_seconds:g}s timeout"
@@ -283,6 +291,9 @@ def run_backend(
 
 
 def assess_runs(runs: Sequence[dict[str, Any]]) -> tuple[str, list[str]]:
+    if runs and all(run.get("unsupported") is True for run in runs):
+        reasons = sorted({str(run.get("reason", "unsupported ROM")) for run in runs})
+        return "unsupported", reasons
     failures = [run.get("reason", "backend run failed") for run in runs if run.get("status") != "ok"]
     if failures:
         return "error", failures
@@ -429,6 +440,10 @@ def parse_modes(value: str) -> list[str]:
     return list(dict.fromkeys(modes))
 
 
+def native_backend_supported() -> bool:
+    return os.name == "posix" and platform.machine().lower() in {"x86_64", "amd64"}
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rom-root", type=Path, default=Path("/data/roms/gb"))
@@ -436,7 +451,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", type=Path, default=Path("logs/gameboy-corpus"))
     parser.add_argument("--steps", type=int, default=100_000)
     parser.add_argument("--timeout", type=float, default=60.0, help="seconds per backend invocation")
-    parser.add_argument("--modes", type=parse_modes, default=parse_modes("baseline,block,ir,native"))
+    parser.add_argument("--modes", type=parse_modes, default=parse_modes("baseline,block,ir"))
     parser.add_argument("--repeat", type=int, default=1, help="runs per ROM/backend")
     parser.add_argument("--limit", type=int, help="run the first N deterministically sorted cases")
     parser.add_argument("--sample", type=int, help="run N cases selected by a stable hash")
@@ -458,6 +473,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         raise SystemExit("sample must be positive")
     if args.limit is not None and args.sample is not None:
         raise SystemExit("limit and sample are mutually exclusive")
+    if "native" in args.modes and not native_backend_supported():
+        raise SystemExit("native corpus mode requires an x86-64 POSIX host")
     root = args.rom_root.resolve()
     emulator = args.emulator.resolve()
     if not root.is_dir():
@@ -528,7 +545,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             result["performance"] = summarize_case_performance(result["runs"])
         except (OSError, ValueError, zipfile.BadZipFile, RuntimeError) as error:
             result["reasons"] = [f"unable to read ROM: {error}"]
-        if result["status"] == "pass" and not args.keep_passing_logs:
+        if result["status"] in {"pass", "unsupported"} and not args.keep_passing_logs:
             for log in case_dir.glob("*.log"):
                 log.unlink()
             try:
@@ -541,7 +558,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             for reason in result["reasons"]:
                 print(f"  {reason}")
 
-    counts = {status: sum(result["status"] == status for result in results) for status in ("pass", "mismatch", "error")}
+    counts = {
+        status: sum(result["status"] == status for result in results)
+        for status in ("pass", "unsupported", "mismatch", "error")
+    }
     summary = {
         "schema": RESULT_SCHEMA,
         "counts": counts,
@@ -549,13 +569,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "discovery_issue_count": len(issues),
         "strict_inputs": args.strict_inputs,
         "performance": summarize_corpus_performance(results),
-        "success": counts["mismatch"] == 0 and counts["error"] == 0 and (not args.strict_inputs or not issues),
+        "success": counts["pass"] > 0 and counts["mismatch"] == 0 and
+                   counts["error"] == 0 and (not args.strict_inputs or not issues),
     }
     json_dump(run_dir / "results.json", results)
     json_dump(run_dir / "summary.json", summary)
     print(
-        f"Summary: {counts['pass']} passed, {counts['mismatch']} mismatched, "
-        f"{counts['error']} errored, {len(issues)} discovery issue(s)"
+        f"Summary: {counts['pass']} passed, {counts['unsupported']} unsupported, "
+        f"{counts['mismatch']} mismatched, {counts['error']} errored, "
+        f"{len(issues)} discovery issue(s)"
     )
     return 0 if summary["success"] else 1
 

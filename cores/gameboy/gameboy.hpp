@@ -358,8 +358,8 @@ public:
   [[nodiscard]] BMMQ::ThreadedBlockCacheStats blockCacheStats() const;
 
 private:
+  bool tryFastExecuteBytes(std::span<const DataType> data);
   BMMQ::ThreadedBlockCache<AddressType, DataType> blockCache_;
-  BMMQ::fetchBlock<AddressType, DataType> translatedFetchBlock_;
   bool blockCacheEnabled_ = true;
   bool portableIrEnabled_ = false;
   bool nativeIrEnabled_ = false;
