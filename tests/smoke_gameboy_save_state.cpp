@@ -58,6 +58,8 @@ int main()
     machine.runtimeContext().write8(0x4000u, 0x01u);
     machine.runtimeContext().write8(0xA000u, 0x34u);
     machine.step();
+    const auto originalFingerprint = machine.deterministicStateFingerprint();
+    assert(originalFingerprint.size() == 16u);
     const auto savedPc = machine.runtimeContext().readRegister16(GB::RegisterId::PC);
 
     machine.save_state(savePath);
@@ -74,6 +76,8 @@ int main()
 
     machine.load_state(savePath);
 
+    assert(machine.deterministicStateFingerprint() == originalFingerprint);
+
     assert(machine.runtimeContext().readRegister16(GB::RegisterId::BC) == 0xBEEFu);
     assert(machine.runtimeContext().readRegister16(GB::RegisterId::SP) == 0xC123u);
     assert(machine.runtimeContext().readRegister16(GB::RegisterId::PC) == savedPc);
@@ -86,6 +90,8 @@ int main()
     assert(machine.runtimeContext().read8(0xA000u) == 0x12u);
     machine.runtimeContext().write8(0x4000u, 0x01u);
     assert(machine.runtimeContext().read8(0xA000u) == 0x34u);
+    machine.runtimeContext().write8(0xC000u, 0xA4u);
+    assert(machine.deterministicStateFingerprint() != originalFingerprint);
 
     GB::GameBoyMachine unloaded;
     bool rejectedWithoutRom = false;

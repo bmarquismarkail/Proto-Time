@@ -59,6 +59,7 @@ add_library(time-gameboy-interpreter-core
 	cores/gameboy/decode/gb_interpreter.cpp
     cores/gameboy/gameboy.cpp
     cores/gameboy/GameBoyIrExecution.cpp
+    cores/gameboy/GameBoyNativeExecution.cpp
     cores/gameboy/GameBoyMachine.cpp
     cores/gameboy/GameBoyMemoryMap.cpp
     cores/gameboy/GameBoyPPU.cpp
@@ -178,7 +179,8 @@ target_compile_definitions(time-sdl-frontend-plugin PRIVATE BMMQ_SDL_FRONTEND_CO
 target_link_libraries(time-sdl-frontend-plugin PRIVATE time-sdl-audio-output time-dummy-audio-output time-file-audio-output time-sdl-video-adapter time-hardware-video-adapter time-simd-pixel-ops)
 
 enable_testing()
-add_test(NAME smoke_run_emulated_corpus COMMAND bash ${CMAKE_SOURCE_DIR}/tests/smoke_run_emulated_corpus.sh)
+add_test(NAME smoke-gameboy-corpus-tool
+    COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/test_gameboy_corpus.py)
 add_executable(time-smoke-gamegear-core tests/smoke_gamegear_core.cpp)
 target_link_libraries(time-smoke-gamegear-core time-gamegear-core)
 add_test(NAME smoke-gamegear-core COMMAND time-smoke-gamegear-core)
@@ -570,6 +572,12 @@ target_link_libraries(time-smoke-gameboy-ir-block-backend
 add_test(NAME smoke-gameboy-ir-block-backend
     COMMAND time-smoke-gameboy-ir-block-backend)
 
+add_executable(time-smoke-gameboy-native-ir
+    tests/smoke_gameboy_native_ir.cpp)
+target_link_libraries(time-smoke-gameboy-native-ir
+    time-gameboy-interpreter-core)
+add_test(NAME smoke-gameboy-native-ir COMMAND time-smoke-gameboy-native-ir)
+
 add_executable(time-perf-gameboy-block-cache tests/perf_gameboy_block_cache.cpp)
 target_link_libraries(time-perf-gameboy-block-cache time-gameboy-interpreter-core)
 add_test(NAME perf-gameboy-block-cache COMMAND time-perf-gameboy-block-cache)
@@ -589,15 +597,6 @@ add_executable(time-smoke-input-state-roundtrip tests/smoke_input_state_roundtri
 target_link_libraries(time-smoke-input-state-roundtrip time-gameboy-interpreter-core)
 add_test(NAME smoke-input-state-roundtrip COMMAND time-smoke-input-state-roundtrip)
 
-if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-    get_property(BMMQ_ALL_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
-    foreach(bmmq_target IN LISTS BMMQ_ALL_TARGETS)
-        if (bmmq_target MATCHES "^time-smoke-")
-            target_compile_options(${bmmq_target} PRIVATE -UNDEBUG)
-        endif()
-    endforeach()
-endif()
-
 add_executable(time-smoke-dma-tests tests/dma_tests.cpp)
 target_link_libraries(time-smoke-dma-tests time-gameboy-interpreter-core)
 add_test(NAME dma-completion-notification COMMAND time-smoke-dma-tests)
@@ -605,3 +604,14 @@ add_test(NAME dma-completion-notification COMMAND time-smoke-dma-tests)
 add_executable(time-smoke-vram-tests tests/vram_tests.cpp)
 target_link_libraries(time-smoke-vram-tests time-gameboy-interpreter-core)
 add_test(NAME auto-bank-switch-on-sprite-access COMMAND time-smoke-vram-tests)
+
+# The test suite uses C assertions extensively. Keep those checks active in
+# release-style configurations, including every performance gate.
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    get_property(BMMQ_ALL_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(bmmq_target IN LISTS BMMQ_ALL_TARGETS)
+        if (bmmq_target MATCHES "^time-(smoke|perf)-")
+            target_compile_options(${bmmq_target} PRIVATE -UNDEBUG)
+        endif()
+    endforeach()
+endif()

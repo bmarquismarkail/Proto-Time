@@ -7,6 +7,8 @@ build-*/
 .cache/
 logs/
 compile_commands.json
+__pycache__/
+*.py[cod]
 
 # MemPalace per-project files (issue #185)
 mempalace.yaml

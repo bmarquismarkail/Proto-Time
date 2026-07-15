@@ -100,12 +100,15 @@ void assertEquivalent(const GB::GameBoyMachine& baseline,
 void testEveryLoweredOpcodeAgainstCanonicalExecution()
 {
     std::uint32_t random = 0x11B2026u;
-    for (const auto opcode : supportedOpcodes()) {
+    for (const bool nativeMode : {false, true}) {
+      if (nativeMode && !GB::NativeExecution::supported()) continue;
+      for (const auto opcode : supportedOpcodes()) {
         GB::GameBoyMachine baseline;
         GB::GameBoyMachine portableIr;
         BMMQ::Plugin::VisibleStatePreservingStepPolicy policy;
         portableIr.attachExecutorPolicy(policy);
-        portableIr.setPortableIrEnabled(true);
+        if (nativeMode) portableIr.setNativeIrEnabled(true);
+        else portableIr.setPortableIrEnabled(true);
         const std::vector<std::uint8_t> rom(0x8000u, 0x00u);
         baseline.loadRom(rom);
         portableIr.loadRom(rom);
@@ -129,8 +132,10 @@ void testEveryLoweredOpcodeAgainstCanonicalExecution()
         baseline.step();
         portableIr.step();
         assert(portableIr.runtimeContext().getLastFeedback().executionPath ==
-               BMMQ::ExecutionPathHint::PortableIr);
+               (nativeMode ? BMMQ::ExecutionPathHint::NativeIr
+                           : BMMQ::ExecutionPathHint::PortableIr));
         assertEquivalent(baseline, portableIr);
+      }
     }
 }
 

@@ -18,6 +18,7 @@ struct EmulatorConfig {
     std::uint32_t windowScale = 3;
     bool headless = false;
     std::string cpuMode = "baseline";
+    bool cpuDetailedTiming = false;
     bool unthrottled = false;
     double speedMultiplier = 1.0;
     bool startPaused = false;
@@ -45,6 +46,7 @@ struct CommandLineConfigOverrides {
     std::optional<std::uint32_t> windowScale;
     std::optional<bool> headless;
     std::optional<std::string> cpuMode;
+    std::optional<bool> cpuDetailedTiming;
     std::optional<bool> unthrottled;
     std::optional<double> speedMultiplier;
     std::optional<bool> startPaused;

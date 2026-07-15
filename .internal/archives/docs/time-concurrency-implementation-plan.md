@@ -340,6 +340,33 @@ improves from approximately baseline speed to about 1.15x baseline, while the
 Phase 10 byte backend remains above 2x. See
 `.internal/docs/proto-time-phase-11c-block-level-backend.md`.
 
+**Phase 11D status: Complete.** Measurement fidelity and realistic-corpus
+closure remove per-instruction wall-clock probes from normal IR execution,
+retain them behind explicit `--cpu-detailed-timing` opt-in, and make the Phase
+10 throughput gate unconditional in release-style test builds. A production
+external-ROM runner now compares baseline, block, and IR retired instructions,
+cycles, and deterministic full-machine fingerprints while reporting repeated
+per-ROM and aggregate performance without treating noisy host timing as a
+correctness gate. A reproducible 20-ROM sample completed with no state or cycle
+mismatches; realistic IR speed remained close to baseline with low aggregate
+coverage, so opcode expansion remains deferred. See
+`.internal/docs/proto-time-phase-11d-measurement-corpus-closure.md`.
+
+**Phase 11E status: Complete — bounded native spike, expansion no-go.** An
+x86-64/POSIX backend now compiles the existing validated IR subset into fixed
+entry thunks and immutable predecoded execution plans behind the same versioned
+ABI, guards, block cursor, fallback path, and synchronous per-instruction
+retirement contract. Executable pages transition once from RW to RX, are never
+RWX, are instruction-cache synchronized, and are retired with their cache
+artifact. Direct mapping tests verify RX/non-W permissions; randomized
+differential tests cover every lowered opcode. The backend is available as
+`--cpu-mode native`, and the corpus runner compares it alongside baseline,
+block, and portable IR. It did not meet the continuation gate: the synthetic
+median was 1.26x baseline and 0.625x the Phase 10 backend, while the 18 runnable
+ROM sample had a 1.02x geometric-mean speedup versus 1.07x for Phase 10. Do not
+expand opcode coverage or add ARM64 for this thunk/predecoded-plan design. See
+`.internal/docs/proto-time-phase-11e-native-backend-spike.md`.
+
 Full just-in-time compilation is the highest upside but also the largest correctness burden. Defer until all other phases are stable.
 
 **Considerations:**

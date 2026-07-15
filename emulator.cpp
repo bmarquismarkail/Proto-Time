@@ -62,7 +62,9 @@ void printUsage(std::string_view program)
               << "  --plugin <path>    Optional SDL frontend shared object override\n"
               << "  --steps <count>    Stop after a fixed number of instruction steps\n"
               << "  --scale <n>        SDL window scale factor (default: 3)\n"
-              << "  --cpu-mode <mode>  CPU execution mode: baseline, block, or ir (Game Boy)\n"
+              << "  --cpu-mode <mode>  CPU execution mode: baseline, block, ir, or native (Game Boy)\n"
+              << "  --cpu-detailed-timing\n"
+              << "                     Enable intrusive IR guard/lowering/execution timers\n"
               << "  --unthrottled      Run unthrottled (no wall-clock pacing)\n"
               << "  --speed <mult>     Start with speed multiplier (e.g. 2.0)\n"
               << "  --pause            Start paused (use single-step to advance)\n"
@@ -155,11 +157,14 @@ void writeDiagnosticsSample(std::ostream& output,
                             std::chrono::steady_clock::time_point startedAt,
                             std::chrono::steady_clock::time_point now,
                             std::uint64_t emulatedCycles,
+                            std::uint64_t retiredInstructions,
                             std::uint32_t cpuClockHz,
                             const BMMQ::SdlFrontendStats* frontendStats,
                             const BMMQ::TimingStats& timingStats,
                             const BMMQ::BackgroundTaskStats& backgroundStats,
                             const GameBoyMachine::BlockCacheStats* blockCacheStats,
+                            bool detailedIrTimingEnabled,
+                            const std::optional<std::string>& stateFingerprint,
                             std::string_view cpuMode) noexcept
 {
     using namespace std::chrono;
@@ -191,6 +196,21 @@ void writeDiagnosticsSample(std::ostream& output,
     output << "{";
     output << "\"host_elapsed_ns\":" << elapsedNs;
     output << ",\"emulated_cycles\":" << emulatedCycles;
+    output << ",\"retired_instructions\":" << retiredInstructions;
+    output << ",\"deterministic_state\":{";
+    output << "\"schema\":";
+    if (blockCacheStats != nullptr) {
+        output << "\"gameboy-v1\"";
+    } else {
+        output << "null";
+    }
+    output << ",\"fingerprint\":";
+    if (stateFingerprint.has_value()) {
+        output << '"' << jsonEscape(*stateFingerprint) << '"';
+    } else {
+        output << "null";
+    }
+    output << "}";
     output << ",\"effective_emulation_speed\":" << effectiveSpeed;
     output << ",\"effective_cycles_per_second\":" << effectiveCyclesPerSecond;
     output << ",\"active_timing_profile\":\""
@@ -199,6 +219,8 @@ void writeDiagnosticsSample(std::ostream& output,
     output << ",\"cpu_block_cache\":{";
     output << "\"supported\":" << (blockCacheStats != nullptr ? "true" : "false");
     output << ",\"mode\":\"" << jsonEscape(cpuMode) << "\"";
+    output << ",\"detailed_timing_enabled\":"
+           << (detailedIrTimingEnabled ? "true" : "false");
     if (blockCacheStats != nullptr) {
         output << ",\"hits\":" << blockCacheStats->hits.load();
         output << ",\"misses\":" << blockCacheStats->misses.load();
@@ -615,7 +637,8 @@ int main(int argc, char** argv)
         const auto& descriptor = bootstrapped.descriptor;
         const auto romSize = bootstrapped.romSize;
         BMMQ::Plugin::VisibleStatePreservingStepPolicy blockExecutionPolicy;
-        if (options.cpuMode == "block" || options.cpuMode == "ir") {
+        if (options.cpuMode == "block" || options.cpuMode == "ir" ||
+            options.cpuMode == "native") {
             auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get());
             if (gameBoyMachine == nullptr) {
                 throw std::runtime_error("CPU block mode requires the Game Boy core");
@@ -623,6 +646,8 @@ int main(int argc, char** argv)
             gameBoyMachine->attachExecutorPolicy(blockExecutionPolicy);
             gameBoyMachine->setBlockCacheEnabled(true);
             gameBoyMachine->setPortableIrEnabled(options.cpuMode == "ir");
+            gameBoyMachine->setNativeIrEnabled(options.cpuMode == "native");
+            gameBoyMachine->setDetailedIrTimingEnabled(options.cpuDetailedTiming);
         }
         machine.videoService().setBackgroundTaskService(&backgroundTaskService);
         machine.visualOverrideService().setBackgroundTaskService(&backgroundTaskService);
@@ -854,20 +879,30 @@ int main(int argc, char** argv)
                 frontendStats = frontend->stats();
             }
             std::optional<GameBoyMachine::BlockCacheStats> blockCacheStats;
+            std::optional<std::string> stateFingerprint;
             if (auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(&machine);
                 gameBoyMachine != nullptr) {
                 blockCacheStats = gameBoyMachine->blockCacheStats();
+                // Full guest state hashing is intentionally a terminal-sample
+                // operation so periodic observability does not perturb hot-path
+                // performance measurements.
+                if (force) {
+                    stateFingerprint = gameBoyMachine->deterministicStateFingerprint();
+                }
             }
 
             writeDiagnosticsSample(diagnosticsReport,
                                    runStartedAt,
                                    now,
                                    emulatedCycles,
+                                   steps,
                                    cpuClockHz,
                                    frontendStats.has_value() ? &*frontendStats : nullptr,
                                    timingStats,
                                    backgroundTaskService.stats(),
                                    blockCacheStats.has_value() ? &*blockCacheStats : nullptr,
+                                   options.cpuDetailedTiming,
+                                   stateFingerprint,
                                    options.cpuMode);
             diagnosticsReport.flush();
         };

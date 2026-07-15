@@ -12,6 +12,13 @@
 
 namespace BMMQ {
 
+class BlockBackendArtifact {
+public:
+    virtual ~BlockBackendArtifact() = default;
+};
+
+using BlockBackendArtifactPtr = std::shared_ptr<const BlockBackendArtifact>;
+
 enum class TranslatedBlockExitReason : std::uint8_t {
     SequentialLimit,
     ControlFlow,
@@ -36,6 +43,10 @@ struct TranslatedBlockEntry {
     // Optional validated, architecture-neutral lowering. The Phase 10 byte
     // sequence remains the portable fallback and invalidation authority.
     IR::BlockPtr intermediateRepresentation{};
+    // Optional immutable host-backend artifact derived from the validated IR.
+    // Its lifetime is tied to the cache entry and it is discarded by the same
+    // invalidation/retirement rules as the portable representation.
+    BlockBackendArtifactPtr backendArtifact{};
     TranslatedBlockExitReason exitReason = TranslatedBlockExitReason::SequentialLimit;
     bool valid = true;
 };

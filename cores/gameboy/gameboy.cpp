@@ -2322,7 +2322,7 @@ bool LR3592_DMG::tryExecuteTranslatedBlock()
 
     const auto lookup = blockCache_.lookup(pcAddress);
     if (!lookup) return false;
-    if (portableIrEnabled_ && !portableIrExecutionSliceActive_ &&
+    if ((portableIrEnabled_ || nativeIrEnabled_) && !portableIrExecutionSliceActive_ &&
         lookup.block->intermediateRepresentation) {
         if (tryExecutePortableIr(*lookup.block, pcAddress, lookup.instructionIndex)) return true;
         if (!lookup.block->valid) return false;
@@ -2535,13 +2535,20 @@ bool LR3592_DMG::tryExecutePortableIr(
     AddressType pcAddress,
     std::size_t instructionIndex)
 {
-    if (!portableIrEnabled_ || !block.intermediateRepresentation) return false;
+    if ((!portableIrEnabled_ && !nativeIrEnabled_) || !block.intermediateRepresentation) return false;
     const auto& irBlock = *block.intermediateRepresentation;
-    const auto guardStarted = std::chrono::steady_clock::now();
-    const auto guardFailure = irGuardFailure(irBlock);
-    const auto guardNanos = std::chrono::duration_cast<std::chrono::nanoseconds>(
-        std::chrono::steady_clock::now() - guardStarted).count();
-    blockCache_.noteIrGuardCheck(static_cast<std::uint64_t>(guardNanos));
+    auto guardNanos = std::uint64_t{0};
+    GB::IRExecution::GuardFailure guardFailure;
+    if (detailedIrTimingEnabled_) {
+        const auto guardStarted = std::chrono::steady_clock::now();
+        guardFailure = irGuardFailure(irBlock);
+        guardNanos = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - guardStarted).count());
+    } else {
+        guardFailure = irGuardFailure(irBlock);
+    }
+    blockCache_.noteIrGuardCheck(guardNanos);
     if (guardFailure != GB::IRExecution::GuardFailure::None) {
         blockCache_.noteIrGuardFailure();
         blockCache_.invalidate(pcAddress, true);
@@ -2568,10 +2575,24 @@ bool LR3592_DMG::executePortableIrInstruction(
     feedback.isControlFlow = instruction.controlFlow;
     feedback.segmentBoundaryHint = instruction.controlFlow || instruction.interruptSensitive;
     const auto abi = irExecutionAbi();
-    const auto executionStarted = std::chrono::steady_clock::now();
-    const auto result = portableIrExecutor_.execute(instruction, abi);
+    auto executionStarted = std::chrono::steady_clock::time_point{};
+    if (detailedIrTimingEnabled_) {
+        executionStarted = std::chrono::steady_clock::now();
+    }
+    GB::IRExecution::InstructionResult result;
+    if (nativeIrEnabled_) {
+        const auto native = std::dynamic_pointer_cast<const GB::NativeExecution::BlockArtifact>(
+            block.backendArtifact);
+        if (!native) {
+            blockCache_.noteIrFallback();
+            return false;
+        }
+        result = native->execute(instructionIndex, abi);
+    } else {
+        result = portableIrExecutor_.execute(instruction, abi);
+    }
     if (!result.retirementReached) {
-        throw std::logic_error("portable IR instruction did not reach its retirement boundary");
+        throw std::logic_error("IR backend instruction did not reach its retirement boundary");
     }
     feedback.isControlFlow = feedback.isControlFlow || result.branchTaken;
     feedback.segmentBoundaryHint = feedback.segmentBoundaryHint || result.exitRequested;
@@ -2581,16 +2602,23 @@ bool LR3592_DMG::executePortableIrInstruction(
     feedback.retiredCycles = retiredCycles;
     abi.retireCpuCycles(abi.opaque, retiredCycles);
     feedback.pcAfter = pcRegister_ != nullptr ? pcRegister_->value : pcAddress;
-    feedback.executionPath = BMMQ::ExecutionPathHint::PortableIr;
-    const auto executionNanos = std::chrono::duration_cast<std::chrono::nanoseconds>(
-        std::chrono::steady_clock::now() - executionStarted).count();
-    blockCache_.noteIrExecution(static_cast<std::uint64_t>(executionNanos));
+    feedback.executionPath = nativeIrEnabled_
+        ? BMMQ::ExecutionPathHint::NativeIr
+        : BMMQ::ExecutionPathHint::PortableIr;
+    auto executionNanos = std::uint64_t{0};
+    if (detailedIrTimingEnabled_) {
+        executionNanos = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - executionStarted).count());
+    }
+    blockCache_.noteIrExecution(executionNanos);
     return true;
 }
 
 bool LR3592_DMG::portableIrBlockContinuationValid() const noexcept
 {
-    if (!portableIrBlockSession_.has_value() || !portableIrEnabled_ || !blockCacheEnabled_) {
+    if (!portableIrBlockSession_.has_value() ||
+        (!portableIrEnabled_ && !nativeIrEnabled_) || !blockCacheEnabled_) {
         return false;
     }
     const auto& session = *portableIrBlockSession_;
@@ -2626,7 +2654,7 @@ void LR3592_DMG::beginPortableIrExecutionSlice() noexcept
 
 bool LR3592_DMG::tryExecutePortableIrBlockInstruction()
 {
-    if (!portableIrEnabled_ || !blockCacheEnabled_) {
+    if ((!portableIrEnabled_ && !nativeIrEnabled_) || !blockCacheEnabled_) {
         resetPortableIrBlockSession();
         return false;
     }
@@ -2643,11 +2671,18 @@ bool LR3592_DMG::tryExecutePortableIrBlockInstruction()
         const auto lookup = blockCache_.lookup(pcAddress);
         if (!lookup || !lookup.block->intermediateRepresentation) return false;
 
-        const auto guardStarted = std::chrono::steady_clock::now();
-        const auto guardFailure = irGuardFailure(*lookup.block->intermediateRepresentation);
-        const auto guardNanos = std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now() - guardStarted).count();
-        blockCache_.noteIrGuardCheck(static_cast<std::uint64_t>(guardNanos));
+        auto guardNanos = std::uint64_t{0};
+        GB::IRExecution::GuardFailure guardFailure;
+        if (detailedIrTimingEnabled_) {
+            const auto guardStarted = std::chrono::steady_clock::now();
+            guardFailure = irGuardFailure(*lookup.block->intermediateRepresentation);
+            guardNanos = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - guardStarted).count());
+        } else {
+            guardFailure = irGuardFailure(*lookup.block->intermediateRepresentation);
+        }
+        blockCache_.noteIrGuardCheck(guardNanos);
         if (guardFailure != GB::IRExecution::GuardFailure::None) {
             blockCache_.noteIrGuardFailure();
             if (guardFailure == GB::IRExecution::GuardFailure::ExecutionState) {
@@ -2755,18 +2790,33 @@ void LR3592_DMG::populateBlockCache(BMMQ::fetchBlock<AddressType, DataType>& fet
         }
         address = static_cast<AddressType>(next);
     }
-    if (portableIrEnabled_) {
+    if (portableIrEnabled_ || nativeIrEnabled_) {
         if (irBlockEligible(translated.instructions)) {
-            const auto loweringStarted = std::chrono::steady_clock::now();
-            translated.intermediateRepresentation = GB::IRExecution::lowerBlock(
-                translated.instructions, blockCache_.mappingGeneration(), irExecutionState());
-            const auto loweringNanos = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::steady_clock::now() - loweringStarted).count();
+            auto loweringNanos = std::uint64_t{0};
+            if (detailedIrTimingEnabled_) {
+                const auto loweringStarted = std::chrono::steady_clock::now();
+                translated.intermediateRepresentation = GB::IRExecution::lowerBlock(
+                    translated.instructions, blockCache_.mappingGeneration(), irExecutionState());
+                loweringNanos = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now() - loweringStarted).count());
+            } else {
+                translated.intermediateRepresentation = GB::IRExecution::lowerBlock(
+                    translated.instructions, blockCache_.mappingGeneration(), irExecutionState());
+            }
             const auto loweredInstructions = translated.intermediateRepresentation
                 ? translated.intermediateRepresentation->instructions.size()
                 : 0u;
             blockCache_.noteIrLowering(
-                loweredInstructions, static_cast<std::uint64_t>(loweringNanos));
+                loweredInstructions, loweringNanos);
+            if (nativeIrEnabled_ && translated.intermediateRepresentation) {
+                const auto native = GB::NativeExecution::compile(
+                    *translated.intermediateRepresentation);
+                translated.backendArtifact = native;
+                if (!native) {
+                    blockCache_.noteIrFallback();
+                }
+            }
         } else {
             blockCache_.noteIrIneligibleTranslation();
         }
@@ -2833,6 +2883,16 @@ void LR3592_DMG::setPortableIrEnabled(bool enabled) noexcept
     }
     resetPortableIrBlockSession();
     portableIrEnabled_ = enabled;
+    if (enabled) nativeIrEnabled_ = false;
+    invalidateAllBlockCache();
+}
+
+void LR3592_DMG::setNativeIrEnabled(bool enabled) noexcept
+{
+    if (nativeIrEnabled_ == enabled) return;
+    resetPortableIrBlockSession();
+    nativeIrEnabled_ = enabled;
+    if (enabled) portableIrEnabled_ = false;
     invalidateAllBlockCache();
 }
 

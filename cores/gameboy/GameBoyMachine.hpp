@@ -59,6 +59,9 @@ public:
     const BMMQ::PluginManager& pluginManager() const override;
     void save_state(const std::filesystem::path& path) override;
     void load_state(const std::filesystem::path& path) override;
+    // Stable guest-visible state fingerprint for cross-backend corpus checks.
+    // Executor-path metadata and host-side cache/profiling state are excluded.
+    [[nodiscard]] std::string deterministicStateFingerprint() const;
 
     // IExternalBootRomMachine
     void loadExternalBootRom(const std::vector<uint8_t>& bytes) override;
@@ -208,6 +211,11 @@ public:
     void setBlockCacheEnabled(bool enabled);
     [[nodiscard]] bool portableIrEnabled() const;
     void setPortableIrEnabled(bool enabled);
+    [[nodiscard]] bool nativeIrEnabled() const;
+    [[nodiscard]] bool nativeIrSupported() const;
+    void setNativeIrEnabled(bool enabled);
+    [[nodiscard]] bool detailedIrTimingEnabled() const;
+    void setDetailedIrTimingEnabled(bool enabled);
 
     // Register access
     uint16_t readRegisterPair(std::string_view id) const override;

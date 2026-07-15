@@ -24,6 +24,7 @@
 #include "register_id.hpp"
 #include "dma_controller.hpp"
 #include "GameBoyIrExecution.hpp"
+#include "GameBoyNativeExecution.hpp"
 #include "vram_manager.hpp"
 
 using AddressType = uint16_t;
@@ -342,10 +343,17 @@ public:
   void invalidateAllBlockCache();
   void setBlockCacheEnabled(bool enabled);
   void setPortableIrEnabled(bool enabled) noexcept;
+  void setNativeIrEnabled(bool enabled) noexcept;
+  void setDetailedIrTimingEnabled(bool enabled) noexcept { detailedIrTimingEnabled_ = enabled; }
   void beginPortableIrExecutionSlice() noexcept;
   [[nodiscard]] bool tryExecutePortableIrBlockInstruction();
   void endPortableIrExecutionSlice() noexcept;
   [[nodiscard]] bool portableIrEnabled() const noexcept { return portableIrEnabled_; }
+  [[nodiscard]] bool nativeIrEnabled() const noexcept { return nativeIrEnabled_; }
+  [[nodiscard]] static bool nativeIrSupported() noexcept {
+    return GB::NativeExecution::supported();
+  }
+  [[nodiscard]] bool detailedIrTimingEnabled() const noexcept { return detailedIrTimingEnabled_; }
   [[nodiscard]] bool blockCacheEnabled() const noexcept;
   [[nodiscard]] BMMQ::ThreadedBlockCacheStats blockCacheStats() const;
 
@@ -354,6 +362,8 @@ private:
   BMMQ::fetchBlock<AddressType, DataType> translatedFetchBlock_;
   bool blockCacheEnabled_ = true;
   bool portableIrEnabled_ = false;
+  bool nativeIrEnabled_ = false;
+  bool detailedIrTimingEnabled_ = false;
   GB::IRExecution::PortableExecutor portableIrExecutor_{};
   std::optional<PortableIrBlockSession> portableIrBlockSession_{};
   bool portableIrExecutionSliceActive_ = false;

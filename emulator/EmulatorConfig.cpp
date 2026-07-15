@@ -123,6 +123,8 @@ void applyConfigValue(EmulatorConfig& config,
             config.headless = parseBool(text, label);
         } else if (key == "cpu_mode") {
             config.cpuMode = lowerAscii(text);
+        } else if (key == "cpu_detailed_timing") {
+            config.cpuDetailedTiming = parseBool(text, label);
         } else {
             throw std::invalid_argument("Unknown config key: " + label);
         }
@@ -288,6 +290,9 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     if (overrides.cpuMode.has_value()) {
         config.cpuMode = lowerAscii(*overrides.cpuMode);
     }
+    if (overrides.cpuDetailedTiming.has_value()) {
+        config.cpuDetailedTiming = *overrides.cpuDetailedTiming;
+    }
     if (overrides.unthrottled.has_value()) {
         config.unthrottled = *overrides.unthrottled;
     }
@@ -351,13 +356,17 @@ void validateEmulatorConfig(const EmulatorConfig& config)
     const auto& descriptor = instance.descriptor;
 
     if (config.cpuMode != "baseline" && config.cpuMode != "block" &&
-        config.cpuMode != "ir") {
+        config.cpuMode != "ir" && config.cpuMode != "native") {
         throw std::invalid_argument("Unknown CPU mode: " + config.cpuMode +
-                                    ". Use baseline, block, or ir.");
+                                    ". Use baseline, block, ir, or native.");
     }
-    if ((config.cpuMode == "block" || config.cpuMode == "ir") &&
+    if ((config.cpuMode == "block" || config.cpuMode == "ir" ||
+         config.cpuMode == "native") &&
         kind != MachineKind::GameBoy) {
         throw std::invalid_argument("CPU block and IR modes are currently supported only by the gameboy core");
+    }
+    if (config.cpuDetailedTiming && config.cpuMode != "ir" && config.cpuMode != "native") {
+        throw std::invalid_argument("Detailed CPU timing requires --cpu-mode ir or native");
     }
 
     if (config.romPath.empty()) {
@@ -433,9 +442,11 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
             arguments.overrides.unthrottled = true;
         } else if (arg == "--cpu-mode") {
             if (i + 1 >= argc) {
-                throw std::invalid_argument("--cpu-mode requires baseline, block, or ir");
+                throw std::invalid_argument("--cpu-mode requires baseline, block, ir, or native");
             }
             arguments.overrides.cpuMode = lowerAscii(argv[++i]);
+        } else if (arg == "--cpu-detailed-timing") {
+            arguments.overrides.cpuDetailedTiming = true;
         } else if (arg == "--speed") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--speed requires a numeric multiplier");

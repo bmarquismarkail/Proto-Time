@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <cassert>
 #include <chrono>
 #include <cstdint>
 #include <iostream>
@@ -7,6 +6,7 @@
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+#include "cores/gameboy/GameBoyNativeExecution.hpp"
 #include "inst_cycle/executor/PluginContract.hpp"
 
 namespace {
@@ -31,6 +31,7 @@ struct RunResult {
     std::uint64_t irFallbacks = 0;
     std::uint64_t irLoweredInstructions = 0;
     std::uint64_t irGuardChecks = 0;
+    std::uint64_t irLoweringNanos = 0;
     std::uint64_t irGuardCheckNanos = 0;
     std::uint64_t irExecutionNanos = 0;
     std::uint64_t irBlockEntries = 0;
@@ -38,7 +39,7 @@ struct RunResult {
     std::uint64_t irBlockContinuationRejects = 0;
 };
 
-enum class Mode { Baseline, Block, Ir };
+enum class Mode { Baseline, Block, Ir, Native };
 
 class ContinueRetirementSink final : public BMMQ::InstructionRetirementSink {
 public:
@@ -50,7 +51,12 @@ public:
     }
 };
 
-RunResult run(Mode mode, std::size_t steps)
+void require(bool condition, const char* message)
+{
+    if (!condition) throw std::runtime_error(message);
+}
+
+RunResult run(Mode mode, std::size_t steps, bool detailedTiming = false)
 {
     GB::GameBoyMachine machine;
     BMMQ::Plugin::VisibleStatePreservingStepPolicy blockPolicy;
@@ -59,6 +65,9 @@ RunResult run(Mode mode, std::size_t steps)
         machine.attachExecutorPolicy(blockPolicy);
         machine.setBlockCacheEnabled(true);
         machine.setPortableIrEnabled(mode == Mode::Ir);
+        machine.setNativeIrEnabled(mode == Mode::Native);
+        machine.setDetailedIrTimingEnabled(
+            detailedTiming && (mode == Mode::Ir || mode == Mode::Native));
     } else {
         machine.setBlockCacheEnabled(false);
     }
@@ -72,7 +81,6 @@ RunResult run(Mode mode, std::size_t steps)
     if (warmup.progress.retiredInstructions != kWarmupSteps) {
         throw std::runtime_error("block-cache benchmark warmup ended early");
     }
-    assert(warmup.progress.retiredInstructions == kWarmupSteps);
 
     const auto started = std::chrono::steady_clock::now();
     const auto measured = machine.runtimeContext().runSlice({
@@ -83,7 +91,6 @@ RunResult run(Mode mode, std::size_t steps)
     if (measured.progress.retiredInstructions != steps) {
         throw std::runtime_error("block-cache benchmark measurement ended early");
     }
-    assert(measured.progress.retiredInstructions == steps);
     const auto stats = machine.blockCacheStats();
     return {
         std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count(),
@@ -93,6 +100,7 @@ RunResult run(Mode mode, std::size_t steps)
         stats.irFallbacks.load(),
         stats.irLoweredInstructions.load(),
         stats.irGuardChecks.load(),
+        stats.irLoweringNanos.load(),
         stats.irGuardCheckNanos.load(),
         stats.irExecutionNanos.load(),
         stats.irBlockEntries.load(),
@@ -110,17 +118,18 @@ int main()
     std::vector<std::int64_t> baseline;
     std::vector<std::int64_t> block;
     std::vector<std::int64_t> ir;
+    std::vector<std::int64_t> native;
     std::uint64_t hits = 0;
     std::uint64_t continuations = 0;
     std::uint64_t irExecutions = 0;
     std::uint64_t irFallbacks = 0;
     std::uint64_t irLoweredInstructions = 0;
     std::uint64_t irGuardChecks = 0;
-    std::uint64_t irGuardCheckNanos = 0;
-    std::uint64_t irExecutionNanos = 0;
     std::uint64_t irBlockEntries = 0;
     std::uint64_t irBlockContinuations = 0;
     std::uint64_t irBlockContinuationRejects = 0;
+    std::uint64_t nativeExecutions = 0;
+    const bool nativeSupported = GB::NativeExecution::supported();
     for (std::size_t runIndex = 0; runIndex < kRuns; ++runIndex) {
         baseline.push_back(run(Mode::Baseline, kSteps).nanoseconds);
         const auto result = run(Mode::Block, kSteps);
@@ -129,65 +138,90 @@ int main()
         continuations += result.continuations;
         const auto irResult = run(Mode::Ir, kSteps);
         ir.push_back(irResult.nanoseconds);
+        require(irResult.irLoweringNanos == 0u &&
+                    irResult.irGuardCheckNanos == 0u &&
+                    irResult.irExecutionNanos == 0u,
+                "default IR benchmark unexpectedly enabled detailed timers");
         irExecutions += irResult.irExecutions;
         irFallbacks += irResult.irFallbacks;
         irLoweredInstructions += irResult.irLoweredInstructions;
         irGuardChecks += irResult.irGuardChecks;
-        irGuardCheckNanos += irResult.irGuardCheckNanos;
-        irExecutionNanos += irResult.irExecutionNanos;
         irBlockEntries += irResult.irBlockEntries;
         irBlockContinuations += irResult.irBlockContinuations;
         irBlockContinuationRejects += irResult.irBlockContinuationRejects;
+        if (nativeSupported) {
+            const auto nativeResult = run(Mode::Native, kSteps);
+            native.push_back(nativeResult.nanoseconds);
+            nativeExecutions += nativeResult.irExecutions;
+        }
     }
     std::sort(baseline.begin(), baseline.end());
     std::sort(block.begin(), block.end());
     std::sort(ir.begin(), ir.end());
+    std::sort(native.begin(), native.end());
     const auto baselineMedian = baseline[kRuns / 2u];
     const auto blockMedian = block[kRuns / 2u];
     const auto irMedian = ir[kRuns / 2u];
+    const auto nativeMedian = nativeSupported ? native[kRuns / 2u] : 0;
     const double speedup = static_cast<double>(baselineMedian) /
                            static_cast<double>(blockMedian);
     const double irSpeedup = static_cast<double>(baselineMedian) /
                              static_cast<double>(irMedian);
+    const double nativeSpeedup = nativeSupported
+        ? static_cast<double>(baselineMedian) / static_cast<double>(nativeMedian) : 0.0;
+    const double nativeVsBlock = nativeSupported
+        ? static_cast<double>(blockMedian) / static_cast<double>(nativeMedian) : 0.0;
     const double irCoverage = irExecutions + irFallbacks == 0u
         ? 0.0
         : static_cast<double>(irExecutions) /
               static_cast<double>(irExecutions + irFallbacks);
-    const double averageGuardNanos = irGuardChecks == 0u
+    // Detailed timers are an explicitly intrusive second pass and do not bias
+    // the primary baseline/block/IR medians above.
+    const auto detailed = run(Mode::Ir, kSteps, true);
+    const double averageGuardNanos = detailed.irGuardChecks == 0u
         ? 0.0
-        : static_cast<double>(irGuardCheckNanos) / static_cast<double>(irGuardChecks);
-    const double averageExecutionNanos = irExecutions == 0u
+        : static_cast<double>(detailed.irGuardCheckNanos) /
+              static_cast<double>(detailed.irGuardChecks);
+    const double averageExecutionNanos = detailed.irExecutions == 0u
         ? 0.0
-        : static_cast<double>(irExecutionNanos) / static_cast<double>(irExecutions);
+        : static_cast<double>(detailed.irExecutionNanos) /
+              static_cast<double>(detailed.irExecutions);
 
     std::cout << "gameboy_block_cache baseline_median_ns=" << baselineMedian
               << " block_median_ns=" << blockMedian
               << " speedup=" << speedup
               << " ir_median_ns=" << irMedian
               << " ir_speedup=" << irSpeedup
+              << " native_median_ns=" << nativeMedian
+              << " native_speedup=" << nativeSpeedup
+              << " native_vs_block=" << nativeVsBlock
+              << " native_executions=" << nativeExecutions
               << " ir_coverage=" << irCoverage
               << " ir_executions=" << irExecutions
               << " ir_fallbacks=" << irFallbacks
               << " ir_lowered_instructions=" << irLoweredInstructions
               << " ir_guard_avg_ns=" << averageGuardNanos
               << " ir_execution_avg_ns=" << averageExecutionNanos
+              << " ir_detailed_lowering_ns=" << detailed.irLoweringNanos
               << " ir_block_entries=" << irBlockEntries
               << " ir_block_continuations=" << irBlockContinuations
               << " ir_block_continuation_rejects=" << irBlockContinuationRejects
               << " hits=" << hits
               << " chain_continuations=" << continuations << '\n';
 
-    assert(hits > 0u);
-    assert(continuations > 0u);
-    assert(irExecutions > 0u);
-    assert(irFallbacks > 0u);
-    assert(irLoweredInstructions > 0u);
-    assert(irGuardChecks > 0u);
-    assert(irGuardCheckNanos > 0u);
-    assert(irExecutionNanos > 0u);
-    assert(irBlockEntries > 0u);
-    assert(irBlockContinuations > 0u);
-    assert(irBlockContinuations > irBlockEntries);
-    assert(speedup >= 2.0);
+    require(hits > 0u, "block cache recorded no hits");
+    require(continuations > 0u, "block cache recorded no continuations");
+    require(irExecutions > 0u, "portable IR recorded no executions");
+    require(irFallbacks > 0u, "portable IR recorded no fallbacks");
+    require(irLoweredInstructions > 0u, "portable IR lowered no instructions");
+    require(irGuardChecks > 0u, "portable IR recorded no guard checks");
+    require(irBlockEntries > 0u, "portable IR recorded no block entries");
+    require(irBlockContinuations > irBlockEntries,
+            "portable IR did not amortize block entries");
+    require(!nativeSupported || nativeExecutions > 0u, "native IR recorded no executions");
+    require(detailed.irLoweringNanos > 0u, "detailed lowering timer recorded no time");
+    require(detailed.irGuardCheckNanos > 0u, "detailed guard timer recorded no time");
+    require(detailed.irExecutionNanos > 0u, "detailed execution timer recorded no time");
+    require(speedup >= 2.0, "Phase 10 block-cache speedup fell below 2.0x");
     return 0;
 }

@@ -94,8 +94,32 @@ void testBlockEntryAmortizesGuardsAcrossSynchronousRetirements()
     assert(observer.pcs == std::vector<std::uint32_t>({0x0101u, 0x0102u, 0x0103u, 0x0104u}));
     assert(after.irExecutions.load() - before.irExecutions.load() == 4u);
     assert(after.irGuardChecks.load() - before.irGuardChecks.load() == 1u);
+    assert(after.irGuardCheckNanos.load() == before.irGuardCheckNanos.load());
+    assert(after.irExecutionNanos.load() == before.irExecutionNanos.load());
     assert(after.irBlockEntries.load() - before.irBlockEntries.load() == 1u);
     assert(after.irBlockContinuations.load() - before.irBlockContinuations.load() == 3u);
+}
+
+void testDetailedTimingIsExplicitlyOptIn()
+{
+    GB::GameBoyMachine machine;
+    BMMQ::Plugin::VisibleStatePreservingStepPolicy policy;
+    enablePortableIr(machine, policy);
+    assert(!machine.detailedIrTimingEnabled());
+    machine.setDetailedIrTimingEnabled(true);
+    assert(machine.detailedIrTimingEnabled());
+    machine.loadRom(makeSequentialIrRom());
+    machine.runtimeContext().step();
+    machine.runtimeContext().writeRegister16(GB::RegisterId::PC, 0x0100u);
+    (void)machine.runSlice({
+        .maxInstructions = 4u,
+        .maxCycles = 100u,
+        .stopOnSegmentBoundary = false,
+    });
+    const auto stats = machine.blockCacheStats();
+    assert(stats.irLoweringNanos.load() > 0u);
+    assert(stats.irGuardCheckNanos.load() > 0u);
+    assert(stats.irExecutionNanos.load() > 0u);
 }
 
 void runRetirementWriteTest()
@@ -197,6 +221,7 @@ void testBlockSliceMatchesCanonicalRetirementSequence()
 int main()
 {
     testBlockEntryAmortizesGuardsAcrossSynchronousRetirements();
+    testDetailedTimingIsExplicitlyOptIn();
     runRetirementWriteTest();
     testBlockSliceMatchesCanonicalRetirementSequence();
     return 0;

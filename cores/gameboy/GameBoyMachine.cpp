@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <limits>
 #include <optional>
 #include <span>
@@ -212,7 +213,7 @@ BMMQ::CpuFeedback readCpuFeedback(StateReader& reader)
     feedback.pcAfter = reader.u32();
     feedback.retiredCycles = reader.u32();
     const auto path = reader.u32();
-    if (path > static_cast<uint32_t>(BMMQ::ExecutionPathHint::PortableIr)) {
+    if (path > static_cast<uint32_t>(BMMQ::ExecutionPathHint::NativeIr)) {
         throw std::invalid_argument("save state execution path invalid");
     }
     feedback.executionPath = static_cast<BMMQ::ExecutionPathHint>(path);
@@ -561,6 +562,44 @@ BMMQ::SaveStateChunk makeChunk(std::string name, std::vector<uint8_t> data)
     chunk.data = std::move(data);
     return chunk;
 }
+
+class StateFingerprintBuilder {
+public:
+    void add(std::string_view name, std::span<const uint8_t> data) noexcept
+    {
+        addU64(name.size());
+        addBytes(std::as_bytes(std::span(name.data(), name.size())));
+        addU64(data.size());
+        addBytes(std::as_bytes(data));
+    }
+
+    [[nodiscard]] std::string finish() const
+    {
+        std::ostringstream output;
+        output << std::hex << std::setfill('0') << std::setw(16) << hash_;
+        return output.str();
+    }
+
+private:
+    void addU64(std::uint64_t value) noexcept
+    {
+        std::array<std::byte, 8> encoded{};
+        for (std::size_t index = 0; index < encoded.size(); ++index) {
+            encoded[index] = static_cast<std::byte>((value >> (index * 8u)) & 0xFFu);
+        }
+        addBytes(encoded);
+    }
+
+    void addBytes(std::span<const std::byte> bytes) noexcept
+    {
+        for (const auto byte : bytes) {
+            hash_ ^= std::to_integer<std::uint8_t>(byte);
+            hash_ *= 1099511628211ull;
+        }
+    }
+
+    std::uint64_t hash_ = 14695981039346656037ull;
+};
 
 const BMMQ::SaveStateChunk& requireChunk(const BMMQ::SaveStateFile& state, std::string_view name)
 {
@@ -1457,6 +1496,29 @@ void GameBoyMachine::setPortableIrEnabled(bool enabled) {
     impl_->cpu.cpu().setPortableIrEnabled(enabled);
 }
 
+bool GameBoyMachine::nativeIrEnabled() const {
+    return impl_->cpu.cpu().nativeIrEnabled();
+}
+
+bool GameBoyMachine::nativeIrSupported() const {
+    return LR3592_DMG::nativeIrSupported();
+}
+
+void GameBoyMachine::setNativeIrEnabled(bool enabled) {
+    if (enabled && !nativeIrSupported()) {
+        throw std::runtime_error("native IR requires an x86-64 POSIX host");
+    }
+    impl_->cpu.cpu().setNativeIrEnabled(enabled);
+}
+
+bool GameBoyMachine::detailedIrTimingEnabled() const {
+    return impl_->cpu.cpu().detailedIrTimingEnabled();
+}
+
+void GameBoyMachine::setDetailedIrTimingEnabled(bool enabled) {
+    impl_->cpu.cpu().setDetailedIrTimingEnabled(enabled);
+}
+
 void GameBoyMachine::save_state(const std::filesystem::path& path) {
     if (!impl_->romLoaded) {
         throw std::runtime_error("Cannot save Game Boy state before ROM is loaded");
@@ -1488,6 +1550,52 @@ void GameBoyMachine::save_state(const std::filesystem::path& path) {
     state.chunks.push_back(makeChunk("gb.mapper", serializeMapperState(impl_->mapper.exportState())));
     state.chunks.push_back(makeChunk("gb.cartridge", serializeCartridgeState(impl_->cartridge_.exportState())));
     BMMQ::SaveStateReader::write(state, path);
+}
+
+std::string GameBoyMachine::deterministicStateFingerprint() const {
+    if (!impl_->romLoaded) {
+        throw std::runtime_error("Cannot fingerprint Game Boy state before ROM is loaded");
+    }
+
+    StateWriter machineWriter;
+    machineWriter.u64(impl_->stepCounter);
+    machineWriter.u64(impl_->lastAudioFrameCounter);
+    machineWriter.boolean(impl_->bootEntryPending);
+    machineWriter.boolean(impl_->interruptRequested);
+    machineWriter.boolean(impl_->lastDigitalInputMask.has_value());
+    if (impl_->lastDigitalInputMask.has_value()) {
+        machineWriter.u32(*impl_->lastDigitalInputMask);
+    }
+    machineWriter.u64(impl_->inputGeneration);
+
+    auto cpuState = impl_->cpu.cpu().exportState();
+    cpuState.feedback.executionPath = BMMQ::ExecutionPathHint::Unknown;
+
+    StateFingerprintBuilder fingerprint;
+    const auto romCrc = BMMQ::crc32(impl_->mapper.romData().data(), impl_->mapper.romData().size());
+    const std::array<uint8_t, 4> romHash{
+        static_cast<uint8_t>(romCrc),
+        static_cast<uint8_t>(romCrc >> 8u),
+        static_cast<uint8_t>(romCrc >> 16u),
+        static_cast<uint8_t>(romCrc >> 24u),
+    };
+    fingerprint.add("rom.crc32", romHash);
+    fingerprint.add("gb.machine", machineWriter.bytes());
+    const auto cpu = serializeCpuState(cpuState);
+    fingerprint.add("gb.cpu", cpu);
+    const auto memory = impl_->memoryMap.exportState();
+    fingerprint.add("gb.memory", memory);
+    const auto ppu = impl_->ppu.exportState();
+    fingerprint.add("gb.ppu", ppu);
+    const auto apu = serializeApuState(impl_->apu.exportState());
+    fingerprint.add("gb.apu", apu);
+    const auto input = impl_->input.exportState();
+    fingerprint.add("gb.input", input);
+    const auto mapper = serializeMapperState(impl_->mapper.exportState());
+    fingerprint.add("gb.mapper", mapper);
+    const auto cartridge = serializeCartridgeState(impl_->cartridge_.exportState());
+    fingerprint.add("gb.cartridge", cartridge);
+    return fingerprint.finish();
 }
 
 void GameBoyMachine::load_state(const std::filesystem::path& path) {
