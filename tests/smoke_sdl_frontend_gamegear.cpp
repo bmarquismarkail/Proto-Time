@@ -100,6 +100,7 @@ int main(int argc, char** argv)
 #endif
 
     BMMQ::SdlFrontendConfig config;
+    config.retainLastPresentedFrame = true;
     config.windowTitle = "Proto-Time SDL Game Gear Smoke";
     config.windowScale = 2u;
     config.frameWidth = 160;
@@ -137,8 +138,6 @@ int main(int argc, char** argv)
         directModel->argbPixels.end());
     assert(directColors.size() > 1u);
 
-    assert(frontend->lastVideoDebugModel().has_value());
-    assert(frontend->lastVideoDebugModel()->displayEnabled);
     assert(frontend->lastFrame().has_value());
     std::unordered_set<std::uint32_t> frameColors(
         frontend->lastFrame()->pixels.begin(),

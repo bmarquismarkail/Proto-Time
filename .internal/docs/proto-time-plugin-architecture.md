@@ -20,7 +20,8 @@ Proto-Time uses four deliberately separate extension layers:
 3. **I/O extensions** remain internal C++ interfaces owned by the existing
    machine-driven `PluginManager`. They are not part of the stable module ABI.
 4. **Host modules** are shared libraries discovered through a generic loader.
-   Their public boundary is a versioned pure-C function table.
+   Their public boundary is a versioned pure-C function table. Executor and
+   frontend descriptors may coexist in one module.
 
 CPU runtimes remain replaceable components inside a machine, but are not an
 external loading boundary in this revision. CPU state, interrupts, memory,
@@ -65,14 +66,15 @@ compiler-owned object layout.
 
 A module exports `time_get_plugin_module_v1`. The returned descriptor contains
 module metadata and indexed plugin descriptors. Executor descriptors point to
-a versioned executor-policy table whose instances are created and destroyed by
-the module that owns them.
+a versioned executor-policy table; frontend descriptors point to a versioned
+window/event/presenter table. Instances are created and destroyed by the module
+that owns them.
 
 The host validates every size, version, enum, identifier, callback, and
 duplicate ID before exposing a policy. Modules must not allow C++ exceptions to
 cross the C boundary; the host reports invalid descriptors and callback results
 as normal host errors. The loader keeps the shared library alive until all
-policy adapters are destroyed.
+policy and frontend adapters are destroyed.
 
 Executor-policy callbacks run synchronously on the emulation lane. A module may
 keep per-instance policy state, but callbacks must not access live guest state,
@@ -81,8 +83,14 @@ descriptors, and function tables are immutable module-owned storage and remain
 valid until the module is unloaded. Policy configuration callbacks are
 deterministic and side-effect-free; `create`/`destroy` own instance allocation.
 
-The first ABI revision supports executor policies. Unsupported plugin kinds are
-reported deterministically rather than treated as partially usable modules.
+Frontend initialization, event service, visibility, and presentation callbacks
+run on the host UI lane. The host owns the realtime video mailbox, audio output
+transport, input snapshots, and timing service. A frontend receives immutable
+ARGB8888 frame views and publishes only logical input/control events through
+host callbacks; it must not retain frame pointers or access guest state. SDL
+video/window/event APIs therefore stay on the process main thread without a
+frontend hot-path lock. SDL audio remains a host-selected drain-only output
+backend independent of the selected window frontend.
 
 ## Compatibility
 
@@ -90,9 +98,10 @@ ABI v1 uses exact version matching and `struct_size` prefix validation. The V1
 struct prefixes are frozen. Incompatible or required table additions use a new
 versioned structure and entrypoint; existing fields never change meaning.
 
-The SDL frontend continues to use its existing build-coupled C++ factory ABI.
-It may migrate onto the generic module loader later, but it is not presented as
-part of this stable C ABI today.
+The SDL frontend implements `TimeFrontendApiV1` and uses the same loader as a
+future GLFW frontend. `IFrontendPlugin` is a host-internal adapter and never
+crosses the shared-library boundary. `ISdlFrontendPlugin` and SDL-prefixed
+configuration/stat names remain source aliases while internal callers migrate.
 
 ## Verification
 
@@ -101,6 +110,8 @@ part of this stable C ABI today.
 - duplicate machine and executor-registry ID rejection
 - built-in machine creation through the registry
 - loading a shared object compiled from C source
+- loading and driving a frontend shared object compiled from C source
+- SDL module descriptor validation and focused video/audio/input flow
 - C policy metadata, decisions, clone, destruction, and library lifetime
 - malformed descriptor and missing-entrypoint failures
 - legacy CLI behavior and full emulator smoke coverage

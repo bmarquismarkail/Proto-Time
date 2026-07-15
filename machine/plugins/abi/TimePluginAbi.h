@@ -18,7 +18,44 @@ extern "C" {
 #define TIME_PLUGIN_MODULE_ENTRYPOINT_V1 "time_get_plugin_module_v1"
 
 enum TimePluginKindV1 {
-    TIME_PLUGIN_KIND_EXECUTOR_POLICY_V1 = 1u
+    TIME_PLUGIN_KIND_EXECUTOR_POLICY_V1 = 1u,
+    TIME_PLUGIN_KIND_FRONTEND_V1 = 2u
+};
+
+enum TimeFrontendCapabilityV1 {
+    TIME_FRONTEND_CAPABILITY_VIDEO_V1 = 1u << 0,
+    TIME_FRONTEND_CAPABILITY_DIGITAL_INPUT_V1 = 1u << 1,
+    TIME_FRONTEND_CAPABILITY_WINDOW_V1 = 1u << 2
+};
+
+enum TimeFrontendConfigFlagV1 {
+    TIME_FRONTEND_CONFIG_ENABLE_VIDEO_V1 = 1u << 0,
+    TIME_FRONTEND_CONFIG_ENABLE_INPUT_V1 = 1u << 1,
+    TIME_FRONTEND_CONFIG_CREATE_HIDDEN_V1 = 1u << 2,
+    TIME_FRONTEND_CONFIG_SHOW_ON_PRESENT_V1 = 1u << 3
+};
+
+enum TimeFrontendInputButtonV1 {
+    TIME_FRONTEND_INPUT_RIGHT_V1 = 0x01u,
+    TIME_FRONTEND_INPUT_LEFT_V1 = 0x02u,
+    TIME_FRONTEND_INPUT_UP_V1 = 0x04u,
+    TIME_FRONTEND_INPUT_DOWN_V1 = 0x08u,
+    TIME_FRONTEND_INPUT_BUTTON1_V1 = 0x10u,
+    TIME_FRONTEND_INPUT_BUTTON2_V1 = 0x20u,
+    TIME_FRONTEND_INPUT_META1_V1 = 0x40u,
+    TIME_FRONTEND_INPUT_META2_V1 = 0x80u
+};
+
+enum TimeFrontendPixelFormatV1 {
+    TIME_FRONTEND_PIXEL_ARGB8888_V1 = 1u
+};
+
+enum TimeFrontendControlActionV1 {
+    TIME_FRONTEND_CONTROL_TOGGLE_PAUSE_V1 = 1u,
+    TIME_FRONTEND_CONTROL_TOGGLE_THROTTLE_V1 = 2u,
+    TIME_FRONTEND_CONTROL_SINGLE_STEP_V1 = 3u,
+    TIME_FRONTEND_CONTROL_SPEED_UP_V1 = 4u,
+    TIME_FRONTEND_CONTROL_SPEED_DOWN_V1 = 5u
 };
 
 enum TimeExecutionBackendV1 {
@@ -60,6 +97,69 @@ struct TimeExecutionObservationV1 {
     uint16_t pc_after;
     uint32_t retired_cycles;
     uint32_t flags;
+};
+
+struct TimeFrontendHostApiV1 {
+    uint32_t struct_size;
+    uint32_t abi_version;
+    void* host_context;
+    void (*log_message)(void* host_context, uint32_t level, const char* message);
+    void (*publish_digital_input)(void* host_context, uint32_t pressed_mask);
+    void (*request_quit)(void* host_context);
+    void (*request_control)(void* host_context, uint32_t action);
+};
+
+struct TimeFrontendConfigV1 {
+    uint32_t struct_size;
+    const char* window_title;
+    uint32_t window_scale;
+    int32_t frame_width;
+    int32_t frame_height;
+    uint32_t flags;
+};
+
+struct TimeFrontendFrameV1 {
+    uint32_t struct_size;
+    uint32_t pixel_format;
+    int32_t width;
+    int32_t height;
+    uint32_t row_stride_bytes;
+    const void* pixels;
+    uint64_t generation;
+    uint64_t lifecycle_epoch;
+};
+
+struct TimeFrontendStatsV1 {
+    uint32_t struct_size;
+    uint64_t service_calls;
+    uint64_t events_processed;
+    uint64_t frames_presented;
+    uint64_t texture_recreate_count;
+    uint64_t texture_upload_count;
+    uint64_t present_failures;
+    int64_t present_duration_last_ns;
+    int64_t present_duration_high_water_ns;
+    uint32_t renderer_flags;
+    int32_t backend_ready;
+    int32_t window_visible;
+    int32_t quit_requested;
+};
+
+struct TimeFrontendApiV1 {
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t capabilities;
+    void* (*create)(const struct TimeFrontendHostApiV1* host_api,
+                    const struct TimeFrontendConfigV1* config);
+    void (*destroy)(void* instance);
+    int32_t (*initialize)(void* instance);
+    void (*shutdown)(void* instance);
+    int32_t (*service)(void* instance);
+    int32_t (*present)(void* instance, const struct TimeFrontendFrameV1* frame);
+    void (*set_window_visible)(void* instance, int32_t visible);
+    const char* (*backend_name)(const void* instance);
+    const char* (*last_error)(const void* instance);
+    int32_t (*query_stats)(const void* instance, struct TimeFrontendStatsV1* stats);
 };
 
 struct TimeExecutorPolicyApiV1 {

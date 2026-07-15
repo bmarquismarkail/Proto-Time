@@ -62,13 +62,15 @@ void printUsage(std::string_view program)
               << "  --config <path>    Optional INI-style emulator configuration file\n"
               << "  --rom <path>       Cartridge ROM to load\n"
               << "  --boot-rom <path>  Optional external boot ROM for supported cores\n"
-              << "  --plugin <path>    Optional SDL frontend shared object override\n"
+              << "  --frontend-plugin <path>\n"
+              << "                     Load a frontend from a pure-C ABI module (--plugin is an alias)\n"
+              << "  --frontend <id>    Select a module frontend ID, or headless\n"
               << "  --executor-plugin <path>\n"
               << "                     Load executor policies from a pure-C ABI module\n"
               << "  --executor-policy <id>\n"
               << "                     Select a built-in or module executor policy ID\n"
               << "  --steps <count>    Stop after a fixed number of instruction steps\n"
-              << "  --scale <n>        SDL window scale factor (default: 3)\n"
+              << "  --scale <n>        Frontend window scale factor (default: 3)\n"
               << "  --cpu-mode <mode>  CPU mode: baseline, block, ir, or native (experimental x86-64/POSIX)\n"
               << "  --cpu-detailed-timing\n"
               << "                     Enable intrusive IR guard/lowering/execution timers\n"
@@ -96,7 +98,7 @@ void printUsage(std::string_view program)
               << "                     Capture observed decoded visual resources for pack authoring\n"
               << "  --visual-pack-reload\n"
               << "                     Poll visual pack manifests/assets and reload changed packs\n"
-              << "  --headless         Run without the SDL frontend plugin\n"
+              << "  --headless         Run without a frontend plugin\n"
               << "  -h, --help         Show this help text\n\n"
               << "Controls:\n"
               << "  Arrow keys = directions, Z = Button1, X = Button2,\n"
@@ -684,10 +686,10 @@ int main(int argc, char** argv)
             gameGearMachine->setBackgroundTaskService(&backgroundTaskService);
         }
 
-        BMMQ::ISdlFrontendPlugin* frontend = nullptr;
-        std::unique_ptr<BMMQ::ISdlFrontendPlugin> frontendPlugin;
+        BMMQ::IFrontendPlugin* frontend = nullptr;
+        std::unique_ptr<BMMQ::IFrontendPlugin> frontendPlugin;
         if (!options.headless) {
-            BMMQ::SdlFrontendConfig config;
+            BMMQ::FrontendConfig config;
             config.windowTitle = "Proto-Time - " + std::string(descriptor.displayName) +
                 " - " + options.romPath.filename().string();
             config.windowScale = std::max(options.windowScale, 1u);
@@ -703,6 +705,7 @@ int main(int argc, char** argv)
             config.pumpBackendEventsOnInputSample = false;
             config.autoPresentOnVideoEvent = true;
             config.showWindowOnPresent = true;
+            config.retainDebugSnapshots = options.debugSnapshotsEnabled;
             config.enableAudio = options.audioEnabled;
             config.audioBackend = options.audioBackend;
             config.audioReadyQueueChunks =
@@ -715,7 +718,16 @@ int main(int argc, char** argv)
                     ? std::filesystem::path(argv[0])
                     : std::filesystem::path("timeEmulator")));
             try {
-                frontendPlugin = BMMQ::loadSdlFrontendPlugin(pluginPath, config);
+                auto frontendModule = BMMQ::Plugin::DynamicPluginModule::load(pluginPath);
+                const auto ids = frontendModule.frontendIds();
+                auto selectedId = options.frontendId.value_or(
+                    ids.size() == 1u ? ids.front() : std::string{});
+                if (selectedId == "sdl") selectedId = "bmmq.frontend.sdl";
+                if (selectedId.empty()) {
+                    throw std::invalid_argument(
+                        "--frontend is required when a module exposes multiple frontends");
+                }
+                frontendPlugin = frontendModule.createFrontend(selectedId, config);
                 frontend = frontendPlugin.get();
                 if (options.debugSnapshotsEnabled) {
                     frontend->setDebugSnapshotService(&debugSnapshotService);

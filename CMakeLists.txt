@@ -103,7 +103,7 @@ target_link_libraries(time-gameboy-interpreter-core PUBLIC time-machine-runtime-
 add_library(time-sdl-frontend-loader
     machine/plugins/SdlFrontendPluginLoader.cpp
 )
-target_link_libraries(time-sdl-frontend-loader ${CMAKE_DL_LIBS})
+target_link_libraries(time-sdl-frontend-loader PUBLIC ${CMAKE_DL_LIBS})
 add_library(time-dynamic-plugin-loader
     machine/plugins/DynamicPluginModule.cpp
 )
@@ -155,9 +155,8 @@ set_target_properties(time-headless-video-adapter PROPERTIES POSITION_INDEPENDEN
 set_target_properties(time-sdl-video-adapter PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set_target_properties(time-hardware-video-adapter PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(time-sdl-frontend-plugin SHARED
-    machine/plugins/sdl_frontend/SdlFrontendPlugin.cpp
+    machine/plugins/sdl_frontend/SdlFrontendModule.cpp
 )
-target_link_libraries(time-sdl-frontend-plugin PRIVATE time-gameboy-interpreter-core)
 add_executable(timeEmulator emulator.cpp)
 target_link_libraries(timeEmulator time-emulator-host time-sdl-frontend-loader)
 if (TARGET SDL2::SDL2)
@@ -181,7 +180,9 @@ target_compile_definitions(time-sdl-audio-output PRIVATE BMMQ_SDL_FRONTEND_COMPI
 target_compile_definitions(time-sdl-video-adapter PUBLIC BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL=${BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE})
 target_compile_definitions(time-hardware-video-adapter PUBLIC BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL=${BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE})
 target_compile_definitions(time-sdl-frontend-plugin PRIVATE BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL=${BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE})
-target_link_libraries(time-sdl-frontend-plugin PRIVATE time-sdl-audio-output time-dummy-audio-output time-file-audio-output time-sdl-video-adapter time-hardware-video-adapter time-simd-pixel-ops)
+target_link_libraries(time-dynamic-plugin-loader PUBLIC
+    time-sdl-audio-output time-dummy-audio-output time-file-audio-output)
+target_link_libraries(time-sdl-frontend-loader PUBLIC time-dynamic-plugin-loader)
 
 enable_testing()
 add_test(NAME smoke-gameboy-corpus-tool
@@ -375,6 +376,14 @@ add_test(NAME smoke-dynamic-plugin-module
         $<TARGET_FILE:time-test-c-executor-plugin>
         $<TARGET_FILE:time-test-missing-plugin-entrypoint>
         $<TARGET_FILE:time-test-malformed-executor-plugin>)
+add_library(time-test-c-frontend-plugin MODULE tests/fixtures/test_frontend_plugin.c)
+target_include_directories(time-test-c-frontend-plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+set_target_properties(time-test-c-frontend-plugin PROPERTIES PREFIX "")
+add_executable(time-smoke-dynamic-frontend-module tests/smoke_dynamic_frontend_module.cpp)
+target_link_libraries(time-smoke-dynamic-frontend-module
+    time-gameboy-interpreter-core time-dynamic-plugin-loader)
+add_test(NAME smoke-dynamic-frontend-module
+    COMMAND time-smoke-dynamic-frontend-module $<TARGET_FILE:time-test-c-frontend-plugin>)
 add_executable(time-smoke-plugin-io tests/smoke_plugin_io.cpp)
 target_link_libraries(time-smoke-plugin-io time-gameboy-interpreter-core)
 add_test(NAME smoke-plugin-io COMMAND time-smoke-plugin-io)

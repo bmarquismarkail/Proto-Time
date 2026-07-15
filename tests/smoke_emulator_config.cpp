@@ -250,6 +250,14 @@ int main()
     {
         const auto arguments = parseArgs({
             "timeEmulator", "--core", "gameboy", "--rom", "game.gb",
+            "--frontend-plugin", "frontend.so", "--frontend", "vendor.frontend.glfw"});
+        CHECK_TRUE(arguments.overrides.pluginPath == "frontend.so");
+        CHECK_TRUE(arguments.overrides.frontendId == "vendor.frontend.glfw");
+    }
+
+    {
+        const auto arguments = parseArgs({
+            "timeEmulator", "--core", "gameboy", "--rom", "game.gb",
             "--executor-policy", "bmmq.executor.policy.portable-ir"});
         CHECK_TRUE(arguments.overrides.executorPolicyId ==
                    "bmmq.executor.policy.portable-ir");

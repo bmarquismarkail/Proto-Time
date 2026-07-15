@@ -117,8 +117,11 @@ void applyConfigValue(EmulatorConfig& config,
             config.romPath = resolveConfigPath(configDirectory, text);
         } else if (key == "boot_rom") {
             config.bootRomPath = resolveConfigPath(configDirectory, text);
-        } else if (key == "plugin") {
+        } else if (key == "plugin" || key == "frontend_plugin") {
             config.pluginPath = resolveConfigPath(configDirectory, text);
+        } else if (key == "frontend") {
+            config.frontendId = text;
+            config.headless = text == "headless";
         } else if (key == "executor_plugin") {
             config.executorPluginPath = resolveConfigPath(configDirectory, text);
         } else if (key == "executor_policy") {
@@ -283,6 +286,10 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     }
     if (overrides.pluginPath.has_value()) {
         config.pluginPath = *overrides.pluginPath;
+    }
+    if (overrides.frontendId.has_value()) {
+        config.frontendId = *overrides.frontendId;
+        config.headless = *overrides.frontendId == "headless";
     }
     if (overrides.executorPluginPath.has_value()) {
         config.executorPluginPath = *overrides.executorPluginPath;
@@ -454,11 +461,16 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
                 throw std::invalid_argument("--boot-rom requires a path");
             }
             arguments.overrides.bootRomPath = std::filesystem::path(argv[++i]);
-        } else if (arg == "--plugin") {
+        } else if (arg == "--plugin" || arg == "--frontend-plugin") {
             if (i + 1 >= argc) {
-                throw std::invalid_argument("--plugin requires a path");
+                throw std::invalid_argument(arg + " requires a path");
             }
             arguments.overrides.pluginPath = std::filesystem::path(argv[++i]);
+        } else if (arg == "--frontend") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--frontend requires an id");
+            }
+            arguments.overrides.frontendId = std::string(argv[++i]);
         } else if (arg == "--executor-plugin") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--executor-plugin requires a path");

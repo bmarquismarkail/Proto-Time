@@ -24,6 +24,7 @@ int main(int argc, char** argv)
     config.enableInput = true;
     config.autoInitializeBackend = false;
     config.pumpBackendEventsOnInputSample = false;
+    config.retainDebugSnapshots = true;
 
     GameBoyMachine machine;
     std::vector<uint8_t> cartridgeRom(0x8000, 0x00);

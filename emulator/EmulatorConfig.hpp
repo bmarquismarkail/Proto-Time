@@ -14,6 +14,7 @@ struct EmulatorConfig {
     std::filesystem::path romPath;
     std::optional<std::filesystem::path> bootRomPath;
     std::optional<std::filesystem::path> pluginPath;
+    std::optional<std::string> frontendId;
     std::optional<std::filesystem::path> executorPluginPath;
     std::optional<std::string> executorPolicyId;
     std::optional<std::uint64_t> stepLimit;
@@ -44,6 +45,7 @@ struct CommandLineConfigOverrides {
     std::optional<std::filesystem::path> romPath;
     std::optional<std::filesystem::path> bootRomPath;
     std::optional<std::filesystem::path> pluginPath;
+    std::optional<std::string> frontendId;
     std::optional<std::filesystem::path> executorPluginPath;
     std::optional<std::string> executorPolicyId;
     std::optional<std::uint64_t> stepLimit;

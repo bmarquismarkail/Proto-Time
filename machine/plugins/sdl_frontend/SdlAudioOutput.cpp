@@ -52,6 +52,12 @@ public:
             lastErrorCode_ = AudioOutputErrorCode::UnsupportedConfig;
             return false;
         }
+        if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
+            lastError_ = SDL_GetError();
+            lastErrorCode_ = AudioOutputErrorCode::BackendUnavailable;
+            return false;
+        }
+        audioSubsystemInitialized_ = true;
         service_ = config.audioService;
         service_->setBackendPausedOrClosed(true);
         engine_ = &engine;
@@ -77,6 +83,8 @@ public:
         if (audioDevice_ == 0) {
             lastError_ = SDL_GetError();
             lastErrorCode_ = AudioOutputErrorCode::DeviceOpenFailed;
+            SDL_QuitSubSystem(SDL_INIT_AUDIO);
+            audioSubsystemInitialized_ = false;
             engine_ = nullptr;
             service_ = nullptr;
             return false;
@@ -161,6 +169,10 @@ public:
             SDL_CloseAudioDevice(audioDevice_);
             audioDevice_ = 0;
         }
+        if (audioSubsystemInitialized_) {
+            SDL_QuitSubSystem(SDL_INIT_AUDIO);
+            audioSubsystemInitialized_ = false;
+        }
         deviceUnpaused_ = false;
 #endif
         if (service_ != nullptr) {
@@ -224,6 +236,7 @@ private:
 
     SDL_AudioDeviceID audioDevice_ = 0;
     bool deviceUnpaused_ = false;
+    bool audioSubsystemInitialized_ = false;
 #endif
     AudioEngine* engine_ = nullptr;
     AudioService* service_ = nullptr;

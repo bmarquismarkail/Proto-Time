@@ -48,6 +48,10 @@ struct SdlFrontendConfig {
     bool pumpBackendEventsOnInputSample = true;
     bool autoPresentOnVideoEvent = true;
     bool showWindowOnPresent = false;
+    // Debug/test inspection only. Full-frame retention is kept off the normal
+    // render path unless a consumer explicitly requests it.
+    bool retainLastPresentedFrame = false;
+    bool retainDebugSnapshots = false;
     VideoPresenterPolicy videoPresenterPolicy = VideoPresenterPolicy::HardwarePreferredWithFallback;
 };
 
@@ -538,15 +542,13 @@ struct SdlAudioPreviewBuffer {
 
 inline constexpr std::string_view kSdlFrontendPluginId = "bmmq.frontend.sdl";
 inline constexpr std::string_view kSdlFrontendPluginDisplayName = "SDL Frontend Plugin";
-inline constexpr std::uint32_t kSdlFrontendPluginApiVersion = 2u;
-inline constexpr const char* kSdlFrontendPluginApiEntryPoint = "bmmq_get_sdl_frontend_plugin_api_v2";
 
-class ISdlFrontendPlugin : public IVideoPlugin,
+class IFrontendPlugin : public IVideoPlugin,
                            public IAudioPlugin,
                            public IDigitalInputPlugin,
                            public IDigitalInputSourcePlugin {
 public:
-    ~ISdlFrontendPlugin() override = default;
+    ~IFrontendPlugin() override = default;
 
     std::string_view id() const override
     {
@@ -601,14 +603,12 @@ public:
     [[nodiscard]] virtual DebugSnapshotService* debugSnapshotService() const noexcept = 0;
 };
 
-struct SdlFrontendPluginApiV1 {
-    std::size_t structSize = sizeof(SdlFrontendPluginApiV1);
-    std::uint32_t apiVersion = kSdlFrontendPluginApiVersion;
-    ISdlFrontendPlugin* (*create)(const SdlFrontendConfig*) = nullptr;
-    void (*destroy)(ISdlFrontendPlugin*) noexcept = nullptr;
-};
-
-using GetSdlFrontendPluginApiV1Fn = const SdlFrontendPluginApiV1* (*)();
+// Generic host-side frontend contract. The SDL-prefixed names remain aliases
+// so existing embedders can migrate without an ABI-visible C++ break; dynamic
+// modules cross only the pure-C TimeFrontendApiV1 boundary.
+using FrontendConfig = SdlFrontendConfig;
+using FrontendStats = SdlFrontendStats;
+using ISdlFrontendPlugin = IFrontendPlugin;
 
 } // namespace BMMQ
 

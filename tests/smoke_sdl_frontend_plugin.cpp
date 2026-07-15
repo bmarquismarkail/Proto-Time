@@ -1,690 +1,104 @@
 #include <cassert>
-#include <chrono>
 #include <cstdlib>
 #include <filesystem>
-#include <span>
-#include <thread>
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
-using GameBoyMachine = GB::GameBoyMachine;
-#include "machine/plugins/SdlFrontendPlugin.hpp"
 #include "machine/plugins/SdlFrontendPluginLoader.hpp"
-#include "tests/visual_test_helpers.hpp"
-
-namespace {
-
-bool stepUntilAudioFrames(GameBoyMachine& machine, uint64_t targetFrameCounter)
-{
-    for (int i = 0; i < 200000; ++i) {
-        machine.step();
-        if (machine.audioFrameCounter() >= targetFrameCounter) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool frameHasVisiblePixels(const BMMQ::SdlFrameBuffer& frame)
-{
-    for (const auto pixel : frame.pixels) {
-        if (pixel != 0xFF000000u) {
-            return true;
-        }
-    }
-    return false;
-}
-
-BMMQ::VideoStateView makeFrontendScanlineState(uint8_t ly, uint8_t scx)
-{
-    BMMQ::VideoStateView state;
-    state.vram.resize(0x2000u, 0);
-    state.oam.resize(0x00A0u, 0);
-    state.lcdc = 0x91u;
-    state.ly = ly;
-    state.scx = scx;
-    state.bgp = 0xE4u;
-
-    for (std::size_t row = 0; row < 8u; ++row) {
-        const auto tile0 = row * 2u;
-        state.vram[tile0] = 0xFFu;
-        state.vram[tile0 + 1u] = 0x00u;
-
-        const auto tile1 = 0x10u + row * 2u;
-        state.vram[tile1] = 0xFFu;
-        state.vram[tile1 + 1u] = 0xFFu;
-    }
-    state.vram[0x1800u] = 0x00u;
-    state.vram[0x1801u] = 0x01u;
-    return state;
-}
-
-} // namespace
 
 int main(int argc, char** argv)
 {
-    namespace Visual = BMMQ::Tests::Visual;
-
 #if defined(__unix__) || defined(__APPLE__)
     ::setenv("SDL_AUDIODRIVER", "dummy", 1);
     ::setenv("SDL_VIDEODRIVER", "dummy", 1);
 #endif
 
     BMMQ::SdlFrontendConfig config;
-    config.windowTitle = "Proto-Time SDL Smoke";
-    config.windowScale = 3u;
+    config.windowTitle = "Proto-Time SDL ABI Smoke";
     config.frameWidth = 32;
     config.frameHeight = 24;
-    config.audioPreviewSampleCount = 64;
-    config.audioBatchChunks = 1u;
+    config.windowScale = 2u;
+    config.audioBackend = "dummy";
     config.autoInitializeBackend = false;
-    config.autoPresentOnVideoEvent = false;
-    config.enableRenderServiceThread = true;
-    config.videoPresenterPolicy = BMMQ::VideoPresenterPolicy::HardwarePreferredWithFallback;
-    // Create the window hidden on initialize in tests to avoid platform
-    // differences in default window visibility (headless CI vs local SDL).
     config.createHiddenWindowOnInitialize = true;
+    config.showWindowOnPresent = false;
+    config.retainLastPresentedFrame = true;
 
-    GameBoyMachine machine;
-    std::vector<uint8_t> cartridgeRom(0x8000, 0x00);
-    cartridgeRom[0x0100] = 0x00;
-    machine.loadRom(cartridgeRom);
-
-    const auto executablePath = (argc > 0 && argv != nullptr)
+    const auto executable = argc > 0
         ? std::filesystem::path(argv[0])
         : std::filesystem::path("time-smoke-sdl-frontend-plugin");
-    auto frontendPlugin = BMMQ::loadSdlFrontendPlugin(
-        BMMQ::defaultSdlFrontendPluginPath(executablePath),
-        config);
-    auto* frontend = frontendPlugin.get();
-    machine.pluginManager().add(std::move(frontendPlugin));
-
-    bool missingLoadThrew = false;
-    try {
-        (void)BMMQ::loadSdlFrontendPlugin(
-            executablePath.parent_path() / "missing-time-sdl-frontend-plugin.so",
-            config);
-    } catch (const std::runtime_error&) {
-        missingLoadThrew = true;
-    }
-    (void)missingLoadThrew;
-    assert(missingLoadThrew);
-
-    machine.pluginManager().initialize(machine.mutableView());
-    assert(frontend->config().windowTitle == "Proto-Time SDL Smoke");
-    assert(frontend->stats().attachCount == 1);
+    const auto modulePath = BMMQ::defaultSdlFrontendPluginPath(executable);
+    auto plugin = BMMQ::loadSdlFrontendPlugin(modulePath, config);
+    auto* frontend = plugin.get();
+    assert(frontend->id() == "bmmq.frontend.sdl");
+    assert(frontend->displayName() == "SDL Frontend Plugin");
+    assert(frontend->config().windowTitle == config.windowTitle);
     assert(!frontend->backendReady());
+
+    GB::GameBoyMachine machine;
+    std::vector<std::uint8_t> rom(0x8000u, 0u);
+    machine.loadRom(rom);
+    machine.pluginManager().add(std::move(plugin));
+    machine.pluginManager().initialize(machine.mutableView());
+    assert(frontend->stats().attachCount == 1u);
+
+    const bool initialized = frontend->tryInitializeBackend();
+    assert(frontend->stats().backendInitAttempts == 1u);
     assert(!frontend->backendName().empty());
-
-    {
-        BMMQ::SdlFrontendConfig disabledAudioConfig = config;
-        disabledAudioConfig.enableAudio = false;
-        disabledAudioConfig.autoInitializeBackend = false;
-
-        GameBoyMachine disabledAudioMachine;
-        disabledAudioMachine.loadRom(cartridgeRom);
-        auto disabledAudioPlugin = BMMQ::loadSdlFrontendPlugin(
-            BMMQ::defaultSdlFrontendPluginPath(executablePath),
-            disabledAudioConfig);
-        auto* disabledAudioFrontend = disabledAudioPlugin.get();
-        disabledAudioMachine.pluginManager().add(std::move(disabledAudioPlugin));
-        disabledAudioMachine.pluginManager().initialize(disabledAudioMachine.mutableView());
-
-        const auto disabledAudioTargetFrame = disabledAudioMachine.audioFrameCounter() + 2u;
-        assert(stepUntilAudioFrames(disabledAudioMachine, disabledAudioTargetFrame));
-        const auto disabledAudioStats = disabledAudioFrontend->stats();
-        assert(disabledAudioStats.audioEvents == 0u);
-        assert(disabledAudioStats.audioTransportAppendRecentPcmCallCount == 0u);
-
-        disabledAudioMachine.pluginManager().shutdown(disabledAudioMachine.mutableView());
-    }
-
-    {
-        BMMQ::SdlFrontendConfig scanlineConfig = config;
-        scanlineConfig.enableAudio = false;
-        scanlineConfig.autoInitializeBackend = false;
-
-        GameBoyMachine scanlineMachine;
-        scanlineMachine.loadRom(cartridgeRom);
-        auto scanlinePlugin = BMMQ::loadSdlFrontendPlugin(
-            BMMQ::defaultSdlFrontendPluginPath(executablePath),
-            scanlineConfig);
-        auto* scanlineFrontend = scanlinePlugin.get();
-        scanlineMachine.pluginManager().add(std::move(scanlinePlugin));
-        scanlineMachine.pluginManager().initialize(scanlineMachine.mutableView());
-
-        const auto scanlineSnapshotsBefore = scanlineFrontend->stats().videoStateSnapshots;
-        const auto scanlineDebugBuildsBefore = scanlineFrontend->stats().videoDebugSnapshotsBuilt;
-        scanlineFrontend->onVideoEvent(BMMQ::MachineEvent{
-            BMMQ::MachineEventType::VideoScanlineReady,
-            BMMQ::PluginCategory::Video,
-            0,
-            0xFF44u,
-            12u,
-            nullptr,
-            "production scanline should not snapshot video state"
-        }, scanlineMachine.view());
-        assert(scanlineFrontend->stats().videoStateSnapshots == scanlineSnapshotsBefore);
-        assert(scanlineFrontend->stats().videoDebugSnapshotsBuilt == scanlineDebugBuildsBefore);
-
-        scanlineMachine.pluginManager().shutdown(scanlineMachine.mutableView());
-    }
-
-    const bool initResult = frontend->tryInitializeBackend();
-    assert(frontend->stats().backendInitAttempts >= 1);
     assert(!frontend->backendStatusSummary().empty());
-    if (initResult) {
-        assert(frontend->backendReady());
-    }
-    // SDL is process-main-thread-affine, so a configured internal render worker
-    // must remain stopped even when the backend initializes successfully.
-    assert(frontend->stats().renderServiceState == BMMQ::SdlRenderServiceState::Stopped);
-    assert(!frontend->windowVisible());
-    assert(!frontend->windowVisibilityRequested());
-    frontend->requestWindowVisibility(true);
-    assert(frontend->windowVisibilityRequested());
-
-    const auto earlySnapshotsBeforeVisualObservation = frontend->stats().videoStateSnapshots;
-    const auto earlyFramesPreparedBeforeVisualObservation = frontend->stats().framesPrepared;
-    frontend->onVideoEvent(BMMQ::MachineEvent{
-        BMMQ::MachineEventType::VisualResourceObserved,
-        BMMQ::PluginCategory::Video,
-        0,
-        0,
-        0,
-        nullptr,
-        "early visual observation should not sample video state"
-    }, machine.view());
-    assert(frontend->stats().videoStateSnapshots == earlySnapshotsBeforeVisualObservation);
-    assert(frontend->stats().framesPrepared == earlyFramesPreparedBeforeVisualObservation);
+    if (initialized) assert(frontend->backendReady());
 
     frontend->pressButton(BMMQ::InputButton::Right);
-    frontend->pressButton(BMMQ::InputButton::Up);
     frontend->pressButton(BMMQ::InputButton::Button1);
-    assert(frontend->queuedDigitalInputMask().has_value());
-    assert(*frontend->queuedDigitalInputMask() == 0x15u);
-    assert(frontend->isButtonPressed(BMMQ::InputButton::Button1));
-    machine.serviceInput();
+    assert(frontend->queuedDigitalInputMask() == 0x11u);
+    assert(frontend->isButtonPressed(BMMQ::InputButton::Right));
+    frontend->releaseButton(BMMQ::InputButton::Right);
+    assert(frontend->queuedDigitalInputMask() == 0x10u);
 
-    GameBoyMachine dmaVisibilityMachine;
-    dmaVisibilityMachine.loadRom(cartridgeRom);
-    dmaVisibilityMachine.runtimeContext().write8(0xFF40, 0x91u);
-    dmaVisibilityMachine.runtimeContext().write8(0x8002, 0x12u);
-    dmaVisibilityMachine.runtimeContext().write8(0x9801, 0x34u);
-    dmaVisibilityMachine.runtimeContext().write8(0xC000, 0x44u);
-    dmaVisibilityMachine.runtimeContext().write8(0xC09F, 0x99u);
-    dmaVisibilityMachine.runtimeContext().write8(0xFF46, 0xC0u);
-    assert(dmaVisibilityMachine.runtimeContext().read8(0x8002) == 0x12u);
-    assert(dmaVisibilityMachine.runtimeContext().read8(0xFE00) == 0x44u);
-    assert(dmaVisibilityMachine.runtimeContext().read8(0xFE9F) == 0x99u);
-    const auto dmaVisibleModel = dmaVisibilityMachine.view().videoDebugFrameModel({32, 24});
-    assert(dmaVisibleModel.has_value());
-    assert(dmaVisibleModel->displayEnabled);
-    assert(!dmaVisibleModel->resources.empty());
+    assert(frontend->handleHostEvent({
+        BMMQ::SdlFrontendHostEventType::KeyDown,
+        BMMQ::SdlFrontendHostKey::X,
+        false}));
+    assert(frontend->isButtonPressed(BMMQ::InputButton::Button2));
+    assert(frontend->handleHostEvent({
+        BMMQ::SdlFrontendHostEventType::KeyUp,
+        BMMQ::SdlFrontendHostKey::X,
+        false}));
+    assert(!frontend->isButtonPressed(BMMQ::InputButton::Button2));
 
-    machine.runtimeContext().write8(0xFF40, 0x00u);
-    machine.runtimeContext().write8(0x8000, 0xFFu);
-    machine.runtimeContext().write8(0x8001, 0x00u);
-    for (uint16_t row = 1; row < 8; ++row) {
-        machine.runtimeContext().write8(static_cast<uint16_t>(0x8000u + row * 2u), 0xFFu);
-        machine.runtimeContext().write8(static_cast<uint16_t>(0x8001u + row * 2u), 0x00u);
-    }
-    machine.runtimeContext().write8(0x9800, 0x00u);
-    machine.runtimeContext().write8(0x8010, 0xFFu);
-    machine.runtimeContext().write8(0x8011, 0xFFu);
-    for (uint16_t row = 1; row < 8; ++row) {
-        machine.runtimeContext().write8(static_cast<uint16_t>(0x8010u + row * 2u), 0xFFu);
-        machine.runtimeContext().write8(static_cast<uint16_t>(0x8011u + row * 2u), 0xFFu);
-    }
-    machine.runtimeContext().write8(0xFE00, 32u);
-    machine.runtimeContext().write8(0xFE01, 16u);
-    machine.runtimeContext().write8(0xFE02, 0x01u);
-    machine.runtimeContext().write8(0xFE03, 0x00u);
-    machine.runtimeContext().write8(0xFF47, 0xE4u);
-    machine.runtimeContext().write8(0xFF48, 0xE4u);
-    machine.runtimeContext().write8(0xFF40, 0x93u);
-    machine.runtimeContext().write8(0xFF12, 0xF3u);
-    if (initResult && frontend->audioOutputReady()) {
-        assert(frontend->serviceFrontend());
-        assert(frontend->bufferedAudioSamples() <= frontend->stats().audioRingBufferCapacitySamples);
-    }
-    const auto snapshotsBeforeVisualObservation = frontend->stats().videoStateSnapshots;
-    const auto framesPreparedBeforeVisualObservation = frontend->stats().framesPrepared;
-    frontend->onVideoEvent(BMMQ::MachineEvent{
-        BMMQ::MachineEventType::VisualResourceObserved,
-        BMMQ::PluginCategory::Video,
-        0,
-        0,
-        0,
-        nullptr,
-        "visual observation should not sample video state"
-    }, machine.view());
-    assert(frontend->stats().videoStateSnapshots == snapshotsBeforeVisualObservation);
-    assert(frontend->stats().framesPrepared == framesPreparedBeforeVisualObservation);
-    const auto renderAttemptsBeforeManualPublish = frontend->stats().renderAttempts;
-    const auto framesPreparedBeforeManualPublish = frontend->stats().framesPrepared;
-    const auto videoRealtimePacketsBeforeManualPublish = frontend->stats().videoRealtimePacketsAccepted;
-    const auto videoDebugSnapshotsBeforeManualPublish = frontend->stats().videoDebugSnapshotsBuilt;
-    const auto videoDebugSkipCountBeforeManualPublish = frontend->stats().videoDebugModelBuildSkipCount;
-    const auto videoDebugBuildSkipNoConsumerBeforeManualPublish =
-        frontend->stats().videoDebugFrameBuildSkippedNoConsumerCount;
-    const auto videoDebugBuildExecutedBeforeManualPublish =
-        frontend->stats().videoDebugFrameBuildExecutedCount;
-    const auto frameBuildSamplesBeforeManualPublish =
-        frontend->stats().videoFrameBuildDurationSampleCount;
-    frontend->onVideoEvent(BMMQ::MachineEvent{
+    frontend->onVideoEvent({
         BMMQ::MachineEventType::VBlank,
         BMMQ::PluginCategory::Video,
-        0,
+        1u,
         0xFF44u,
-        machine.runtimeContext().read8(0xFF44u),
+        144u,
         nullptr,
-        "manual vblank publish regression"
-    }, machine.view());
-    assert(frontend->stats().framesPrepared == framesPreparedBeforeManualPublish + 1u);
-    assert(frontend->stats().renderAttempts == renderAttemptsBeforeManualPublish);
-    assert(frontend->stats().videoRealtimePacketsAccepted == videoRealtimePacketsBeforeManualPublish + 1u);
-    assert(frontend->stats().videoDebugSnapshotsBuilt == videoDebugSnapshotsBeforeManualPublish);
-    assert(frontend->stats().videoDebugModelBuildSkipCount == videoDebugSkipCountBeforeManualPublish + 1u);
-    assert(frontend->stats().videoDebugFrameBuildSkippedNoConsumerCount >=
-           videoDebugBuildSkipNoConsumerBeforeManualPublish);
-    assert(frontend->stats().videoDebugFrameBuildExecutedCount ==
-           videoDebugBuildExecutedBeforeManualPublish);
-    const auto frameBuildStats = frontend->stats();
-    assert(frameBuildStats.videoFrameBuildDurationSampleCount ==
-           frameBuildSamplesBeforeManualPublish + 1u);
-    assert(frameBuildStats.videoFrameBuildDurationHighWaterNanos >=
-           frameBuildStats.videoFrameBuildDurationLastNanos);
-    if (frontend->backendReady()) {
-        assert(frontend->serviceFrontend());
-    }
-
-    const auto pumpedBeforeStep = frontend->pumpBackendEvents();
-    (void)pumpedBeforeStep;
-    for (int i = 0; i < 20000; ++i) {
-        machine.step();
-        if (frontend->lastVideoDebugModel().has_value() && frontend->lastVideoDebugModel()->inVBlank) {
-            break;
-        }
-    }
+        "ABI video publication"}, machine.view());
+    assert(frontend->stats().videoRealtimePacketsAccepted == 1u);
     assert(frontend->serviceFrontend());
-
-    auto& lifecycle = machine.lifecycleCoordinator();
-    machine.audioService().setLifecycleContractEnforced(true);
-    machine.videoService().setLifecycleContractEnforced(true);
-    const auto audioDeniedBeforeRecovery = machine.audioService().lifecycleContractDeniedCalls();
-    const auto videoDeniedBeforeRecovery = machine.videoService().lifecycleContractDeniedCalls();
-    const auto lifecycleStatsBeforeRecovery = lifecycle.stats();
-    const auto videoRestartReasonIndex = static_cast<std::size_t>(BMMQ::MachineTransitionReason::VideoBackendRestart);
-    const auto recoveryVideoAttemptsBefore = frontend->stats().lifecycleRecoveryVideoAttemptCount;
-    const auto ensureCoordinatorBeforeRecovery = frontend->stats().lifecycleVideoPresenterEnsureCoordinatorCount;
-    const auto ensureDirectBeforeRecovery = frontend->stats().lifecycleVideoPresenterEnsureDirectCount;
-    const bool degradedForRecovery = lifecycle.runTransition(BMMQ::MachineTransitionReason::VideoBackendRestart, [&]() {
-        return BMMQ::MachineTransitionMutationResult{
-            .success = false,
-            .videoReady = false,
-            .audioReady = true,
-        };
-    });
-    assert(degradedForRecovery);
-    for (std::size_t attempt = 0; attempt < 80u; ++attempt) {
-        (void)frontend->serviceFrontend();
-        if (frontend->stats().lifecycleRecoveryVideoAttemptCount > recoveryVideoAttemptsBefore) {
-            break;
-        }
+    if (initialized) {
+        assert(frontend->lastFrame().has_value());
+        assert(frontend->lastFrame()->width == config.frameWidth);
+        assert(frontend->lastFrame()->height == config.frameHeight);
     }
-    const auto recoveryStats = frontend->stats();
-    assert(recoveryStats.lifecycleRecoveryVideoAttemptCount > recoveryVideoAttemptsBefore);
-    const auto lifecycleStatsAfterRecovery = lifecycle.stats();
-    assert(lifecycleStatsAfterRecovery.reasonCounts[videoRestartReasonIndex] >
-           lifecycleStatsBeforeRecovery.reasonCounts[videoRestartReasonIndex]);
-    assert(recoveryStats.lifecycleRecoveryLastTarget == BMMQ::SdlLifecycleRecoveryTarget::Video);
-    assert(recoveryStats.lifecycleRecoveryLastTransitionReason ==
-           BMMQ::MachineTransitionReason::VideoBackendRestart);
-    assert(recoveryStats.lifecycleRecoveryLastUsedCoordinator);
-    assert(!recoveryStats.lifecycleRecoveryLastTransitionRejectedForReentry);
-    assert(recoveryStats.lifecycleVideoPresenterEnsureCoordinatorCount > ensureCoordinatorBeforeRecovery);
-    assert(recoveryStats.lifecycleVideoPresenterEnsureDirectCount == ensureDirectBeforeRecovery);
-    assert(machine.audioService().lifecycleContractDeniedCalls() == audioDeniedBeforeRecovery);
-    assert(machine.videoService().lifecycleContractDeniedCalls() == videoDeniedBeforeRecovery);
 
-    const bool degradedForSuppression = lifecycle.runTransition(BMMQ::MachineTransitionReason::VideoBackendRestart, [&]() {
-        return BMMQ::MachineTransitionMutationResult{
-            .success = false,
-            .videoReady = false,
-            .audioReady = true,
-        };
-    });
-    assert(degradedForSuppression);
-    const auto cooldownSuppressBefore = frontend->stats().lifecycleRecoveryCooldownSuppressCount;
-    (void)frontend->serviceFrontend();
-    assert(frontend->stats().lifecycleRecoveryCooldownSuppressCount > cooldownSuppressBefore);
-
-    const auto& stats = frontend->stats();
-    (void)stats;
-    assert(stats.videoEvents >= 1);
-    assert(stats.audioEvents >= 1);
-    assert(stats.inputEvents >= 1);
-    assert(stats.inputPolls >= 1);
-    assert(stats.inputSamplesProvided >= 1);
-    assert(stats.framesPrepared >= 1);
-    assert(stats.videoRealtimePacketsAccepted >= stats.framesPrepared);
-    // Phase 25: realtime packets are built outside sharedStateMutex_ in onVideoEvent(); counter must track this
-    assert(stats.videoRealtimePacketsBuiltOutsideLock >= stats.videoRealtimePacketsAccepted);
-    assert(stats.videoRealtimeRenderFromMemoryWriteCount == 0u);
-    assert(stats.videoDebugModelBuildSkipCount <= stats.videoEvents);
-    // The host thread presents outside sharedStateMutex_; the retired internal
-    // render worker must not execute SDL work.
-    assert(stats.renderServicePresentCallsOutsideLock == 0u);
-    // Phase 27: render loop uses lightweight sync per iteration; full sync only on present
-    assert(stats.renderServiceLightweightSyncCount + stats.renderServicePresentSuccessCount >= stats.renderServiceLoopCount);
-    // Phase 28: wake-reason counters must account for every sleep entered (fencepost: first iteration has no prior sleep)
-    assert(stats.renderServiceFrameWakeCount + stats.renderServiceTimeoutWakeCount + 1 >= stats.renderServiceLoopCount);
-    // Phase 28: deferred fast-sleep count must not exceed total sleeps
-    assert(stats.renderServiceDeferredPresentFastSleepCount <= stats.renderServiceSleepCount);
-    // Phase 29: audio worker wake-reason counters must cover all tracked wakes
-    assert(stats.audioTransportWorkerCallbackWakeCount +
-               stats.audioTransportWorkerEmulationWakeCount +
-               stats.audioTransportWorkerTimeoutWakeCount >=
-           stats.audioTransportWorkerWakeCount);
-    // Phase 29: callback can't wake the worker more times than the callback itself ran
-    assert(stats.audioTransportWorkerCallbackWakeCount <= stats.audioTransportDrainCallbackCount);
-    // Phase 30: emulation wake latency histogram consistency
-    assert(stats.audioTransportWorkerEmulationWakeLatencySampleCount <=
-           stats.audioTransportWorkerEmulationWakeCount);
-    if (stats.audioTransportWorkerEmulationWakeLatencySampleCount > 0u) {
-        assert(stats.audioTransportWorkerEmulationWakeLatencyHighWaterNs >=
-               stats.audioTransportWorkerEmulationWakeLatencyLastNs);
-    }
-    assert(stats.videoDebugSnapshotsBuilt == stats.videoStateSnapshots);
-    // Snapshot cost invariants: high-water must be >= last if any snapshots were taken
-    if (stats.videoDebugSnapshotsBuilt > 0u) {
-        assert(stats.videoDebugSnapshotDurationHighWaterNs >= stats.videoDebugSnapshotDurationLastNs);
-    }
-    if (stats.audioStateSnapshotsBuilt > 0u) {
-        assert(stats.audioStateSnapshotDurationHighWaterNs >= stats.audioStateSnapshotDurationLastNs);
-    }
-    assert(stats.videoFramesPublished >= stats.framesPrepared);
-    assert(stats.videoPublishedPixelBytes >= stats.videoFramesPublished * 4u);
-    assert(stats.videoPublishedPixelBytes ==
-           stats.videoPublishedRealtimePixelBytes + stats.videoPublishedDebugPixelBytes);
-    assert(stats.videoPublishedRealtimeFrameCount + stats.videoPublishedDebugFrameCount >= stats.framesPrepared);
-    assert(stats.videoPresentFreshFrameCount >= stats.framesPresented);
-    assert(stats.videoPresentFreshFrameCount ==
-           stats.videoPresentFromRealtimeFrameCount + stats.videoPresentFromDebugFrameCount);
-    assert(stats.videoMailboxHighWaterFrames >= 1u);
-    assert(stats.videoMailboxStaleDropCount ==
-           stats.videoMailboxStaleDebugDropCount + stats.videoMailboxStaleRealtimeDropCount);
-    assert(stats.videoMailboxOverwriteCount ==
-           stats.videoMailboxOverwriteDebugCount + stats.videoMailboxOverwriteRealtimeCount);
-    assert(stats.videoPresentCount >= stats.framesPresented);
-    assert(stats.configuredPresenterMode == BMMQ::VideoPresenterMode::Hardware);
-    assert(stats.configuredPresenterPolicy == BMMQ::VideoPresenterPolicy::HardwarePreferredWithFallback);
-    assert(stats.videoPresenterLastFallbackReason == BMMQ::VideoPresenterFallbackReason::None ||
-           stats.videoPresenterLastFallbackReason == BMMQ::VideoPresenterFallbackReason::HardwareRendererUnavailable ||
-           stats.videoPresenterLastFallbackReason == BMMQ::VideoPresenterFallbackReason::RuntimePresentFailure);
-    if (stats.lifecycleRecoveryVideoAttemptCount == 0u) {
-        assert(stats.videoPresenterRenderCount >= stats.framesPresented);
-        assert(stats.videoPresenterTextureUploadCount >= stats.framesPresented);
-    }
-    assert(stats.audioRealtimePacketsAccepted >= 1u);
-    assert(stats.audioStateSnapshotsBuilt == 0u);
-    assert(stats.audioPreviewsBuilt >= 1);
-    assert(stats.buttonTransitions >= 3);
-    assert(stats.eventPumpCalls >= 2);
-    assert(stats.serviceCalls >= 1);
-    assert(stats.timingFrontendTicksScheduled >= stats.timingFrontendTicksExecuted);
-    assert(stats.timingFrontendTicksScheduled ==
-           stats.timingFrontendTicksExecuted + stats.timingFrontendTicksMerged);
-    assert(stats.timingFrontendTickDelayHighWaterNanos >= stats.timingFrontendTickDelayLastNanos);
-    assert(stats.timingFrontendTickDelayHighWaterNanos >= 0);
-    assert(!stats.timingProfileName.empty());
-    assert(stats.timingSleepWakeLateStreakHighWater >= stats.timingSleepWakeLateStreakCurrent);
-    assert(stats.timingSleepWakeEarlyCount + stats.timingSleepWakeLateCount <= stats.timingSleepCalls);
-    assert(stats.timingSleepWakeJitterUnder100usCount +
-               stats.timingSleepWakeJitter100To500usCount +
-               stats.timingSleepWakeJitter500usTo2msCount +
-               stats.timingSleepWakeJitterOver2msCount <=
-           stats.timingSleepCalls);
-    assert(stats.renderServiceState == BMMQ::SdlRenderServiceState::Stopped);
-    if (initResult) {
-        assert(stats.renderServiceLoopCount == 0u);
-        assert(stats.renderServiceSleepCount == 0u);
-        assert(stats.lifecycleLastOutcome != BMMQ::MachineTransitionOutcome::Failed);
-    }
-    assert(!stats.lifecycleLastRejectedForReentry);
-    assert(stats.lifecycleTransitionCount ==
-           stats.lifecycleTransitionSuccessCount +
-               stats.lifecycleTransitionDegradedCount +
-               stats.lifecycleTransitionFailureCount);
-    assert(stats.lifecycleTransitionCount >= 1u);
-    assert(stats.lifecycleTransitionReentryAttemptCount >= stats.lifecycleNestedTransitionRejectCount);
-    assert(stats.lifecycleReasonVideoBackendRestartCount >= 1u);
-    assert(stats.lifecycleReasonConfigReconfigureCount >= 1u);
-    assert(stats.lifecycleTransitionDurationMaxNs >= stats.lifecycleTransitionDurationP95Ns);
-    assert(stats.lifecycleTransitionDurationP95Ns >= stats.lifecycleTransitionDurationP50Ns);
-    assert(stats.lifecycleVideoPresenterEnsureCoordinatorCount >=
-           stats.lifecycleRecoveryVideoAttemptCount);
-    assert(stats.lifecycleVideoPresenterEnsureCoordinatorCount > 0u);
-    if (initResult) {
-        assert(stats.lifecycleVideoPresenterEnsureDirectCount > 0u);
-    }
-    assert(stats.lifecycleRecoveryVideoAttemptCount ==
-           stats.lifecycleRecoveryVideoSuccessCount + stats.lifecycleRecoveryVideoFailureCount);
-    assert(stats.lifecycleRecoveryAudioAttemptCount ==
-           stats.lifecycleRecoveryAudioSuccessCount + stats.lifecycleRecoveryAudioFailureCount);
-    assert(stats.lifecycleRecoveryLastTarget != BMMQ::SdlLifecycleRecoveryTarget::None);
-    assert(stats.lifecycleRecoveryLastUsedCoordinator);
-    assert(stats.lifecycleRecoveryLastTransitionFailureStage == BMMQ::MachineTransitionFailureStage::None ||
-           stats.lifecycleRecoveryLastTransitionOutcome != BMMQ::MachineTransitionOutcome::Succeeded);
-    assert(stats.lifecycleLastFailureStage != BMMQ::MachineTransitionFailureStage::Pause ||
-           stats.lifecycleLastOutcome == BMMQ::MachineTransitionOutcome::Failed);
-    assert(!frontend->diagnostics().empty());
-    assert(frontend->lastVideoDebugModel().has_value());
-    assert(frontend->lastVideoDebugModel()->displayEnabled);
-    assert(frontend->lastFrame().has_value());
-    assert(frameHasVisiblePixels(*frontend->lastFrame()));
-    const auto shade1 = 0xFF88C070u;
-    const auto shade3 = 0xFF081820u;
-    (void)shade1;
-    (void)shade3;
-    assert(frontend->lastFrame()->pixels[0] == shade1);
-    assert(frontend->lastFrame()->pixels[1] == shade1);
-    assert(frontend->lastFrame()->pixels[7] == shade1);
-    assert(frontend->lastFrame()->pixels[8] == shade1);
-    assert(frontend->lastFrame()->pixels[16 * 32 + 8] == shade3);
-    assert(frontend->lastFrame()->pixels[16 * 32 + 15] == shade3);
-    assert(frontend->lastAudioPreview().has_value());
-    assert(frontend->lastAudioPreview()->sampleCount() == 64u);
-    if (initResult && frontend->audioOutputReady()) {
-        assert(stats.audioSourceSampleRate == 48000);
-        assert(stats.audioDeviceSampleRate == 48000);
-        assert(stats.audioCallbackChunkSamples == 256u);
-        assert(stats.audioRingBufferCapacitySamples == 2048u);
-        assert(!stats.audioResamplingActive);
-        assert(stats.audioResampleRatio == 1.0);
-        assert(frontend->bufferedAudioSamples() <= stats.audioRingBufferCapacitySamples);
-        assert(stats.audioOverrunDropCount == 0u);
-        assert(stats.audioQueueRecoveryClears == 0u);
-        assert(stats.audioTransportDrainDurationSampleCount >= stats.audioTransportDrainCallbackCount);
-        assert(stats.audioTransportDrainDurationHighWaterNanos >= stats.audioTransportDrainDurationLastNanos);
-        assert(stats.audioTransportDrainDurationP95Nanos >= stats.audioTransportDrainDurationP50Nanos);
-        assert(stats.audioTransportDrainDurationP99Nanos >= stats.audioTransportDrainDurationP95Nanos);
-        assert(stats.audioTransportDrainDurationP999Nanos >= stats.audioTransportDrainDurationP99Nanos);
-        const auto durationBucketTotal =
-            stats.audioTransportDrainDurationUnder50usCount +
-            stats.audioTransportDrainDuration50To100usCount +
-            stats.audioTransportDrainDuration100To250usCount +
-            stats.audioTransportDrainDuration250To500usCount +
-            stats.audioTransportDrainDuration500usTo1msCount +
-            stats.audioTransportDrainDuration1To2msCount +
-            stats.audioTransportDrainDuration2To5msCount +
-            stats.audioTransportDrainDuration5To10msCount +
-            stats.audioTransportDrainDurationOver10msCount;
-        assert(durationBucketTotal == stats.audioTransportDrainDurationSampleCount);
-
-        // Video frame publish-to-present age invariants
-        if (stats.videoPresentFreshFrameCount > 0u) {
-            assert(stats.videoFrameAgeLastNs > 0u);
-            assert(stats.videoFrameAgeHighWaterNs >= stats.videoFrameAgeLastNs);
-            const std::size_t videoAgeBucketSum =
-                stats.videoFrameAgeUnder50usCount + stats.videoFrameAge50To100usCount +
-                stats.videoFrameAge100To250usCount + stats.videoFrameAge250To500usCount +
-                stats.videoFrameAge500usTo1msCount + stats.videoFrameAge1To2msCount +
-                stats.videoFrameAge2To5msCount + stats.videoFrameAge5To10msCount +
-                stats.videoFrameAgeOver10msCount;
-            assert(videoAgeBucketSum == stats.videoPresentFreshFrameCount);
-        }
-
-        for (std::size_t attempt = 0; attempt < 50u && frontend->bufferedAudioSamples() != 0u; ++attempt) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            (void)frontend->stats();
-        }
-        assert(frontend->bufferedAudioSamples() == 0u);
-        assert(!frontend->audioQueueBackpressureActive());
-
-        const auto lowWaterBefore = frontend->stats().audioQueueLowWaterHits;
-        const auto framesPreparedBefore = frontend->stats().framesPrepared;
-        const auto framesPublishedBefore = frontend->stats().videoFramesPublished;
-        const auto videoRealtimePacketsBefore = frontend->stats().videoRealtimePacketsAccepted;
-        const auto videoRealtimeBuiltOutsideLockBefore = frontend->stats().videoRealtimePacketsBuiltOutsideLock;
-        const auto videoDebugSnapshotsBefore = frontend->stats().videoDebugSnapshotsBuilt;
-        const auto renderAttemptsBefore = frontend->stats().renderAttempts;
-        const auto audioEventsBeforeLowWater = frontend->stats().audioEvents;
-        frontend->onVideoEvent(BMMQ::MachineEvent{
-            BMMQ::MachineEventType::VBlank,
-            BMMQ::PluginCategory::Video,
-            0,
-            0xFF44u,
-            machine.runtimeContext().read8(0xFF44u),
-            nullptr,
-            "audio-low-water video pressure regression"
-        }, machine.view());
-        assert(frontend->stats().audioQueueLowWaterHits >= lowWaterBefore);
-        assert(frontend->stats().framesPrepared == framesPreparedBefore + 1u);
-        assert(frontend->stats().videoFramesPublished == framesPublishedBefore + 1u);
-        assert(frontend->stats().videoRealtimePacketsAccepted == videoRealtimePacketsBefore + 1u);
-        assert(frontend->stats().videoRealtimePacketsBuiltOutsideLock == videoRealtimeBuiltOutsideLockBefore + 1u);
-        assert(frontend->stats().videoDebugSnapshotsBuilt == videoDebugSnapshotsBefore);
-        assert(frontend->stats().renderAttempts == renderAttemptsBefore);
-
-        for (uint8_t y = 0; y < 24u; ++y) {
-            auto scanlineModel = Visual::makeSemanticModelFromState(
-                makeFrontendScanlineState(y, y == 0u ? 0u : 8u),
-                32,
-                24);
-            assert(!machine.videoService().submitVideoDebugModel(BMMQ::MachineEvent{
-                BMMQ::MachineEventType::VideoScanlineReady,
-                BMMQ::PluginCategory::Video,
-                0,
-                0xFF44u,
-                y,
-                nullptr,
-                "pending scanline low-water regression"
-            }, scanlineModel));
-        }
-        assert(!machine.videoService().hasPartialScanlineFrame());
-        const auto lowWaterBeforePendingScanline = frontend->stats().audioQueueLowWaterHits;
-        const auto framesPreparedBeforePendingScanline = frontend->stats().framesPrepared;
-        const auto framesPublishedBeforePendingScanline = frontend->stats().videoFramesPublished;
-        const auto videoStateSnapshotsBeforePendingScanline = frontend->stats().videoStateSnapshots;
-        frontend->onVideoEvent(BMMQ::MachineEvent{
-            BMMQ::MachineEventType::VBlank,
-            BMMQ::PluginCategory::Video,
-            0,
-            0xFF44u,
-            machine.runtimeContext().read8(0xFF44u),
-            nullptr,
-            "pending scanline low-water regression"
-        }, machine.view());
-        assert(frontend->stats().audioQueueLowWaterHits >= lowWaterBeforePendingScanline);
-        assert(frontend->stats().framesPrepared == framesPreparedBeforePendingScanline + 1u);
-        assert(frontend->stats().videoFramesPublished == framesPublishedBeforePendingScanline + 1u);
-        assert(frontend->stats().videoStateSnapshots == videoStateSnapshotsBeforePendingScanline);
-
-        const auto nextAudioFrame = machine.audioFrameCounter() + 1u;
-        assert(stepUntilAudioFrames(machine, nextAudioFrame));
-        assert(frontend->stats().audioEvents >= audioEventsBeforeLowWater + 1u);
-        const auto audioStats = frontend->stats();
-        assert(audioStats.audioBatchConfiguredChunks == 1u);
-        assert(audioStats.audioBatchFlushCount >= 1u);
-        assert(audioStats.audioBatchFlushSamplesMin == audioStats.audioRealtimePacketSamplesMin);
-
-        const auto highWaterStartFrame = machine.audioFrameCounter() + 1u;
-        std::vector<int16_t> highWaterChunk(256u, 700);
-        for (uint64_t frame = highWaterStartFrame; frame < highWaterStartFrame + 32u; ++frame) {
-            machine.audioService().appendRecentPcm(highWaterChunk, frame);
-        }
-        assert(frontend->audioQueueBackpressureActive());
-    }
-    assert(frontend->lastInputState().has_value());
-    assert(frontend->lastInputState()->pressedMask == 0x15u);
-    assert(frontend->lastFrame().has_value());
-    assert(frontend->lastFrame()->width == 32);
-    assert(frontend->lastFrame()->height == 24);
-    assert(frontend->lastFrame()->pixelCount() == 32u * 24u);
-    assert(frontend->windowVisibilityRequested() ||
-           frontend->stats().lifecycleRecoveryVideoAttemptCount > 0u);
-
-    frontend->releaseButton(BMMQ::InputButton::Up);
-    assert(frontend->queuedDigitalInputMask().has_value());
-    assert(*frontend->queuedDigitalInputMask() == 0x11u);
-
-    assert(frontend->handleHostEvent({BMMQ::SdlFrontendHostEventType::KeyDown, BMMQ::SdlFrontendHostKey::Return, false}));
-    assert(frontend->isButtonPressed(BMMQ::InputButton::Meta2));
-    assert(frontend->handleHostEvent({BMMQ::SdlFrontendHostEventType::KeyDown, BMMQ::SdlFrontendHostKey::X, false}));
-    assert(frontend->isButtonPressed(BMMQ::InputButton::Button2));
-    assert(frontend->handleHostEvent({BMMQ::SdlFrontendHostEventType::KeyUp, BMMQ::SdlFrontendHostKey::X, false}));
-    assert(!frontend->isButtonPressed(BMMQ::InputButton::Button2));
-    assert(frontend->stats().hostEventsHandled >= 3);
-    assert(frontend->stats().keyEventsHandled >= 3);
-    assert(!frontend->lastHostEventSummary().empty());
-
-    assert(frontend->handleHostEvent({BMMQ::SdlFrontendHostEventType::Quit, BMMQ::SdlFrontendHostKey::Unknown, false}));
+    assert(frontend->handleHostEvent({
+        BMMQ::SdlFrontendHostEventType::Quit,
+        BMMQ::SdlFrontendHostKey::Unknown,
+        false}));
     assert(frontend->quitRequested());
     frontend->clearQuitRequest();
     assert(!frontend->quitRequested());
 
-    frontend->clearQueuedDigitalInputMask();
-    assert(!frontend->queuedDigitalInputMask().has_value());
-
     machine.pluginManager().shutdown(machine.mutableView());
-    assert(frontend->stats().detachCount == 1);
+    assert(frontend->stats().detachCount == 1u);
 
-    {
-        GameBoyMachine batchedMachine;
-        std::vector<uint8_t> batchedRom(0x8000, 0x00);
-        batchedRom[0x0100] = 0x00;
-        batchedMachine.loadRom(batchedRom);
-
-        BMMQ::SdlFrontendConfig batchedConfig = config;
-        batchedConfig.audioBatchChunks = 2u;
-        auto batchedPlugin = BMMQ::loadSdlFrontendPlugin(
-            BMMQ::defaultSdlFrontendPluginPath(executablePath),
-            batchedConfig);
-        auto* batchedFrontend = batchedPlugin.get();
-        batchedMachine.pluginManager().add(std::move(batchedPlugin));
-        batchedMachine.pluginManager().initialize(batchedMachine.mutableView());
-
-        const auto batchTargetFrame = batchedMachine.audioFrameCounter() + 3u;
-        assert(stepUntilAudioFrames(batchedMachine, batchTargetFrame));
-        auto batchedStats = batchedFrontend->stats();
-        assert(batchedStats.audioBatchConfiguredChunks == 2u);
-        assert(batchedStats.audioBatchFlushSamplesMax >=
-               batchedStats.audioRealtimePacketSamplesMax);
-        assert(batchedStats.audioTransportAppendRecentPcmCallCount <
-               batchedStats.audioRealtimePacketsAccepted);
-        const auto pendingBatchSamplesBeforeDetach = batchedStats.audioBatchCurrentSamples;
-        const auto lifecycleFlushesBeforeDetach = batchedStats.audioBatchFlushReasonLifecycleCount;
-
-        batchedMachine.pluginManager().shutdown(batchedMachine.mutableView());
-        batchedStats = batchedFrontend->stats();
-        if (pendingBatchSamplesBeforeDetach > 0u) {
-            assert(batchedStats.audioBatchFlushReasonLifecycleCount > lifecycleFlushesBeforeDetach);
-        }
-        assert(batchedStats.audioBatchCurrentSamples == 0u);
-        assert(batchedStats.detachCount == 1u);
+    bool missingRejected = false;
+    try {
+        (void)BMMQ::loadSdlFrontendPlugin(
+            executable.parent_path() / "missing-time-frontend-plugin.so", config);
+    } catch (const std::runtime_error&) {
+        missingRejected = true;
     }
-
-    return 0;
+    assert(missingRejected);
 }

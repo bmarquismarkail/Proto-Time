@@ -28,7 +28,7 @@ cmake --build build-working -j4
 
 This build now produces both the host executable `timeEmulator` and the runtime-loaded SDL frontend shared object `libtime-sdl-frontend-plugin.so`.
 
-`timeEmulator` will auto-load that shared object from the executable directory by default. Use `--plugin <path>` to override the plugin path or `--headless` to skip frontend loading entirely.
+`timeEmulator` will auto-load that shared object from the executable directory by default. Use `--frontend-plugin <path>` to load any compatible pure-C frontend module, `--frontend <id>` when it exposes multiple frontends, or `--headless` to skip frontend loading. `--plugin` remains a path alias.
 
 Executor policies are a separate extension layer. Built-in policies can be
 selected by stable ID, while external modules use the pure-C ABI in
@@ -42,8 +42,8 @@ timeEmulator --core gameboy --rom path/to/rom.gb \
 
 If a module exposes exactly one executor policy, `--executor-policy` may be
 omitted. The legacy `--cpu-mode baseline|block|ir|native` options remain aliases
-for the built-in policy IDs. The SDL frontend's `--plugin` option is still a
-build-coupled C++ interface and is intentionally distinct from this stable C ABI.
+for the built-in policy IDs. Frontends use the same module ABI with a distinct
+frontend descriptor and function table.
 
 Run tests:
 
@@ -226,15 +226,21 @@ This wraps `LR3592_DMG` into `ICpuCoreRuntime`, while `GameBoyMachine` hosts the
 
 The SDL frontend is no longer compiled directly into the emulator executable. The host uses:
 
-- `machine/plugins/SdlFrontendPlugin.hpp` for the shared frontend interface and factory ABI
-- `machine/plugins/SdlFrontendPluginLoader.hpp`
-- `machine/plugins/SdlFrontendPluginLoader.cpp`
+- `machine/plugins/abi/TimePluginAbi.h` for the stable pure-C module boundary
+- `machine/plugins/DynamicPluginModule.hpp` for validated loading and the host adapter
+- `machine/plugins/SdlFrontendPlugin.hpp` for the temporary internal C++ compatibility interface
 
 The plugin implementation lives in:
 
-- `machine/plugins/sdl_frontend/SdlFrontendPlugin.cpp`
+- `machine/plugins/sdl_frontend/SdlFrontendModule.cpp`
 
-At runtime the emulator loads `libtime-sdl-frontend-plugin.so` with `dlopen`, creates an `ISdlFrontendPlugin` instance through the exported factory table, and registers that instance with `PluginManager` like any other host-side I/O plugin. If loading fails, the emulator logs a warning and continues in headless mode.
+At runtime the emulator loads `libtime-sdl-frontend-plugin.so`, validates its
+`TimeFrontendApiV1` descriptor, wraps it in an `IFrontendPlugin`, and registers
+the adapter with `PluginManager`. Video/window/events stay inside the SDL
+module; the host owns audio transport, input snapshots, timing controls, and
+the video mailbox. Any module implementing the same C table can be selected in
+its place. If loading fails, the emulator logs a warning and continues in
+headless mode.
 
 ## Tests
 
