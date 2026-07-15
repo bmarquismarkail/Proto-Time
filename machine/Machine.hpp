@@ -259,21 +259,32 @@ public:
     }
     virtual void serviceInput() {
     }
-    virtual ExecutionSliceResult runSlice(const ExecutionBudget& budget) {
+    virtual ExecutionSliceResult runSlice(
+        const ExecutionBudget& budget,
+        InstructionRetirementSink* observer = nullptr) {
         class MachineRetirementSink final : public InstructionRetirementSink {
         public:
-            explicit MachineRetirementSink(Machine& machine) : machine_(machine) {}
+            MachineRetirementSink(Machine& machine, InstructionRetirementSink* observer)
+                : machine_(machine), observer_(observer) {}
 
             InstructionRetirementDecision retireInstruction(
                 const CpuFeedback& feedback,
                 const ExecutionSliceProgress& progress) override
             {
-                return machine_.onInstructionRetired(feedback, progress);
+                const auto machineDecision = machine_.onInstructionRetired(feedback, progress);
+                const auto observerDecision = observer_ != nullptr
+                    ? observer_->retireInstruction(feedback, progress)
+                    : InstructionRetirementDecision::continueSlice();
+                if (!machineDecision.continueExecution) {
+                    return machineDecision;
+                }
+                return observerDecision;
             }
 
         private:
             Machine& machine_;
-        } sink(*this);
+            InstructionRetirementSink* observer_;
+        } sink(*this, observer);
 
         return runtimeContext().runSlice(budget, sink);
     }

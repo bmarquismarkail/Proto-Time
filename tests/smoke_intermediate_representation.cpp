@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "inst_cycle/IntermediateRepresentation.hpp"
+#include "inst_cycle/IntermediateRepresentationInterpreter.hpp"
 
 namespace {
 
@@ -107,6 +108,41 @@ void testBuilderRejectsMalformedConditionalCycles()
     assert(threw);
 }
 
+void testPortableInterpreterUsesHostAbiAndReportsBranch()
+{
+    struct Host final : InterpreterHost {
+        std::uint64_t readRegister(std::uint32_t, ValueType) override { return reg; }
+        void writeRegister(std::uint32_t, ValueType, std::uint64_t value) override { reg = value; }
+        std::uint64_t loadMemory(std::uint64_t, ValueType, MemoryClass) override { return memory; }
+        void storeMemory(std::uint64_t, ValueType, MemoryClass, std::uint64_t value) override {
+            memory = value;
+        }
+        std::uint64_t callHelper(std::uint32_t, ValueType,
+                                 std::span<const std::uint64_t> arguments) override {
+            return arguments.empty() ? 0u : arguments.front();
+        }
+        void setProgramCounter(std::uint64_t address) override { pc = address; }
+
+        std::uint64_t reg = 1u;
+        std::uint64_t memory = 0u;
+        std::uint64_t pc = 0u;
+    } host;
+
+    const auto block = makeConditionalBlock();
+    Interpreter interpreter;
+    const auto taken = interpreter.execute(block->instructions.front(), host);
+    assert(taken.branchTaken);
+    assert(taken.cycleCondition);
+    assert(host.pc == 0x01FFu);
+
+    host.reg = 0u;
+    host.pc = 0u;
+    const auto notTaken = interpreter.execute(block->instructions.front(), host);
+    assert(!notTaken.branchTaken);
+    assert(!notTaken.cycleCondition);
+    assert(host.pc == 0u);
+}
+
 } // namespace
 
 int main()
@@ -115,5 +151,6 @@ int main()
     testRejectsMissingRetirement();
     testRejectsCrossInstructionTemporary();
     testBuilderRejectsMalformedConditionalCycles();
+    testPortableInterpreterUsesHostAbiAndReportsBranch();
     return 0;
 }

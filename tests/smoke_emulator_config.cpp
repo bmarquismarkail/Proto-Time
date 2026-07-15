@@ -231,6 +231,18 @@ int main()
         CHECK_TRUE(arguments.overrides.cpuMode == "block");
     }
 
+    {
+        const auto arguments = parseArgs({
+            "timeEmulator", "--core", "gameboy", "--rom", "game.gb",
+            "--cpu-mode", "ir"});
+        CHECK_TRUE(arguments.overrides.cpuMode == "ir");
+        auto config = BMMQ::EmulatorConfig{};
+        config.machineKind = std::string("gameboy");
+        config.romPath = "game.gb";
+        config.cpuMode = "ir";
+        BMMQ::validateEmulatorConfig(config);
+    }
+
     CHECK_TRUE(throwsInvalidArgumentContaining("Unknown CPU mode", [] {
         BMMQ::EmulatorConfig config;
         config.machineKind = std::string("gameboy");
@@ -244,6 +256,14 @@ int main()
         config.machineKind = std::string("gamegear");
         config.romPath = "game.gg";
         config.cpuMode = "block";
+        BMMQ::validateEmulatorConfig(config);
+    }));
+
+    CHECK_TRUE(throwsInvalidArgumentContaining("only by the gameboy core", [] {
+        BMMQ::EmulatorConfig config;
+        config.machineKind = std::string("gamegear");
+        config.romPath = "game.gg";
+        config.cpuMode = "ir";
         BMMQ::validateEmulatorConfig(config);
     }));
 

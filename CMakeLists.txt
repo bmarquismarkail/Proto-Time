@@ -58,6 +58,7 @@ add_library(time-gameboy-interpreter-core
 	cores/gameboy/decode/gb_decoder.cpp
 	cores/gameboy/decode/gb_interpreter.cpp
     cores/gameboy/gameboy.cpp
+    cores/gameboy/GameBoyIrExecution.cpp
     cores/gameboy/GameBoyMachine.cpp
     cores/gameboy/GameBoyMemoryMap.cpp
     cores/gameboy/GameBoyPPU.cpp
@@ -543,6 +544,10 @@ add_test(NAME smoke-execution-slice COMMAND time-smoke-execution-slice)
 
 add_executable(time-smoke-intermediate-representation tests/smoke_intermediate_representation.cpp)
 add_test(NAME smoke-intermediate-representation COMMAND time-smoke-intermediate-representation)
+
+add_executable(time-smoke-gameboy-portable-ir tests/smoke_gameboy_portable_ir.cpp)
+target_link_libraries(time-smoke-gameboy-portable-ir time-gameboy-interpreter-core)
+add_test(NAME smoke-gameboy-portable-ir COMMAND time-smoke-gameboy-portable-ir)
 
 add_executable(time-perf-gameboy-block-cache tests/perf_gameboy_block_cache.cpp)
 target_link_libraries(time-perf-gameboy-block-cache time-gameboy-interpreter-core)

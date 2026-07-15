@@ -30,7 +30,9 @@ public:
     const PluginManager& pluginManager() const override;
     void save_state(const std::filesystem::path& path) override;
     void load_state(const std::filesystem::path& path) override;
-    ExecutionSliceResult runSlice(const ExecutionBudget& budget) override;
+    ExecutionSliceResult runSlice(
+        const ExecutionBudget& budget,
+        InstructionRetirementSink* observer = nullptr) override;
     void step() override;
     void serviceInput() override;
 

@@ -212,7 +212,7 @@ BMMQ::CpuFeedback readCpuFeedback(StateReader& reader)
     feedback.pcAfter = reader.u32();
     feedback.retiredCycles = reader.u32();
     const auto path = reader.u32();
-    if (path > static_cast<uint32_t>(BMMQ::ExecutionPathHint::CpuOptimizedFastPath)) {
+    if (path > static_cast<uint32_t>(BMMQ::ExecutionPathHint::PortableIr)) {
         throw std::invalid_argument("save state execution path invalid");
     }
     feedback.executionPath = static_cast<BMMQ::ExecutionPathHint>(path);
@@ -1076,7 +1076,9 @@ const BMMQ::Plugin::IExecutorPolicyPlugin& GameBoyMachine::attachedExecutorPolic
     return *impl_->activePolicy;
 }
 
-BMMQ::ExecutionSliceResult GameBoyMachine::runSlice(const BMMQ::ExecutionBudget& budget) {
+BMMQ::ExecutionSliceResult GameBoyMachine::runSlice(
+    const BMMQ::ExecutionBudget& budget,
+    BMMQ::InstructionRetirementSink* observer) {
     if (impl_->bootEntryPending) {
         impl_->bootEntryPending = false;
         impl_->context->writeRegister16(GB::RegisterId::PC, 0x0100u);
@@ -1084,7 +1086,7 @@ BMMQ::ExecutionSliceResult GameBoyMachine::runSlice(const BMMQ::ExecutionBudget&
         result.exitReason = BMMQ::ExecutionSliceExitReason::MachineBoundary;
         return result;
     }
-    return BMMQ::Machine::runSlice(budget);
+    return BMMQ::Machine::runSlice(budget, observer);
 }
 
 void GameBoyMachine::step() {
@@ -1405,7 +1407,11 @@ GameBoyMachine::BlockCacheStats GameBoyMachine::blockCacheStats() const {
         stats.translatedInstructions,
         stats.guardFailures,
         stats.chainContinuations,
-        stats.unsupportedFallbacks
+        stats.unsupportedFallbacks,
+        stats.irTranslations,
+        stats.irExecutions,
+        stats.irGuardFailures,
+        stats.irFallbacks
     };
 }
 
@@ -1415,6 +1421,14 @@ bool GameBoyMachine::blockCacheEnabled() const {
 
 void GameBoyMachine::setBlockCacheEnabled(bool enabled) {
     impl_->cpu.cpu().setBlockCacheEnabled(enabled);
+}
+
+bool GameBoyMachine::portableIrEnabled() const {
+    return impl_->cpu.cpu().portableIrEnabled();
+}
+
+void GameBoyMachine::setPortableIrEnabled(bool enabled) {
+    impl_->cpu.cpu().setPortableIrEnabled(enabled);
 }
 
 void GameBoyMachine::save_state(const std::filesystem::path& path) {

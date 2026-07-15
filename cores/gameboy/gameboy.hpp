@@ -23,6 +23,7 @@
 #include "../../memory/templ/reg_uint16.impl.hpp"
 #include "register_id.hpp"
 #include "dma_controller.hpp"
+#include "GameBoyIrExecution.hpp"
 #include "vram_manager.hpp"
 
 using AddressType = uint16_t;
@@ -249,6 +250,12 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   void pushApuSample();
   void updateApuStatusRegister();
   void retireInstruction(std::size_t executedByteCount);
+  [[nodiscard]] GB::IRExecution::ExecutionAbiV1 irExecutionAbi();
+  [[nodiscard]] std::uint64_t irExecutionState() const;
+  [[nodiscard]] bool irGuardsValid(const BMMQ::IR::Block& block);
+  [[nodiscard]] bool tryExecutePortableIr(
+      const BMMQ::TranslatedBlockEntry<AddressType, DataType>& block,
+      AddressType pcAddress);
   [[nodiscard]] bool lcdEnabled() const;
   [[nodiscard]] DataType currentPpuMode() const;
   [[nodiscard]] DataType joypadLowNibble() const;
@@ -319,6 +326,8 @@ public:
   void invalidateBlockCacheForWrite(AddressType address, std::size_t size = 1);
   void invalidateAllBlockCache();
   void setBlockCacheEnabled(bool enabled);
+  void setPortableIrEnabled(bool enabled) noexcept;
+  [[nodiscard]] bool portableIrEnabled() const noexcept { return portableIrEnabled_; }
   [[nodiscard]] bool blockCacheEnabled() const noexcept;
   [[nodiscard]] BMMQ::ThreadedBlockCacheStats blockCacheStats() const;
 
@@ -326,6 +335,8 @@ private:
   BMMQ::ThreadedBlockCache<AddressType, DataType> blockCache_;
   BMMQ::fetchBlock<AddressType, DataType> translatedFetchBlock_;
   bool blockCacheEnabled_ = true;
+  bool portableIrEnabled_ = false;
+  GB::IRExecution::PortableExecutor portableIrExecutor_{};
 
 public:
   void

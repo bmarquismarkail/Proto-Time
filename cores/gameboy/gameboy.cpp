@@ -2309,7 +2309,8 @@ bool LR3592_DMG::tryExecuteTranslatedBlock()
     }
 
     const auto pcAddress = pcRegister_ != nullptr ? pcRegister_->value : AddressType{0};
-    if (stopFlag || (dmaActive && !isHramAddress(pcAddress))) return false;
+    if (stopFlag || haltBugPcAdjustPending || pendingCycleCharge_ != 0u ||
+        (dmaActive && !isHramAddress(pcAddress))) return false;
     const DataType pending = static_cast<DataType>(
         (readCachedRegister(hardwareRegisters_.interruptFlags) &
          readCachedRegister(hardwareRegisters_.ie)) & kInterruptMask);
@@ -2320,6 +2321,10 @@ bool LR3592_DMG::tryExecuteTranslatedBlock()
 
     const auto lookup = blockCache_.lookup(pcAddress);
     if (!lookup) return false;
+    if (portableIrEnabled_ && lookup.block->intermediateRepresentation) {
+        if (tryExecutePortableIr(*lookup.block, pcAddress)) return true;
+        if (!lookup.block->valid) return false;
+    }
     const auto& instruction = lookup.block->instructions[lookup.instructionIndex];
     translatedFetchBlock_.setbaseAddress(pcAddress);
     auto& data = translatedFetchBlock_.getblockData();
@@ -2332,6 +2337,221 @@ bool LR3592_DMG::tryExecuteTranslatedBlock()
         blockCache_.noteUnsupportedFallback();
         return false;
     }
+    return true;
+}
+
+GB::IRExecution::ExecutionAbiV1 LR3592_DMG::irExecutionAbi()
+{
+    using GB::IRExecution::AluOperation;
+    using GB::IRExecution::ExecutionAbiV1;
+    using GB::IRExecution::Helper;
+    using GB::IRExecution::Register;
+
+    ExecutionAbiV1 abi;
+    abi.opaque = this;
+    abi.readRegister = [](void* opaque, Register reg) -> std::uint64_t {
+        auto& cpu = *static_cast<LR3592_DMG*>(opaque);
+        switch (reg) {
+        case Register::A: return cpu.cachedReadR8(7u);
+        case Register::F: return static_cast<DataType>(cpu.cachedFlags());
+        case Register::B: return cpu.cachedReadR8(0u);
+        case Register::C: return cpu.cachedReadR8(1u);
+        case Register::D: return cpu.cachedReadR8(2u);
+        case Register::E: return cpu.cachedReadR8(3u);
+        case Register::H: return cpu.cachedReadR8(4u);
+        case Register::L: return cpu.cachedReadR8(5u);
+        case Register::AF: return cpu.cpuRegisters_.af->value;
+        case Register::BC: return cpu.cpuRegisters_.bc->value;
+        case Register::DE: return cpu.cpuRegisters_.de->value;
+        case Register::HL: return cpu.cpuRegisters_.hl->value;
+        case Register::SP: return cpu.spRegister_->value;
+        case Register::PC: return cpu.pcRegister_->value;
+        }
+        return 0u;
+    };
+    abi.writeRegister = [](void* opaque, Register reg, std::uint64_t value) {
+        auto& cpu = *static_cast<LR3592_DMG*>(opaque);
+        switch (reg) {
+        case Register::A: cpu.cachedWriteR8(7u, static_cast<DataType>(value)); break;
+        case Register::F: cpu.cachedFlags() = static_cast<DataType>(value & 0xF0u); break;
+        case Register::B: cpu.cachedWriteR8(0u, static_cast<DataType>(value)); break;
+        case Register::C: cpu.cachedWriteR8(1u, static_cast<DataType>(value)); break;
+        case Register::D: cpu.cachedWriteR8(2u, static_cast<DataType>(value)); break;
+        case Register::E: cpu.cachedWriteR8(3u, static_cast<DataType>(value)); break;
+        case Register::H: cpu.cachedWriteR8(4u, static_cast<DataType>(value)); break;
+        case Register::L: cpu.cachedWriteR8(5u, static_cast<DataType>(value)); break;
+        case Register::AF: cpu.cpuRegisters_.af->value = static_cast<AddressType>(value & 0xFFF0u); break;
+        case Register::BC: cpu.cpuRegisters_.bc->value = static_cast<AddressType>(value); break;
+        case Register::DE: cpu.cpuRegisters_.de->value = static_cast<AddressType>(value); break;
+        case Register::HL: cpu.cpuRegisters_.hl->value = static_cast<AddressType>(value); break;
+        case Register::SP: cpu.spRegister_->value = static_cast<AddressType>(value); break;
+        case Register::PC: cpu.pcRegister_->value = static_cast<AddressType>(value); break;
+        }
+    };
+    abi.readMemory8 = [](void* opaque, std::uint16_t address) -> std::uint8_t {
+        auto& cpu = *static_cast<LR3592_DMG*>(opaque);
+        return read8(cpu.mem, static_cast<AddressType>(address));
+    };
+    abi.writeMemory8 = [](void* opaque, std::uint16_t address, std::uint8_t value) {
+        auto& cpu = *static_cast<LR3592_DMG*>(opaque);
+        write8(cpu.mem, static_cast<AddressType>(address), static_cast<DataType>(value));
+    };
+    abi.callHelper = [](void* opaque, Helper helper,
+                        const std::uint64_t* arguments, std::size_t count) -> std::uint64_t {
+        auto& cpu = *static_cast<LR3592_DMG*>(opaque);
+        if (helper == Helper::UpdateIncrementFlags || helper == Helper::UpdateDecrementFlags) {
+            if (count != 2u) throw std::invalid_argument("invalid increment/decrement helper arguments");
+            const auto oldValue = static_cast<DataType>(arguments[0]);
+            const auto newValue = static_cast<DataType>(arguments[1]);
+            const bool carry = (cpu.cachedFlags() & kFlagC) != 0u;
+            if (helper == Helper::UpdateIncrementFlags) {
+                cpu.cachedSetFlags(newValue == 0u, false,
+                                   ((oldValue & 0x0Fu) + 1u) > 0x0Fu, carry);
+            } else {
+                cpu.cachedSetFlags(newValue == 0u, true,
+                                   (oldValue & 0x0Fu) == 0u, carry);
+            }
+            return newValue;
+        }
+        if (helper != Helper::ExecuteAlu8 || count != 3u) {
+            throw std::invalid_argument("invalid portable IR helper invocation");
+        }
+
+        const auto operation = static_cast<AluOperation>(arguments[0]);
+        const auto lhs = static_cast<DataType>(arguments[1]);
+        const auto rhs = static_cast<DataType>(arguments[2]);
+        const bool carryIn = (cpu.cachedFlags() & kFlagC) != 0u;
+        DataType result = lhs;
+        bool z = false;
+        bool n = false;
+        bool h = false;
+        bool c = false;
+        switch (operation) {
+        case AluOperation::Add:
+            result = static_cast<DataType>(lhs + rhs);
+            h = static_cast<uint16_t>((lhs & 0x0Fu) + (rhs & 0x0Fu)) > 0x0Fu;
+            c = static_cast<uint16_t>(lhs) + static_cast<uint16_t>(rhs) > 0xFFu;
+            break;
+        case AluOperation::AddCarry: {
+            const auto sum = static_cast<uint16_t>(lhs) + rhs + (carryIn ? 1u : 0u);
+            result = static_cast<DataType>(sum);
+            h = static_cast<uint16_t>((lhs & 0x0Fu) + (rhs & 0x0Fu) +
+                                      (carryIn ? 1u : 0u)) > 0x0Fu;
+            c = sum > 0xFFu;
+            break;
+        }
+        case AluOperation::Subtract:
+            result = static_cast<DataType>(lhs - rhs);
+            h = (lhs & 0x0Fu) < (rhs & 0x0Fu);
+            c = lhs < rhs;
+            n = true;
+            break;
+        case AluOperation::SubtractCarry: {
+            const auto subtrahend = static_cast<uint16_t>(rhs) + (carryIn ? 1u : 0u);
+            result = static_cast<DataType>(lhs - subtrahend);
+            h = (lhs & 0x0Fu) < ((rhs & 0x0Fu) + (carryIn ? 1u : 0u));
+            c = static_cast<uint16_t>(lhs) < subtrahend;
+            n = true;
+            break;
+        }
+        case AluOperation::And: result = static_cast<DataType>(lhs & rhs); h = true; break;
+        case AluOperation::Xor: result = static_cast<DataType>(lhs ^ rhs); break;
+        case AluOperation::Or: result = static_cast<DataType>(lhs | rhs); break;
+        case AluOperation::Compare:
+            h = (lhs & 0x0Fu) < (rhs & 0x0Fu);
+            c = lhs < rhs;
+            z = lhs == rhs;
+            n = true;
+            cpu.cachedSetFlags(z, n, h, c);
+            return lhs;
+        }
+        z = result == 0u;
+        cpu.cachedSetFlags(z, n, h, c);
+        return result;
+    };
+    abi.retireCpuCycles = [](void* opaque, std::uint32_t cycles) {
+        static_cast<LR3592_DMG*>(opaque)->retireInstruction(cycles);
+    };
+    abi.executionState = [](void* opaque) -> std::uint64_t {
+        return static_cast<LR3592_DMG*>(opaque)->irExecutionState();
+    };
+    return abi;
+}
+
+std::uint64_t LR3592_DMG::irExecutionState() const
+{
+    std::uint64_t state = 0u;
+    if (stopFlag) state |= GB::IRExecution::Stop;
+    if (haltFlag) state |= GB::IRExecution::Halt;
+    if (dmaActive && pcRegister_ != nullptr && !isHramAddress(pcRegister_->value)) {
+        state |= GB::IRExecution::DmaRestricted;
+    }
+    const auto pending = static_cast<DataType>(
+        readCachedRegister(hardwareRegisters_.interruptFlags) &
+        readCachedRegister(hardwareRegisters_.ie) & kInterruptMask);
+    if (ime && pending != 0u) state |= GB::IRExecution::InterruptPending;
+    if (haltBugPcAdjustPending) state |= GB::IRExecution::HaltBugPending;
+    if (pendingCycleCharge_ != 0u) state |= GB::IRExecution::PendingCycleCharge;
+    return state;
+}
+
+bool LR3592_DMG::irGuardsValid(const BMMQ::IR::Block& block)
+{
+    for (const auto& guard : block.guards) {
+        switch (guard.kind) {
+        case BMMQ::IR::GuardKind::MappingGeneration:
+            if (guard.expected != blockCache_.mappingGeneration() ||
+                block.mappingGeneration != blockCache_.mappingGeneration()) return false;
+            break;
+        case BMMQ::IR::GuardKind::HelperAbi:
+            if (guard.expected != GB::IRExecution::kAbiVersion) return false;
+            break;
+        case BMMQ::IR::GuardKind::ExecutionState:
+            if ((irExecutionState() & guard.mask) != (guard.expected & guard.mask)) return false;
+            break;
+        case BMMQ::IR::GuardKind::CodeBytes:
+            for (std::size_t index = 0u; index < guard.bytes.size(); ++index) {
+                DataType byte = 0u;
+                const auto address = static_cast<AddressType>(guard.subject + index);
+                mem.read(std::span<DataType>(&byte, 1u), address);
+                if (byte != guard.bytes[index]) return false;
+            }
+            break;
+        }
+    }
+    return true;
+}
+
+bool LR3592_DMG::tryExecutePortableIr(
+    const BMMQ::TranslatedBlockEntry<AddressType, DataType>& block,
+    AddressType pcAddress)
+{
+    if (!portableIrEnabled_ || !block.intermediateRepresentation) return false;
+    const auto& irBlock = *block.intermediateRepresentation;
+    if (!irGuardsValid(irBlock)) {
+        blockCache_.noteIrGuardFailure();
+        blockCache_.invalidate(pcAddress, true);
+        return false;
+    }
+    const auto found = std::find_if(
+        irBlock.instructions.begin(), irBlock.instructions.end(),
+        [pcAddress](const auto& instruction) { return instruction.address == pcAddress; });
+    if (found == irBlock.instructions.end()) {
+        blockCache_.noteIrFallback();
+        return false;
+    }
+
+    feedback.pcBefore = pcAddress;
+    feedback.isControlFlow = found->controlFlow;
+    feedback.segmentBoundaryHint = found->controlFlow || found->interruptSensitive;
+    const auto abi = irExecutionAbi();
+    const auto result = portableIrExecutor_.execute(*found, abi);
+    const auto retiredCycles = result.cycleCondition ? found->cyclesTaken : found->cyclesNotTaken;
+    feedback.retiredCycles = retiredCycles;
+    abi.retireCpuCycles(abi.opaque, retiredCycles);
+    feedback.pcAfter = pcRegister_ != nullptr ? pcRegister_->value : pcAddress;
+    feedback.executionPath = BMMQ::ExecutionPathHint::PortableIr;
+    blockCache_.noteIrExecution();
     return true;
 }
 
@@ -2394,6 +2614,10 @@ void LR3592_DMG::populateBlockCache(BMMQ::fetchBlock<AddressType, DataType>& fet
         }
         address = static_cast<AddressType>(next);
     }
+    if (portableIrEnabled_) {
+        translated.intermediateRepresentation = GB::IRExecution::lowerBlock(
+            translated.instructions, blockCache_.mappingGeneration(), irExecutionState());
+    }
     blockCache_.insert(std::move(translated));
 }
 
@@ -2446,6 +2670,15 @@ bool LR3592_DMG::blockCacheEnabled() const noexcept
 BMMQ::ThreadedBlockCacheStats LR3592_DMG::blockCacheStats() const
 {
     return blockCache_.stats();
+}
+
+void LR3592_DMG::setPortableIrEnabled(bool enabled) noexcept
+{
+    if (portableIrEnabled_ == enabled) {
+        return;
+    }
+    portableIrEnabled_ = enabled;
+    invalidateAllBlockCache();
 }
 
 void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, AddressType>& block, BMMQ::fetchBlock<AddressType, DataType>& fb)

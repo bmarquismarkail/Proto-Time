@@ -350,12 +350,14 @@ void validateEmulatorConfig(const EmulatorConfig& config)
     auto instance = createMachine(kind);
     const auto& descriptor = instance.descriptor;
 
-    if (config.cpuMode != "baseline" && config.cpuMode != "block") {
+    if (config.cpuMode != "baseline" && config.cpuMode != "block" &&
+        config.cpuMode != "ir") {
         throw std::invalid_argument("Unknown CPU mode: " + config.cpuMode +
-                                    ". Use baseline or block.");
+                                    ". Use baseline, block, or ir.");
     }
-    if (config.cpuMode == "block" && kind != MachineKind::GameBoy) {
-        throw std::invalid_argument("CPU block mode is currently supported only by the gameboy core");
+    if ((config.cpuMode == "block" || config.cpuMode == "ir") &&
+        kind != MachineKind::GameBoy) {
+        throw std::invalid_argument("CPU block and IR modes are currently supported only by the gameboy core");
     }
 
     if (config.romPath.empty()) {
@@ -431,7 +433,7 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
             arguments.overrides.unthrottled = true;
         } else if (arg == "--cpu-mode") {
             if (i + 1 >= argc) {
-                throw std::invalid_argument("--cpu-mode requires baseline or block");
+                throw std::invalid_argument("--cpu-mode requires baseline, block, or ir");
             }
             arguments.overrides.cpuMode = lowerAscii(argv[++i]);
         } else if (arg == "--speed") {

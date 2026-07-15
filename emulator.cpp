@@ -62,7 +62,7 @@ void printUsage(std::string_view program)
               << "  --plugin <path>    Optional SDL frontend shared object override\n"
               << "  --steps <count>    Stop after a fixed number of instruction steps\n"
               << "  --scale <n>        SDL window scale factor (default: 3)\n"
-              << "  --cpu-mode <mode>  CPU execution mode: baseline or block (Game Boy)\n"
+              << "  --cpu-mode <mode>  CPU execution mode: baseline, block, or ir (Game Boy)\n"
               << "  --unthrottled      Run unthrottled (no wall-clock pacing)\n"
               << "  --speed <mult>     Start with speed multiplier (e.g. 2.0)\n"
               << "  --pause            Start paused (use single-step to advance)\n"
@@ -208,6 +208,10 @@ void writeDiagnosticsSample(std::ostream& output,
         output << ",\"guard_failures\":" << blockCacheStats->guardFailures.load();
         output << ",\"chain_continuations\":" << blockCacheStats->chainContinuations.load();
         output << ",\"unsupported_fallbacks\":" << blockCacheStats->unsupportedFallbacks.load();
+        output << ",\"ir_translations\":" << blockCacheStats->irTranslations.load();
+        output << ",\"ir_executions\":" << blockCacheStats->irExecutions.load();
+        output << ",\"ir_guard_failures\":" << blockCacheStats->irGuardFailures.load();
+        output << ",\"ir_fallbacks\":" << blockCacheStats->irFallbacks.load();
     }
     output << "}";
 
@@ -600,13 +604,14 @@ int main(int argc, char** argv)
         const auto& descriptor = bootstrapped.descriptor;
         const auto romSize = bootstrapped.romSize;
         BMMQ::Plugin::VisibleStatePreservingStepPolicy blockExecutionPolicy;
-        if (options.cpuMode == "block") {
+        if (options.cpuMode == "block" || options.cpuMode == "ir") {
             auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get());
             if (gameBoyMachine == nullptr) {
                 throw std::runtime_error("CPU block mode requires the Game Boy core");
             }
             gameBoyMachine->attachExecutorPolicy(blockExecutionPolicy);
             gameBoyMachine->setBlockCacheEnabled(true);
+            gameBoyMachine->setPortableIrEnabled(options.cpuMode == "ir");
         }
         machine.videoService().setBackgroundTaskService(&backgroundTaskService);
         machine.visualOverrideService().setBackgroundTaskService(&backgroundTaskService);
@@ -928,6 +933,59 @@ int main(int argc, char** argv)
 
         auto runEmulationLane = [&]() {
             try {
+                class TimingRetirementSink final : public BMMQ::InstructionRetirementSink {
+                public:
+                    TimingRetirementSink(BMMQ::TimingEngine& engine,
+                                         const BMMQ::TimingConfig& config,
+                                         std::atomic<bool>& stopRequested,
+                                         std::uint64_t& steps,
+                                         std::uint64_t& emulatedCycles,
+                                         double& wakeCycles,
+                                         bool& timingSliceComplete,
+                                         double minInstructionCycles,
+                                         const std::optional<std::uint64_t>& stepLimit)
+                        : engine_(engine), config_(config), stopRequested_(stopRequested),
+                          steps_(steps), emulatedCycles_(emulatedCycles),
+                          wakeCycles_(wakeCycles), timingSliceComplete_(timingSliceComplete),
+                          minInstructionCycles_(minInstructionCycles),
+                          stepLimit_(stepLimit) {}
+
+                    BMMQ::InstructionRetirementDecision retireInstruction(
+                        const BMMQ::CpuFeedback& feedback,
+                        const BMMQ::ExecutionSliceProgress&) override
+                    {
+                        ++steps_;
+                        emulatedCycles_ += feedback.retiredCycles;
+                        const auto retiredCycles = static_cast<double>(feedback.retiredCycles);
+                        const auto chargedCycles =
+                            std::max(minInstructionCycles_, retiredCycles);
+                        wakeCycles_ += chargedCycles;
+                        engine_.charge(retiredCycles);
+                        const auto decision = engine_.recordExecutionSliceCycles(chargedCycles);
+                        timingSliceComplete_ = decision.executionSliceComplete;
+                        const bool stepLimitReached =
+                            stepLimit_.has_value() && steps_ >= *stepLimit_;
+                        if (decision.executionSliceComplete || !engine_.canExecute() ||
+                            wakeCycles_ >= config_.maxCyclesPerWake || stepLimitReached ||
+                            stopRequested_.load(std::memory_order_acquire) ||
+                            gStopRequested != 0) {
+                            return BMMQ::InstructionRetirementDecision::exitSlice();
+                        }
+                        return BMMQ::InstructionRetirementDecision::continueSlice();
+                    }
+
+                private:
+                    BMMQ::TimingEngine& engine_;
+                    const BMMQ::TimingConfig& config_;
+                    std::atomic<bool>& stopRequested_;
+                    std::uint64_t& steps_;
+                    std::uint64_t& emulatedCycles_;
+                    double& wakeCycles_;
+                    bool& timingSliceComplete_;
+                    double minInstructionCycles_;
+                    const std::optional<std::uint64_t>& stepLimit_;
+                };
+
                 while (!stopRequested.load(std::memory_order_acquire) && gStopRequested == 0) {
                     if (options.stepLimit.has_value() && steps >= *options.stepLimit) {
                         break;
@@ -966,19 +1024,31 @@ int main(int argc, char** argv)
                             ++wakeExecutionSlices;
                         }
 
-                        machine.step();
-                        ++steps;
+                        const auto remainingSteps = options.stepLimit.has_value()
+                            ? *options.stepLimit - steps
+                            : std::uint64_t{256u};
+                        const auto instructionBudget =
+                            std::min<std::uint64_t>(remainingSteps, 256u);
+                        const auto remainingWakeCycles = std::max(
+                            1.0, timingConfig.maxCyclesPerWake - wakeExecutionCycles);
+                        bool timingSliceComplete = false;
+                        TimingRetirementSink retirementSink(
+                            timingEngine, timingConfig, stopRequested, steps,
+                            emulatedCycles, wakeExecutionCycles,
+                            timingSliceComplete,
+                            kMinInstructionCycles, options.stepLimit);
+                        const auto sliceResult = machine.runSlice(
+                            BMMQ::ExecutionBudget{
+                                .maxInstructions = instructionBudget,
+                                .maxCycles = static_cast<std::uint64_t>(remainingWakeCycles),
+                                .stopOnSegmentBoundary = false,
+                            },
+                            &retirementSink);
+                        if (sliceResult.progress.retiredInstructions == 0u) {
+                            break;
+                        }
                         executedInstruction = true;
-                        emulatedCycles += machine.runtimeContext().getLastFeedback().retiredCycles;
-
-                        const auto retiredCycles =
-                            static_cast<double>(machine.runtimeContext().getLastFeedback().retiredCycles);
-                        const auto chargedCycles = std::max(kMinInstructionCycles, retiredCycles);
-                        wakeExecutionCycles += chargedCycles;
-                        timingEngine.charge(retiredCycles);
-                        const auto sliceDecision = timingEngine.recordExecutionSliceCycles(chargedCycles);
-
-                        if (sliceDecision.executionSliceComplete) {
+                        if (timingSliceComplete) {
                             break;
                         }
                     }

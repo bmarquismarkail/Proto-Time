@@ -102,7 +102,9 @@ public:
     }
 
     // Step
-    BMMQ::ExecutionSliceResult runSlice(const BMMQ::ExecutionBudget& budget) override;
+    BMMQ::ExecutionSliceResult runSlice(
+        const BMMQ::ExecutionBudget& budget,
+        BMMQ::InstructionRetirementSink* observer = nullptr) override;
     void step() override;
     void serviceInput() override;
 
@@ -122,13 +124,21 @@ public:
         std::atomic<uint64_t> guardFailures{0};
         std::atomic<uint64_t> chainContinuations{0};
         std::atomic<uint64_t> unsupportedFallbacks{0};
+        std::atomic<uint64_t> irTranslations{0};
+        std::atomic<uint64_t> irExecutions{0};
+        std::atomic<uint64_t> irGuardFailures{0};
+        std::atomic<uint64_t> irFallbacks{0};
         BlockCacheStats() = default;
         BlockCacheStats(uint64_t h, uint64_t m, uint64_t i,
                         uint64_t t = 0, uint64_t ti = 0, uint64_t g = 0,
-                        uint64_t c = 0, uint64_t u = 0)
+                        uint64_t c = 0, uint64_t u = 0,
+                        uint64_t irt = 0, uint64_t ire = 0,
+                        uint64_t irg = 0, uint64_t irf = 0)
             : hits(h), misses(m), invalidations(i), translations(t),
               translatedInstructions(ti), guardFailures(g),
-              chainContinuations(c), unsupportedFallbacks(u) {}
+              chainContinuations(c), unsupportedFallbacks(u),
+              irTranslations(irt), irExecutions(ire),
+              irGuardFailures(irg), irFallbacks(irf) {}
         BlockCacheStats(const BlockCacheStats& other)
             : hits(other.hits.load()), misses(other.misses.load()),
               invalidations(other.invalidations.load()),
@@ -136,7 +146,11 @@ public:
               translatedInstructions(other.translatedInstructions.load()),
               guardFailures(other.guardFailures.load()),
               chainContinuations(other.chainContinuations.load()),
-              unsupportedFallbacks(other.unsupportedFallbacks.load()) {}
+              unsupportedFallbacks(other.unsupportedFallbacks.load()),
+              irTranslations(other.irTranslations.load()),
+              irExecutions(other.irExecutions.load()),
+              irGuardFailures(other.irGuardFailures.load()),
+              irFallbacks(other.irFallbacks.load()) {}
         BlockCacheStats& operator=(const BlockCacheStats& other) {
             hits.store(other.hits.load());
             misses.store(other.misses.load());
@@ -146,12 +160,18 @@ public:
             guardFailures.store(other.guardFailures.load());
             chainContinuations.store(other.chainContinuations.load());
             unsupportedFallbacks.store(other.unsupportedFallbacks.load());
+            irTranslations.store(other.irTranslations.load());
+            irExecutions.store(other.irExecutions.load());
+            irGuardFailures.store(other.irGuardFailures.load());
+            irFallbacks.store(other.irFallbacks.load());
             return *this;
         }
     };
     [[nodiscard]] BlockCacheStats blockCacheStats() const;
     [[nodiscard]] bool blockCacheEnabled() const;
     void setBlockCacheEnabled(bool enabled);
+    [[nodiscard]] bool portableIrEnabled() const;
+    void setPortableIrEnabled(bool enabled);
 
     // Register access
     uint16_t readRegisterPair(std::string_view id) const override;

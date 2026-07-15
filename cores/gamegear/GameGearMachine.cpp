@@ -556,13 +556,15 @@ void GameGearMachine::load_state(const std::filesystem::path& path) {
     inputService().advanceGeneration(impl->inputGeneration);
 }
 
-ExecutionSliceResult GameGearMachine::runSlice(const ExecutionBudget& budget) {
+ExecutionSliceResult GameGearMachine::runSlice(
+    const ExecutionBudget& budget,
+    InstructionRetirementSink* observer) {
     if (!impl->romLoaded) {
         ExecutionSliceResult result;
         result.exitReason = ExecutionSliceExitReason::MachineBoundary;
         return result;
     }
-    return Machine::runSlice(budget);
+    return Machine::runSlice(budget, observer);
 }
 
 void GameGearMachine::step() {

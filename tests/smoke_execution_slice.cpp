@@ -110,6 +110,40 @@ void testEmptyBudgetDoesNotExecute()
     assert(machine.runtimeContext().readRegister16(GB::RegisterId::PC) == pcBefore);
 }
 
+void testHostObserverRunsAfterMachineRetirementAndCanStop()
+{
+    class StopAfterTwo final : public BMMQ::InstructionRetirementSink {
+    public:
+        BMMQ::InstructionRetirementDecision retireInstruction(
+            const BMMQ::CpuFeedback& feedback,
+            const BMMQ::ExecutionSliceProgress& progress) override
+        {
+            ++calls;
+            lastPc = feedback.pcAfter;
+            return progress.retiredInstructions == 2u
+                ? BMMQ::InstructionRetirementDecision::exitSlice()
+                : BMMQ::InstructionRetirementDecision::continueSlice();
+        }
+
+        std::uint64_t calls = 0u;
+        std::uint32_t lastPc = 0u;
+    } observer;
+
+    GB::GameBoyMachine machine;
+    machine.loadRom(makeSequentialRom());
+    const auto result = machine.runSlice({
+        .maxInstructions = 8u,
+        .maxCycles = 100u,
+        .stopOnSegmentBoundary = false,
+    }, &observer);
+
+    assert(result.progress.retiredInstructions == 2u);
+    assert(result.exitReason == BMMQ::ExecutionSliceExitReason::RetirementRequested);
+    assert(observer.calls == 2u);
+    assert(observer.lastPc == 0x0102u);
+    assert(machine.runtimeContext().readRegister16(GB::RegisterId::BC) == 0x0114u);
+}
+
 } // namespace
 
 int main()
@@ -118,5 +152,6 @@ int main()
     testCycleBudgetIsAnAtomicSoftCeiling();
     testControlFlowEndsSegmentedSlice();
     testEmptyBudgetDoesNotExecute();
+    testHostObserverRunsAfterMachineRetirementAndCanStop();
     return 0;
 }

@@ -33,8 +33,8 @@ struct TranslatedBlockEntry {
     AddressType end = 0;
     std::uint64_t mappingGeneration = 0;
     std::vector<TranslatedInstruction<AddressType, DataType>> instructions;
-    // Optional validated lowering for a future native backend. The Phase 10
-    // byte sequence remains the portable fallback and invalidation authority.
+    // Optional validated, architecture-neutral lowering. The Phase 10 byte
+    // sequence remains the portable fallback and invalidation authority.
     IR::BlockPtr intermediateRepresentation{};
     TranslatedBlockExitReason exitReason = TranslatedBlockExitReason::SequentialLimit;
     bool valid = true;
@@ -49,6 +49,10 @@ struct ThreadedBlockCacheStats {
     std::uint64_t guardFailures = 0;
     std::uint64_t chainContinuations = 0;
     std::uint64_t unsupportedFallbacks = 0;
+    std::uint64_t irTranslations = 0;
+    std::uint64_t irExecutions = 0;
+    std::uint64_t irGuardFailures = 0;
+    std::uint64_t irFallbacks = 0;
     std::array<std::uint64_t, 5> exits{};
 };
 
@@ -99,6 +103,7 @@ public:
         }
         ++stats_.translations;
         stats_.translatedInstructions += pointer->instructions.size();
+        if (pointer->intermediateRepresentation) ++stats_.irTranslations;
         ++stats_.exits[static_cast<std::size_t>(pointer->exitReason)];
         blocks_.push_back(std::move(stored));
     }
@@ -138,6 +143,9 @@ public:
     }
 
     void noteUnsupportedFallback() noexcept { ++stats_.unsupportedFallbacks; }
+    void noteIrExecution() noexcept { ++stats_.irExecutions; }
+    void noteIrGuardFailure() noexcept { ++stats_.irGuardFailures; }
+    void noteIrFallback() noexcept { ++stats_.irFallbacks; }
     [[nodiscard]] ThreadedBlockCacheStats stats() const noexcept { return stats_; }
     [[nodiscard]] std::uint64_t mappingGeneration() const noexcept { return mappingGeneration_; }
     [[nodiscard]] std::size_t size() const noexcept { return blocks_.size(); }
