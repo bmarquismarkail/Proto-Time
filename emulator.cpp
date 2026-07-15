@@ -37,7 +37,7 @@
 #include "machine/BackgroundTaskService.hpp"
 #include "machine/DebugSnapshotService.hpp"
 #include "machine/ImageDecoder.hpp"
-#include "machine/plugins/SdlFrontendPluginLoader.hpp"
+#include "machine/plugins/FrontendPluginLoader.hpp"
 #include "machine/plugins/DynamicPluginModule.hpp"
 #include "machine/TimingService.hpp"
 #include "cores/gameboy/GameBoyMachine.hpp"
@@ -713,21 +713,18 @@ int main(int argc, char** argv)
             config.audioBatchChunks =
                 static_cast<std::size_t>(std::clamp<std::uint32_t>(options.audioBatchChunks, 1u, 16u));
 
+            const auto selectedFrontendId = BMMQ::normalizeFrontendId(
+                options.frontendId.value_or(std::string{}));
+            const auto defaultFilename = BMMQ::defaultFrontendPluginFilename(
+                selectedFrontendId);
+            const auto executablePath = (argc > 0 && argv != nullptr)
+                ? std::filesystem::path(argv[0])
+                : std::filesystem::path("timeEmulator");
             const auto pluginPath = options.pluginPath.value_or(
-                BMMQ::defaultSdlFrontendPluginPath((argc > 0 && argv != nullptr)
-                    ? std::filesystem::path(argv[0])
-                    : std::filesystem::path("timeEmulator")));
+                BMMQ::defaultFrontendPluginPath(executablePath, defaultFilename));
             try {
-                auto frontendModule = BMMQ::Plugin::DynamicPluginModule::load(pluginPath);
-                const auto ids = frontendModule.frontendIds();
-                auto selectedId = options.frontendId.value_or(
-                    ids.size() == 1u ? ids.front() : std::string{});
-                if (selectedId == "sdl") selectedId = "bmmq.frontend.sdl";
-                if (selectedId.empty()) {
-                    throw std::invalid_argument(
-                        "--frontend is required when a module exposes multiple frontends");
-                }
-                frontendPlugin = frontendModule.createFrontend(selectedId, config);
+                frontendPlugin = BMMQ::loadFrontendPlugin(
+                    pluginPath, config, selectedFrontendId);
                 frontend = frontendPlugin.get();
                 if (options.debugSnapshotsEnabled) {
                     frontend->setDebugSnapshotService(&debugSnapshotService);

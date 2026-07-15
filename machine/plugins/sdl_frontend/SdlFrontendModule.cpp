@@ -68,7 +68,15 @@ public:
             SDL_RendererInfo info{};
             if (SDL_GetRendererInfo(renderer_, &info) == 0) {
                 rendererName_ = info.name != nullptr ? info.name : "SDL2 renderer";
-                stats_.renderer_flags = info.flags;
+                if ((info.flags & SDL_RENDERER_ACCELERATED) != 0u) {
+                    stats_.renderer_flags |= TIME_FRONTEND_RENDERER_ACCELERATED_V1;
+                }
+                if ((info.flags & SDL_RENDERER_PRESENTVSYNC) != 0u) {
+                    stats_.renderer_flags |= TIME_FRONTEND_RENDERER_VSYNC_V1;
+                }
+                if ((info.flags & SDL_RENDERER_SOFTWARE) != 0u) {
+                    stats_.renderer_flags |= TIME_FRONTEND_RENDERER_SOFTWARE_V1;
+                }
             }
             windowVisible_ = (windowFlags & SDL_WINDOW_SHOWN) != 0u;
         }
@@ -294,6 +302,7 @@ void* createFrontend(const TimeFrontendHostApiV1* host, const TimeFrontendConfig
 {
     if (host == nullptr || config == nullptr ||
         host->struct_size < sizeof(TimeFrontendHostApiV1) ||
+        host->abi_version != TIME_PLUGIN_ABI_VERSION_V1 ||
         config->struct_size < sizeof(TimeFrontendConfigV1)) return nullptr;
     try { return new SdlFrontend(*host, *config); } catch (...) { return nullptr; }
 }

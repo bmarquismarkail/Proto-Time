@@ -4,11 +4,9 @@
 #include <filesystem>
 #include <memory>
 
-#include "SdlFrontendPlugin.hpp"
+#include "FrontendPluginLoader.hpp"
 
 namespace BMMQ {
-
-inline constexpr const char* kDefaultSdlFrontendPluginFilename = "libtime-sdl-frontend-plugin.so";
 
 [[nodiscard]] std::filesystem::path defaultSdlFrontendPluginPath(const std::filesystem::path& executablePath);
 

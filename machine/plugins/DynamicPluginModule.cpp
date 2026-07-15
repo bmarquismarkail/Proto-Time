@@ -610,6 +610,8 @@ private:
             result.textureUploadCount = stats.texture_upload_count;
             result.rendererName = owner_.backendName();
             result.rendererFlags = stats.renderer_flags;
+            result.rendererAccelerated =
+                (stats.renderer_flags & TIME_FRONTEND_RENDERER_ACCELERATED_V1) != 0u;
             result.presenterPresentDurationLastNanos = stats.present_duration_last_ns;
             result.presenterPresentDurationHighWaterNanos = stats.present_duration_high_water_ns;
             result.presenterPresentDurationSampleCount = stats.frames_presented;
@@ -806,7 +808,7 @@ private:
             result.videoFrameAgeHighWaterNs = video.frameAgeHighWaterNs;
             result.videoPresenterRendererName = video.presenterRendererName;
             result.videoPresenterRendererAccelerated =
-                (video.presenterRendererFlags & 0x2u) != 0u;
+                video.presenterRendererAccelerated;
         }
         if (audioService_ != nullptr) {
             const auto engine = audioService_->engine().stats();

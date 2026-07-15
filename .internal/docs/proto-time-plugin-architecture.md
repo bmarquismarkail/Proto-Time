@@ -88,9 +88,9 @@ run on the host UI lane. The host owns the realtime video mailbox, audio output
 transport, input snapshots, and timing service. A frontend receives immutable
 ARGB8888 frame views and publishes only logical input/control events through
 host callbacks; it must not retain frame pointers or access guest state. SDL
-video/window/event APIs therefore stay on the process main thread without a
-frontend hot-path lock. SDL audio remains a host-selected drain-only output
-backend independent of the selected window frontend.
+and GLFW window/event/presentation APIs therefore stay on the process main
+thread without a frontend hot-path lock. SDL audio remains a host-selected
+drain-only output backend independent of the selected window frontend.
 
 ## Compatibility
 
@@ -98,10 +98,12 @@ ABI v1 uses exact version matching and `struct_size` prefix validation. The V1
 struct prefixes are frozen. Incompatible or required table additions use a new
 versioned structure and entrypoint; existing fields never change meaning.
 
-The SDL frontend implements `TimeFrontendApiV1` and uses the same loader as a
-future GLFW frontend. `IFrontendPlugin` is a host-internal adapter and never
-crosses the shared-library boundary. `ISdlFrontendPlugin` and SDL-prefixed
-configuration/stat names remain source aliases while internal callers migrate.
+The SDL and GLFW frontends both implement `TimeFrontendApiV1` and use the same
+loader and host adapter. GLFW performs a direct ARGB8888-to-OpenGL texture upload
+on the UI lane; it does not own audio or guest state. `IFrontendPlugin` is a
+host-internal adapter and never crosses the shared-library boundary.
+`ISdlFrontendPlugin` and SDL-prefixed configuration/stat names remain source
+aliases while internal callers migrate.
 
 ## Verification
 
@@ -112,6 +114,7 @@ configuration/stat names remain source aliases while internal callers migrate.
 - loading a shared object compiled from C source
 - loading and driving a frontend shared object compiled from C source
 - SDL module descriptor validation and focused video/audio/input flow
+- GLFW module descriptor, generic loader, and default-path selection coverage
 - C policy metadata, decisions, clone, destruction, and library lifetime
 - malformed descriptor and missing-entrypoint failures
 - legacy CLI behavior and full emulator smoke coverage

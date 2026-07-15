@@ -6,6 +6,11 @@ option(BMMQ_ENABLE_TSAN "Enable ThreadSanitizer for race detection builds" OFF)
 option(BMMQ_PROFILE_VDP_RENDER "Enable profiling-oriented compile flags for GameGearVDP::renderFramePixels attribution" OFF)
 
 find_package(SDL2 QUIET)
+find_package(glfw3 3.3 QUIET)
+if (TARGET glfw OR TARGET glfw3::glfw)
+    set(OpenGL_GL_PREFERENCE LEGACY)
+    find_package(OpenGL QUIET)
+endif()
 find_package(ZLIB REQUIRED)
 
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -100,14 +105,18 @@ endif()
 
 set_target_properties(time-gameboy-interpreter-core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(time-gameboy-interpreter-core PUBLIC time-machine-runtime-common)
-add_library(time-sdl-frontend-loader
-    machine/plugins/SdlFrontendPluginLoader.cpp
-)
-target_link_libraries(time-sdl-frontend-loader PUBLIC ${CMAKE_DL_LIBS})
 add_library(time-dynamic-plugin-loader
     machine/plugins/DynamicPluginModule.cpp
 )
 target_link_libraries(time-dynamic-plugin-loader PUBLIC time-machine-runtime-common ${CMAKE_DL_LIBS})
+add_library(time-frontend-loader
+    machine/plugins/FrontendPluginLoader.cpp
+)
+target_link_libraries(time-frontend-loader PUBLIC time-dynamic-plugin-loader)
+add_library(time-sdl-frontend-loader
+    machine/plugins/SdlFrontendPluginLoader.cpp
+)
+target_link_libraries(time-sdl-frontend-loader PUBLIC time-frontend-loader)
 add_library(time-emulator-config STATIC
     emulator/EmulatorConfig.cpp
 )
@@ -157,8 +166,11 @@ set_target_properties(time-hardware-video-adapter PROPERTIES POSITION_INDEPENDEN
 add_library(time-sdl-frontend-plugin SHARED
     machine/plugins/sdl_frontend/SdlFrontendModule.cpp
 )
+add_library(time-glfw-frontend-plugin SHARED
+    machine/plugins/glfw_frontend/GlfwFrontendModule.cpp
+)
 add_executable(timeEmulator emulator.cpp)
-target_link_libraries(timeEmulator time-emulator-host time-sdl-frontend-loader)
+target_link_libraries(timeEmulator time-emulator-host time-frontend-loader)
 if (TARGET SDL2::SDL2)
     target_link_libraries(time-sdl-audio-output PRIVATE SDL2::SDL2)
     target_link_libraries(time-sdl-video-adapter PRIVATE SDL2::SDL2)
@@ -180,9 +192,20 @@ target_compile_definitions(time-sdl-audio-output PRIVATE BMMQ_SDL_FRONTEND_COMPI
 target_compile_definitions(time-sdl-video-adapter PUBLIC BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL=${BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE})
 target_compile_definitions(time-hardware-video-adapter PUBLIC BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL=${BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE})
 target_compile_definitions(time-sdl-frontend-plugin PRIVATE BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL=${BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE})
+set(BMMQ_GLFW_FRONTEND_COMPILED_WITH_GLFW_VALUE 0)
+if ((TARGET glfw OR TARGET glfw3::glfw) AND TARGET OpenGL::GL)
+    if (TARGET glfw)
+        target_link_libraries(time-glfw-frontend-plugin PRIVATE glfw)
+    else()
+        target_link_libraries(time-glfw-frontend-plugin PRIVATE glfw3::glfw)
+    endif()
+    target_link_libraries(time-glfw-frontend-plugin PRIVATE OpenGL::GL)
+    set(BMMQ_GLFW_FRONTEND_COMPILED_WITH_GLFW_VALUE 1)
+endif()
+target_compile_definitions(time-glfw-frontend-plugin PRIVATE
+    BMMQ_GLFW_FRONTEND_COMPILED_WITH_GLFW=${BMMQ_GLFW_FRONTEND_COMPILED_WITH_GLFW_VALUE})
 target_link_libraries(time-dynamic-plugin-loader PUBLIC
     time-sdl-audio-output time-dummy-audio-output time-file-audio-output)
-target_link_libraries(time-sdl-frontend-loader PUBLIC time-dynamic-plugin-loader)
 
 enable_testing()
 add_test(NAME smoke-gameboy-corpus-tool
@@ -384,6 +407,10 @@ target_link_libraries(time-smoke-dynamic-frontend-module
     time-gameboy-interpreter-core time-dynamic-plugin-loader)
 add_test(NAME smoke-dynamic-frontend-module
     COMMAND time-smoke-dynamic-frontend-module $<TARGET_FILE:time-test-c-frontend-plugin>)
+add_executable(time-smoke-glfw-frontend-plugin tests/smoke_glfw_frontend_plugin.cpp)
+target_link_libraries(time-smoke-glfw-frontend-plugin time-frontend-loader)
+add_test(NAME smoke-glfw-frontend-plugin
+    COMMAND time-smoke-glfw-frontend-plugin $<TARGET_FILE:time-glfw-frontend-plugin>)
 add_executable(time-smoke-plugin-io tests/smoke_plugin_io.cpp)
 target_link_libraries(time-smoke-plugin-io time-gameboy-interpreter-core)
 add_test(NAME smoke-plugin-io COMMAND time-smoke-plugin-io)

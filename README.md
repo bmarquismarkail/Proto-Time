@@ -26,9 +26,23 @@ cmake -S . -B build-working
 cmake --build build-working -j4
 ```
 
-This build now produces both the host executable `timeEmulator` and the runtime-loaded SDL frontend shared object `libtime-sdl-frontend-plugin.so`.
+This build produces the host executable plus interchangeable SDL and GLFW
+frontend modules: `libtime-sdl-frontend-plugin.so` and
+`libtime-glfw-frontend-plugin.so`. GLFW/OpenGL support is enabled when GLFW 3.3+
+and OpenGL are available at configure time; otherwise the GLFW module reports a
+deterministic backend-unavailable error.
 
 `timeEmulator` will auto-load that shared object from the executable directory by default. Use `--frontend-plugin <path>` to load any compatible pure-C frontend module, `--frontend <id>` when it exposes multiple frontends, or `--headless` to skip frontend loading. `--plugin` remains a path alias.
+
+SDL remains the default. Switch window, input, and video presentation to GLFW
+with:
+
+```bash
+timeEmulator --core gameboy --rom path/to/rom.gb --frontend glfw
+```
+
+`--frontend sdl` selects SDL explicitly. Audio output is host-owned and selected
+independently with `--audio-backend sdl|dummy|file`.
 
 Executor policies are a separate extension layer. Built-in policies can be
 selected by stable ID, while external modules use the pure-C ABI in
@@ -222,7 +236,7 @@ Plugin runtime adapter:
 
 This wraps `LR3592_DMG` into `ICpuCoreRuntime`, while `GameBoyMachine` hosts the runtime and ROM-backed memory path.
 
-### 6. SDL Frontend Plugin
+### 6. Frontend Plugins
 
 The SDL frontend is no longer compiled directly into the emulator executable. The host uses:
 
@@ -230,16 +244,19 @@ The SDL frontend is no longer compiled directly into the emulator executable. Th
 - `machine/plugins/DynamicPluginModule.hpp` for validated loading and the host adapter
 - `machine/plugins/SdlFrontendPlugin.hpp` for the temporary internal C++ compatibility interface
 
-The plugin implementation lives in:
+The implementations live in:
 
 - `machine/plugins/sdl_frontend/SdlFrontendModule.cpp`
+- `machine/plugins/glfw_frontend/GlfwFrontendModule.cpp`
 
 At runtime the emulator loads `libtime-sdl-frontend-plugin.so`, validates its
 `TimeFrontendApiV1` descriptor, wraps it in an `IFrontendPlugin`, and registers
 the adapter with `PluginManager`. Video/window/events stay inside the SDL
 module; the host owns audio transport, input snapshots, timing controls, and
-the video mailbox. Any module implementing the same C table can be selected in
-its place. If loading fails, the emulator logs a warning and continues in
+the video mailbox. The GLFW module uses an OpenGL texture and implements the
+same table without a frontend-specific host path. Select it with `--frontend
+glfw`, or select any external implementation with `--frontend-plugin` and its
+descriptor ID. If loading fails, the emulator logs a warning and continues in
 headless mode.
 
 ## Tests
