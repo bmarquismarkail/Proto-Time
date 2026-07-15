@@ -344,6 +344,10 @@ def summarize_case_performance(runs: Sequence[dict[str, Any]]) -> dict[str, Any]
             elapsed = mode_data["median_host_elapsed_ns"]
             mode_data["speedup_vs_baseline"] = baseline / elapsed
 
+    block_stats = summarize_block_cache_runs(by_mode.get("block", []))
+    if block_stats:
+        modes.setdefault("block", {})["block_cache"] = block_stats
+
     for backend in ("ir", "native"):
         backend_runs = by_mode.get(backend, [])
         executions = fallbacks = entries = continuations = 0
@@ -369,12 +373,69 @@ def summarize_case_performance(runs: Sequence[dict[str, Any]]) -> dict[str, Any]
     return {"modes": modes}
 
 
+def summarize_block_cache_runs(runs: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    totals = {
+        name: 0 for name in (
+            "hits", "misses", "translations", "translated_instructions",
+            "invalidations", "guard_failures", "chain_continuations",
+            "unsupported_fallbacks", "fast_eligibility_stops",
+            "invalidation_requests", "invalidation_page_skips",
+            "invalidation_scans", "invalidation_blocks_examined",
+        )
+    }
+    opcode_totals = {
+        "unsupported_fallback_opcodes": Counter(),
+        "fast_eligibility_stop_opcodes": Counter(),
+    }
+    samples = 0
+    for run in runs:
+        if run.get("status") != "ok":
+            continue
+        stats = run.get("cpu_block_cache")
+        if not isinstance(stats, dict):
+            continue
+        samples += 1
+        for name in totals:
+            value = stats.get(name)
+            if isinstance(value, int) and value >= 0:
+                totals[name] += value
+        for name, combined in opcode_totals.items():
+            counts = stats.get(name)
+            if not isinstance(counts, dict):
+                continue
+            for opcode, value in counts.items():
+                if isinstance(opcode, str) and isinstance(value, int) and value >= 0:
+                    combined[opcode] += value
+    if samples == 0:
+        return {}
+
+    def ratio(numerator: str, denominator: str) -> Optional[float]:
+        return totals[numerator] / totals[denominator] if totals[denominator] else None
+
+    lookups = totals["hits"] + totals["misses"]
+    summary: dict[str, Any] = {
+        "samples": samples,
+        **totals,
+        "lookup_hit_rate": totals["hits"] / lookups if lookups else None,
+        "average_translated_instructions": ratio("translated_instructions", "translations"),
+        "chain_continuations_per_hit": ratio("chain_continuations", "hits"),
+        "unsupported_fallbacks_per_translation": ratio("unsupported_fallbacks", "translations"),
+        "fast_eligibility_stops_per_translation": ratio("fast_eligibility_stops", "translations"),
+        "invalidation_page_skip_rate": ratio("invalidation_page_skips", "invalidation_requests"),
+        "average_blocks_examined_per_scan": ratio("invalidation_blocks_examined", "invalidation_scans"),
+    }
+    for name, counts in opcode_totals.items():
+        summary[name] = dict(sorted(counts.items()))
+    return summary
+
+
 def summarize_corpus_performance(results: Sequence[dict[str, Any]]) -> dict[str, Any]:
     speedups: dict[str, list[float]] = {}
     dispatch = {
         mode: {"executions": 0, "fallbacks": 0, "entries": 0, "continuations": 0}
         for mode in ("ir", "native")
     }
+    block_runs: list[dict[str, Any]] = []
     for result in results:
         performance = result.get("performance")
         if not isinstance(performance, dict):
@@ -385,6 +446,8 @@ def summarize_corpus_performance(results: Sequence[dict[str, Any]]) -> dict[str,
                 speedups.setdefault(mode, []).append(float(speedup))
         for run in result.get("runs", []):
             mode = run.get("mode")
+            if mode == "block":
+                block_runs.append(run)
             if mode not in dispatch or run.get("status") != "ok":
                 continue
             stats = run.get("cpu_block_cache")
@@ -411,6 +474,7 @@ def summarize_corpus_performance(results: Sequence[dict[str, Any]]) -> dict[str,
         }
     summary = {
         "modes": modes,
+        "block_cache": summarize_block_cache_runs(block_runs),
         "interpretation": "informational; only deterministic state/cycle agreement is a corpus gate",
     }
     for mode, values in dispatch.items():

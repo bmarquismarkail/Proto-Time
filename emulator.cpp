@@ -230,6 +230,30 @@ void writeDiagnosticsSample(std::ostream& output,
         output << ",\"guard_failures\":" << blockCacheStats->guardFailures.load();
         output << ",\"chain_continuations\":" << blockCacheStats->chainContinuations.load();
         output << ",\"unsupported_fallbacks\":" << blockCacheStats->unsupportedFallbacks.load();
+        output << ",\"fast_eligibility_stops\":" << blockCacheStats->fastEligibilityStops.load();
+        output << ",\"invalidation_requests\":" << blockCacheStats->invalidationRequests.load();
+        output << ",\"invalidation_page_skips\":" << blockCacheStats->invalidationPageSkips.load();
+        output << ",\"invalidation_scans\":" << blockCacheStats->invalidationScans.load();
+        output << ",\"invalidation_blocks_examined\":"
+               << blockCacheStats->invalidationBlocksExamined.load();
+        const auto emitOpcodeCounts = [&](std::string_view name, const auto& counts) {
+            output << ",\"" << name << "\":{";
+            bool first = true;
+            for (std::size_t opcode = 0u; opcode < counts.size(); ++opcode) {
+                const auto count = counts[opcode].load();
+                if (count == 0u) continue;
+                if (!first) output << ',';
+                first = false;
+                output << '\"' << "0x" << std::uppercase << std::hex
+                       << std::setw(2) << std::setfill('0') << opcode
+                       << std::dec << std::nouppercase << "\":" << count;
+            }
+            output << '}';
+        };
+        emitOpcodeCounts("unsupported_fallback_opcodes",
+                         blockCacheStats->unsupportedFallbackOpcodes);
+        emitOpcodeCounts("fast_eligibility_stop_opcodes",
+                         blockCacheStats->fastEligibilityStopOpcodes);
         output << ",\"ir_translations\":" << blockCacheStats->irTranslations.load();
         output << ",\"ir_executions\":" << blockCacheStats->irExecutions.load();
         output << ",\"ir_guard_failures\":" << blockCacheStats->irGuardFailures.load();

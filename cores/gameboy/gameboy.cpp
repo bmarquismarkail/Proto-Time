@@ -474,6 +474,42 @@ bool isControlFlowOpcode(DataType opcode)
     }
 }
 
+// Keep block formation aligned with the byte fast path. Unsupported opcodes
+// remain baseline-interpreter work and must never become a cached guard failure.
+constexpr bool supportsFastOpcode(DataType opcode) noexcept
+{
+    if ((opcode >= 0x40u && opcode <= 0x7Fu) ||
+        (opcode >= 0x80u && opcode <= 0xBFu)) {
+        return true;
+    }
+    if ((opcode & 0xC7u) == 0x04u || (opcode & 0xC7u) == 0x05u ||
+        (opcode & 0xC7u) == 0x06u) {
+        return true;
+    }
+    switch (opcode) {
+    case 0x00: case 0x01: case 0x02: case 0x03:
+    case 0x07: case 0x08: case 0x09: case 0x0A: case 0x0B: case 0x0F:
+    case 0x10: case 0x11: case 0x12: case 0x13:
+    case 0x17: case 0x18: case 0x19: case 0x1A: case 0x1B: case 0x1F:
+    case 0x20: case 0x21: case 0x22: case 0x23:
+    case 0x27: case 0x28: case 0x29: case 0x2A: case 0x2B: case 0x2F:
+    case 0x30: case 0x31: case 0x32: case 0x33:
+    case 0x37: case 0x38: case 0x39: case 0x3A: case 0x3B: case 0x3F:
+    case 0xC0: case 0xC1: case 0xC2: case 0xC3: case 0xC4: case 0xC5:
+    case 0xC6: case 0xC7: case 0xC8: case 0xC9:
+    case 0xCA: case 0xCC: case 0xCD: case 0xCE: case 0xCF:
+    case 0xD0: case 0xD1: case 0xD2: case 0xD4: case 0xD5: case 0xD6:
+    case 0xD7: case 0xD8: case 0xD9: case 0xDA: case 0xDC: case 0xDE: case 0xDF:
+    case 0xE0: case 0xE1: case 0xE2: case 0xE5: case 0xE6: case 0xE7:
+    case 0xE8: case 0xE9: case 0xEA: case 0xEE: case 0xEF:
+    case 0xF0: case 0xF1: case 0xF2: case 0xF3: case 0xF5: case 0xF6:
+    case 0xF7: case 0xF8: case 0xF9: case 0xFA: case 0xFB: case 0xFE: case 0xFF:
+        return true;
+    default:
+        return false;
+    }
+}
+
 template <typename CycleResolver, typename Emit>
 auto makeOpcode(DataType length, CycleResolver&& cycleResolver, Emit&& emit)
 {
@@ -1875,6 +1911,7 @@ bool LR3592_DMG::tryFastExecuteBytes(std::span<const DataType> data)
 {
     if (data.empty()) return false;
     const DataType opcode = data[0];
+    if (!supportsFastOpcode(opcode)) return false;
     const auto immediate8 = [&]() noexcept { return data[1]; };
     const auto immediate16 = [&]() noexcept {
         return static_cast<AddressType>(
@@ -2340,7 +2377,7 @@ bool LR3592_DMG::tryExecuteTranslatedBlock()
     if (!tryFastExecuteBytes(std::span<const DataType>(
             instruction.bytes.data(), instruction.length))) {
         blockCache_.invalidate(pcAddress, true);
-        blockCache_.noteUnsupportedFallback();
+        blockCache_.noteUnsupportedFallback(instruction.bytes[0]);
         return false;
     }
     return true;
@@ -2775,6 +2812,11 @@ void LR3592_DMG::populateBlockCache(BMMQ::fetchBlock<AddressType, DataType>& fet
             mem.read(std::span<DataType>(bytes.data(), length), address);
         }
         if (length == 0u) break;
+        if (!supportsFastOpcode(opcode)) {
+            blockCache_.noteFastEligibilityStop(opcode);
+            translated.exitReason = BMMQ::TranslatedBlockExitReason::Unsupported;
+            break;
+        }
         translated.instructions.push_back({.address = address, .bytes = bytes, .length = length});
         byteCount += length;
         translated.end = static_cast<AddressType>(address + length - 1u);
@@ -3056,7 +3098,6 @@ bool LR3592_DMG::handleMemoryRead(AddressType address, std::span<DataType> value
 bool LR3592_DMG::handleMemoryWrite(AddressType address, std::span<const DataType> value)
 {
     address = normalizeAccessAddress(address);
-    invalidateBlockCacheForWrite(address, value.size());
     if (value.size() == 1 && address == 0xFF00) {
         const DataType oldLow = joypadLowNibble();
         joypSelect = static_cast<DataType>(value[0] & 0x30u);

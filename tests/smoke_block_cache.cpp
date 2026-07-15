@@ -81,6 +81,7 @@ void test_threaded_block_cache() {
     const auto continuation = cache.lookup(0x1002u);
     assert(continuation);
     assert(continuation.instructionIndex == 1u);
+    cache.invalidateRange(0xC000u, 0xC000u);
     cache.invalidateRange(0x1001u, 0x1001u);
     assert(!cache.lookup(0x1000u));
     const auto stats = cache.stats();
@@ -88,6 +89,16 @@ void test_threaded_block_cache() {
     assert(stats.translatedInstructions == 2u);
     assert(stats.chainContinuations == 1u);
     assert(stats.invalidations == 1u);
+    assert(stats.invalidationRequests == 2u);
+    assert(stats.invalidationPageSkips == 1u);
+    assert(stats.invalidationScans == 1u);
+    assert(stats.invalidationBlocksExamined == 1u);
+
+    cache.noteUnsupportedFallback(0xCBu);
+    cache.noteFastEligibilityStop(0xCBu);
+    const auto opcodeStats = cache.stats();
+    assert(opcodeStats.unsupportedFallbackOpcodes[0xCBu] == 1u);
+    assert(opcodeStats.fastEligibilityStopOpcodes[0xCBu] == 1u);
 
     std::cout << "  PASSED" << std::endl;
 }
@@ -187,12 +198,48 @@ void test_gameboy_cached_fast_path_execution() {
     assert((machine.runtimeContext().readRegister16(GB::RegisterId::AF) >> 8) == 0x12u);
     assert(machine.blockCacheStats().hits.load() >= 1u);
 
+    const auto nonCodeWriteStats = machine.blockCacheStats();
+    machine.runtimeContext().write8(0xC100u, 0x55u);
+    const auto afterNonCodeWrite = machine.blockCacheStats();
+    assert(afterNonCodeWrite.invalidationRequests.load() -
+               nonCodeWriteStats.invalidationRequests.load() == 1u);
+    assert(afterNonCodeWrite.invalidationPageSkips.load() -
+               nonCodeWriteStats.invalidationPageSkips.load() == 1u);
+
     machine.runtimeContext().write8(0xC001u, 0x34u);
     machine.runtimeContext().writeRegister16(GB::RegisterId::PC, 0xC000u);
     machine.runtimeContext().writeRegister16(GB::RegisterId::AF, 0x0000u);
     machine.step();
     assert((machine.runtimeContext().readRegister16(GB::RegisterId::AF) >> 8) == 0x34u);
     assert(machine.blockCacheStats().invalidations.load() >= 1u);
+
+    std::cout << "  PASSED" << std::endl;
+}
+
+void test_unsupported_opcode_ends_cached_block() {
+    std::cout << "Test: Unsupported Opcode Ends Cached Block..." << std::endl;
+
+    GameBoyMachine machine;
+    BMMQ::Plugin::VisibleStatePreservingStepPolicy optimizedPolicy;
+    machine.attachExecutorPolicy(optimizedPolicy);
+    machine.loadRom(std::vector<uint8_t>(0x8000u, 0x00u));
+    machine.runtimeContext().write8(0xC000u, 0x00u); // NOP: cacheable
+    machine.runtimeContext().write8(0xC001u, 0xCBu); // RLC B: baseline only
+    machine.runtimeContext().write8(0xC002u, 0x00u);
+
+    machine.runtimeContext().writeRegister16(GB::RegisterId::PC, 0xC000u);
+    machine.step();
+    machine.step();
+    machine.runtimeContext().writeRegister16(GB::RegisterId::PC, 0xC000u);
+    machine.step();
+
+    const auto stats = machine.blockCacheStats();
+    assert(stats.hits.load() >= 1u);
+    assert(stats.fastEligibilityStops.load() >= 1u);
+    assert(stats.fastEligibilityStopOpcodes[0xCBu].load() >= 1u);
+    assert(stats.unsupportedFallbacks.load() == 0u);
+    assert(stats.unsupportedFallbackOpcodes[0xCBu].load() == 0u);
+    assert(stats.guardFailures.load() == 0u);
 
     std::cout << "  PASSED" << std::endl;
 }
@@ -452,6 +499,7 @@ int main() {
     test_cache_stats();
     test_range_overlap_invalidation();
     test_gameboy_cached_fast_path_execution();
+    test_unsupported_opcode_ends_cached_block();
     test_baseline_policy_disables_cache_execution();
     test_runtime_cache_disable();
     test_control_flow_equivalence_with_cache();

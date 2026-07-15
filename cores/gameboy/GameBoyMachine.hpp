@@ -15,6 +15,7 @@
 //         -> pluginManager_ (PluginManager)
 //         -> context_ (GameBoyRuntimeContext)
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -127,6 +128,13 @@ public:
         std::atomic<uint64_t> guardFailures{0};
         std::atomic<uint64_t> chainContinuations{0};
         std::atomic<uint64_t> unsupportedFallbacks{0};
+        std::atomic<uint64_t> fastEligibilityStops{0};
+        std::atomic<uint64_t> invalidationRequests{0};
+        std::atomic<uint64_t> invalidationPageSkips{0};
+        std::atomic<uint64_t> invalidationScans{0};
+        std::atomic<uint64_t> invalidationBlocksExamined{0};
+        std::array<std::atomic<uint64_t>, 256> unsupportedFallbackOpcodes{};
+        std::array<std::atomic<uint64_t>, 256> fastEligibilityStopOpcodes{};
         std::atomic<uint64_t> irTranslations{0};
         std::atomic<uint64_t> irExecutions{0};
         std::atomic<uint64_t> irGuardFailures{0};
@@ -180,7 +188,19 @@ public:
               irExecutionNanos(other.irExecutionNanos.load()),
               irBlockEntries(other.irBlockEntries.load()),
               irBlockContinuations(other.irBlockContinuations.load()),
-              irBlockContinuationRejects(other.irBlockContinuationRejects.load()) {}
+              irBlockContinuationRejects(other.irBlockContinuationRejects.load()) {
+            fastEligibilityStops.store(other.fastEligibilityStops.load());
+            invalidationRequests.store(other.invalidationRequests.load());
+            invalidationPageSkips.store(other.invalidationPageSkips.load());
+            invalidationScans.store(other.invalidationScans.load());
+            invalidationBlocksExamined.store(other.invalidationBlocksExamined.load());
+            for (std::size_t opcode = 0u; opcode < 256u; ++opcode) {
+                unsupportedFallbackOpcodes[opcode].store(
+                    other.unsupportedFallbackOpcodes[opcode].load());
+                fastEligibilityStopOpcodes[opcode].store(
+                    other.fastEligibilityStopOpcodes[opcode].load());
+            }
+        }
         BlockCacheStats& operator=(const BlockCacheStats& other) {
             hits.store(other.hits.load());
             misses.store(other.misses.load());
@@ -190,6 +210,11 @@ public:
             guardFailures.store(other.guardFailures.load());
             chainContinuations.store(other.chainContinuations.load());
             unsupportedFallbacks.store(other.unsupportedFallbacks.load());
+            fastEligibilityStops.store(other.fastEligibilityStops.load());
+            invalidationRequests.store(other.invalidationRequests.load());
+            invalidationPageSkips.store(other.invalidationPageSkips.load());
+            invalidationScans.store(other.invalidationScans.load());
+            invalidationBlocksExamined.store(other.invalidationBlocksExamined.load());
             irTranslations.store(other.irTranslations.load());
             irExecutions.store(other.irExecutions.load());
             irGuardFailures.store(other.irGuardFailures.load());
@@ -203,6 +228,12 @@ public:
             irBlockEntries.store(other.irBlockEntries.load());
             irBlockContinuations.store(other.irBlockContinuations.load());
             irBlockContinuationRejects.store(other.irBlockContinuationRejects.load());
+            for (std::size_t opcode = 0u; opcode < 256u; ++opcode) {
+                unsupportedFallbackOpcodes[opcode].store(
+                    other.unsupportedFallbackOpcodes[opcode].load());
+                fastEligibilityStopOpcodes[opcode].store(
+                    other.fastEligibilityStopOpcodes[opcode].load());
+            }
             return *this;
         }
     };

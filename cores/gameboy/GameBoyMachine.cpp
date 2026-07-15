@@ -1455,7 +1455,7 @@ void GameBoyMachine::setJoypadState(uint8_t value) {
 
 GameBoyMachine::BlockCacheStats GameBoyMachine::blockCacheStats() const {
     const auto stats = impl_->cpu.cpu().blockCacheStats();
-    return BlockCacheStats{
+    BlockCacheStats result{
         stats.hits,
         stats.misses,
         stats.invalidations,
@@ -1478,6 +1478,18 @@ GameBoyMachine::BlockCacheStats GameBoyMachine::blockCacheStats() const {
         stats.irBlockContinuations,
         stats.irBlockContinuationRejects
     };
+    result.fastEligibilityStops.store(stats.fastEligibilityStops);
+    result.invalidationRequests.store(stats.invalidationRequests);
+    result.invalidationPageSkips.store(stats.invalidationPageSkips);
+    result.invalidationScans.store(stats.invalidationScans);
+    result.invalidationBlocksExamined.store(stats.invalidationBlocksExamined);
+    for (std::size_t opcode = 0u; opcode < 256u; ++opcode) {
+        result.unsupportedFallbackOpcodes[opcode].store(
+            stats.unsupportedFallbackOpcodes[opcode]);
+        result.fastEligibilityStopOpcodes[opcode].store(
+            stats.fastEligibilityStopOpcodes[opcode]);
+    }
+    return result;
 }
 
 bool GameBoyMachine::blockCacheEnabled() const {

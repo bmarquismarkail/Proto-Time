@@ -379,6 +379,19 @@ block, and IR modes; native is explicit and capability-checked. Uniform
 failure, and irrelevant non-Game-Boy archives no longer produce discovery
 noise. Native opcode and architecture expansion remain frozen.
 
+**Phase 10B hardening status: Complete.** Block formation now stops before an
+opcode the cached byte executor cannot handle, with sparse opcode diagnostics
+for eligibility stops and unexpected runtime fallback. A single committed-write
+observer owns guest-write invalidation, so MMIO intercepted or hardware-rejected
+writes do not churn code guards. A conservative executable-page index rejects
+unrelated writes before a cache scan while preserving exact overlap and mapping
+generation invalidation. The corpus aggregates block lookup, translation,
+chaining, fallback, and invalidation-work rates. A deterministic 20-ROM run had
+zero mismatches and zero unsupported cached fallbacks (previously 46.6% per
+translation), rejected 99.897% of write invalidations at the page index, and
+measured a 1.1125x block geometric-mean speedup. The retained synthetic gate
+passed at 2.131x paired median and 2.126x lower quartile.
+
 Full just-in-time compilation is the highest upside but also the largest correctness burden. Defer until all other phases are stable.
 
 **Considerations:**

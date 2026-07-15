@@ -45,6 +45,21 @@ sample = {
     "deterministic_state": {"schema": "gameboy-v1", "fingerprint": fingerprint},
     "cpu_block_cache": {
         "mode": mode,
+        "hits": 8 if mode == "block" else 0,
+        "misses": 2 if mode == "block" else 0,
+        "translations": 4 if mode == "block" else 0,
+        "translated_instructions": 12 if mode == "block" else 0,
+        "invalidations": 1 if mode == "block" else 0,
+        "guard_failures": 0,
+        "chain_continuations": 6 if mode == "block" else 0,
+        "unsupported_fallbacks": 1 if mode == "block" else 0,
+        "fast_eligibility_stops": 2 if mode == "block" else 0,
+        "invalidation_requests": 4 if mode == "block" else 0,
+        "invalidation_page_skips": 3 if mode == "block" else 0,
+        "invalidation_scans": 1 if mode == "block" else 0,
+        "invalidation_blocks_examined": 5 if mode == "block" else 0,
+        "unsupported_fallback_opcodes": {"0xCB": 1} if mode == "block" else {},
+        "fast_eligibility_stop_opcodes": {"0xCB": 2} if mode == "block" else {},
         "ir_executions": 8 if mode in {"ir", "native"} else 0,
         "ir_fallbacks": 2 if mode in {"ir", "native"} else 0,
         "ir_block_entries": 2 if mode in {"ir", "native"} else 0,
@@ -132,6 +147,17 @@ class CorpusToolTests(unittest.TestCase):
         self.assertEqual(summary["performance"]["modes"]["block"]["cases"], 1)
         self.assertEqual(summary["performance"]["ir_dispatch_coverage"], 0.8)
         self.assertEqual(summary["performance"]["ir_average_continuations_per_entry"], 2.0)
+        block = summary["performance"]["block_cache"]
+        self.assertEqual(block["lookup_hit_rate"], 0.8)
+        self.assertEqual(block["average_translated_instructions"], 3.0)
+        self.assertEqual(block["chain_continuations_per_hit"], 0.75)
+        self.assertEqual(block["unsupported_fallbacks_per_translation"], 0.25)
+        self.assertEqual(block["fast_eligibility_stops_per_translation"], 0.5)
+        self.assertEqual(block["invalidation_page_skip_rate"], 0.75)
+        self.assertEqual(block["average_blocks_examined_per_scan"], 5.0)
+        self.assertEqual(block["unsupported_fallback_opcodes"], {"0xCB": 1})
+        case_block = results[0]["performance"]["modes"]["block"]["block_cache"]
+        self.assertEqual(case_block["fast_eligibility_stop_opcodes"], {"0xCB": 2})
 
     def test_state_difference_is_a_failure(self) -> None:
         (self.rom_root / "game.gb").write_bytes(self.rom())

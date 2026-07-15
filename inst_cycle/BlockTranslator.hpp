@@ -60,6 +60,11 @@ struct ThreadedBlockCacheStats {
     std::uint64_t guardFailures = 0;
     std::uint64_t chainContinuations = 0;
     std::uint64_t unsupportedFallbacks = 0;
+    std::uint64_t fastEligibilityStops = 0;
+    std::uint64_t invalidationRequests = 0;
+    std::uint64_t invalidationPageSkips = 0;
+    std::uint64_t invalidationScans = 0;
+    std::uint64_t invalidationBlocksExamined = 0;
     std::uint64_t irTranslations = 0;
     std::uint64_t irExecutions = 0;
     std::uint64_t irGuardFailures = 0;
@@ -74,6 +79,8 @@ struct ThreadedBlockCacheStats {
     std::uint64_t irBlockContinuations = 0;
     std::uint64_t irBlockContinuationRejects = 0;
     std::array<std::uint64_t, 5> exits{};
+    std::array<std::uint64_t, 256> unsupportedFallbackOpcodes{};
+    std::array<std::uint64_t, 256> fastEligibilityStopOpcodes{};
 };
 
 // Emulation-thread-owned cache. Direct PC slots make a sequential successor a
@@ -91,6 +98,10 @@ public:
 
     static constexpr std::size_t kAddressCount =
         static_cast<std::size_t>(std::numeric_limits<AddressType>::max()) + 1u;
+    static constexpr std::size_t kPageShift = 8u;
+    static constexpr std::size_t kPageSize = std::size_t{1u} << kPageShift;
+    static constexpr std::size_t kPageCount =
+        (kAddressCount + kPageSize - 1u) / kPageSize;
 
     explicit ThreadedBlockCache(std::size_t maxBlocks = 4096u)
         : maxBlocks_(std::max<std::size_t>(maxBlocks, 1u))
@@ -125,15 +136,23 @@ public:
         stats_.translatedInstructions += pointer->instructions.size();
         if (pointer->intermediateRepresentation) ++stats_.irTranslations;
         ++stats_.exits[static_cast<std::size_t>(pointer->exitReason)];
+        adjustActivePages(*pointer, 1);
         blocks_.push_back(std::move(stored));
     }
 
     void invalidateRange(AddressType start, AddressType end) noexcept
     {
+        ++stats_.invalidationRequests;
         const auto rangeStart = static_cast<std::uint64_t>(start);
         const auto rangeEnd = static_cast<std::uint64_t>(end);
+        if (!rangeHasActivePage(rangeStart, rangeEnd)) {
+            ++stats_.invalidationPageSkips;
+            return;
+        }
+        ++stats_.invalidationScans;
         for (auto& block : blocks_) {
             if (!block->valid) continue;
+            ++stats_.invalidationBlocksExamined;
             if (static_cast<std::uint64_t>(block->start) <= rangeEnd &&
                 static_cast<std::uint64_t>(block->end) >= rangeStart) {
                 invalidateBlock(*block);
@@ -159,10 +178,18 @@ public:
             }
         }
         slots_.fill(Slot{});
+        activeBlocksByPage_.fill(0u);
         ++mappingGeneration_;
     }
 
-    void noteUnsupportedFallback() noexcept { ++stats_.unsupportedFallbacks; }
+    void noteUnsupportedFallback(DataType opcode) noexcept {
+        ++stats_.unsupportedFallbacks;
+        ++stats_.unsupportedFallbackOpcodes[static_cast<std::size_t>(opcode)];
+    }
+    void noteFastEligibilityStop(DataType opcode) noexcept {
+        ++stats_.fastEligibilityStops;
+        ++stats_.fastEligibilityStopOpcodes[static_cast<std::size_t>(opcode)];
+    }
     void noteIrExecution(std::uint64_t elapsedNanos = 0u) noexcept {
         ++stats_.irExecutions;
         stats_.irExecutionNanos += elapsedNanos;
@@ -200,6 +227,7 @@ private:
 
     void invalidateBlock(Block& block) noexcept
     {
+        adjustActivePages(block, -1);
         block.valid = false;
         ++stats_.invalidations;
         for (std::size_t index = 0; index < block.instructions.size(); ++index) {
@@ -211,10 +239,42 @@ private:
     void clearEntries() noexcept
     {
         slots_.fill(Slot{});
+        activeBlocksByPage_.fill(0u);
         blocks_.clear();
     }
 
+    void adjustActivePages(const Block& block, int delta) noexcept
+    {
+        const auto first = static_cast<std::size_t>(block.start) >> kPageShift;
+        const auto last = static_cast<std::size_t>(block.end) >> kPageShift;
+        auto adjust = [&](std::size_t page) {
+            if (delta > 0) {
+                ++activeBlocksByPage_[page];
+            } else if (activeBlocksByPage_[page] != 0u) {
+                --activeBlocksByPage_[page];
+            }
+        };
+        if (first <= last) {
+            for (auto page = first; page <= last; ++page) adjust(page);
+            return;
+        }
+        for (auto page = first; page < kPageCount; ++page) adjust(page);
+        for (std::size_t page = 0u; page <= last; ++page) adjust(page);
+    }
+
+    [[nodiscard]] bool rangeHasActivePage(
+        std::uint64_t rangeStart, std::uint64_t rangeEnd) const noexcept
+    {
+        const auto first = static_cast<std::size_t>(rangeStart) >> kPageShift;
+        const auto last = static_cast<std::size_t>(rangeEnd) >> kPageShift;
+        for (auto page = first; page <= last; ++page) {
+            if (activeBlocksByPage_[page] != 0u) return true;
+        }
+        return false;
+    }
+
     std::array<Slot, kAddressCount> slots_{};
+    std::array<std::uint32_t, kPageCount> activeBlocksByPage_{};
     std::vector<std::unique_ptr<Block>> blocks_{};
     std::size_t maxBlocks_ = 0;
     std::uint64_t mappingGeneration_ = 0;
