@@ -28,6 +28,7 @@ public:
         outputSampleRate_ = std::max(outputSampleRate, 1);
         channelCount_ = std::max<uint8_t>(channelCount, 1u);
         step_ = static_cast<double>(sourceSampleRate_) / static_cast<double>(outputSampleRate_);
+        stepScale_ = 1.0;
         reset();
     }
 
@@ -49,6 +50,20 @@ public:
     [[nodiscard]] double ratio() const noexcept
     {
         return static_cast<double>(outputSampleRate_) / static_cast<double>(sourceSampleRate_);
+    }
+
+    void setStepScale(double scale) noexcept
+    {
+        stepScale_ = std::clamp(scale, 0.995, 1.005);
+    }
+
+    [[nodiscard]] std::size_t sourceSamplesRequired(std::size_t outputSamples) const noexcept
+    {
+        const auto channels = static_cast<std::size_t>(std::max<uint8_t>(channelCount_, 1u));
+        const auto outputFrames = outputSamples / channels;
+        const auto sourceFrames = static_cast<std::size_t>(
+            std::ceil((sourcePhase_ + static_cast<double>(outputFrames) * effectiveStep()) - 1.0e-12));
+        return sourceFrames * channels;
     }
 
     [[nodiscard]] uint8_t channelCount() const noexcept
@@ -92,7 +107,7 @@ public:
                 stats.silenceSamplesFilled += channels;
             }
 
-            sourcePhase_ += step_;
+            sourcePhase_ += effectiveStep();
             const auto wholeSteps = static_cast<std::size_t>(sourcePhase_);
             if (wholeSteps != 0u) {
                 const auto consumed = consumeSamples(wholeSteps * channels);
@@ -126,10 +141,16 @@ public:
     }
 
 private:
+    [[nodiscard]] double effectiveStep() const noexcept
+    {
+        return step_ * stepScale_;
+    }
+
     int sourceSampleRate_ = 48000;
     int outputSampleRate_ = 48000;
     uint8_t channelCount_ = 1u;
     double step_ = 1.0;
+    double stepScale_ = 1.0;
     double sourcePhase_ = 0.0;
 };
 

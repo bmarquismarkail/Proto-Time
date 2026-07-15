@@ -114,5 +114,19 @@ int main()
         assert(resumedOutput[3] == 1500);
     }
 
+    {
+        BMMQ::SdlAudioResampler resampler(48000, 48000);
+        assert(resampler.sourceSamplesRequired(256u) == 256u);
+        resampler.setStepScale(0.995);
+        const auto correctedRequirement = resampler.sourceSamplesRequired(256u);
+        assert(correctedRequirement == 255u);
+
+        std::vector<int16_t> input(correctedRequirement, 1200);
+        std::vector<int16_t> output(256u, 0);
+        const auto stats = resampler.render(input, output);
+        assert(stats.silenceSamplesFilled == 0u);
+        assert(stats.sourceSamplesConsumed <= correctedRequirement);
+    }
+
     return 0;
 }

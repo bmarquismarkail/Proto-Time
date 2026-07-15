@@ -439,7 +439,13 @@ public:
             return false;
         }
         const auto sourceBufferedSamples = engine_.bufferedSamples();
-        if (sourceBufferedSamples == 0u) {
+        const auto queueDepth = readyQueueDepth();
+        // Recover a drained FIFO by consuming source slightly more slowly for
+        // one block. Once one block remains queued, return to the nominal rate
+        // so steady-state audio pitch is not biased.
+        engine_.setTransportRateCorrection(queueDepth == 0u ? 0.995 : 1.0);
+        const auto requiredSourceSamples = engine_.sourceSamplesRequired(producerScratch_.size());
+        if (sourceBufferedSamples < requiredSourceSamples) {
             transportWorkerProductionSourceBufferedSamplesFailureLast_.store(0u, std::memory_order_relaxed);
             transportWorkerProductionSourceEmptyFailureCount_.fetch_add(1u, std::memory_order_relaxed);
             return false;
@@ -497,6 +503,9 @@ public:
             transportReadyQueueEmptyCount_.fetch_add(1u, std::memory_order_relaxed);
             transportUnderrunCount_.fetch_add(1u, std::memory_order_relaxed);
             transportSilenceSamplesFilled_.fetch_add(output.size(), std::memory_order_relaxed);
+            // Re-establish the configured prefill margin instead of resuming
+            // from a single just-in-time block after an underrun.
+            transportPrimedForDrain_.store(false, std::memory_order_release);
             return;
         }
 

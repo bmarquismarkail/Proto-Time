@@ -74,6 +74,16 @@ public:
         resampler_.configure(config_.sourceSampleRate, config_.deviceSampleRate, config_.channelCount);
     }
 
+    void setTransportRateCorrection(double scale) noexcept
+    {
+        resampler_.setStepScale(scale);
+    }
+
+    [[nodiscard]] std::size_t sourceSamplesRequired(std::size_t outputSamples) const noexcept
+    {
+        return resampler_.sourceSamplesRequired(outputSamples);
+    }
+
     [[nodiscard]] std::size_t bufferedSamples() const noexcept
     {
         const auto capacity = buffer_.size();
