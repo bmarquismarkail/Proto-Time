@@ -94,7 +94,9 @@ private:
         bool useWindow = false;
         bool unsignedTileData = true;
     };
-    [[nodiscard]] BackgroundSample sampleBackground(int screenX, int screenY) const;
+    [[nodiscard]] BackgroundSample sampleBackground(int screenX, int screenY,
+                                                     uint8_t lcdc, uint8_t scy, uint8_t scx,
+                                                     uint8_t wy, uint8_t wx) const;
     [[nodiscard]] uint8_t sampleTileColor(uint8_t tileIndex, bool unsignedTileData,
                                           uint8_t tileX, uint8_t tileY) const;
 
@@ -119,7 +121,10 @@ private:
     std::array<uint32_t, kFramePixelCount> framePixels_{};
     std::array<uint8_t, kFramePixelCount> frameColorIndices_{};
     std::array<bool, kDisplayHeight> capturedScanlines_{};
+    BMMQ::VideoDebugFrameModel scanlineCaptureModel_{};
+    std::vector<uint8_t> scanlineBackgroundColors_{};
     bool hasCapturedScanlines_ = false;
+    bool lcdEnabledLastStep_ = false;
 
     // Previous LY for transition detection
     uint8_t lastLy_ = 0;

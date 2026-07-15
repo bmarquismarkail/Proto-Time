@@ -9,7 +9,12 @@
 
 namespace GB {
 
-GameBoyPPU::GameBoyPPU() : dotCounter_(0), ly_(0), ppuMode_(kModeDMATransfer) {}
+GameBoyPPU::GameBoyPPU() : dotCounter_(0), ly_(0), ppuMode_(kModeDMATransfer) {
+    scanlineCaptureModel_.width = kDisplayWidth;
+    scanlineCaptureModel_.height = kDisplayHeight;
+    scanlineCaptureModel_.argbPixels.resize(kFramePixelCount);
+    scanlineBackgroundColors_.resize(static_cast<std::size_t>(kDisplayWidth));
+}
 
 void GameBoyPPU::reset() {
     dotCounter_ = 0;
@@ -22,6 +27,7 @@ void GameBoyPPU::reset() {
     frameColorIndices_.fill(0u);
     capturedScanlines_.fill(false);
     hasCapturedScanlines_ = false;
+    lcdEnabledLastStep_ = false;
     lastLy_ = 0;
 }
 
@@ -58,14 +64,10 @@ uint8_t GameBoyPPU::readOam(uint16_t address) const {
     return memoryMap->read(address);
 }
 
-GameBoyPPU::BackgroundSample GameBoyPPU::sampleBackground(int screenX, int screenY) const {
+GameBoyPPU::BackgroundSample GameBoyPPU::sampleBackground(int screenX, int screenY,
+                                                          uint8_t lcdc, uint8_t scy, uint8_t scx,
+                                                          uint8_t wy, uint8_t wx) const {
     if (!memoryMap) return {};
-
-    uint8_t lcdc = memoryMap->read(0xFF40);
-    uint8_t scy = memoryMap->read(0xFF42);
-    uint8_t scx = memoryMap->read(0xFF43);
-    uint8_t wy = memoryMap->read(0xFF4A);
-    uint8_t wx = memoryMap->read(0xFF4B);
 
     bool windowEnabled = (lcdc & 0x20u) != 0;
     int windowLeft = static_cast<int>(wx) - 7;
@@ -224,6 +226,11 @@ void GameBoyPPU::renderScanline(BMMQ::VideoDebugFrameModel& model, int screenY,
     if (screenY < 0 || screenY >= kDisplayHeight || model.width <= 0) return;
 
     uint8_t lcdc = memoryMap->read(0xFF40);
+    const uint8_t scy = memoryMap->read(0xFF42);
+    const uint8_t scx = memoryMap->read(0xFF43);
+    const uint8_t backgroundPalette = memoryMap->read(0xFF47);
+    const uint8_t wy = memoryMap->read(0xFF4A);
+    const uint8_t wx = memoryMap->read(0xFF4B);
     bool lcdEnabled = (lcdc & 0x80u) != 0u;
     bool backgroundEnabled = (lcdc & 0x01u) != 0u;
 
@@ -241,10 +248,10 @@ void GameBoyPPU::renderScanline(BMMQ::VideoDebugFrameModel& model, int screenY,
             continue;
         }
 
-        auto sample = sampleBackground(x, screenY);
+        auto sample = sampleBackground(x, screenY, lcdc, scy, scx, wy, wx);
         bgColors[static_cast<std::size_t>(x)] = sample.colorIndex;
 
-        uint8_t shade = mapPaletteShade(memoryMap->read(0xFF47), sample.colorIndex);
+        uint8_t shade = mapPaletteShade(backgroundPalette, sample.colorIndex);
         model.argbPixels[static_cast<std::size_t>(pixelIndex)] = paletteColor(shade);
     }
 
@@ -258,20 +265,14 @@ void GameBoyPPU::captureScanline(int screenY) {
         return;
     }
 
-    BMMQ::VideoDebugFrameModel model;
-    model.width = kDisplayWidth;
-    model.height = kDisplayHeight;
-    model.argbPixels.assign(kFramePixelCount, paletteColor(0));
-
-    std::vector<uint8_t> bgColors;
-    renderScanline(model, screenY, bgColors);
+    renderScanline(scanlineCaptureModel_, screenY, scanlineBackgroundColors_);
 
     const auto rowOffset = static_cast<std::size_t>(screenY) * static_cast<std::size_t>(kDisplayWidth);
-    std::copy_n(model.argbPixels.begin() + static_cast<std::ptrdiff_t>(rowOffset),
+    std::copy_n(scanlineCaptureModel_.argbPixels.begin() + static_cast<std::ptrdiff_t>(rowOffset),
                 static_cast<std::size_t>(kDisplayWidth),
                 framePixels_.begin() + static_cast<std::ptrdiff_t>(rowOffset));
     for (std::size_t x = 0u; x < static_cast<std::size_t>(kDisplayWidth); ++x) {
-        frameColorIndices_[rowOffset + x] = paletteIndex(model.argbPixels[rowOffset + x]);
+        frameColorIndices_[rowOffset + x] = paletteIndex(scanlineCaptureModel_.argbPixels[rowOffset + x]);
     }
     capturedScanlines_[static_cast<std::size_t>(screenY)] = true;
     hasCapturedScanlines_ = true;
@@ -360,13 +361,17 @@ void GameBoyPPU::step(uint32_t cpuCycles) {
         scanlineReadyPending_ = false;
         vblankPending_ = false;
         lastReadyScanline_ = 0;
-        framePixels_.fill(paletteColor(0));
-        frameColorIndices_.fill(0u);
-        capturedScanlines_.fill(false);
-        hasCapturedScanlines_ = false;
+        if (lcdEnabledLastStep_) {
+            framePixels_.fill(paletteColor(0));
+            frameColorIndices_.fill(0u);
+            capturedScanlines_.fill(false);
+            hasCapturedScanlines_ = false;
+        }
+        lcdEnabledLastStep_ = false;
         lastLy_ = 0;
         return;
     }
+    lcdEnabledLastStep_ = true;
 
     dotCounter_ += cpuCycles;
 
@@ -496,6 +501,11 @@ void GameBoyPPU::importState(const std::vector<uint8_t>& state) {
     // Clear captured scanlines for deterministic mid-frame restore
     capturedScanlines_.fill(0);
     hasCapturedScanlines_ = false;
+    lcdEnabledLastStep_ = memoryMap != nullptr && (memoryMap->read(0xFF40u) & 0x80u) != 0u;
+    if (!lcdEnabledLastStep_) {
+        framePixels_.fill(paletteColor(0));
+        frameColorIndices_.fill(0u);
+    }
 }
 
 } // namespace GB

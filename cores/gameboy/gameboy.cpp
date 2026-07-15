@@ -2872,6 +2872,10 @@ void LR3592_DMG::populateBlockCache(BMMQ::fetchBlock<AddressType, DataType>& fet
 
 void LR3592_DMG::invalidateBlockCacheForWrite(AddressType address, std::size_t size)
 {
+    if (!blockCacheEnabled_) {
+        return;
+    }
+
     address = normalizeAccessAddress(address);
     if (size == 0u) {
         return;
