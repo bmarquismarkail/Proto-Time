@@ -20,6 +20,9 @@ int main()
 
     struct CountingRuntimeContext final : BMMQ::RuntimeContext {
         struct CountingPolicy final : BMMQ::Plugin::IExecutorPolicyPlugin {
+            std::unique_ptr<BMMQ::Plugin::IExecutorPolicyPlugin> clone() const override {
+                return std::make_unique<CountingPolicy>(*this);
+            }
             const BMMQ::Plugin::PluginMetadata& metadata() const override {
                 static const BMMQ::Plugin::PluginMetadata meta{
                     sizeof(BMMQ::Plugin::PluginMetadata),
@@ -33,6 +36,7 @@ int main()
             BMMQ::ExecutionGuarantee guarantee() const override {
                 return BMMQ::ExecutionGuarantee::BaselineFaithful;
             }
+            BMMQ::ExecutionBackend backend() const override { return BMMQ::ExecutionBackend::Baseline; }
             bool shouldRecord(const BMMQ::Plugin::FetchBlock&, const BMMQ::CpuFeedback&) const override { return true; }
             bool shouldSegment(const BMMQ::Plugin::FetchBlock&, const BMMQ::CpuFeedback&) const override { return false; }
         };

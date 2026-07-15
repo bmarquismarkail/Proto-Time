@@ -14,6 +14,9 @@ struct AdvancedOptimizationMetadata final : BMMQ::IOptimizationMetadataCapabilit
 
 struct AdvancedRuntimeContext final : BMMQ::RuntimeContext {
     struct AdvancedPolicy final : BMMQ::Plugin::IExecutorPolicyPlugin {
+        std::unique_ptr<BMMQ::Plugin::IExecutorPolicyPlugin> clone() const override {
+            return std::make_unique<AdvancedPolicy>(*this);
+        }
         const BMMQ::Plugin::PluginMetadata& metadata() const override {
             static const BMMQ::Plugin::PluginMetadata meta{
                 sizeof(BMMQ::Plugin::PluginMetadata),
@@ -26,6 +29,9 @@ struct AdvancedRuntimeContext final : BMMQ::RuntimeContext {
         }
         BMMQ::ExecutionGuarantee guarantee() const override {
             return BMMQ::ExecutionGuarantee::Experimental;
+        }
+        BMMQ::ExecutionBackend backend() const override {
+            return BMMQ::ExecutionBackend::NativeExperimental;
         }
         bool shouldRecord(const BMMQ::Plugin::FetchBlock&, const BMMQ::CpuFeedback&) const override { return true; }
         bool shouldSegment(const BMMQ::Plugin::FetchBlock&, const BMMQ::CpuFeedback&) const override { return false; }

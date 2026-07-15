@@ -18,6 +18,27 @@ int main()
     assert(gameBoyDescriptor.id == "gameboy");
     const auto& gameGearDescriptor = BMMQ::machineDescriptor(MachineKind::GameGear);
     assert(gameGearDescriptor.id == "gamegear");
+    const auto& builtins = BMMQ::MachineRegistry::builtins();
+    assert(builtins.contains("gameboy"));
+    assert(builtins.contains("gamegear"));
+    assert(builtins.descriptors().size() == 2u);
+    assert(builtins.create("gameboy") != nullptr);
+
+    BMMQ::MachineRegistry registry;
+    registry.registerProvider({"test", "Test Machine", 1, 1}, [] {
+        return BMMQ::MachineRegistry::builtins().create("gameboy");
+    });
+    assert(registry.contains("test"));
+    assert(registry.create("test") != nullptr);
+    bool duplicateProviderRejected = false;
+    try {
+        registry.registerProvider({"test", "Duplicate", 1, 1}, [] {
+            return BMMQ::MachineRegistry::builtins().create("gameboy");
+        });
+    } catch (const std::invalid_argument&) {
+        duplicateProviderRejected = true;
+    }
+    assert(duplicateProviderRejected);
 
     auto gameBoyInstance = BMMQ::createMachine(MachineKind::GameBoy);
     assert(gameBoyInstance.machine != nullptr);

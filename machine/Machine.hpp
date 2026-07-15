@@ -167,7 +167,8 @@ public:
         return true;
     }
     virtual std::span<const IoRegionDescriptor> describeIoRegions() const = 0;
-    virtual void attachExecutorPolicy(Plugin::IExecutorPolicyPlugin& policy) = 0;
+    // Installs an owned clone; callers do not need to extend policy lifetime.
+    virtual void attachExecutorPolicy(const Plugin::IExecutorPolicyPlugin& policy) = 0;
     virtual const Plugin::IExecutorPolicyPlugin& attachedExecutorPolicy() const = 0;
     [[nodiscard]] MachineView view() const {
         const auto regions = describeIoRegions();

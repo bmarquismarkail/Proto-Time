@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <stdexcept>
 #include <string>
 
@@ -61,9 +62,11 @@ public:
 class IExecutorPolicyPlugin {
 public:
     virtual ~IExecutorPolicyPlugin() = default;
+    [[nodiscard]] virtual std::unique_ptr<IExecutorPolicyPlugin> clone() const = 0;
     virtual const PluginMetadata& metadata() const = 0;
+    virtual BMMQ::ExecutionBackend backend() const = 0;
     virtual BMMQ::ExecutionGuarantee guarantee() const = 0;
-    virtual BMMQ::RuntimeCapabilityProfile capabilityProfile() const {
+    virtual BMMQ::RuntimeCapabilityProfile requiredCapabilities() const {
         return {};
     }
     virtual bool shouldRecord(const FetchBlock& fb, const BMMQ::CpuFeedback& feedback) const = 0;
@@ -94,24 +97,37 @@ inline void validateExecutorPolicyStartup(const IExecutorPolicyPlugin& policy) {
     if (policy.metadata().kind != PluginKind::ExecutorPolicy) {
         throw std::runtime_error("executor policy kind is not ExecutorPolicy");
     }
+    if (policy.backend() == BMMQ::ExecutionBackend::Baseline &&
+        policy.guarantee() != BMMQ::ExecutionGuarantee::BaselineFaithful) {
+        throw std::runtime_error("baseline executor policy must be baseline-faithful");
+    }
+    if (policy.backend() != BMMQ::ExecutionBackend::Baseline &&
+        policy.guarantee() == BMMQ::ExecutionGuarantee::BaselineFaithful) {
+        throw std::runtime_error("accelerated executor policy cannot claim baseline-faithful execution");
+    }
 }
 
-// C ABI entrypoints for future dynamic plugin loading.
-// A shared library can export `bmmq_get_plugin_descriptor_v1`.
-struct PluginDescriptorV1 {
-    std::size_t structSize = sizeof(PluginDescriptorV1);
-    AbiVersion abiVersion = kHostAbiVersion;
-    PluginKind kind = PluginKind::CpuCore;
-    const char* pluginId = nullptr;
-    const char* displayName = nullptr;
+inline bool capabilityProfileContains(const BMMQ::RuntimeCapabilityProfile& offered,
+                                      const BMMQ::RuntimeCapabilityProfile& required) noexcept {
+    return (!required.interception || offered.interception) &&
+           (!required.translation || offered.translation) &&
+           (!required.invalidation || offered.invalidation) &&
+           (!required.optimizationMetadata || offered.optimizationMetadata);
+}
 
-    // Factory-style opaque creation hooks.
-    void* (*create)() = nullptr;
-    void (*destroy)(void*) = nullptr;
-};
+inline void validateExecutorPolicyForRuntime(const IExecutorPolicyPlugin& policy,
+                                             const BMMQ::RuntimeContext& runtime) {
+    validateExecutorPolicyStartup(policy);
+    if (!capabilityProfileContains(runtime.capabilityProfile(), policy.requiredCapabilities())) {
+        throw std::runtime_error("executor policy requires unsupported runtime capabilities");
+    }
+}
 
 class DefaultStepPolicy final : public IExecutorPolicyPlugin {
 public:
+    [[nodiscard]] std::unique_ptr<IExecutorPolicyPlugin> clone() const override {
+        return std::make_unique<DefaultStepPolicy>(*this);
+    }
     const PluginMetadata& metadata() const override {
         static const PluginMetadata meta{
             sizeof(PluginMetadata),
@@ -127,7 +143,11 @@ public:
         return BMMQ::ExecutionGuarantee::BaselineFaithful;
     }
 
-    BMMQ::RuntimeCapabilityProfile capabilityProfile() const override {
+    BMMQ::ExecutionBackend backend() const override {
+        return BMMQ::ExecutionBackend::Baseline;
+    }
+
+    BMMQ::RuntimeCapabilityProfile requiredCapabilities() const override {
         return {};
     }
 
@@ -142,6 +162,9 @@ public:
 
 class VisibleStatePreservingStepPolicy final : public IExecutorPolicyPlugin {
 public:
+    [[nodiscard]] std::unique_ptr<IExecutorPolicyPlugin> clone() const override {
+        return std::make_unique<VisibleStatePreservingStepPolicy>(*this);
+    }
     const PluginMetadata& metadata() const override {
         static const PluginMetadata meta{
             sizeof(PluginMetadata),
@@ -157,14 +180,68 @@ public:
         return BMMQ::ExecutionGuarantee::VisibleStatePreserving;
     }
 
-    BMMQ::RuntimeCapabilityProfile capabilityProfile() const override {
-        return {};
+    BMMQ::ExecutionBackend backend() const override {
+        return BMMQ::ExecutionBackend::CachedBlock;
+    }
+
+    BMMQ::RuntimeCapabilityProfile requiredCapabilities() const override {
+        return {.translation = true, .invalidation = true};
     }
 
     bool shouldRecord(const FetchBlock&, const BMMQ::CpuFeedback&) const override {
         return true;
     }
 
+    bool shouldSegment(const FetchBlock&, const BMMQ::CpuFeedback& feedback) const override {
+        return feedback.segmentBoundaryHint;
+    }
+};
+
+class PortableIrStepPolicy final : public IExecutorPolicyPlugin {
+public:
+    [[nodiscard]] std::unique_ptr<IExecutorPolicyPlugin> clone() const override {
+        return std::make_unique<PortableIrStepPolicy>(*this);
+    }
+    const PluginMetadata& metadata() const override {
+        static const PluginMetadata meta{sizeof(PluginMetadata),
+            "bmmq.executor.policy.portable-ir", "Portable IR Policy",
+            PluginKind::ExecutorPolicy, kHostAbiVersion};
+        return meta;
+    }
+    BMMQ::ExecutionBackend backend() const override { return BMMQ::ExecutionBackend::PortableIr; }
+    BMMQ::ExecutionGuarantee guarantee() const override {
+        return BMMQ::ExecutionGuarantee::VisibleStatePreserving;
+    }
+    BMMQ::RuntimeCapabilityProfile requiredCapabilities() const override {
+        return {.translation = true, .invalidation = true};
+    }
+    bool shouldRecord(const FetchBlock&, const BMMQ::CpuFeedback&) const override { return true; }
+    bool shouldSegment(const FetchBlock&, const BMMQ::CpuFeedback& feedback) const override {
+        return feedback.segmentBoundaryHint;
+    }
+};
+
+class NativeExperimentalStepPolicy final : public IExecutorPolicyPlugin {
+public:
+    [[nodiscard]] std::unique_ptr<IExecutorPolicyPlugin> clone() const override {
+        return std::make_unique<NativeExperimentalStepPolicy>(*this);
+    }
+    const PluginMetadata& metadata() const override {
+        static const PluginMetadata meta{sizeof(PluginMetadata),
+            "bmmq.executor.policy.native-experimental", "Native Experimental Policy",
+            PluginKind::ExecutorPolicy, kHostAbiVersion};
+        return meta;
+    }
+    BMMQ::ExecutionBackend backend() const override {
+        return BMMQ::ExecutionBackend::NativeExperimental;
+    }
+    BMMQ::ExecutionGuarantee guarantee() const override {
+        return BMMQ::ExecutionGuarantee::Experimental;
+    }
+    BMMQ::RuntimeCapabilityProfile requiredCapabilities() const override {
+        return {.translation = true, .invalidation = true};
+    }
+    bool shouldRecord(const FetchBlock&, const BMMQ::CpuFeedback&) const override { return true; }
     bool shouldSegment(const FetchBlock&, const BMMQ::CpuFeedback& feedback) const override {
         return feedback.segmentBoundaryHint;
     }

@@ -304,6 +304,7 @@ struct GameGearMachine::Impl {
     BMMQ::BackgroundTaskService* backgroundTaskService = nullptr;
     std::optional<GameGearSaveManager::SaveSnapshot> pendingSaveSnapshot;
     Plugin::DefaultStepPolicy defaultPolicy;
+    std::unique_ptr<Plugin::IExecutorPolicyPlugin> ownedPolicy;
     Plugin::IExecutorPolicyPlugin* activePolicy = &defaultPolicy;
     bool romLoaded = false;
     std::optional<std::filesystem::path> pendingRomSourcePath;
@@ -321,9 +322,15 @@ std::span<const IoRegionDescriptor> GameGearMachine::describeIoRegions() const {
     return kIoRegions;
 }
 
-void GameGearMachine::attachExecutorPolicy(Plugin::IExecutorPolicyPlugin& policy) {
-    Plugin::validateExecutorPolicyStartup(policy);
-    impl->activePolicy = &policy;
+void GameGearMachine::attachExecutorPolicy(const Plugin::IExecutorPolicyPlugin& policy) {
+    Plugin::validateExecutorPolicyForRuntime(policy, impl->context);
+    auto owned = policy.clone();
+    if (!owned) {
+        throw std::runtime_error("executor policy clone returned null");
+    }
+    Plugin::validateExecutorPolicyForRuntime(*owned, impl->context);
+    impl->ownedPolicy = std::move(owned);
+    impl->activePolicy = impl->ownedPolicy.get();
 }
 
 const Plugin::IExecutorPolicyPlugin& GameGearMachine::attachedExecutorPolicy() const {

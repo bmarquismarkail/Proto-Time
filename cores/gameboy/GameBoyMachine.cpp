@@ -794,7 +794,7 @@ public:
 
     void refreshExecutionMode() {
         allowFastPath_ = activePolicy_ != nullptr &&
-            activePolicy_->guarantee() != BMMQ::ExecutionGuarantee::BaselineFaithful;
+            activePolicy_->backend() != BMMQ::ExecutionBackend::Baseline;
     }
 
     [[nodiscard]] bool fastExecutionAllowed() const noexcept {
@@ -1122,9 +1122,22 @@ std::span<const BMMQ::IoRegionDescriptor> GameBoyMachine::describeIoRegions() co
     return kIoRegions;
 }
 
-void GameBoyMachine::attachExecutorPolicy(BMMQ::Plugin::IExecutorPolicyPlugin& policy) {
-    BMMQ::Plugin::validateExecutorPolicyStartup(policy);
-    impl_->activePolicy = &policy;
+void GameBoyMachine::attachExecutorPolicy(const BMMQ::Plugin::IExecutorPolicyPlugin& policy) {
+    BMMQ::Plugin::validateExecutorPolicyForRuntime(policy, *impl_->context);
+    auto owned = policy.clone();
+    if (!owned) {
+        throw std::runtime_error("executor policy clone returned null");
+    }
+    BMMQ::Plugin::validateExecutorPolicyForRuntime(*owned, *impl_->context);
+    const auto backend = owned->backend();
+    if (backend == BMMQ::ExecutionBackend::NativeExperimental && !nativeIrSupported()) {
+        throw std::runtime_error("native IR requires an x86-64 POSIX host");
+    }
+    impl_->ownedPolicy = std::move(owned);
+    impl_->activePolicy = impl_->ownedPolicy.get();
+    setBlockCacheEnabled(backend != BMMQ::ExecutionBackend::Baseline);
+    setPortableIrEnabled(backend == BMMQ::ExecutionBackend::PortableIr);
+    setNativeIrEnabled(backend == BMMQ::ExecutionBackend::NativeExperimental);
     impl_->context->refreshExecutionMode();
 }
 

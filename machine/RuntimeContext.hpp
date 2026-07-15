@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <string_view>
 #include <utility>
 
 #include "../inst_cycle/execute/executionBlock.hpp"
@@ -23,6 +24,24 @@ enum class ExecutionGuarantee {
     VisibleStatePreserving,
     Experimental,
 };
+
+enum class ExecutionBackend : std::uint8_t {
+    Baseline = 0,
+    CachedBlock,
+    PortableIr,
+    NativeExperimental,
+};
+
+[[nodiscard]] constexpr std::string_view executionBackendName(ExecutionBackend backend) noexcept
+{
+    switch (backend) {
+    case ExecutionBackend::Baseline: return "baseline";
+    case ExecutionBackend::CachedBlock: return "cached-block";
+    case ExecutionBackend::PortableIr: return "portable-ir";
+    case ExecutionBackend::NativeExperimental: return "native-experimental";
+    }
+    return "unknown";
+}
 
 struct RuntimeCapabilityProfile {
     bool interception = false;

@@ -30,6 +30,9 @@ struct HasHasMemoryMap<T, std::void_t<decltype(&T::hasMemoryMap)>> : std::true_t
 int main() {
     struct FakeRuntimeContext final : BMMQ::RuntimeContext {
         struct FakePolicy final : BMMQ::Plugin::IExecutorPolicyPlugin {
+            std::unique_ptr<BMMQ::Plugin::IExecutorPolicyPlugin> clone() const override {
+                return std::make_unique<FakePolicy>(*this);
+            }
             const BMMQ::Plugin::PluginMetadata& metadata() const override {
                 static const BMMQ::Plugin::PluginMetadata meta{
                     sizeof(BMMQ::Plugin::PluginMetadata),
@@ -43,6 +46,7 @@ int main() {
             BMMQ::ExecutionGuarantee guarantee() const override {
                 return BMMQ::ExecutionGuarantee::BaselineFaithful;
             }
+            BMMQ::ExecutionBackend backend() const override { return BMMQ::ExecutionBackend::Baseline; }
             bool shouldRecord(const BMMQ::Plugin::FetchBlock&, const BMMQ::CpuFeedback&) const override { return true; }
             bool shouldSegment(const BMMQ::Plugin::FetchBlock&, const BMMQ::CpuFeedback&) const override { return false; }
         };
@@ -74,6 +78,10 @@ int main() {
     struct ExperimentalPolicy final : BMMQ::Plugin::IExecutorPolicyPlugin {
         using PluginFetchBlock = BMMQ::Plugin::FetchBlock;
 
+        std::unique_ptr<BMMQ::Plugin::IExecutorPolicyPlugin> clone() const override {
+            return std::make_unique<ExperimentalPolicy>(*this);
+        }
+
         const BMMQ::Plugin::PluginMetadata& metadata() const override {
             static const BMMQ::Plugin::PluginMetadata meta{
                 sizeof(BMMQ::Plugin::PluginMetadata),
@@ -86,6 +94,10 @@ int main() {
         }
         BMMQ::ExecutionGuarantee guarantee() const override {
             return BMMQ::ExecutionGuarantee::Experimental;
+        }
+        BMMQ::ExecutionBackend backend() const override { return BMMQ::ExecutionBackend::CachedBlock; }
+        BMMQ::RuntimeCapabilityProfile requiredCapabilities() const override {
+            return {.translation = true, .invalidation = true};
         }
         bool shouldRecord(const PluginFetchBlock&, const BMMQ::CpuFeedback&) const override { return true; }
         bool shouldSegment(const PluginFetchBlock&, const BMMQ::CpuFeedback&) const override { return false; }
@@ -106,7 +118,7 @@ int main() {
         const BMMQ::PluginManager& pluginManager() const override { return manager; }
         std::span<const BMMQ::IoRegionDescriptor> describeIoRegions() const override { return regions; }
         uint16_t readRegisterPair(std::string_view) const override { return 0; }
-        void attachExecutorPolicy(BMMQ::Plugin::IExecutorPolicyPlugin&) override {}
+        void attachExecutorPolicy(const BMMQ::Plugin::IExecutorPolicyPlugin&) override {}
         const BMMQ::Plugin::IExecutorPolicyPlugin& attachedExecutorPolicy() const override { return policy; }
     };
 

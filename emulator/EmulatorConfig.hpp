@@ -14,6 +14,8 @@ struct EmulatorConfig {
     std::filesystem::path romPath;
     std::optional<std::filesystem::path> bootRomPath;
     std::optional<std::filesystem::path> pluginPath;
+    std::optional<std::filesystem::path> executorPluginPath;
+    std::optional<std::string> executorPolicyId;
     std::optional<std::uint64_t> stepLimit;
     std::uint32_t windowScale = 3;
     bool headless = false;
@@ -42,6 +44,8 @@ struct CommandLineConfigOverrides {
     std::optional<std::filesystem::path> romPath;
     std::optional<std::filesystem::path> bootRomPath;
     std::optional<std::filesystem::path> pluginPath;
+    std::optional<std::filesystem::path> executorPluginPath;
+    std::optional<std::string> executorPolicyId;
     std::optional<std::uint64_t> stepLimit;
     std::optional<std::uint32_t> windowScale;
     std::optional<bool> headless;

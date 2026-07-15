@@ -33,10 +33,12 @@
 #include "emulator/EmulatorConfig.hpp"
 #include "emulator/DiagnosticsJson.hpp"
 #include "emulator/EmulatorHost.hpp"
+#include "inst_cycle/executor/ExecutorPolicyRegistry.hpp"
 #include "machine/BackgroundTaskService.hpp"
 #include "machine/DebugSnapshotService.hpp"
 #include "machine/ImageDecoder.hpp"
 #include "machine/plugins/SdlFrontendPluginLoader.hpp"
+#include "machine/plugins/DynamicPluginModule.hpp"
 #include "machine/TimingService.hpp"
 #include "cores/gameboy/GameBoyMachine.hpp"
 using GameBoyMachine = GB::GameBoyMachine;
@@ -61,6 +63,10 @@ void printUsage(std::string_view program)
               << "  --rom <path>       Cartridge ROM to load\n"
               << "  --boot-rom <path>  Optional external boot ROM for supported cores\n"
               << "  --plugin <path>    Optional SDL frontend shared object override\n"
+              << "  --executor-plugin <path>\n"
+              << "                     Load executor policies from a pure-C ABI module\n"
+              << "  --executor-policy <id>\n"
+              << "                     Select a built-in or module executor policy ID\n"
               << "  --steps <count>    Stop after a fixed number of instruction steps\n"
               << "  --scale <n>        SDL window scale factor (default: 3)\n"
               << "  --cpu-mode <mode>  CPU mode: baseline, block, ir, or native (experimental x86-64/POSIX)\n"
@@ -166,7 +172,8 @@ void writeDiagnosticsSample(std::ostream& output,
                             const GameBoyMachine::BlockCacheStats* blockCacheStats,
                             bool detailedIrTimingEnabled,
                             const std::optional<std::string>& stateFingerprint,
-                            std::string_view cpuMode) noexcept
+                            std::string_view executorPolicyId,
+                            BMMQ::ExecutionBackend executionBackend) noexcept
 {
     using namespace std::chrono;
     const auto elapsedNs = duration_cast<nanoseconds>(now - startedAt).count();
@@ -216,10 +223,14 @@ void writeDiagnosticsSample(std::ostream& output,
     output << ",\"effective_cycles_per_second\":" << effectiveCyclesPerSecond;
     output << ",\"active_timing_profile\":\""
            << jsonEscape(BMMQ::timingPolicyProfileName(timingStats.activeProfile)) << "\"";
+    output << ",\"executor\":{";
+    output << "\"policy_id\":\"" << jsonEscape(executorPolicyId) << "\"";
+    output << ",\"backend\":\"" << BMMQ::executionBackendName(executionBackend) << "\"";
+    output << "}";
 
     output << ",\"cpu_block_cache\":{";
     output << "\"supported\":" << (blockCacheStats != nullptr ? "true" : "false");
-    output << ",\"mode\":\"" << jsonEscape(cpuMode) << "\"";
+    output << ",\"mode\":\"" << BMMQ::executionBackendName(executionBackend) << "\"";
     output << ",\"detailed_timing_enabled\":"
            << (detailedIrTimingEnabled ? "true" : "false");
     if (blockCacheStats != nullptr) {
@@ -633,17 +644,32 @@ int main(int argc, char** argv)
         auto& machine = *bootstrapped.machine;
         const auto& descriptor = bootstrapped.descriptor;
         const auto romSize = bootstrapped.romSize;
-        BMMQ::Plugin::VisibleStatePreservingStepPolicy blockExecutionPolicy;
-        if (options.cpuMode == "block" || options.cpuMode == "ir" ||
-            options.cpuMode == "native") {
+        std::optional<BMMQ::Plugin::DynamicPluginModule> executorModule;
+        std::unique_ptr<BMMQ::Plugin::IExecutorPolicyPlugin> executorPolicy;
+        if (options.executorPluginPath.has_value()) {
+            executorModule = BMMQ::Plugin::DynamicPluginModule::load(*options.executorPluginPath);
+            const auto ids = executorModule->executorPolicyIds();
+            const auto selectedId = options.executorPolicyId.has_value()
+                ? *options.executorPolicyId
+                : (ids.size() == 1u ? ids.front() : std::string{});
+            if (selectedId.empty()) {
+                throw std::invalid_argument(
+                    "--executor-policy is required when a module exposes multiple policies");
+            }
+            executorPolicy = executorModule->createExecutorPolicy(selectedId);
+        } else {
+            const auto executorPolicyId = options.executorPolicyId.has_value()
+                ? std::string_view(*options.executorPolicyId)
+                : BMMQ::Plugin::executorPolicyIdForLegacyMode(options.cpuMode);
+            executorPolicy = BMMQ::Plugin::ExecutorPolicyRegistry::builtins().create(executorPolicyId);
+        }
+        machine.attachExecutorPolicy(*executorPolicy);
+        const auto& activeExecutorPolicy = machine.attachedExecutorPolicy();
+        if (options.cpuDetailedTiming) {
             auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get());
             if (gameBoyMachine == nullptr) {
-                throw std::runtime_error("CPU block mode requires the Game Boy core");
+                throw std::runtime_error("detailed IR timing requires the Game Boy core");
             }
-            gameBoyMachine->attachExecutorPolicy(blockExecutionPolicy);
-            gameBoyMachine->setBlockCacheEnabled(true);
-            gameBoyMachine->setPortableIrEnabled(options.cpuMode == "ir");
-            gameBoyMachine->setNativeIrEnabled(options.cpuMode == "native");
             gameBoyMachine->setDetailedIrTimingEnabled(options.cpuDetailedTiming);
         }
         machine.videoService().setBackgroundTaskService(&backgroundTaskService);
@@ -704,7 +730,9 @@ int main(int argc, char** argv)
         }
 
         std::cout << "Core: " << descriptor.id << '\n';
-        std::cout << "CPU mode: " << options.cpuMode << '\n';
+        std::cout << "Executor policy: " << activeExecutorPolicy.metadata().id << '\n';
+        std::cout << "Execution backend: "
+                  << BMMQ::executionBackendName(activeExecutorPolicy.backend()) << '\n';
         std::cout << "Loaded ROM: " << options.romPath << " ("
             << romSize << " bytes)\n";
         if (options.bootRomPath.has_value()) {
@@ -900,7 +928,8 @@ int main(int argc, char** argv)
                                    blockCacheStats.has_value() ? &*blockCacheStats : nullptr,
                                    options.cpuDetailedTiming,
                                    stateFingerprint,
-                                   options.cpuMode);
+                                   activeExecutorPolicy.metadata().id,
+                                   activeExecutorPolicy.backend());
             diagnosticsReport.flush();
         };
 

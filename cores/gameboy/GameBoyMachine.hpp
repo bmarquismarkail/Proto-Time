@@ -72,7 +72,7 @@ public:
 
     // IoPlugin interface
     std::span<const BMMQ::IoRegionDescriptor> describeIoRegions() const override;
-    void attachExecutorPolicy(BMMQ::Plugin::IExecutorPolicyPlugin& policy) override;
+    void attachExecutorPolicy(const BMMQ::Plugin::IExecutorPolicyPlugin& policy) override;
     const BMMQ::Plugin::IExecutorPolicyPlugin& attachedExecutorPolicy() const override;
 
     // Audio queries
@@ -283,6 +283,7 @@ private:
         // Runtime context wrapping CPU + memory map
         std::unique_ptr<GameBoyRuntimeContext> context;
         BMMQ::Plugin::DefaultStepPolicy defaultPolicy;
+        std::unique_ptr<BMMQ::Plugin::IExecutorPolicyPlugin> ownedPolicy;
         BMMQ::Plugin::IExecutorPolicyPlugin* activePolicy = &defaultPolicy;
     };
 

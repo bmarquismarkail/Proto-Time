@@ -41,6 +41,7 @@ if (BMMQ_ENABLE_TSAN)
     endif()
 endif()
 add_library(time-machine-runtime-common STATIC
+    inst_cycle/executor/ExecutorPolicyRegistry.cpp
     machine/MachineLifecycleCoordinator.cpp
     machine/TimingService.cpp
     machine/VisualCaptureWriter.cpp
@@ -103,6 +104,10 @@ add_library(time-sdl-frontend-loader
     machine/plugins/SdlFrontendPluginLoader.cpp
 )
 target_link_libraries(time-sdl-frontend-loader ${CMAKE_DL_LIBS})
+add_library(time-dynamic-plugin-loader
+    machine/plugins/DynamicPluginModule.cpp
+)
+target_link_libraries(time-dynamic-plugin-loader PUBLIC time-machine-runtime-common ${CMAKE_DL_LIBS})
 add_library(time-emulator-config STATIC
     emulator/EmulatorConfig.cpp
 )
@@ -115,7 +120,7 @@ target_link_libraries(time-machine-factory
         time-gameboy-interpreter-core
         time-gamegear-core
 )
-target_link_libraries(time-emulator-config PUBLIC time-machine-factory)
+target_link_libraries(time-emulator-config PUBLIC time-machine-factory time-dynamic-plugin-loader)
 add_library(time-emulator-host STATIC
     emulator/EmulatorHost.cpp
 )
@@ -354,6 +359,22 @@ add_test(NAME smoke-plugin-executor COMMAND time-smoke-plugin-executor)
 add_executable(time-smoke-plugin-abi tests/smoke_plugin_abi.cpp)
 target_link_libraries(time-smoke-plugin-abi time-gameboy-interpreter-core)
 add_test(NAME smoke-plugin-abi COMMAND time-smoke-plugin-abi)
+add_library(time-test-c-executor-plugin MODULE tests/fixtures/test_executor_plugin.c)
+set_target_properties(time-test-c-executor-plugin PROPERTIES PREFIX "")
+add_library(time-test-missing-plugin-entrypoint MODULE
+    tests/fixtures/test_missing_plugin_entrypoint.c)
+set_target_properties(time-test-missing-plugin-entrypoint PROPERTIES PREFIX "")
+add_library(time-test-malformed-executor-plugin MODULE
+    tests/fixtures/test_malformed_executor_plugin.c)
+set_target_properties(time-test-malformed-executor-plugin PROPERTIES PREFIX "")
+add_executable(time-smoke-dynamic-plugin-module tests/smoke_dynamic_plugin_module.cpp)
+target_link_libraries(time-smoke-dynamic-plugin-module
+    time-gameboy-interpreter-core time-gamegear-core time-dynamic-plugin-loader)
+add_test(NAME smoke-dynamic-plugin-module
+    COMMAND time-smoke-dynamic-plugin-module
+        $<TARGET_FILE:time-test-c-executor-plugin>
+        $<TARGET_FILE:time-test-missing-plugin-entrypoint>
+        $<TARGET_FILE:time-test-malformed-executor-plugin>)
 add_executable(time-smoke-plugin-io tests/smoke_plugin_io.cpp)
 target_link_libraries(time-smoke-plugin-io time-gameboy-interpreter-core)
 add_test(NAME smoke-plugin-io COMMAND time-smoke-plugin-io)

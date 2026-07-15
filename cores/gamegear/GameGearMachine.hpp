@@ -37,7 +37,7 @@ public:
     void serviceInput() override;
 
     std::span<const IoRegionDescriptor> describeIoRegions() const override;
-    void attachExecutorPolicy(Plugin::IExecutorPolicyPlugin& policy) override;
+    void attachExecutorPolicy(const Plugin::IExecutorPolicyPlugin& policy) override;
     const Plugin::IExecutorPolicyPlugin& attachedExecutorPolicy() const override;
     uint16_t readRegisterPair(std::string_view id) const override;
     std::optional<uint32_t> currentDigitalInputMask() const override;

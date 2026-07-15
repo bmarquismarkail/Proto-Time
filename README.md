@@ -6,7 +6,8 @@ T.I.M.E (The Infinite Modder's Emulator) is an emulator framework prototype focu
 - Declarative-ish instruction flow (`fetch -> decode -> execute`)
 - Memory/register snapshotting for traceability
 - Executor-driven orchestration
-- Plugin-oriented extension points for core runtimes and executor policies
+- Registry-backed machine providers and executor policies
+- A versioned pure-C function-table ABI for dynamically loaded executor policies
 
 ## Current Status
 
@@ -28,6 +29,21 @@ cmake --build build-working -j4
 This build now produces both the host executable `timeEmulator` and the runtime-loaded SDL frontend shared object `libtime-sdl-frontend-plugin.so`.
 
 `timeEmulator` will auto-load that shared object from the executable directory by default. Use `--plugin <path>` to override the plugin path or `--headless` to skip frontend loading entirely.
+
+Executor policies are a separate extension layer. Built-in policies can be
+selected by stable ID, while external modules use the pure-C ABI in
+`machine/plugins/abi/TimePluginAbi.h`:
+
+```bash
+timeEmulator --core gameboy --rom path/to/rom.gb \
+  --executor-plugin path/to/executor-module.so \
+  --executor-policy vendor.executor.policy
+```
+
+If a module exposes exactly one executor policy, `--executor-policy` may be
+omitted. The legacy `--cpu-mode baseline|block|ir|native` options remain aliases
+for the built-in policy IDs. The SDL frontend's `--plugin` option is still a
+build-coupled C++ interface and is intentionally distinct from this stable C ABI.
 
 Run tests:
 

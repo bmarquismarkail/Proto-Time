@@ -74,6 +74,8 @@ int main()
         CHECK_TRUE(defaults.romPath.empty());
         CHECK_TRUE(!defaults.bootRomPath.has_value());
         CHECK_TRUE(!defaults.pluginPath.has_value());
+        CHECK_TRUE(!defaults.executorPluginPath.has_value());
+        CHECK_TRUE(!defaults.executorPolicyId.has_value());
         CHECK_TRUE(!defaults.stepLimit.has_value());
         CHECK_TRUE(defaults.windowScale == 3u);
         CHECK_TRUE(!defaults.headless);
@@ -103,6 +105,8 @@ int main()
         "rom = roms/game.gb\n"
         "boot_rom = boot/dmg.bin\n"
         "plugin = plugins/frontend.so\n"
+        "executor_plugin = plugins/executor.so\n"
+        "executor_policy = example.executor.policy\n"
         "steps = 1000000\n"
         "headless = yes\n"
         "cpu_mode = block\n"
@@ -140,6 +144,8 @@ int main()
     CHECK_TRUE(fileConfig.romPath == tempDir / "roms/game.gb");
     CHECK_TRUE(fileConfig.bootRomPath == tempDir / "boot/dmg.bin");
     CHECK_TRUE(fileConfig.pluginPath == tempDir / "plugins/frontend.so");
+    CHECK_TRUE(fileConfig.executorPluginPath == tempDir / "plugins/executor.so");
+    CHECK_TRUE(fileConfig.executorPolicyId == "example.executor.policy");
     CHECK_TRUE(fileConfig.stepLimit == 1000000u);
     CHECK_TRUE(fileConfig.windowScale == 5u);
     CHECK_TRUE(fileConfig.headless);
@@ -170,6 +176,8 @@ int main()
     overrides.romPath = std::filesystem::path("cli.gb");
     overrides.bootRomPath = std::filesystem::path("cli-boot.bin");
     overrides.pluginPath = std::filesystem::path("cli-plugin.so");
+    overrides.executorPluginPath = std::filesystem::path("cli-executor.so");
+    overrides.executorPolicyId = std::string("bmmq.executor.policy.default-step");
     overrides.stepLimit = 42u;
     overrides.windowScale = 1u;
     overrides.headless = false;
@@ -200,6 +208,8 @@ int main()
     CHECK_TRUE(fileConfig.romPath == "cli.gb");
     CHECK_TRUE(fileConfig.bootRomPath == "cli-boot.bin");
     CHECK_TRUE(fileConfig.pluginPath == "cli-plugin.so");
+    CHECK_TRUE(fileConfig.executorPluginPath == "cli-executor.so");
+    CHECK_TRUE(fileConfig.executorPolicyId == "bmmq.executor.policy.default-step");
     CHECK_TRUE(fileConfig.stepLimit == 42u);
     CHECK_TRUE(fileConfig.windowScale == 1u);
     CHECK_TRUE(!fileConfig.headless);
@@ -228,6 +238,27 @@ int main()
     CHECK_TRUE(throwsInvalidArgumentContaining("ROM path was provided more than once", [] {
         (void)parseArgs({"timeEmulator", "--rom", "a.gb", "b.gb"});
     }));
+
+    {
+        const auto arguments = parseArgs({
+            "timeEmulator", "--core", "gameboy", "--rom", "game.gb",
+            "--executor-plugin", "executor.so", "--executor-policy", "example.policy"});
+        CHECK_TRUE(arguments.overrides.executorPluginPath == "executor.so");
+        CHECK_TRUE(arguments.overrides.executorPolicyId == "example.policy");
+    }
+
+    {
+        const auto arguments = parseArgs({
+            "timeEmulator", "--core", "gameboy", "--rom", "game.gb",
+            "--executor-policy", "bmmq.executor.policy.portable-ir"});
+        CHECK_TRUE(arguments.overrides.executorPolicyId ==
+                   "bmmq.executor.policy.portable-ir");
+        auto config = BMMQ::EmulatorConfig{};
+        config.machineKind = std::string("gameboy");
+        config.romPath = "game.gb";
+        config.executorPolicyId = "bmmq.executor.policy.portable-ir";
+        BMMQ::validateEmulatorConfig(config);
+    }
 
     {
         const auto arguments = parseArgs({
@@ -273,7 +304,7 @@ int main()
         BMMQ::validateEmulatorConfig(config);
     }
 
-    CHECK_TRUE(throwsInvalidArgumentContaining("requires --cpu-mode ir", [] {
+    CHECK_TRUE(throwsInvalidArgumentContaining("requires a portable-IR or native-experimental", [] {
         BMMQ::EmulatorConfig config;
         config.machineKind = std::string("gameboy");
         config.romPath = "game.gb";
@@ -289,7 +320,7 @@ int main()
         BMMQ::validateEmulatorConfig(config);
     }));
 
-    CHECK_TRUE(throwsInvalidArgumentContaining("only by the gameboy core", [] {
+    CHECK_TRUE(throwsInvalidArgumentContaining("unsupported by core 'gamegear'", [] {
         BMMQ::EmulatorConfig config;
         config.machineKind = std::string("gamegear");
         config.romPath = "game.gg";
@@ -297,7 +328,7 @@ int main()
         BMMQ::validateEmulatorConfig(config);
     }));
 
-    CHECK_TRUE(throwsInvalidArgumentContaining("only by the gameboy core", [] {
+    CHECK_TRUE(throwsInvalidArgumentContaining("unsupported by core 'gamegear'", [] {
         BMMQ::EmulatorConfig config;
         config.machineKind = std::string("gamegear");
         config.romPath = "game.gg";
@@ -368,6 +399,14 @@ int main()
 
     CHECK_TRUE(throwsInvalidArgumentContaining("--timing-profile requires a value", [] {
         (void)parseArgs({"timeEmulator", "--timing-profile"});
+    }));
+
+    CHECK_TRUE(throwsInvalidArgumentContaining("--executor-plugin requires a path", [] {
+        (void)parseArgs({"timeEmulator", "--executor-plugin"});
+    }));
+
+    CHECK_TRUE(throwsInvalidArgumentContaining("--executor-policy requires an id", [] {
+        (void)parseArgs({"timeEmulator", "--executor-policy"});
     }));
 
     CHECK_TRUE(throwsInvalidArgumentContaining("--diagnostics-report requires a path", [] {

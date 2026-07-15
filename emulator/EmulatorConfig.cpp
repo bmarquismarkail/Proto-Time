@@ -1,4 +1,6 @@
 #include "emulator/EmulatorConfig.hpp"
+#include "inst_cycle/executor/ExecutorPolicyRegistry.hpp"
+#include "machine/plugins/DynamicPluginModule.hpp"
 
 #include "emulator/MachineFactory.hpp"
 
@@ -117,6 +119,10 @@ void applyConfigValue(EmulatorConfig& config,
             config.bootRomPath = resolveConfigPath(configDirectory, text);
         } else if (key == "plugin") {
             config.pluginPath = resolveConfigPath(configDirectory, text);
+        } else if (key == "executor_plugin") {
+            config.executorPluginPath = resolveConfigPath(configDirectory, text);
+        } else if (key == "executor_policy") {
+            config.executorPolicyId = text;
         } else if (key == "steps") {
             config.stepLimit = parseUnsigned(text, label);
         } else if (key == "headless") {
@@ -278,6 +284,12 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     if (overrides.pluginPath.has_value()) {
         config.pluginPath = *overrides.pluginPath;
     }
+    if (overrides.executorPluginPath.has_value()) {
+        config.executorPluginPath = *overrides.executorPluginPath;
+    }
+    if (overrides.executorPolicyId.has_value()) {
+        config.executorPolicyId = *overrides.executorPolicyId;
+    }
     if (overrides.stepLimit.has_value()) {
         config.stepLimit = *overrides.stepLimit;
     }
@@ -360,13 +372,37 @@ void validateEmulatorConfig(const EmulatorConfig& config)
         throw std::invalid_argument("Unknown CPU mode: " + config.cpuMode +
                                     ". Use baseline, block, ir, or native.");
     }
-    if ((config.cpuMode == "block" || config.cpuMode == "ir" ||
-         config.cpuMode == "native") &&
-        kind != MachineKind::GameBoy) {
-        throw std::invalid_argument("CPU block and IR modes are currently supported only by the gameboy core");
+    std::unique_ptr<Plugin::IExecutorPolicyPlugin> policy;
+    if (config.executorPluginPath.has_value()) {
+        const auto module = Plugin::DynamicPluginModule::load(*config.executorPluginPath);
+        const auto ids = module.executorPolicyIds();
+        const auto selectedId = config.executorPolicyId.has_value()
+            ? *config.executorPolicyId
+            : (ids.size() == 1u ? ids.front() : std::string{});
+        if (selectedId.empty()) {
+            throw std::invalid_argument("--executor-policy is required when a module exposes multiple policies");
+        }
+        policy = module.createExecutorPolicy(selectedId);
+    } else {
+        const auto policyId = config.executorPolicyId.has_value()
+            ? std::string_view(*config.executorPolicyId)
+            : Plugin::executorPolicyIdForLegacyMode(config.cpuMode);
+        policy = Plugin::ExecutorPolicyRegistry::builtins().create(policyId);
     }
-    if (config.cpuDetailedTiming && config.cpuMode != "ir" && config.cpuMode != "native") {
-        throw std::invalid_argument("Detailed CPU timing requires --cpu-mode ir or native");
+    try {
+        // Validate the complete machine installation contract, including
+        // platform-specific backend availability and clone ownership.
+        instance.machine->attachExecutorPolicy(*policy);
+    } catch (const std::runtime_error& ex) {
+        const auto selection = config.executorPolicyId.value_or(config.cpuMode);
+        throw std::invalid_argument("Executor selection '" + selection +
+                                    "' is unsupported by core '" + *config.machineKind +
+                                    "': " + ex.what());
+    }
+    if (config.cpuDetailedTiming && policy->backend() != ExecutionBackend::PortableIr &&
+        policy->backend() != ExecutionBackend::NativeExperimental) {
+        throw std::invalid_argument(
+            "Detailed CPU timing requires a portable-IR or native-experimental executor policy");
     }
 
     if (config.romPath.empty()) {
@@ -423,6 +459,16 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
                 throw std::invalid_argument("--plugin requires a path");
             }
             arguments.overrides.pluginPath = std::filesystem::path(argv[++i]);
+        } else if (arg == "--executor-plugin") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--executor-plugin requires a path");
+            }
+            arguments.overrides.executorPluginPath = std::filesystem::path(argv[++i]);
+        } else if (arg == "--executor-policy") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--executor-policy requires an id");
+            }
+            arguments.overrides.executorPolicyId = std::string(argv[++i]);
         } else if (arg == "--steps") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--steps requires a count");

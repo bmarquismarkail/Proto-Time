@@ -12,7 +12,11 @@ namespace {
 
 struct DescriptorRuntimeContext final : BMMQ::RuntimeContext {
     struct DescriptorPolicy final : BMMQ::Plugin::IExecutorPolicyPlugin {
+        std::unique_ptr<BMMQ::Plugin::IExecutorPolicyPlugin> clone() const override {
+            return std::make_unique<DescriptorPolicy>(*this);
+        }
         const BMMQ::Plugin::PluginMetadata& metadata() const override;
+        BMMQ::ExecutionBackend backend() const override { return BMMQ::ExecutionBackend::Baseline; }
         BMMQ::ExecutionGuarantee guarantee() const override
         {
             return BMMQ::ExecutionGuarantee::BaselineFaithful;
