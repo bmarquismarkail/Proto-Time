@@ -499,6 +499,7 @@ enum class SdlFrontendHostKey : uint8_t {
     SingleStep,
     SpeedUp,
     SpeedDown,
+    SaveState,
 };
 
 struct SdlFrontendHostEvent {
@@ -581,6 +582,7 @@ public:
     [[nodiscard]] virtual bool isButtonPressed(InputButton button) const noexcept = 0;
     virtual void clearQuitRequest() noexcept = 0;
     [[nodiscard]] virtual bool quitRequested() const noexcept = 0;
+    [[nodiscard]] virtual bool takeSaveStateRequest() noexcept = 0;
     [[nodiscard]] virtual std::string_view lastHostEventSummary() const noexcept = 0;
     [[nodiscard]] virtual std::string_view lastBackendError() const noexcept = 0;
     [[nodiscard]] virtual std::string backendStatusSummary() const = 0;

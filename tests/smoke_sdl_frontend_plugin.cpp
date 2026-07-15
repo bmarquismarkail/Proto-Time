@@ -66,6 +66,19 @@ int main(int argc, char** argv)
         false}));
     assert(!frontend->isButtonPressed(BMMQ::InputButton::Button2));
 
+    assert(!frontend->takeSaveStateRequest());
+    assert(frontend->handleHostEvent({
+        BMMQ::SdlFrontendHostEventType::KeyDown,
+        BMMQ::SdlFrontendHostKey::SaveState,
+        false}));
+    assert(frontend->takeSaveStateRequest());
+    assert(!frontend->takeSaveStateRequest());
+    assert(!frontend->handleHostEvent({
+        BMMQ::SdlFrontendHostEventType::KeyDown,
+        BMMQ::SdlFrontendHostKey::SaveState,
+        true}));
+    assert(!frontend->takeSaveStateRequest());
+
     frontend->onVideoEvent({
         BMMQ::MachineEventType::VBlank,
         BMMQ::PluginCategory::Video,

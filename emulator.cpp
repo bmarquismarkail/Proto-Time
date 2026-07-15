@@ -102,7 +102,7 @@ void printUsage(std::string_view program)
               << "  -h, --help         Show this help text\n\n"
               << "Controls:\n"
               << "  Arrow keys = directions, Z = Button1, X = Button2,\n"
-              << "  Backspace = Meta1, Enter = Meta2\n";
+              << "  Backspace = Meta1, Enter = Meta2, F1 = save state\n";
 }
 
 std::filesystem::file_time_type fileWriteTime(const std::filesystem::path& path) noexcept
@@ -1070,6 +1070,16 @@ int main(int argc, char** argv)
                 while (!stopRequested.load(std::memory_order_acquire) && gStopRequested == 0) {
                     if (options.stepLimit.has_value() && steps >= *options.stepLimit) {
                         break;
+                    }
+
+                    if (frontend != nullptr && frontend->takeSaveStateRequest()) {
+                        constexpr auto quickSavePath = "quicksave.ptstate";
+                        try {
+                            machine.save_state(quickSavePath);
+                            std::cout << "Saved state: " << quickSavePath << '\n';
+                        } catch (const std::exception& error) {
+                            std::cerr << "warning: failed to save state: " << error.what() << '\n';
+                        }
                     }
 
                     const auto now = SteadyClock::now();

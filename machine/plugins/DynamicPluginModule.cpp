@@ -478,6 +478,10 @@ public:
     }
     void clearQuitRequest() noexcept override { quitRequested_.store(false, std::memory_order_release); }
     bool quitRequested() const noexcept override { return quitRequested_.load(std::memory_order_acquire); }
+    bool takeSaveStateRequest() noexcept override
+    {
+        return saveStateRequested_.exchange(false, std::memory_order_acq_rel);
+    }
     std::string_view lastHostEventSummary() const noexcept override { return lastHostEventSummary_; }
     std::string_view lastBackendError() const noexcept override
     {
@@ -652,6 +656,10 @@ private:
 
     void handleControl(std::uint32_t action)
     {
+        if (action == TIME_FRONTEND_CONTROL_SAVE_STATE_V1) {
+            saveStateRequested_.store(true, std::memory_order_release);
+            return;
+        }
         if (timingService_ == nullptr) return;
         const auto timing = timingService_->stats();
         switch (action) {
@@ -673,6 +681,7 @@ private:
         else if (key == SdlFrontendHostKey::SingleStep) handleControl(TIME_FRONTEND_CONTROL_SINGLE_STEP_V1);
         else if (key == SdlFrontendHostKey::SpeedUp) handleControl(TIME_FRONTEND_CONTROL_SPEED_UP_V1);
         else if (key == SdlFrontendHostKey::SpeedDown) handleControl(TIME_FRONTEND_CONTROL_SPEED_DOWN_V1);
+        else if (key == SdlFrontendHostKey::SaveState) handleControl(TIME_FRONTEND_CONTROL_SAVE_STATE_V1);
     }
 
     static std::optional<InputButton> buttonForHostKey(SdlFrontendHostKey key)
@@ -930,6 +939,7 @@ private:
     mutable std::atomic<std::size_t> inputPolls_{0u};
     std::atomic<std::int32_t> inputMask_{0};
     std::atomic<bool> quitRequested_{false};
+    std::atomic<bool> saveStateRequested_{false};
     std::atomic<std::size_t> quitRequestCount_{0u};
     bool visibilityRequested_ = false;
     std::vector<std::string> diagnostics_;

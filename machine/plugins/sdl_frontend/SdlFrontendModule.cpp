@@ -256,6 +256,7 @@ private:
         else if (key == SDLK_n) action = TIME_FRONTEND_CONTROL_SINGLE_STEP_V1;
         else if (key == SDLK_RIGHTBRACKET) action = TIME_FRONTEND_CONTROL_SPEED_UP_V1;
         else if (key == SDLK_LEFTBRACKET) action = TIME_FRONTEND_CONTROL_SPEED_DOWN_V1;
+        else if (key == SDLK_F1) action = TIME_FRONTEND_CONTROL_SAVE_STATE_V1;
         if (action != 0u) host_.request_control(host_.host_context, action);
     }
 #endif
