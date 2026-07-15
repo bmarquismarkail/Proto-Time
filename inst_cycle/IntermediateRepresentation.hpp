@@ -284,6 +284,7 @@ namespace detail {
 
         std::unordered_map<ValueId, ValueType> values;
         std::size_t retirementCount = 0u;
+        std::size_t exitCount = 0u;
         for (std::size_t operationIndex = 0u;
              operationIndex < instruction.operations.size(); ++operationIndex) {
             const auto& operation = instruction.operations[operationIndex];
@@ -426,9 +427,20 @@ namespace detail {
                                            instructionIndex, operationIndex);
                 }
             }
+            if (operation.opcode == Opcode::Exit) {
+                ++exitCount;
+                if (operationIndex + 2u != instruction.operations.size()) {
+                    return detail::invalid(
+                        "exit must immediately precede retirement",
+                        instructionIndex, operationIndex);
+                }
+            }
         }
         if (retirementCount != 1u) {
             return detail::invalid("IR guest instruction must retire exactly once", instructionIndex);
+        }
+        if (exitCount > 1u) {
+            return detail::invalid("IR guest instruction may exit at most once", instructionIndex);
         }
         if (instruction.takenCondition.has_value()) {
             const auto found = values.find(*instruction.takenCondition);

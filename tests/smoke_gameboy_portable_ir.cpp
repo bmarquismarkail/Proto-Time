@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+#include "cores/gameboy/GameBoyIrExecution.hpp"
 #include "inst_cycle/executor/PluginContract.hpp"
 #include "machine/RegisterId.hpp"
 
@@ -118,11 +119,95 @@ void testUnsupportedOpcodeFallsBackAndModeToggleInvalidates()
     assert(machine.blockCacheStats().invalidations.load() > invalidationsBefore);
 }
 
+void testEveryPortableIrGuardFailureIsClassified()
+{
+    const BMMQ::TranslatedInstruction<std::uint16_t, std::uint8_t> instruction{
+        .address = 0xC000u,
+        .bytes = {0x00u, 0x00u, 0x00u},
+        .length = 1u,
+    };
+    const auto block = GB::IRExecution::lowerBlock(
+        std::span(&instruction, 1u), 7u, 0u);
+    assert(block);
+
+    struct Code {
+        std::uint8_t byte = 0x00u;
+        bool eligible = true;
+    } code;
+    auto peek = [](const void* opaque, std::uint16_t, std::uint8_t& value) noexcept {
+        const auto& code = *static_cast<const Code*>(opaque);
+        if (!code.eligible) return false;
+        value = code.byte;
+        return true;
+    };
+    GB::IRExecution::GuardContext context{
+        .mappingGeneration = 7u,
+        .executionState = 0u,
+        .opaque = &code,
+        .peekCodeByte = peek,
+    };
+    assert(GB::IRExecution::validateGuards(*block, context) ==
+           GB::IRExecution::GuardFailure::None);
+
+    context.mappingGeneration = 8u;
+    assert(GB::IRExecution::validateGuards(*block, context) ==
+           GB::IRExecution::GuardFailure::MappingGeneration);
+    context.mappingGeneration = 7u;
+
+    auto helperMismatch = *block;
+    for (auto& guard : helperMismatch.guards) {
+        if (guard.kind == BMMQ::IR::GuardKind::HelperAbi) ++guard.expected;
+    }
+    assert(GB::IRExecution::validateGuards(helperMismatch, context) ==
+           GB::IRExecution::GuardFailure::HelperAbi);
+
+    for (const auto boundary : {
+             GB::IRExecution::Stop,
+             GB::IRExecution::Halt,
+             GB::IRExecution::DmaRestricted,
+             GB::IRExecution::InterruptPending,
+             GB::IRExecution::HaltBugPending,
+             GB::IRExecution::PendingCycleCharge,
+         }) {
+        context.executionState = boundary;
+        assert(GB::IRExecution::validateGuards(*block, context) ==
+               GB::IRExecution::GuardFailure::ExecutionState);
+    }
+    context.executionState = 0u;
+
+    code.byte = 0xFFu;
+    assert(GB::IRExecution::validateGuards(*block, context) ==
+           GB::IRExecution::GuardFailure::CodeBytes);
+    code.byte = 0x00u;
+    code.eligible = false;
+    assert(GB::IRExecution::validateGuards(*block, context) ==
+           GB::IRExecution::GuardFailure::IneligibleCode);
+}
+
+void testMappedDeviceCodeIsNeverLowered()
+{
+    GB::GameBoyMachine machine;
+    BMMQ::Plugin::VisibleStatePreservingStepPolicy policy;
+    machine.attachExecutorPolicy(policy);
+    machine.setPortableIrEnabled(true);
+    machine.loadRom(std::vector<std::uint8_t>(0x8000u, 0x00u));
+    machine.runtimeContext().write8(0x8000u, 0x00u);
+    machine.runtimeContext().writeRegister16(GB::RegisterId::PC, 0x8000u);
+    machine.step();
+    machine.runtimeContext().writeRegister16(GB::RegisterId::PC, 0x8000u);
+    machine.step();
+    const auto stats = machine.blockCacheStats();
+    assert(stats.irExecutions.load() == 0u);
+    assert(stats.irIneligibleTranslations.load() > 0u);
+}
+
 } // namespace
 
 int main()
 {
     testPortableIrMatchesCanonicalRetirement();
     testUnsupportedOpcodeFallsBackAndModeToggleInvalidates();
+    testEveryPortableIrGuardFailureIsClassified();
+    testMappedDeviceCodeIsNeverLowered();
     return 0;
 }

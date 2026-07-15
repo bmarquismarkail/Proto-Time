@@ -68,6 +68,10 @@ public:
     [[nodiscard]] std::span<uint8_t> storageSpan() noexcept { return storage_; }
     [[nodiscard]] std::span<const uint8_t> storageSpan() const noexcept { return storage_; }
 
+    // Phase 11 IR code guards may inspect only regions whose reads are direct,
+    // stable, and free of mapper/MMIO/device side effects.
+    [[nodiscard]] bool peekExecutableByte(uint16_t address, uint8_t& value) const noexcept;
+
     // Save state export/import.
     std::vector<uint8_t> exportState() const;
     void importState(const std::vector<uint8_t>& state);

@@ -29,6 +29,7 @@ struct InterpreterResult {
     bool branchTaken = false;
     bool exitRequested = false;
     bool cycleCondition = false;
+    bool retirementReached = false;
 };
 
 class Interpreter {
@@ -43,10 +44,14 @@ public:
 
         InterpreterResult result;
         for (const auto& operation : instruction.operations) {
+            if (result.exitRequested && operation.opcode != Opcode::RetireInstruction) {
+                continue;
+            }
             const auto value = executeOperation(operation, host, result);
             if (operation.result.has_value()) {
                 values_[*operation.result] = truncate(value, operation.resultType);
             }
+            if (result.retirementReached) break;
         }
         if (instruction.takenCondition.has_value()) {
             result.cycleCondition = values_.at(*instruction.takenCondition) != 0u;
@@ -73,17 +78,62 @@ private:
         return value & mask(type);
     }
 
-    static constexpr std::int64_t signedValue(std::uint64_t value, ValueType type) noexcept
+    static constexpr unsigned bitWidth(ValueType type) noexcept
     {
         switch (type) {
-        case ValueType::Bool: return static_cast<std::int64_t>(value & 1u);
-        case ValueType::I8: return static_cast<std::int8_t>(value);
-        case ValueType::I16: return static_cast<std::int16_t>(value);
-        case ValueType::I32: return static_cast<std::int32_t>(value);
-        case ValueType::I64: return static_cast<std::int64_t>(value);
+        case ValueType::Bool: return 1u;
+        case ValueType::I8: return 8u;
+        case ValueType::I16: return 16u;
+        case ValueType::I32: return 32u;
+        case ValueType::I64: return 64u;
         case ValueType::Void: return 0;
         }
         return 0;
+    }
+
+    static constexpr std::uint64_t shiftLeft(
+        std::uint64_t value, std::uint64_t amount, ValueType type) noexcept
+    {
+        const auto width = bitWidth(type);
+        const auto shift = static_cast<unsigned>(amount & 63u);
+        if (width == 0u || shift >= width) return 0u;
+        return truncate(truncate(value, type) << shift, type);
+    }
+
+    static constexpr std::uint64_t shiftRightLogical(
+        std::uint64_t value, std::uint64_t amount, ValueType type) noexcept
+    {
+        const auto width = bitWidth(type);
+        const auto shift = static_cast<unsigned>(amount & 63u);
+        if (width == 0u || shift >= width) return 0u;
+        return truncate(value, type) >> shift;
+    }
+
+    static constexpr std::uint64_t shiftRightArithmetic(
+        std::uint64_t value, std::uint64_t amount, ValueType type) noexcept
+    {
+        const auto width = bitWidth(type);
+        const auto shift = static_cast<unsigned>(amount & 63u);
+        if (width == 0u) return 0u;
+        const auto source = truncate(value, type);
+        const bool negative = (source & (std::uint64_t{1} << (width - 1u))) != 0u;
+        if (shift >= width) return negative ? mask(type) : 0u;
+        if (shift == 0u) return source;
+        auto shifted = source >> shift;
+        if (negative) {
+            const auto fill = mask(type) ^ ((std::uint64_t{1} << (width - shift)) - 1u);
+            shifted |= fill;
+        }
+        return truncate(shifted, type);
+    }
+
+    static constexpr bool signedLess(
+        std::uint64_t lhs, std::uint64_t rhs, ValueType type) noexcept
+    {
+        const auto width = bitWidth(type);
+        if (width == 0u) return false;
+        const auto sign = std::uint64_t{1} << (width - 1u);
+        return (truncate(lhs, type) ^ sign) < (truncate(rhs, type) ^ sign);
     }
 
     std::uint64_t operandValue(const Operand& operand) const
@@ -127,13 +177,15 @@ private:
         case Opcode::BitAnd: return binary([](auto lhs, auto rhs) { return lhs & rhs; });
         case Opcode::BitOr: return binary([](auto lhs, auto rhs) { return lhs | rhs; });
         case Opcode::BitXor: return binary([](auto lhs, auto rhs) { return lhs ^ rhs; });
-        case Opcode::ShiftLeft: return binary([](auto lhs, auto rhs) { return lhs << (rhs & 63u); });
+        case Opcode::ShiftLeft:
+            return shiftLeft(operandValue(operation.operands[0]),
+                             operandValue(operation.operands[1]), operation.resultType);
         case Opcode::ShiftRightLogical:
-            return binary([](auto lhs, auto rhs) { return lhs >> (rhs & 63u); });
+            return shiftRightLogical(operandValue(operation.operands[0]),
+                                     operandValue(operation.operands[1]), operation.resultType);
         case Opcode::ShiftRightArithmetic:
-            return static_cast<std::uint64_t>(
-                signedValue(operandValue(operation.operands[0]), operation.operands[0].type) >>
-                (operandValue(operation.operands[1]) & 63u));
+            return shiftRightArithmetic(operandValue(operation.operands[0]),
+                                        operandValue(operation.operands[1]), operation.resultType);
         case Opcode::BitNot: return ~operandValue(operation.operands[0]);
         case Opcode::CompareEqual:
             return binary([](auto lhs, auto rhs) { return lhs == rhs ? 1u : 0u; });
@@ -142,9 +194,9 @@ private:
         case Opcode::CompareUnsignedLess:
             return binary([](auto lhs, auto rhs) { return lhs < rhs ? 1u : 0u; });
         case Opcode::CompareSignedLess:
-            return signedValue(operandValue(operation.operands[0]), operation.operands[0].type) <
-                           signedValue(operandValue(operation.operands[1]), operation.operands[1].type)
-                       ? 1u : 0u;
+            return signedLess(operandValue(operation.operands[0]),
+                              operandValue(operation.operands[1]),
+                              operation.operands[0].type) ? 1u : 0u;
         case Opcode::Select:
             return operandValue(operation.operands[0]) != 0u
                 ? operandValue(operation.operands[1])
@@ -175,6 +227,7 @@ private:
             result.exitRequested = true;
             return 0u;
         case Opcode::RetireInstruction:
+            result.retirementReached = true;
             return 0u;
         }
         throw std::invalid_argument("unknown portable IR opcode");

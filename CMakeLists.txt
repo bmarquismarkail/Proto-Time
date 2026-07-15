@@ -549,6 +549,20 @@ add_executable(time-smoke-gameboy-portable-ir tests/smoke_gameboy_portable_ir.cp
 target_link_libraries(time-smoke-gameboy-portable-ir time-gameboy-interpreter-core)
 add_test(NAME smoke-gameboy-portable-ir COMMAND time-smoke-gameboy-portable-ir)
 
+add_executable(time-smoke-gameboy-ir-opcode-differential
+    tests/smoke_gameboy_ir_opcode_differential.cpp)
+target_link_libraries(time-smoke-gameboy-ir-opcode-differential
+    time-gameboy-interpreter-core)
+add_test(NAME smoke-gameboy-ir-opcode-differential
+    COMMAND time-smoke-gameboy-ir-opcode-differential)
+
+add_executable(time-smoke-gameboy-ir-boundary-corpus
+    tests/smoke_gameboy_ir_boundary_corpus.cpp)
+target_link_libraries(time-smoke-gameboy-ir-boundary-corpus
+    time-gameboy-interpreter-core)
+add_test(NAME smoke-gameboy-ir-boundary-corpus
+    COMMAND time-smoke-gameboy-ir-boundary-corpus)
+
 add_executable(time-perf-gameboy-block-cache tests/perf_gameboy_block_cache.cpp)
 target_link_libraries(time-perf-gameboy-block-cache time-gameboy-interpreter-core)
 add_test(NAME perf-gameboy-block-cache COMMAND time-perf-gameboy-block-cache)

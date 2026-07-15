@@ -212,6 +212,12 @@ void writeDiagnosticsSample(std::ostream& output,
         output << ",\"ir_executions\":" << blockCacheStats->irExecutions.load();
         output << ",\"ir_guard_failures\":" << blockCacheStats->irGuardFailures.load();
         output << ",\"ir_fallbacks\":" << blockCacheStats->irFallbacks.load();
+        output << ",\"ir_lowered_instructions\":" << blockCacheStats->irLoweredInstructions.load();
+        output << ",\"ir_ineligible_translations\":" << blockCacheStats->irIneligibleTranslations.load();
+        output << ",\"ir_lowering_ns\":" << blockCacheStats->irLoweringNanos.load();
+        output << ",\"ir_guard_checks\":" << blockCacheStats->irGuardChecks.load();
+        output << ",\"ir_guard_check_ns\":" << blockCacheStats->irGuardCheckNanos.load();
+        output << ",\"ir_execution_ns\":" << blockCacheStats->irExecutionNanos.load();
     }
     output << "}";
 

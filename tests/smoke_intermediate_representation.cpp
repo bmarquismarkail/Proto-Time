@@ -141,6 +141,101 @@ void testPortableInterpreterUsesHostAbiAndReportsBranch()
     assert(!notTaken.branchTaken);
     assert(!notTaken.cycleCondition);
     assert(host.pc == 0u);
+    assert(notTaken.retirementReached);
+}
+
+void testPortableSignedAndWideShiftSemantics()
+{
+    struct Host final : InterpreterHost {
+        std::uint64_t readRegister(std::uint32_t id, ValueType) override { return regs[id]; }
+        void writeRegister(std::uint32_t id, ValueType, std::uint64_t value) override {
+            regs[id] = value;
+        }
+        std::uint64_t loadMemory(std::uint64_t, ValueType, MemoryClass) override { return 0u; }
+        void storeMemory(std::uint64_t, ValueType, MemoryClass, std::uint64_t) override {}
+        std::uint64_t callHelper(std::uint32_t, ValueType,
+                                 std::span<const std::uint64_t>) override { return 0u; }
+        void setProgramCounter(std::uint64_t) override {}
+        std::uint64_t regs[4]{};
+    } host;
+
+    BlockBuilder builder(0x4000u);
+    builder.beginInstruction(0x4000u, 1u, 4u);
+    const auto negative = builder.emitValue(
+        Opcode::Constant, ValueType::I8,
+        {Operand::immediate(0x80u, ValueType::I8)});
+    const auto one = builder.emitValue(
+        Opcode::Constant, ValueType::I8,
+        {Operand::immediate(1u, ValueType::I8)});
+    const auto width = builder.emitValue(
+        Opcode::Constant, ValueType::I8,
+        {Operand::immediate(8u, ValueType::I8)});
+    const auto positive = builder.emitValue(
+        Opcode::Constant, ValueType::I8,
+        {Operand::immediate(0x7Fu, ValueType::I8)});
+    const auto arithmetic = builder.emitValue(
+        Opcode::ShiftRightArithmetic, ValueType::I8,
+        {Operand::value(negative, ValueType::I8), Operand::value(one, ValueType::I8)});
+    const auto signFill = builder.emitValue(
+        Opcode::ShiftRightArithmetic, ValueType::I8,
+        {Operand::value(negative, ValueType::I8), Operand::value(width, ValueType::I8)});
+    const auto logical = builder.emitValue(
+        Opcode::ShiftRightLogical, ValueType::I8,
+        {Operand::value(negative, ValueType::I8), Operand::value(width, ValueType::I8)});
+    const auto signedLess = builder.emitValue(
+        Opcode::CompareSignedLess, ValueType::Bool,
+        {Operand::value(negative, ValueType::I8), Operand::value(positive, ValueType::I8)});
+    builder.emit(Opcode::WriteRegister,
+                 {Operand::guestRegister(0u, ValueType::I8),
+                  Operand::value(arithmetic, ValueType::I8)});
+    builder.emit(Opcode::WriteRegister,
+                 {Operand::guestRegister(1u, ValueType::I8),
+                  Operand::value(signFill, ValueType::I8)});
+    builder.emit(Opcode::WriteRegister,
+                 {Operand::guestRegister(2u, ValueType::I8),
+                  Operand::value(logical, ValueType::I8)});
+    builder.emit(Opcode::WriteRegister,
+                 {Operand::guestRegister(3u, ValueType::Bool),
+                  Operand::value(signedLess, ValueType::Bool)});
+    builder.endInstruction();
+    const auto block = builder.finish();
+
+    Interpreter interpreter;
+    const auto result = interpreter.execute(block->instructions.front(), host);
+    assert(result.retirementReached);
+    assert(host.regs[0] == 0xC0u);
+    assert(host.regs[1] == 0xFFu);
+    assert(host.regs[2] == 0x00u);
+    assert(host.regs[3] == 0x01u);
+}
+
+void testExitTerminatesAtRetirementBoundary()
+{
+    struct Host final : InterpreterHost {
+        std::uint64_t readRegister(std::uint32_t, ValueType) override { return 0u; }
+        void writeRegister(std::uint32_t, ValueType, std::uint64_t) override {}
+        std::uint64_t loadMemory(std::uint64_t, ValueType, MemoryClass) override { return 0u; }
+        void storeMemory(std::uint64_t, ValueType, MemoryClass, std::uint64_t) override {}
+        std::uint64_t callHelper(std::uint32_t, ValueType,
+                                 std::span<const std::uint64_t>) override { return 0u; }
+        void setProgramCounter(std::uint64_t) override {}
+    } host;
+
+    BlockBuilder builder(0x5000u);
+    builder.beginInstruction(0x5000u, 1u, 4u);
+    builder.emit(Opcode::Exit);
+    builder.endInstruction();
+    const auto block = builder.finish();
+    Interpreter interpreter;
+    const auto result = interpreter.execute(block->instructions.front(), host);
+    assert(result.exitRequested);
+    assert(result.retirementReached);
+
+    auto malformed = *block;
+    malformed.instructions.front().operations.insert(
+        malformed.instructions.front().operations.begin(),
+        Operation{.opcode = Opcode::Exit});
+    assert(!validate(malformed));
 }
 
 } // namespace
@@ -152,5 +247,7 @@ int main()
     testRejectsCrossInstructionTemporary();
     testBuilderRejectsMalformedConditionalCycles();
     testPortableInterpreterUsesHostAbiAndReportsBranch();
+    testPortableSignedAndWideShiftSemantics();
+    testExitTerminatesAtRetirementBoundary();
     return 0;
 }

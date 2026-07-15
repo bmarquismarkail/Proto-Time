@@ -53,6 +53,12 @@ struct ThreadedBlockCacheStats {
     std::uint64_t irExecutions = 0;
     std::uint64_t irGuardFailures = 0;
     std::uint64_t irFallbacks = 0;
+    std::uint64_t irLoweredInstructions = 0;
+    std::uint64_t irIneligibleTranslations = 0;
+    std::uint64_t irLoweringNanos = 0;
+    std::uint64_t irGuardChecks = 0;
+    std::uint64_t irGuardCheckNanos = 0;
+    std::uint64_t irExecutionNanos = 0;
     std::array<std::uint64_t, 5> exits{};
 };
 
@@ -143,9 +149,21 @@ public:
     }
 
     void noteUnsupportedFallback() noexcept { ++stats_.unsupportedFallbacks; }
-    void noteIrExecution() noexcept { ++stats_.irExecutions; }
+    void noteIrExecution(std::uint64_t elapsedNanos = 0u) noexcept {
+        ++stats_.irExecutions;
+        stats_.irExecutionNanos += elapsedNanos;
+    }
     void noteIrGuardFailure() noexcept { ++stats_.irGuardFailures; }
     void noteIrFallback() noexcept { ++stats_.irFallbacks; }
+    void noteIrLowering(std::size_t instructions, std::uint64_t elapsedNanos) noexcept {
+        stats_.irLoweredInstructions += instructions;
+        stats_.irLoweringNanos += elapsedNanos;
+    }
+    void noteIrGuardCheck(std::uint64_t elapsedNanos) noexcept {
+        ++stats_.irGuardChecks;
+        stats_.irGuardCheckNanos += elapsedNanos;
+    }
+    void noteIrIneligibleTranslation() noexcept { ++stats_.irIneligibleTranslations; }
     [[nodiscard]] ThreadedBlockCacheStats stats() const noexcept { return stats_; }
     [[nodiscard]] std::uint64_t mappingGeneration() const noexcept { return mappingGeneration_; }
     [[nodiscard]] std::size_t size() const noexcept { return blocks_.size(); }

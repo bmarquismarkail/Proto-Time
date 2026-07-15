@@ -57,6 +57,26 @@ enum ExecutionState : std::uint64_t {
     PendingCycleCharge = 1u << 5u,
 };
 
+enum class GuardFailure : std::uint8_t {
+    None,
+    MappingGeneration,
+    HelperAbi,
+    ExecutionState,
+    CodeBytes,
+    IneligibleCode,
+};
+
+struct GuardContext {
+    std::uint64_t mappingGeneration = 0u;
+    std::uint64_t executionState = 0u;
+    const void* opaque = nullptr;
+    bool (*peekCodeByte)(const void*, std::uint16_t, std::uint8_t&) noexcept = nullptr;
+};
+
+[[nodiscard]] GuardFailure validateGuards(
+    const BMMQ::IR::Block& block,
+    const GuardContext& context) noexcept;
+
 // Versioned helper table shared by the portable interpreter and future native
 // backends. All callbacks operate on the emulation lane and on opaque CPU state.
 struct ExecutionAbiV1 {
@@ -78,6 +98,7 @@ struct InstructionResult {
     bool branchTaken = false;
     bool exitRequested = false;
     bool cycleCondition = false;
+    bool retirementReached = false;
 };
 
 class PortableExecutor {

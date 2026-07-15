@@ -220,6 +220,46 @@ bool valid(const ExecutionAbiV1& abi) noexcept
            abi.executionState != nullptr;
 }
 
+GuardFailure validateGuards(const BMMQ::IR::Block& block,
+                            const GuardContext& context) noexcept
+{
+    for (const auto& guard : block.guards) {
+        switch (guard.kind) {
+        case BMMQ::IR::GuardKind::MappingGeneration:
+            if (guard.expected != context.mappingGeneration ||
+                block.mappingGeneration != context.mappingGeneration) {
+                return GuardFailure::MappingGeneration;
+            }
+            break;
+        case BMMQ::IR::GuardKind::HelperAbi:
+            if (guard.expected != kAbiVersion) return GuardFailure::HelperAbi;
+            break;
+        case BMMQ::IR::GuardKind::ExecutionState:
+            if ((context.executionState & guard.mask) !=
+                (guard.expected & guard.mask)) {
+                return GuardFailure::ExecutionState;
+            }
+            break;
+        case BMMQ::IR::GuardKind::CodeBytes:
+            if (context.opaque == nullptr || context.peekCodeByte == nullptr) {
+                return GuardFailure::IneligibleCode;
+            }
+            for (std::size_t index = 0u; index < guard.bytes.size(); ++index) {
+                const auto rawAddress = guard.subject + index;
+                if (rawAddress > 0xFFFFu) return GuardFailure::IneligibleCode;
+                std::uint8_t byte = 0u;
+                if (!context.peekCodeByte(
+                        context.opaque, static_cast<std::uint16_t>(rawAddress), byte)) {
+                    return GuardFailure::IneligibleCode;
+                }
+                if (byte != guard.bytes[index]) return GuardFailure::CodeBytes;
+            }
+            break;
+        }
+    }
+    return GuardFailure::None;
+}
+
 InstructionResult PortableExecutor::execute(const BMMQ::IR::GuestInstruction& instruction,
                                             const ExecutionAbiV1& abi)
 {
@@ -230,6 +270,7 @@ InstructionResult PortableExecutor::execute(const BMMQ::IR::GuestInstruction& in
         .branchTaken = result.branchTaken,
         .exitRequested = result.exitRequested,
         .cycleCondition = result.cycleCondition,
+        .retirementReached = result.retirementReached,
     };
 }
 

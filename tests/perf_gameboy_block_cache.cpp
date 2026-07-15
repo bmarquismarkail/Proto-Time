@@ -26,16 +26,25 @@ struct RunResult {
     std::int64_t nanoseconds = 0;
     std::uint64_t hits = 0;
     std::uint64_t continuations = 0;
+    std::uint64_t irExecutions = 0;
+    std::uint64_t irFallbacks = 0;
+    std::uint64_t irLoweredInstructions = 0;
+    std::uint64_t irGuardChecks = 0;
+    std::uint64_t irGuardCheckNanos = 0;
+    std::uint64_t irExecutionNanos = 0;
 };
 
-RunResult run(bool blockMode, std::size_t steps)
+enum class Mode { Baseline, Block, Ir };
+
+RunResult run(Mode mode, std::size_t steps)
 {
     GB::GameBoyMachine machine;
     BMMQ::Plugin::VisibleStatePreservingStepPolicy blockPolicy;
     machine.loadRom(makeBenchmarkRom());
-    if (blockMode) {
+    if (mode != Mode::Baseline) {
         machine.attachExecutorPolicy(blockPolicy);
         machine.setBlockCacheEnabled(true);
+        machine.setPortableIrEnabled(mode == Mode::Ir);
     } else {
         machine.setBlockCacheEnabled(false);
     }
@@ -55,6 +64,12 @@ RunResult run(bool blockMode, std::size_t steps)
         std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count(),
         stats.hits.load(),
         stats.chainContinuations.load(),
+        stats.irExecutions.load(),
+        stats.irFallbacks.load(),
+        stats.irLoweredInstructions.load(),
+        stats.irGuardChecks.load(),
+        stats.irGuardCheckNanos.load(),
+        stats.irExecutionNanos.load(),
     };
 }
 
@@ -66,30 +81,73 @@ int main()
     constexpr std::size_t kRuns = 5u;
     std::vector<std::int64_t> baseline;
     std::vector<std::int64_t> block;
+    std::vector<std::int64_t> ir;
     std::uint64_t hits = 0;
     std::uint64_t continuations = 0;
+    std::uint64_t irExecutions = 0;
+    std::uint64_t irFallbacks = 0;
+    std::uint64_t irLoweredInstructions = 0;
+    std::uint64_t irGuardChecks = 0;
+    std::uint64_t irGuardCheckNanos = 0;
+    std::uint64_t irExecutionNanos = 0;
     for (std::size_t runIndex = 0; runIndex < kRuns; ++runIndex) {
-        baseline.push_back(run(false, kSteps).nanoseconds);
-        const auto result = run(true, kSteps);
+        baseline.push_back(run(Mode::Baseline, kSteps).nanoseconds);
+        const auto result = run(Mode::Block, kSteps);
         block.push_back(result.nanoseconds);
         hits += result.hits;
         continuations += result.continuations;
+        const auto irResult = run(Mode::Ir, kSteps);
+        ir.push_back(irResult.nanoseconds);
+        irExecutions += irResult.irExecutions;
+        irFallbacks += irResult.irFallbacks;
+        irLoweredInstructions += irResult.irLoweredInstructions;
+        irGuardChecks += irResult.irGuardChecks;
+        irGuardCheckNanos += irResult.irGuardCheckNanos;
+        irExecutionNanos += irResult.irExecutionNanos;
     }
     std::sort(baseline.begin(), baseline.end());
     std::sort(block.begin(), block.end());
+    std::sort(ir.begin(), ir.end());
     const auto baselineMedian = baseline[kRuns / 2u];
     const auto blockMedian = block[kRuns / 2u];
+    const auto irMedian = ir[kRuns / 2u];
     const double speedup = static_cast<double>(baselineMedian) /
                            static_cast<double>(blockMedian);
+    const double irSpeedup = static_cast<double>(baselineMedian) /
+                             static_cast<double>(irMedian);
+    const double irCoverage = irExecutions + irFallbacks == 0u
+        ? 0.0
+        : static_cast<double>(irExecutions) /
+              static_cast<double>(irExecutions + irFallbacks);
+    const double averageGuardNanos = irGuardChecks == 0u
+        ? 0.0
+        : static_cast<double>(irGuardCheckNanos) / static_cast<double>(irGuardChecks);
+    const double averageExecutionNanos = irExecutions == 0u
+        ? 0.0
+        : static_cast<double>(irExecutionNanos) / static_cast<double>(irExecutions);
 
     std::cout << "gameboy_block_cache baseline_median_ns=" << baselineMedian
               << " block_median_ns=" << blockMedian
               << " speedup=" << speedup
+              << " ir_median_ns=" << irMedian
+              << " ir_speedup=" << irSpeedup
+              << " ir_coverage=" << irCoverage
+              << " ir_executions=" << irExecutions
+              << " ir_fallbacks=" << irFallbacks
+              << " ir_lowered_instructions=" << irLoweredInstructions
+              << " ir_guard_avg_ns=" << averageGuardNanos
+              << " ir_execution_avg_ns=" << averageExecutionNanos
               << " hits=" << hits
               << " chain_continuations=" << continuations << '\n';
 
     assert(hits > 0u);
     assert(continuations > 0u);
+    assert(irExecutions > 0u);
+    assert(irFallbacks > 0u);
+    assert(irLoweredInstructions > 0u);
+    assert(irGuardChecks > 0u);
+    assert(irGuardCheckNanos > 0u);
+    assert(irExecutionNanos > 0u);
     assert(speedup >= 2.0);
     return 0;
 }

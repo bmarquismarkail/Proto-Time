@@ -252,10 +252,14 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   void retireInstruction(std::size_t executedByteCount);
   [[nodiscard]] GB::IRExecution::ExecutionAbiV1 irExecutionAbi();
   [[nodiscard]] std::uint64_t irExecutionState() const;
-  [[nodiscard]] bool irGuardsValid(const BMMQ::IR::Block& block);
+  [[nodiscard]] GB::IRExecution::GuardFailure irGuardFailure(
+      const BMMQ::IR::Block& block) const noexcept;
+  [[nodiscard]] bool irBlockEligible(
+      std::span<const BMMQ::TranslatedInstruction<AddressType, DataType>> instructions) const noexcept;
   [[nodiscard]] bool tryExecutePortableIr(
       const BMMQ::TranslatedBlockEntry<AddressType, DataType>& block,
-      AddressType pcAddress);
+      AddressType pcAddress,
+      std::size_t instructionIndex);
   [[nodiscard]] bool lcdEnabled() const;
   [[nodiscard]] DataType currentPpuMode() const;
   [[nodiscard]] DataType joypadLowNibble() const;

@@ -1411,7 +1411,13 @@ GameBoyMachine::BlockCacheStats GameBoyMachine::blockCacheStats() const {
         stats.irTranslations,
         stats.irExecutions,
         stats.irGuardFailures,
-        stats.irFallbacks
+        stats.irFallbacks,
+        stats.irLoweredInstructions,
+        stats.irIneligibleTranslations,
+        stats.irLoweringNanos,
+        stats.irGuardChecks,
+        stats.irGuardCheckNanos,
+        stats.irExecutionNanos
     };
 }
 
