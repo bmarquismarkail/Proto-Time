@@ -1076,19 +1076,26 @@ const BMMQ::Plugin::IExecutorPolicyPlugin& GameBoyMachine::attachedExecutorPolic
     return *impl_->activePolicy;
 }
 
-void GameBoyMachine::step() {
+BMMQ::ExecutionSliceResult GameBoyMachine::runSlice(const BMMQ::ExecutionBudget& budget) {
     if (impl_->bootEntryPending) {
         impl_->bootEntryPending = false;
         impl_->context->writeRegister16(GB::RegisterId::PC, 0x0100u);
-        return;
+        BMMQ::ExecutionSliceResult result;
+        result.exitReason = BMMQ::ExecutionSliceExitReason::MachineBoundary;
+        return result;
     }
-    // Handle boot entry pending (FF50 write during boot ROM)
-    // In the new architecture, boot ROM is handled by memory map intercept
-    // The CPU's handleMemoryWrite will catch FF50 writes
+    return BMMQ::Machine::runSlice(budget);
+}
 
-    impl_->context->step();
+void GameBoyMachine::step() {
+    (void)runSlice(BMMQ::ExecutionBudget{});
+}
+
+BMMQ::InstructionRetirementDecision GameBoyMachine::onInstructionRetired(
+    const BMMQ::CpuFeedback& feedback,
+    const BMMQ::ExecutionSliceProgress&)
+{
     ++impl_->stepCounter;
-    const auto& feedback = impl_->context->getLastFeedback();
 
     // Advance PPU by retired cycles
     impl_->ppu.step(feedback.retiredCycles);
@@ -1180,6 +1187,16 @@ void GameBoyMachine::step() {
             }
         }
     }
+
+    // Conservatively leave a multi-instruction slice whenever a device-visible
+    // interrupt is pending. The next CPU entry owns the exact IME/HALT decision.
+    const auto pendingInterrupts = static_cast<uint8_t>(
+        impl_->context->read8(0xFF0Fu) & impl_->context->read8(0xFFFFu) & 0x1Fu);
+    if (pendingInterrupts != 0u) {
+        return BMMQ::InstructionRetirementDecision::exitSlice(
+            BMMQ::ExecutionSliceExitReason::MachineBoundary);
+    }
+    return BMMQ::InstructionRetirementDecision::continueSlice();
 }
 
 void GameBoyMachine::serviceInput() {

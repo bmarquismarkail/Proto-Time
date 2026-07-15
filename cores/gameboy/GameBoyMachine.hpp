@@ -102,6 +102,7 @@ public:
     }
 
     // Step
+    BMMQ::ExecutionSliceResult runSlice(const BMMQ::ExecutionBudget& budget) override;
     void step() override;
     void serviceInput() override;
 
@@ -155,6 +156,11 @@ public:
     // Register access
     uint16_t readRegisterPair(std::string_view id) const override;
     std::string stopSummary() const override;
+
+protected:
+    BMMQ::InstructionRetirementDecision onInstructionRetired(
+        const BMMQ::CpuFeedback& feedback,
+        const BMMQ::ExecutionSliceProgress& progress) override;
 
 private:
     struct Impl {

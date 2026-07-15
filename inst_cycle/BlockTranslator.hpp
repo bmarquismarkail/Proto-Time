@@ -8,6 +8,8 @@
 #include <memory>
 #include <vector>
 
+#include "IntermediateRepresentation.hpp"
+
 namespace BMMQ {
 
 enum class TranslatedBlockExitReason : std::uint8_t {
@@ -31,6 +33,9 @@ struct TranslatedBlockEntry {
     AddressType end = 0;
     std::uint64_t mappingGeneration = 0;
     std::vector<TranslatedInstruction<AddressType, DataType>> instructions;
+    // Optional validated lowering for a future native backend. The Phase 10
+    // byte sequence remains the portable fallback and invalidation authority.
+    IR::BlockPtr intermediateRepresentation{};
     TranslatedBlockExitReason exitReason = TranslatedBlockExitReason::SequentialLimit;
     bool valid = true;
 };

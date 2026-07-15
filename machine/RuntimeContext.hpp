@@ -2,11 +2,13 @@
 #define BMMQ_RUNTIME_CONTEXT_HPP
 
 #include <cstdint>
+#include <limits>
 #include <utility>
 
 #include "../inst_cycle/execute/executionBlock.hpp"
 #include "../inst_cycle/fetch/fetchBlock.hpp"
 #include "CPU.hpp"
+#include "ExecutionSlice.hpp"
 #include "RegisterId.hpp"
 
 namespace BMMQ {
@@ -71,6 +73,51 @@ public:
     virtual CpuFeedback step() {
         auto fetchBlock = fetch();
         return step(fetchBlock);
+    }
+    virtual ExecutionSliceResult runSlice(
+        const ExecutionBudget& budget,
+        InstructionRetirementSink& retirementSink)
+    {
+        ExecutionSliceResult result;
+        if (budget.maxInstructions == 0u) {
+            result.exitReason = ExecutionSliceExitReason::InstructionBudget;
+            return result;
+        }
+        if (budget.maxCycles == 0u) {
+            result.exitReason = ExecutionSliceExitReason::CycleBudget;
+            return result;
+        }
+
+        while (result.progress.retiredInstructions < budget.maxInstructions &&
+               result.progress.retiredCycles < budget.maxCycles) {
+            result.lastFeedback = step();
+            ++result.progress.retiredInstructions;
+            const auto cycles = static_cast<std::uint64_t>(result.lastFeedback.retiredCycles);
+            if (cycles > std::numeric_limits<std::uint64_t>::max() -
+                             result.progress.retiredCycles) {
+                result.progress.retiredCycles = std::numeric_limits<std::uint64_t>::max();
+            } else {
+                result.progress.retiredCycles += cycles;
+            }
+
+            const auto retirement = retirementSink.retireInstruction(
+                result.lastFeedback, result.progress);
+            if (!retirement.continueExecution) {
+                result.exitReason = retirement.exitReason;
+                return result;
+            }
+            if (budget.stopOnSegmentBoundary && result.lastFeedback.segmentBoundaryHint) {
+                result.exitReason = ExecutionSliceExitReason::SegmentBoundary;
+                return result;
+            }
+            if (result.progress.retiredCycles >= budget.maxCycles) {
+                result.exitReason = ExecutionSliceExitReason::CycleBudget;
+                return result;
+            }
+        }
+
+        result.exitReason = ExecutionSliceExitReason::InstructionBudget;
+        return result;
     }
     virtual DataType read8(AddressType address) const = 0;
     virtual DataType peek8(AddressType address) const {

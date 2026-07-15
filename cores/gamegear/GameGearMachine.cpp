@@ -556,11 +556,23 @@ void GameGearMachine::load_state(const std::filesystem::path& path) {
     inputService().advanceGeneration(impl->inputGeneration);
 }
 
-void GameGearMachine::step() {
+ExecutionSliceResult GameGearMachine::runSlice(const ExecutionBudget& budget) {
     if (!impl->romLoaded) {
-        return;
+        ExecutionSliceResult result;
+        result.exitReason = ExecutionSliceExitReason::MachineBoundary;
+        return result;
     }
-    const auto feedback = impl->context.step();
+    return Machine::runSlice(budget);
+}
+
+void GameGearMachine::step() {
+    (void)runSlice(ExecutionBudget{});
+}
+
+InstructionRetirementDecision GameGearMachine::onInstructionRetired(
+    const CpuFeedback& feedback,
+    const ExecutionSliceProgress&)
+{
     ++impl->stepCounter;
     impl->vdp.step(feedback.retiredCycles);
     impl->psg.step(feedback.retiredCycles);
@@ -611,6 +623,11 @@ void GameGearMachine::step() {
             });
         }
     }
+    if (impl->interruptRequested || impl->vdp.isIrqAsserted()) {
+        return InstructionRetirementDecision::exitSlice(
+            ExecutionSliceExitReason::MachineBoundary);
+    }
+    return InstructionRetirementDecision::continueSlice();
 }
 
 void GameGearMachine::serviceInput() {

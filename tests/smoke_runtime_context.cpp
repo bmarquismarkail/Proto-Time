@@ -41,6 +41,14 @@ struct AdvancedRuntimeContext final : BMMQ::RuntimeContext {
     FetchBlock fetch() override { return {}; }
     ExecutionBlock decode(FetchBlock&) override { return {}; }
     void execute(const ExecutionBlock&, FetchBlock&) override {}
+    BMMQ::CpuFeedback step() override {
+        feedback.pcBefore = feedback.pcAfter;
+        feedback.pcAfter += 1u;
+        feedback.retiredCycles = 4u;
+        feedback.segmentBoundaryHint = false;
+        feedback.executionPath = BMMQ::ExecutionPathHint::CanonicalFetchDecodeExecute;
+        return feedback;
+    }
     uint8_t read8(AddressType) const override { return 0; }
     void write8(AddressType, DataType) override {}
     uint8_t readRegister8(std::string_view) const override { return 0; }
@@ -64,6 +72,24 @@ struct AdvancedRuntimeContext final : BMMQ::RuntimeContext {
     const BMMQ::IOptimizationMetadataCapability* optimizationMetadataCapability() const override { return &optimization; }
 };
 
+struct StopAfterThreeRetirements final : BMMQ::InstructionRetirementSink {
+    std::uint64_t calls = 0u;
+
+    BMMQ::InstructionRetirementDecision retireInstruction(
+        const BMMQ::CpuFeedback& feedback,
+        const BMMQ::ExecutionSliceProgress& progress) override
+    {
+        ++calls;
+        assert(feedback.retiredCycles == 4u);
+        assert(progress.retiredInstructions == calls);
+        assert(progress.retiredCycles == calls * 4u);
+        if (calls == 3u) {
+            return BMMQ::InstructionRetirementDecision::exitSlice();
+        }
+        return BMMQ::InstructionRetirementDecision::continueSlice();
+    }
+};
+
 }
 
 int main()
@@ -84,5 +110,17 @@ int main()
     assert(context.translationCapability() != nullptr);
     assert(context.invalidationCapability() != nullptr);
     assert(context.optimizationMetadataCapability() != nullptr);
+
+    StopAfterThreeRetirements retirementSink;
+    const auto slice = context.runSlice({
+        .maxInstructions = 10u,
+        .maxCycles = 100u,
+        .stopOnSegmentBoundary = false,
+    }, retirementSink);
+    assert(retirementSink.calls == 3u);
+    assert(slice.progress.retiredInstructions == 3u);
+    assert(slice.progress.retiredCycles == 12u);
+    assert(slice.lastFeedback.pcAfter == 3u);
+    assert(slice.exitReason == BMMQ::ExecutionSliceExitReason::RetirementRequested);
     return 0;
 }

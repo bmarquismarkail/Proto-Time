@@ -68,9 +68,16 @@ void test_threaded_block_cache() {
     block.end = 0x1002u;
     block.instructions.push_back({0x1000u, {0x3Eu, 0x12u, 0x00u}, 2u});
     block.instructions.push_back({0x1002u, {0x00u, 0x00u, 0x00u}, 1u});
+    BMMQ::IR::BlockBuilder irBuilder(0x1000u);
+    irBuilder.beginInstruction(0x1000u, 2u, 8u).endInstruction();
+    irBuilder.beginInstruction(0x1002u, 1u, 4u).endInstruction();
+    block.intermediateRepresentation = irBuilder.finish();
     cache.insert(std::move(block));
 
-    assert(cache.lookup(0x1000u));
+    const auto entry = cache.lookup(0x1000u);
+    assert(entry);
+    assert(entry.block->intermediateRepresentation);
+    assert(BMMQ::IR::validate(*entry.block->intermediateRepresentation));
     const auto continuation = cache.lookup(0x1002u);
     assert(continuation);
     assert(continuation.instructionIndex == 1u);

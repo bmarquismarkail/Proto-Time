@@ -537,6 +537,13 @@ target_link_libraries(time-smoke-slim-packets time-gameboy-interpreter-core)
 add_test(NAME smoke-slim-packets COMMAND time-smoke-slim-packets)
 add_test(NAME smoke-block-cache COMMAND time-smoke-block-cache)
 
+add_executable(time-smoke-execution-slice tests/smoke_execution_slice.cpp)
+target_link_libraries(time-smoke-execution-slice time-gameboy-interpreter-core)
+add_test(NAME smoke-execution-slice COMMAND time-smoke-execution-slice)
+
+add_executable(time-smoke-intermediate-representation tests/smoke_intermediate_representation.cpp)
+add_test(NAME smoke-intermediate-representation COMMAND time-smoke-intermediate-representation)
+
 add_executable(time-perf-gameboy-block-cache tests/perf_gameboy_block_cache.cpp)
 target_link_libraries(time-perf-gameboy-block-cache time-gameboy-interpreter-core)
 add_test(NAME perf-gameboy-block-cache COMMAND time-perf-gameboy-block-cache)

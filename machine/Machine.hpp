@@ -259,14 +259,40 @@ public:
     }
     virtual void serviceInput() {
     }
+    virtual ExecutionSliceResult runSlice(const ExecutionBudget& budget) {
+        class MachineRetirementSink final : public InstructionRetirementSink {
+        public:
+            explicit MachineRetirementSink(Machine& machine) : machine_(machine) {}
+
+            InstructionRetirementDecision retireInstruction(
+                const CpuFeedback& feedback,
+                const ExecutionSliceProgress& progress) override
+            {
+                return machine_.onInstructionRetired(feedback, progress);
+            }
+
+        private:
+            Machine& machine_;
+        } sink(*this);
+
+        return runtimeContext().runSlice(budget, sink);
+    }
     virtual void step() {
-        runtimeContext().step();
+        (void)runSlice(ExecutionBudget{});
     }
     virtual uint16_t readRegisterPair(std::string_view id) const = 0;
     virtual std::string stopSummary() const {
         return {};
     }
     virtual void flushPendingBackgroundWork() {}
+
+protected:
+    virtual InstructionRetirementDecision onInstructionRetired(
+        const CpuFeedback&,
+        const ExecutionSliceProgress&)
+    {
+        return InstructionRetirementDecision::continueSlice();
+    }
 
 private:
     void bindVisualOverrideEvents()
