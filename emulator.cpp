@@ -27,6 +27,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 #include "emulator/AudioKpiStatus.hpp"
@@ -89,6 +90,8 @@ void printUsage(std::string_view program)
               << "  --audio-backend <name>\n"
               << "                     Audio backend: sdl, dummy, or file (default: sdl)\n"
               << "  --audio-plugin <path>\n"
+              << "  --audio-processor-plugin <path> (repeatable)\n"
+              << "  --audio-processor-config <id>=<json-file>\n"
               << "                     Load an audio output from a pure-C ABI module\n"
               << "  --audio-file <path>\n"
               << "                     Raw signed 16-bit PCM path for the file backend\n"
@@ -849,6 +852,36 @@ int main(int argc, char** argv)
         if (frontend != nullptr) {
             frontend->requestWindowVisibility(true);
             frontend->serviceFrontend();
+        }
+
+        std::unordered_set<std::string> loadedAudioProcessorIds;
+        for (const auto& processorPath : options.audioProcessorPluginPaths) {
+            auto module = BMMQ::Plugin::DynamicPluginModule::load(processorPath);
+            const auto ids = module.audioProcessorIds();
+            if (ids.empty()) {
+                throw std::runtime_error("Audio processor module has no processors: " + processorPath.string());
+            }
+            for (const auto& id : ids) {
+                if (!loadedAudioProcessorIds.emplace(id).second) {
+                    throw std::runtime_error("Duplicate audio processor id: " + id);
+                }
+                std::string configJson;
+                const auto config = std::find_if(options.audioProcessorConfigs.begin(),
+                    options.audioProcessorConfigs.end(), [&id](const auto& item) { return item.pluginId == id; });
+                if (config != options.audioProcessorConfigs.end()) {
+                    std::ifstream input(config->jsonPath, std::ios::binary);
+                    if (!input) throw std::runtime_error("Unable to read audio processor config: " + config->jsonPath.string());
+                    configJson.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+                }
+                const auto& engineConfig = machine.audioService().engine().config();
+                auto processor = module.createAudioProcessor(
+                    id, static_cast<std::uint32_t>(engineConfig.sourceSampleRate),
+                    engineConfig.channelCount, engineConfig.frameChunkSamples, std::move(configJson));
+                if (!machine.audioService().addProcessor(std::move(processor))) {
+                    throw std::runtime_error("Unable to attach audio processor: " + id);
+                }
+                std::cout << "Audio processor: " << id << " (" << processorPath << ")\n";
+            }
         }
 
         std::unique_ptr<BMMQ::IAudioOutputBackend> audioOutput;

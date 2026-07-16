@@ -419,6 +419,13 @@ add_test(NAME smoke-dynamic-frontend-module
 add_library(time-test-c-audio-output-plugin MODULE tests/fixtures/test_audio_output_plugin.c)
 target_include_directories(time-test-c-audio-output-plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 set_target_properties(time-test-c-audio-output-plugin PROPERTIES PREFIX "")
+add_library(time-test-c-audio-processor-plugin MODULE tests/fixtures/test_audio_processor_plugin.c)
+target_include_directories(time-test-c-audio-processor-plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+set_target_properties(time-test-c-audio-processor-plugin PROPERTIES PREFIX "")
+add_executable(time-smoke-dynamic-audio-processor tests/smoke_dynamic_audio_processor.cpp)
+target_link_libraries(time-smoke-dynamic-audio-processor time-dynamic-plugin-loader time-machine-runtime-common)
+add_test(NAME smoke-dynamic-audio-processor
+    COMMAND time-smoke-dynamic-audio-processor $<TARGET_FILE:time-test-c-audio-processor-plugin>)
 add_library(time-test-malformed-audio-output-plugin MODULE
     tests/fixtures/test_malformed_audio_output_plugin.c)
 target_include_directories(time-test-malformed-audio-output-plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

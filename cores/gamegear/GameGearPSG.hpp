@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <vector>
+#include "machine/AudioPipeline.hpp"
 
 class GameGearPSG {
 public:
@@ -15,12 +16,15 @@ public:
     void reset();
     void step(uint32_t cpuCycles);
     void writeData(uint8_t value);
-    void writeStereoControl(uint8_t value) noexcept;
+    void writeStereoControl(uint8_t value);
     [[nodiscard]] uint8_t readCompatRegister(uint16_t addr) const noexcept;
     void writeCompatRegister(uint16_t addr, uint8_t value);
     [[nodiscard]] uint8_t readWaveRam(uint16_t addr) const noexcept;
     void writeWaveRam(uint16_t addr, uint8_t value) noexcept;
     [[nodiscard]] std::vector<int16_t> copyRecentSamples() const;
+    [[nodiscard]] std::vector<int16_t> copyRecentVoiceStems() const;
+    [[nodiscard]] std::vector<BMMQ::PsgAudioEvent> copyRecentEvents() const;
+    [[nodiscard]] std::uint64_t recentFirstSampleFrame() const noexcept;
     [[nodiscard]] uint32_t sampleRate() const noexcept;
     [[nodiscard]] uint8_t outputChannelCount() const noexcept;
     [[nodiscard]] uint64_t frameCounter() const noexcept;
@@ -58,6 +62,8 @@ private:
     void applyCompatVolume(uint8_t value);
     void updateCompatStatus() noexcept;
     [[nodiscard]] std::array<int16_t, 2> mixFrame() noexcept;
+    void recordWrite(std::uint16_t address, std::uint8_t value,
+                     std::uint8_t voice, BMMQ::PsgEventKind kind);
     [[nodiscard]] int channelAmplitude(std::size_t channel) const noexcept;
     [[nodiscard]] bool channelRoutedLeft(std::size_t channel) const noexcept;
     [[nodiscard]] bool channelRoutedRight(std::size_t channel) const noexcept;
@@ -73,6 +79,13 @@ private:
     std::array<uint8_t, 0x10u> waveRam_{};
     std::vector<int16_t> currentFrameSamples_;
     std::vector<int16_t> recentSamples_;
+    std::vector<int16_t> currentVoiceStems_;
+    std::vector<int16_t> recentVoiceStems_;
+    std::vector<BMMQ::PsgAudioEvent> currentEvents_;
+    std::vector<BMMQ::PsgAudioEvent> recentEvents_;
+    std::uint64_t eventSequence_ = 0u;
+    std::uint64_t recentFirstSampleFrame_ = 0u;
+    std::array<bool, 4u> observedGateStates_{};
     std::size_t chunkSamplesLast_ = 0u;
     std::size_t chunkSamplesMin_ = 0u;
     std::size_t chunkSamplesMax_ = 0u;

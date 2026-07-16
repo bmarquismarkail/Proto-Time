@@ -10,6 +10,7 @@
 #include "inst_cycle/executor/PluginContract.hpp"
 #include "machine/plugins/AudioOutput.hpp"
 #include "machine/plugins/FrontendPlugin.hpp"
+#include "machine/AudioPipeline.hpp"
 
 namespace BMMQ::Plugin {
 
@@ -30,6 +31,10 @@ public:
     [[nodiscard]] std::vector<std::string> audioOutputIds() const;
     [[nodiscard]] std::unique_ptr<IAudioOutputBackend> createAudioOutput(
         std::string_view id) const;
+    [[nodiscard]] std::vector<std::string> audioProcessorIds() const;
+    [[nodiscard]] std::unique_ptr<IAudioProcessor> createAudioProcessor(
+        std::string_view id, std::uint32_t sampleRate, std::uint8_t channels,
+        std::size_t maxBlockSamples, std::string configJson = {}) const;
 
 private:
     explicit DynamicPluginModule(std::shared_ptr<State> state) : state_(std::move(state)) {}

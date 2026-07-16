@@ -16,6 +16,10 @@ struct RecordingAudioPlugin final : BMMQ::IAudioPlugin {
     std::optional<BMMQ::AudioStateView> lastAudioState;
     std::vector<std::size_t> realtimePacketSampleSizes;
     std::vector<uint8_t> realtimePacketChannelCounts;
+    std::vector<std::size_t> realtimePacketVoiceCounts;
+    std::vector<std::size_t> realtimePacketStemSizes;
+    std::size_t realtimeEventCount = 0u;
+    bool stemsReconstructMix = true;
 
     std::string_view id() const override {
         return "test.audio.apu";
@@ -33,6 +37,17 @@ struct RecordingAudioPlugin final : BMMQ::IAudioPlugin {
         if (packet.has_value()) {
             realtimePacketSampleSizes.push_back(packet->pcmSamples.size());
             realtimePacketChannelCounts.push_back(packet->channelCount);
+            realtimePacketVoiceCounts.push_back(packet->voices.size());
+            realtimePacketStemSizes.push_back(packet->voiceStems.size());
+            realtimeEventCount += packet->events.size();
+            for (std::size_t sample = 0u; sample < packet->pcmSamples.size(); ++sample) {
+                int sum = 0;
+                for (std::size_t voice = 0u; voice < 4u; ++voice) {
+                    sum += packet->voiceStems[voice * packet->pcmSamples.size() + sample];
+                }
+                stemsReconstructMix = stemsReconstructMix &&
+                    packet->pcmSamples[sample] == std::clamp(sum, -32768, 32767);
+            }
         }
     }
 };
@@ -194,6 +209,15 @@ int main()
                        [](std::size_t sampleCount) {
                            return sampleCount != 0u && (sampleCount % 256u) == 0u;
                        }));
+    assert(std::all_of(recorder->realtimePacketVoiceCounts.begin(),
+                       recorder->realtimePacketVoiceCounts.end(),
+                       [](std::size_t count) { return count == 4u; }));
+    assert(recorder->realtimePacketStemSizes.size() == recorder->realtimePacketSampleSizes.size());
+    for (std::size_t i = 0u; i < recorder->realtimePacketStemSizes.size(); ++i) {
+        assert(recorder->realtimePacketStemSizes[i] == recorder->realtimePacketSampleSizes[i] * 4u);
+    }
+    assert(recorder->realtimeEventCount > 0u);
+    assert(recorder->stemsReconstructMix);
 
     const auto lowToneSamples = collectPulseToneSamples(0x0300u);
     const auto highToneSamples = collectPulseToneSamples(0x0700u);

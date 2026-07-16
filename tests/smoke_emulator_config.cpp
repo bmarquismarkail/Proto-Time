@@ -477,6 +477,9 @@ int main()
                              "--audio-file", "runtime-audio.pcm",
                              "--audio-ready-queue-chunks", "12",
                              "--audio-batch-chunks", "5",
+                             "--audio-processor-plugin", "processor-a.so",
+                             "--audio-processor-plugin", "processor-b.so",
+                             "--audio-processor-config", "test.processor=processor.json",
                              "--background-workers", "4",
                              "--background-queue-capacity", "99",
                              "--debug-snapshots",
@@ -496,6 +499,11 @@ int main()
     CHECK_TRUE(resolved.audioOutputFilePath == "runtime-audio.pcm");
     CHECK_TRUE(resolved.audioReadyQueueChunks == 12u);
     CHECK_TRUE(resolved.audioBatchChunks == 5u);
+    CHECK_TRUE(resolved.audioProcessorPluginPaths.size() == 2u);
+    CHECK_TRUE(resolved.audioProcessorPluginPaths[0] == "processor-a.so");
+    CHECK_TRUE(resolved.audioProcessorConfigs.size() == 1u);
+    CHECK_TRUE(resolved.audioProcessorConfigs[0].pluginId == "test.processor");
+    CHECK_TRUE(resolved.audioProcessorConfigs[0].jsonPath == "processor.json");
     CHECK_TRUE(resolved.backgroundWorkers == 4u);
     CHECK_TRUE(resolved.backgroundQueueCapacity == 99u);
     CHECK_TRUE(resolved.debugSnapshotsEnabled);
