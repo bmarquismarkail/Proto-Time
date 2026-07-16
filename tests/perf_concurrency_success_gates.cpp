@@ -17,11 +17,14 @@
 #include "machine/AudioService.hpp"
 #include "machine/InputService.hpp"
 #include "machine/plugins/video/VideoEngine.hpp"
+#include "PerfTimingSupport.hpp"
 
 namespace {
 
-using Clock = std::chrono::steady_clock;
-using Nanoseconds = std::chrono::nanoseconds;
+using BMMQ::Tests::Perf::Clock;
+using BMMQ::Tests::Perf::Nanoseconds;
+using BMMQ::Tests::Perf::kEnforceWallClockThresholds;
+using BMMQ::Tests::Perf::percentile;
 
 constexpr std::int64_t kAudioCallbackP99LimitNs = 50'000;
 constexpr std::int64_t kVideoFrameAgeP99LimitNs = 16'000'000;
@@ -29,28 +32,11 @@ constexpr std::int64_t kInputHandoffP99LimitNs = 16'000'000;
 constexpr std::int64_t kVideoSnapshotP95LimitNs = 10'000;
 constexpr std::int64_t kAudioSnapshotP95LimitNs = 5'000;
 
-#if defined(BMMQ_TSAN_ENABLED) || defined(__SANITIZE_THREAD__)
-constexpr bool kEnforceWallClockThresholds = false;
-#else
-constexpr bool kEnforceWallClockThresholds = true;
-#endif
-
 struct Metric {
     std::string_view name;
     std::int64_t observedNs = 0;
     std::int64_t limitNs = 0;
 };
-
-[[nodiscard]] std::int64_t percentile(std::vector<std::int64_t> samples, double quantile)
-{
-    if (samples.empty()) {
-        return 0;
-    }
-    std::sort(samples.begin(), samples.end());
-    const auto rank = static_cast<std::size_t>(
-        std::max<double>(1.0, std::ceil(quantile * static_cast<double>(samples.size()))));
-    return samples[std::min(rank - 1u, samples.size() - 1u)];
-}
 
 template <typename Operation>
 [[nodiscard]] std::vector<std::int64_t> sampleDurations(std::size_t sampleCount, Operation operation)

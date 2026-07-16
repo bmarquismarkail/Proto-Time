@@ -21,11 +21,14 @@
 #include "machine/VideoService.hpp"
 #include "machine/plugins/IoPlugin.hpp"
 #include "machine/plugins/video/VideoPlugin.hpp"
+#include "PerfTimingSupport.hpp"
 
 namespace {
 
-using Clock = std::chrono::steady_clock;
-using Nanoseconds = std::chrono::nanoseconds;
+using BMMQ::Tests::Perf::Clock;
+using BMMQ::Tests::Perf::Nanoseconds;
+using BMMQ::Tests::Perf::kEnforceWallClockThresholds;
+using BMMQ::Tests::Perf::percentile;
 
 constexpr std::size_t kTargetFrames = 30u;
 constexpr std::size_t kTargetInputTransitions = 6u;
@@ -37,26 +40,9 @@ constexpr std::int64_t kInputInjectionDelayNs = 5'000'000;
 constexpr std::uint32_t kLightestPixel = 0xFFE0F8D0u;
 constexpr std::uint32_t kDarkestPixel = 0xFF081820u;
 
-#if defined(BMMQ_TSAN_ENABLED) || defined(__SANITIZE_THREAD__)
-constexpr bool kEnforceWallClockThresholds = false;
-#else
-constexpr bool kEnforceWallClockThresholds = true;
-#endif
-
 [[nodiscard]] std::int64_t clockNs(Clock::time_point value) noexcept
 {
     return std::chrono::duration_cast<Nanoseconds>(value.time_since_epoch()).count();
-}
-
-[[nodiscard]] std::int64_t percentile(std::vector<std::int64_t> values, double quantile)
-{
-    if (values.empty()) {
-        return 0;
-    }
-    std::sort(values.begin(), values.end());
-    const auto rank = static_cast<std::size_t>(
-        std::max(1.0, std::ceil(quantile * static_cast<double>(values.size()))));
-    return values[std::min(rank - 1u, values.size() - 1u)];
 }
 
 struct PresentedFrame {
