@@ -88,6 +88,8 @@ int main()
         CHECK_TRUE(defaults.diagnosticsIntervalMs == 1000u);
         CHECK_TRUE(defaults.audioEnabled);
         CHECK_TRUE(defaults.audioBackend == "sdl");
+        CHECK_TRUE(!defaults.audioPluginPath.has_value());
+        CHECK_TRUE(!defaults.audioOutputFilePath.has_value());
         CHECK_TRUE(defaults.audioReadyQueueChunks == 3u);
         CHECK_TRUE(defaults.audioBatchChunks == 1u);
         CHECK_TRUE(defaults.backgroundWorkers == 0u);
@@ -124,6 +126,8 @@ int main()
         "[audio]\n"
         "enabled = false\n"
         "backend = file\n"
+        "plugin = plugins/audio.so\n"
+        "output_file = captures/audio.pcm\n"
         "ready_queue_chunks = 8\n"
         "batch_chunks = 4\n"
         "\n"
@@ -160,6 +164,8 @@ int main()
     CHECK_TRUE(fileConfig.diagnosticsIntervalMs == 1000u);
     CHECK_TRUE(!fileConfig.audioEnabled);
     CHECK_TRUE(fileConfig.audioBackend == "file");
+    CHECK_TRUE(fileConfig.audioPluginPath == tempDir / "plugins/audio.so");
+    CHECK_TRUE(fileConfig.audioOutputFilePath == tempDir / "captures/audio.pcm");
     CHECK_TRUE(fileConfig.audioReadyQueueChunks == 8u);
     CHECK_TRUE(fileConfig.audioBatchChunks == 4u);
     CHECK_TRUE(fileConfig.backgroundWorkers == 3u);
@@ -191,6 +197,8 @@ int main()
     overrides.diagnosticsIntervalMs = 250u;
     overrides.audioEnabled = true;
     overrides.audioBackend = "dummy";
+    overrides.audioPluginPath = std::filesystem::path("cli-audio.so");
+    overrides.audioOutputFilePath = std::filesystem::path("cli-audio.pcm");
     overrides.audioReadyQueueChunks = 6u;
     overrides.audioBatchChunks = 3u;
     overrides.backgroundWorkers = 2u;
@@ -224,6 +232,8 @@ int main()
     CHECK_TRUE(fileConfig.diagnosticsIntervalMs == 250u);
     CHECK_TRUE(fileConfig.audioEnabled);
     CHECK_TRUE(fileConfig.audioBackend == "dummy");
+    CHECK_TRUE(fileConfig.audioPluginPath == "cli-audio.so");
+    CHECK_TRUE(fileConfig.audioOutputFilePath == "cli-audio.pcm");
     CHECK_TRUE(fileConfig.audioReadyQueueChunks == 6u);
     CHECK_TRUE(fileConfig.audioBatchChunks == 3u);
     CHECK_TRUE(fileConfig.backgroundWorkers == 2u);
@@ -463,6 +473,8 @@ int main()
                              "--diagnostics-report", "runtime-diag.jsonl",
                              "--diagnostics-interval-ms", "125",
                              "--audio-backend", "dummy",
+                             "--audio-plugin", "runtime-audio.so",
+                             "--audio-file", "runtime-audio.pcm",
                              "--audio-ready-queue-chunks", "12",
                              "--audio-batch-chunks", "5",
                              "--background-workers", "4",
@@ -480,6 +492,8 @@ int main()
     CHECK_TRUE(resolved.diagnosticsReportPath == "runtime-diag.jsonl");
     CHECK_TRUE(resolved.diagnosticsIntervalMs == 125u);
     CHECK_TRUE(resolved.audioBackend == "dummy");
+    CHECK_TRUE(resolved.audioPluginPath == "runtime-audio.so");
+    CHECK_TRUE(resolved.audioOutputFilePath == "runtime-audio.pcm");
     CHECK_TRUE(resolved.audioReadyQueueChunks == 12u);
     CHECK_TRUE(resolved.audioBatchChunks == 5u);
     CHECK_TRUE(resolved.backgroundWorkers == 4u);

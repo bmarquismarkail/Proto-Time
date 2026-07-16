@@ -1091,8 +1091,8 @@ private:
     std::vector<ReadyBlock> readyBlocks_{};
     std::vector<int16_t> producerScratch_{};
     std::vector<int16_t> transportPipelineScratch_{};
-    alignas(64) std::atomic<std::size_t> readyReadIndex_{0};   // written by SDL callback, read by worker
-    alignas(64) std::atomic<std::size_t> readyWriteIndex_{0};   // written by worker, read by SDL callback
+    alignas(64) std::atomic<std::size_t> readyReadIndex_{0};   // written by device callback, read by worker
+    alignas(64) std::atomic<std::size_t> readyWriteIndex_{0};  // written by worker, read by device callback
     std::atomic<bool> outputTransportRunning_{false};
     std::atomic<bool> outputTransportStopRequested_{false};
     std::thread outputTransportWorker_{};

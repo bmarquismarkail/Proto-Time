@@ -13,7 +13,6 @@ int main(int argc, char** argv)
 
     BMMQ::FrontendConfig config;
     config.enableVideo = false;
-    config.enableAudio = false;
     config.enableInput = true;
     config.autoInitializeBackend = true;
     auto frontend = module.createFrontend("test.frontend.pure-c", config);

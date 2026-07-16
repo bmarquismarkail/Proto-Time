@@ -3,12 +3,12 @@
 #include <cstdint>
 #include <vector>
 
-#include "machine/plugins/SdlAudioResampler.hpp"
+#include "machine/plugins/AudioResampler.hpp"
 
 int main()
 {
     {
-        BMMQ::SdlAudioResampler resampler(48000, 48000);
+        BMMQ::AudioResampler resampler(48000, 48000);
         const std::vector<int16_t> input{100, 200, 300, 400};
         std::vector<int16_t> output(4, 0);
         const auto stats = resampler.render(input, output);
@@ -22,7 +22,7 @@ int main()
     }
 
     {
-        BMMQ::SdlAudioResampler resampler(48000, 24000);
+        BMMQ::AudioResampler resampler(48000, 24000);
         const std::vector<int16_t> input{0, 1000, 2000, 3000, 4000, 5000};
         std::vector<int16_t> output(3, 0);
         const auto stats = resampler.render(input, output);
@@ -35,7 +35,7 @@ int main()
     }
 
     {
-        BMMQ::SdlAudioResampler resampler(48000, 24000, 2u);
+        BMMQ::AudioResampler resampler(48000, 24000, 2u);
         const std::vector<int16_t> input{
             10, -10,
             20, -20,
@@ -54,7 +54,7 @@ int main()
     }
 
     {
-        BMMQ::SdlAudioResampler resampler(48000, 96000);
+        BMMQ::AudioResampler resampler(48000, 96000);
         const std::vector<int16_t> input{0, 1000, 2000, 3000};
         std::vector<int16_t> output(6, 0);
         const auto stats = resampler.render(input, output);
@@ -70,7 +70,7 @@ int main()
     }
 
     {
-        BMMQ::SdlAudioResampler resampler(48000, 96000);
+        BMMQ::AudioResampler resampler(48000, 96000);
         const std::vector<int16_t> input{1200};
         std::vector<int16_t> output(4, -1);
         const auto stats = resampler.render(input, output);
@@ -82,7 +82,7 @@ int main()
     }
 
     {
-        BMMQ::SdlAudioResampler resampler(48000, 96000);
+        BMMQ::AudioResampler resampler(48000, 96000);
         const std::vector<int16_t> input{0, 1000, 2000, 3000};
         std::vector<int16_t> output(3, 0);
         (void)resampler.render(input, output);
@@ -97,7 +97,7 @@ int main()
     }
 
     {
-        BMMQ::SdlAudioResampler resampler(48000, 96000);
+        BMMQ::AudioResampler resampler(48000, 96000);
         const std::vector<int16_t> sparseInput{1200};
         std::vector<int16_t> sparseOutput(4, 0);
         const auto sparseStats = resampler.render(sparseInput, sparseOutput);
@@ -115,7 +115,7 @@ int main()
     }
 
     {
-        BMMQ::SdlAudioResampler resampler(48000, 48000);
+        BMMQ::AudioResampler resampler(48000, 48000);
         assert(resampler.sourceSamplesRequired(256u) == 256u);
         resampler.setStepScale(0.995);
         const auto correctedRequirement = resampler.sourceSamplesRequired(256u);

@@ -4,7 +4,7 @@
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
-#include "machine/plugins/SdlFrontendPluginLoader.hpp"
+#include "machine/plugins/FrontendPluginLoader.hpp"
 
 int main(int argc, char** argv)
 {
@@ -13,12 +13,11 @@ int main(int argc, char** argv)
     ::setenv("SDL_VIDEODRIVER", "dummy", 1);
 #endif
 
-    BMMQ::SdlFrontendConfig config;
+    BMMQ::FrontendConfig config;
     config.windowTitle = "Proto-Time SDL ABI Smoke";
     config.frameWidth = 32;
     config.frameHeight = 24;
     config.windowScale = 2u;
-    config.audioBackend = "dummy";
     config.autoInitializeBackend = false;
     config.createHiddenWindowOnInitialize = true;
     config.showWindowOnPresent = false;
@@ -27,8 +26,8 @@ int main(int argc, char** argv)
     const auto executable = argc > 0
         ? std::filesystem::path(argv[0])
         : std::filesystem::path("time-smoke-sdl-frontend-plugin");
-    const auto modulePath = BMMQ::defaultSdlFrontendPluginPath(executable);
-    auto plugin = BMMQ::loadSdlFrontendPlugin(modulePath, config);
+    const auto modulePath = BMMQ::defaultFrontendPluginPath(executable, BMMQ::kDefaultSdlFrontendPluginFilename);
+    auto plugin = BMMQ::loadFrontendPlugin(modulePath, config);
     auto* frontend = plugin.get();
     assert(frontend->id() == "bmmq.frontend.sdl");
     assert(frontend->displayName() == "SDL Frontend Plugin");
@@ -56,26 +55,26 @@ int main(int argc, char** argv)
     assert(frontend->queuedDigitalInputMask() == 0x10u);
 
     assert(frontend->handleHostEvent({
-        BMMQ::SdlFrontendHostEventType::KeyDown,
-        BMMQ::SdlFrontendHostKey::X,
+        BMMQ::FrontendHostEventType::KeyDown,
+        BMMQ::FrontendHostKey::X,
         false}));
     assert(frontend->isButtonPressed(BMMQ::InputButton::Button2));
     assert(frontend->handleHostEvent({
-        BMMQ::SdlFrontendHostEventType::KeyUp,
-        BMMQ::SdlFrontendHostKey::X,
+        BMMQ::FrontendHostEventType::KeyUp,
+        BMMQ::FrontendHostKey::X,
         false}));
     assert(!frontend->isButtonPressed(BMMQ::InputButton::Button2));
 
     assert(!frontend->takeSaveStateRequest());
     assert(frontend->handleHostEvent({
-        BMMQ::SdlFrontendHostEventType::KeyDown,
-        BMMQ::SdlFrontendHostKey::SaveState,
+        BMMQ::FrontendHostEventType::KeyDown,
+        BMMQ::FrontendHostKey::SaveState,
         false}));
     assert(frontend->takeSaveStateRequest());
     assert(!frontend->takeSaveStateRequest());
     assert(!frontend->handleHostEvent({
-        BMMQ::SdlFrontendHostEventType::KeyDown,
-        BMMQ::SdlFrontendHostKey::SaveState,
+        BMMQ::FrontendHostEventType::KeyDown,
+        BMMQ::FrontendHostKey::SaveState,
         true}));
     assert(!frontend->takeSaveStateRequest());
 
@@ -96,8 +95,8 @@ int main(int argc, char** argv)
     }
 
     assert(frontend->handleHostEvent({
-        BMMQ::SdlFrontendHostEventType::Quit,
-        BMMQ::SdlFrontendHostKey::Unknown,
+        BMMQ::FrontendHostEventType::Quit,
+        BMMQ::FrontendHostKey::Unknown,
         false}));
     assert(frontend->quitRequested());
     frontend->clearQuitRequest();
@@ -108,7 +107,7 @@ int main(int argc, char** argv)
 
     bool missingRejected = false;
     try {
-        (void)BMMQ::loadSdlFrontendPlugin(
+        (void)BMMQ::loadFrontendPlugin(
             executable.parent_path() / "missing-time-frontend-plugin.so", config);
     } catch (const std::runtime_error&) {
         missingRejected = true;

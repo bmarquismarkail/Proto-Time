@@ -7,6 +7,7 @@
 #include <dlfcn.h>
 #include <limits>
 #include <mutex>
+#include <span>
 #include <stdexcept>
 #include <unordered_set>
 #include <utility>
@@ -18,9 +19,6 @@
 #include "machine/TimingService.hpp"
 #include "machine/VideoService.hpp"
 #include "machine/plugins/AudioOutput.hpp"
-#include "machine/plugins/audio_output/DummyAudioOutput.hpp"
-#include "machine/plugins/audio_output/FileAudioOutput.hpp"
-#include "machine/plugins/sdl_frontend/SdlAudioOutput.hpp"
 #include "machine/plugins/abi/TimePluginAbi.h"
 
 namespace BMMQ::Plugin {
@@ -91,6 +89,12 @@ struct DynamicPluginModule::State {
         const TimeFrontendApiV1* api = nullptr;
     };
 
+    struct AudioOutputEntry {
+        std::string id;
+        std::string displayName;
+        const TimeAudioOutputApiV1* api = nullptr;
+    };
+
     ~State() {
         if (handle != nullptr) dlclose(handle);
     }
@@ -100,6 +104,7 @@ struct DynamicPluginModule::State {
     std::string moduleDisplayName;
     std::vector<ExecutorEntry> executors;
     std::vector<FrontendEntry> frontends;
+    std::vector<AudioOutputEntry> audioOutputs;
 };
 
 namespace {
@@ -163,7 +168,7 @@ class CFrontendAdapter final : public IFrontendPlugin {
 public:
     CFrontendAdapter(std::shared_ptr<DynamicPluginModule::State> state,
                      const DynamicPluginModule::State::FrontendEntry& entry,
-                     const SdlFrontendConfig& config)
+                     const FrontendConfig& config)
         : state_(std::move(state)), api_(entry.api), id_(entry.id),
           displayName_(entry.displayName), config_(config)
     {
@@ -211,7 +216,6 @@ public:
     void onAttach(MutableMachineView& view) override
     {
         ++stats_.attachCount;
-        audioService_ = &view.audioService();
         videoService_ = &view.videoService();
         timingService_ = &view.timingService();
         inputService_ = &view.inputService();
@@ -249,13 +253,11 @@ public:
         } else if (config_.autoInitializeBackend) {
             (void)tryInitializeBackend();
         }
-        openAudioOutput();
     }
 
     void onDetach(MutableMachineView&) override
     {
         ++stats_.detachCount;
-        flushAudioBatch();
         detachServices();
     }
 
@@ -290,57 +292,6 @@ public:
         videoBuildSamples_.fetch_add(1u, std::memory_order_relaxed);
     }
 
-    void onAudioEvent(const MachineEvent& event, const MachineView& view) override
-    {
-        if (!config_.enableAudio || audioService_ == nullptr ||
-            event.type != MachineEventType::AudioFrameReady) return;
-        audioEvents_.fetch_add(1u, std::memory_order_relaxed);
-        if (auto packet = view.realtimeAudioPacket(); packet.has_value() &&
-            packet->contractVersion == RealtimeAudioPacket::kContractVersion) {
-            audioPacketsAccepted_.fetch_add(1u, std::memory_order_relaxed);
-            if (config_.audioBatchChunks <= 1u) {
-                audioService_->appendRecentPcm(packet->pcmSamples, packet->frameCounter);
-                audioBatchFlushCount_.fetch_add(1u, std::memory_order_relaxed);
-                audioBatchFlushLast_.store(packet->pcmSamples.size(), std::memory_order_relaxed);
-                atomicMinNonZero(audioBatchFlushMin_, packet->pcmSamples.size());
-                atomicMax(audioBatchFlushMax_, packet->pcmSamples.size());
-                audioBatchPacketsAccumulated_.fetch_add(1u, std::memory_order_relaxed);
-                audioBatchPacketsFlushed_.fetch_add(1u, std::memory_order_relaxed);
-            } else {
-                if (!audioBatchSamples_.empty() &&
-                    (audioBatchSampleRate_ != packet->sampleRate ||
-                     audioBatchChannels_ != packet->channelCount)) flushAudioBatch();
-                audioBatchSampleRate_ = packet->sampleRate;
-                audioBatchChannels_ = packet->channelCount;
-                audioBatchFrameCounter_ = packet->frameCounter;
-                audioBatchSamples_.insert(audioBatchSamples_.end(),
-                    packet->pcmSamples.begin(), packet->pcmSamples.end());
-                ++audioBatchPackets_;
-                audioBatchPacketsAccumulated_.fetch_add(1u, std::memory_order_relaxed);
-                audioBatchCurrentSamples_.store(audioBatchSamples_.size(), std::memory_order_relaxed);
-                if (audioBatchPackets_ >= config_.audioBatchChunks) flushAudioBatch();
-            }
-            if (config_.retainDebugSnapshots || debugSnapshotService_ != nullptr) {
-                SdlAudioPreviewBuffer preview;
-                preview.sampleRate = static_cast<int>(packet->sampleRate);
-                preview.channels = packet->channelCount;
-                const auto count = std::min<std::size_t>(packet->pcmSamples.size(),
-                    static_cast<std::size_t>(std::max(config_.audioPreviewSampleCount, 0)));
-                preview.samples.assign(packet->pcmSamples.end() - static_cast<std::ptrdiff_t>(count),
-                                       packet->pcmSamples.end());
-                lastAudioPreview_ = std::move(preview);
-            }
-            return;
-        }
-        audioPacketsSkipped_.fetch_add(1u, std::memory_order_relaxed);
-        if (auto state = view.audioState(); state.has_value()) {
-            if (config_.retainDebugSnapshots || debugSnapshotService_ != nullptr) {
-                lastAudioState_ = *state;
-            }
-            audioService_->appendRecentPcm(state->pcmSamples, state->frameCounter);
-        }
-    }
-
     std::optional<uint32_t> sampleDigitalInput(const MachineView&) override
     {
         if (!config_.enableInput) return std::nullopt;
@@ -370,9 +321,9 @@ public:
         }
     }
 
-    const SdlFrontendConfig& config() const noexcept override { return config_; }
+    const FrontendConfig& config() const noexcept override { return config_; }
 
-    SdlFrontendStats stats() const noexcept override
+    FrontendStats stats() const noexcept override
     {
         auto result = stats_;
         result.videoEvents = videoEvents_.load(std::memory_order_relaxed);
@@ -385,17 +336,6 @@ public:
         result.videoFrameBuildDurationHighWaterNanos =
             videoBuildHighWaterNs_.load(std::memory_order_relaxed);
         result.videoFrameBuildDurationSampleCount = videoBuildSamples_.load(std::memory_order_relaxed);
-        result.audioEvents = audioEvents_.load(std::memory_order_relaxed);
-        result.audioRealtimePacketsAccepted = audioPacketsAccepted_.load(std::memory_order_relaxed);
-        result.audioRealtimePacketsSkipped = audioPacketsSkipped_.load(std::memory_order_relaxed);
-        result.audioBatchFlushCount = audioBatchFlushCount_.load(std::memory_order_relaxed);
-        result.audioBatchFlushSamplesLast = audioBatchFlushLast_.load(std::memory_order_relaxed);
-        result.audioBatchFlushSamplesMin = audioBatchFlushMin_.load(std::memory_order_relaxed);
-        result.audioBatchFlushSamplesMax = audioBatchFlushMax_.load(std::memory_order_relaxed);
-        result.audioBatchPacketsAccumulated =
-            audioBatchPacketsAccumulated_.load(std::memory_order_relaxed);
-        result.audioBatchPacketsFlushed = audioBatchPacketsFlushed_.load(std::memory_order_relaxed);
-        result.audioBatchCurrentSamples = audioBatchCurrentSamples_.load(std::memory_order_relaxed);
         result.inputEvents = inputEvents_.load(std::memory_order_relaxed);
         result.inputSamplesProvided = inputSamplesProvided_.load(std::memory_order_relaxed);
         result.inputPolls = inputPolls_.load(std::memory_order_relaxed);
@@ -427,14 +367,10 @@ public:
     const std::optional<VideoDebugFrameModel>& lastVideoDebugModel() const noexcept override {
         return lastVideoDebugModel_;
     }
-    const std::optional<AudioStateView>& lastAudioState() const noexcept override { return lastAudioState_; }
-    const std::optional<SdlAudioPreviewBuffer>& lastAudioPreview() const noexcept override {
-        return lastAudioPreview_;
-    }
     const std::optional<DigitalInputStateView>& lastInputState() const noexcept override {
         return lastInputState_;
     }
-    const std::optional<SdlFrameBuffer>& lastFrame() const noexcept override { return lastFrame_; }
+    const std::optional<FrontendFrameBuffer>& lastFrame() const noexcept override { return lastFrame_; }
     std::string_view lastRenderSummary() const noexcept override { return lastRenderSummary_; }
     bool windowVisible() const noexcept override { return backendStats().window_visible != 0; }
     bool windowVisibilityRequested() const noexcept override { return visibilityRequested_; }
@@ -450,7 +386,6 @@ public:
     {
         if (instance_ == nullptr) return false;
         if (!backendReady() && !tryInitializeBackend()) return true;
-        if (audioOutput_ != nullptr) audioOutput_->service();
         bool serviced = false;
         try { serviced = api_->service(instance_) != 0; } catch (...) { serviced = false; }
         if (videoService_ != nullptr && videoService_->hasPendingRealtimeFrame()) {
@@ -493,22 +428,22 @@ public:
         refreshBackendStrings();
         return backendReady() ? backendName_ + " ready" : backendName_ + ": " + lastBackendError_;
     }
-    bool handleHostEvent(const SdlFrontendHostEvent& event) override
+    bool handleHostEvent(const FrontendHostEvent& event) override
     {
         lastHostEventSummary_ = "frontend host event";
-        if (event.type == SdlFrontendHostEventType::Quit) {
+        if (event.type == FrontendHostEventType::Quit) {
             requestQuit(&*this);
             return true;
         }
         const auto button = buttonForHostKey(event.key);
-        if (button.has_value() && (event.type == SdlFrontendHostEventType::KeyDown ||
-                                  event.type == SdlFrontendHostEventType::KeyUp)) {
-            setButton(*button, event.type == SdlFrontendHostEventType::KeyDown);
+        if (button.has_value() && (event.type == FrontendHostEventType::KeyDown ||
+                                  event.type == FrontendHostEventType::KeyUp)) {
+            setButton(*button, event.type == FrontendHostEventType::KeyDown);
             return true;
         }
-        if (event.type == SdlFrontendHostEventType::KeyDown && !event.repeat) {
+        if (event.type == FrontendHostEventType::KeyDown && !event.repeat) {
             handleControlKey(event.key);
-            return event.key != SdlFrontendHostKey::Unknown;
+            return event.key != FrontendHostKey::Unknown;
         }
         return false;
     }
@@ -518,21 +453,6 @@ public:
         return backendName_;
     }
     bool backendReady() const noexcept override { return backendStats().backend_ready != 0; }
-    bool audioOutputReady() const noexcept override { return audioOutput_ != nullptr && audioOutput_->ready(); }
-    std::size_t bufferedAudioSamples() const noexcept override
-    {
-        return audioService_ != nullptr ? audioService_->engine().bufferedSamples() : 0u;
-    }
-    bool audioQueueBackpressureActive() const noexcept override
-    {
-        if (audioService_ == nullptr || !audioOutputReady()) return false;
-        const auto capacity = audioService_->engine().bufferCapacitySamples();
-        return capacity != 0u && audioService_->engine().bufferedSamples() >= (capacity * 9u) / 10u;
-    }
-    uint32_t queuedAudioBytes() const noexcept override
-    {
-        return audioService_ != nullptr ? audioService_->engine().queuedBytes() : 0u;
-    }
     bool tryInitializeBackend() override
     {
         if (instance_ == nullptr) return false;
@@ -564,14 +484,6 @@ private:
                !target.compare_exchange_weak(current, value, std::memory_order_relaxed)) {}
     }
 
-    template<typename T>
-    static void atomicMinNonZero(std::atomic<T>& target, T value) noexcept
-    {
-        auto current = target.load(std::memory_order_relaxed);
-        while ((current == 0 || value < current) &&
-               !target.compare_exchange_weak(current, value, std::memory_order_relaxed)) {}
-    }
-
     class Presenter final : public IVideoPresenterPlugin {
     public:
         explicit Presenter(CFrontendAdapter& owner) : owner_(owner) {}
@@ -594,7 +506,7 @@ private:
             bool ok = false;
             try { ok = owner_.api_->present(owner_.instance_, &cFrame) != 0; } catch (...) { ok = false; }
             if (ok && owner_.config_.retainLastPresentedFrame) {
-                SdlFrameBuffer snapshot;
+                FrontendFrameBuffer snapshot;
                 snapshot.width = frame.width;
                 snapshot.height = frame.height;
                 snapshot.generation = frame.generation;
@@ -674,27 +586,27 @@ private:
         }
     }
 
-    void handleControlKey(SdlFrontendHostKey key)
+    void handleControlKey(FrontendHostKey key)
     {
-        if (key == SdlFrontendHostKey::Pause) handleControl(TIME_FRONTEND_CONTROL_TOGGLE_PAUSE_V1);
-        else if (key == SdlFrontendHostKey::ThrottleToggle) handleControl(TIME_FRONTEND_CONTROL_TOGGLE_THROTTLE_V1);
-        else if (key == SdlFrontendHostKey::SingleStep) handleControl(TIME_FRONTEND_CONTROL_SINGLE_STEP_V1);
-        else if (key == SdlFrontendHostKey::SpeedUp) handleControl(TIME_FRONTEND_CONTROL_SPEED_UP_V1);
-        else if (key == SdlFrontendHostKey::SpeedDown) handleControl(TIME_FRONTEND_CONTROL_SPEED_DOWN_V1);
-        else if (key == SdlFrontendHostKey::SaveState) handleControl(TIME_FRONTEND_CONTROL_SAVE_STATE_V1);
+        if (key == FrontendHostKey::Pause) handleControl(TIME_FRONTEND_CONTROL_TOGGLE_PAUSE_V1);
+        else if (key == FrontendHostKey::ThrottleToggle) handleControl(TIME_FRONTEND_CONTROL_TOGGLE_THROTTLE_V1);
+        else if (key == FrontendHostKey::SingleStep) handleControl(TIME_FRONTEND_CONTROL_SINGLE_STEP_V1);
+        else if (key == FrontendHostKey::SpeedUp) handleControl(TIME_FRONTEND_CONTROL_SPEED_UP_V1);
+        else if (key == FrontendHostKey::SpeedDown) handleControl(TIME_FRONTEND_CONTROL_SPEED_DOWN_V1);
+        else if (key == FrontendHostKey::SaveState) handleControl(TIME_FRONTEND_CONTROL_SAVE_STATE_V1);
     }
 
-    static std::optional<InputButton> buttonForHostKey(SdlFrontendHostKey key)
+    static std::optional<InputButton> buttonForHostKey(FrontendHostKey key)
     {
         switch (key) {
-        case SdlFrontendHostKey::Right: return InputButton::Right;
-        case SdlFrontendHostKey::Left: return InputButton::Left;
-        case SdlFrontendHostKey::Up: return InputButton::Up;
-        case SdlFrontendHostKey::Down: return InputButton::Down;
-        case SdlFrontendHostKey::Z: return InputButton::Button1;
-        case SdlFrontendHostKey::X: return InputButton::Button2;
-        case SdlFrontendHostKey::Backspace: return InputButton::Meta1;
-        case SdlFrontendHostKey::Return: return InputButton::Meta2;
+        case FrontendHostKey::Right: return InputButton::Right;
+        case FrontendHostKey::Left: return InputButton::Left;
+        case FrontendHostKey::Up: return InputButton::Up;
+        case FrontendHostKey::Down: return InputButton::Down;
+        case FrontendHostKey::Z: return InputButton::Button1;
+        case FrontendHostKey::X: return InputButton::Button2;
+        case FrontendHostKey::Backspace: return InputButton::Meta1;
+        case FrontendHostKey::Return: return InputButton::Meta2;
         default: return std::nullopt;
         }
     }
@@ -708,58 +620,8 @@ private:
         ++stats_.buttonTransitions;
     }
 
-    std::unique_ptr<IAudioOutputBackend> makeAudioOutput() const
-    {
-        if (config_.audioBackend == "sdl") return std::make_unique<SdlAudioOutputBackend>();
-        if (config_.audioBackend == "file") return std::make_unique<FileAudioOutputBackend>();
-        if (config_.audioBackend == "dummy") return std::make_unique<DummyAudioOutputBackend>();
-        return {};
-    }
-    void openAudioOutput()
-    {
-        if (!config_.enableAudio || audioService_ == nullptr) return;
-        audioOutput_ = makeAudioOutput();
-        if (!audioOutput_) {
-            diagnostics_.push_back("frontend: unknown audio backend: " + config_.audioBackend);
-            return;
-        }
-        const auto channels = std::max<int>(audioService_->engine().config().channelCount, 1);
-        if (!audioOutput_->open(audioService_->engine(), {
-                .backend = config_.audioBackend,
-                .requestedSampleRate = audioService_->engine().config().sourceSampleRate,
-                .callbackChunkSamples = static_cast<std::size_t>(
-                    std::max(config_.audioCallbackChunkSamples, 1)) * static_cast<std::size_t>(channels),
-                .readyQueueChunks = std::clamp<std::size_t>(config_.audioReadyQueueChunks, 1u, 64u),
-                .channels = channels,
-                .testForcedDeviceSampleRate = config_.enableAudioResamplingDiagnostics
-                    ? config_.testForcedAudioDeviceSampleRate : 0,
-                .filePath = config_.audioOutputFilePath,
-                .appendToFile = config_.audioFileAppend,
-                .audioService = audioService_,
-            })) {
-            diagnostics_.push_back("frontend: audio open failed: " + audioOutput_->lastError());
-        }
-    }
-    void flushAudioBatch()
-    {
-        if (audioBatchSamples_.empty() || audioService_ == nullptr) return;
-        audioService_->appendRecentPcm(audioBatchSamples_, audioBatchFrameCounter_);
-        audioBatchFlushCount_.fetch_add(1u, std::memory_order_relaxed);
-        audioBatchFlushLast_.store(audioBatchSamples_.size(), std::memory_order_relaxed);
-        atomicMinNonZero(audioBatchFlushMin_, audioBatchSamples_.size());
-        atomicMax(audioBatchFlushMax_, audioBatchSamples_.size());
-        audioBatchPacketsFlushed_.fetch_add(audioBatchPackets_, std::memory_order_relaxed);
-        audioBatchSamples_.clear();
-        audioBatchPackets_ = 0u;
-        audioBatchCurrentSamples_.store(0u, std::memory_order_relaxed);
-    }
-
     void detachServices() noexcept
     {
-        if (audioOutput_ != nullptr) {
-            audioOutput_->close();
-            audioOutput_.reset();
-        }
         if (videoService_ != nullptr) {
             (void)videoService_->pause();
             (void)videoService_->detachPresenter();
@@ -767,7 +629,6 @@ private:
         if (instance_ != nullptr) {
             try { api_->shutdown(instance_); } catch (...) {}
         }
-        audioService_ = nullptr;
         videoService_ = nullptr;
         timingService_ = nullptr;
         if (inputService_ != nullptr) {
@@ -797,7 +658,7 @@ private:
             lastBackendError_ = "frontend callback threw across the C ABI";
         }
     }
-    void syncServiceStats(SdlFrontendStats& result) const noexcept
+    void syncServiceStats(FrontendStats& result) const noexcept
     {
         if (videoService_ != nullptr) {
             const auto video = videoService_->diagnostics();
@@ -819,86 +680,6 @@ private:
             result.videoPresenterRendererAccelerated =
                 video.presenterRendererAccelerated;
         }
-        if (audioService_ != nullptr) {
-            const auto engine = audioService_->engine().stats();
-            const auto transport = audioService_->transportStats();
-            result.audioSourceSampleRate = audioService_->engine().config().sourceSampleRate;
-            result.audioDeviceSampleRate = audioService_->engine().config().deviceSampleRate;
-            result.audioRingBufferCapacitySamples = audioService_->engine().bufferCapacitySamples();
-            const auto device = audioOutput_ != nullptr
-                ? audioOutput_->deviceInfo() : AudioOutputDeviceInfo{};
-            result.audioCallbackChunkSamples = device.callbackChunkSamples;
-            result.audioBufferedHighWaterSamples = engine.bufferedHighWaterSamples;
-            result.audioCallbackCount = engine.callbackCount;
-            result.audioSamplesDelivered = engine.samplesDelivered;
-            result.audioUnderrunCount = engine.underrunCount;
-            result.audioSilenceSamplesFilled = engine.silenceSamplesFilled;
-            result.audioOverrunDropCount = engine.overrunDropCount;
-            result.audioDroppedSamples = engine.droppedSamples;
-            result.audioResamplingActive = engine.resamplingActive;
-            result.audioResampleRatio = engine.resampleRatio;
-            result.audioSourceSamplesPushed = engine.sourceSamplesPushed;
-            result.audioAppendCallCount = engine.appendCallCount;
-            result.audioAppendSamplesRequested = engine.appendSamplesRequested;
-            result.audioAppendSamplesAccepted = engine.appendSamplesAccepted;
-            result.audioAppendSamplesRejected = engine.appendSamplesRejected;
-            result.audioAppendSamplesTruncated = engine.appendSamplesTruncated;
-            result.audioAppendBufferedSamplesLast = engine.appendBufferedSamplesLast;
-            result.audioResampleSourceSamplesConsumed = engine.sourceSamplesConsumed;
-            result.audioResampleOutputSamplesProduced = engine.outputSamplesProduced;
-            result.audioPipelineCapacitySkipCount = engine.pipelineCapacitySkipCount;
-            result.audioReadyQueueDepth = transport.readyQueueDepth;
-            result.audioTransportConfiguredReadyQueueChunks = transport.configuredReadyQueueChunks;
-            result.audioTransportPrefillTargetChunks = transport.prefillTargetChunks;
-            result.audioTransportReadyQueueCapacityChunks = transport.readyQueueCapacityChunks;
-            result.audioTransportReadyQueueUsableChunks = transport.readyQueueUsableChunks;
-            result.audioReadyQueueHighWaterChunks = transport.readyQueueHighWaterChunks;
-            result.audioReadyQueueLowWaterChunks = transport.readyQueueLowWaterChunks;
-            result.audioReadyQueueEmptyCount = transport.readyQueueEmptyCount;
-            result.audioTransportDrainCallbackCount = transport.drainCallbackCount;
-            result.audioTransportDrainRequestedSamples = transport.drainRequestedSamples;
-            result.audioTransportDrainReadySamples = transport.drainReadySamples;
-            result.audioTransportUnderrunCount = transport.underrunCount;
-            result.audioTransportSilenceSamplesFilled = transport.silenceSamplesFilled;
-            result.audioTransportWorkerWakeCount = transport.workerWakeCount;
-            result.audioTransportWorkerCallbackWakeCount = transport.workerCallbackWakeCount;
-            result.audioTransportWorkerEmulationWakeCount = transport.workerEmulationWakeCount;
-            result.audioTransportWorkerTimeoutWakeCount = transport.workerTimeoutWakeCount;
-            result.audioTransportAppendRecentPcmCallCount = transport.appendRecentPcmCallCount;
-            result.audioTransportAppendRecentPcmSamplesAppended = transport.appendRecentPcmSamplesAppended;
-            result.audioTransportPrimedForDrain = transport.primedForDrain;
-            result.audioTransportPrimedTransitionCount = transport.primedTransitionCount;
-            result.audioTransportPrimingSilenceCallbackCount = transport.primingSilenceCallbackCount;
-            result.audioTransportPrimingSilenceSamples = transport.primingSilenceSamples;
-            result.audioTransportDrainDurationSampleCount = transport.drainCallbackDurationSampleCount;
-            result.audioTransportDrainDurationLastNanos = transport.drainCallbackDurationLastNanos;
-            result.audioTransportDrainDurationHighWaterNanos = transport.drainCallbackDurationHighWaterNanos;
-            result.audioTransportDrainDurationP50Nanos = transport.drainCallbackDurationP50Nanos;
-            result.audioTransportDrainDurationP95Nanos = transport.drainCallbackDurationP95Nanos;
-            result.audioTransportDrainDurationP99Nanos = transport.drainCallbackDurationP99Nanos;
-            result.audioTransportDrainDurationP999Nanos = transport.drainCallbackDurationP999Nanos;
-            result.audioTransportDrainDurationUnder50usCount =
-                transport.drainCallbackDurationUnder50usCount;
-            result.audioTransportDrainDuration50To100usCount =
-                transport.drainCallbackDuration50To100usCount;
-            result.audioTransportDrainDuration100To250usCount =
-                transport.drainCallbackDuration100To250usCount;
-            result.audioTransportDrainDuration250To500usCount =
-                transport.drainCallbackDuration250To500usCount;
-            result.audioTransportDrainDuration500usTo1msCount =
-                transport.drainCallbackDuration500usTo1msCount;
-            result.audioTransportDrainDuration1To2msCount =
-                transport.drainCallbackDuration1To2msCount;
-            result.audioTransportDrainDuration2To5msCount =
-                transport.drainCallbackDuration2To5msCount;
-            result.audioTransportDrainDuration5To10msCount =
-                transport.drainCallbackDuration5To10msCount;
-            result.audioTransportDrainDurationOver10msCount =
-                transport.drainCallbackDurationOver10msCount;
-            result.audioTransportWorkerEmulationWakeLatencySampleCount = transport.workerEmulationWakeLatencySampleCount;
-            result.audioTransportWorkerEmulationWakeLatencyLastNs = transport.workerEmulationWakeLatencyLastNs;
-            result.audioTransportWorkerEmulationWakeLatencyHighWaterNs = transport.workerEmulationWakeLatencyHighWaterNs;
-        }
     }
 
     std::shared_ptr<DynamicPluginModule::State> state_;
@@ -906,16 +687,14 @@ private:
     void* instance_ = nullptr;
     std::string id_;
     std::string displayName_;
-    SdlFrontendConfig config_;
+    FrontendConfig config_;
     TimeFrontendHostApiV1 hostApi_{};
     std::unique_ptr<Presenter> presenter_;
-    AudioService* audioService_ = nullptr;
     VideoService* videoService_ = nullptr;
     TimingService* timingService_ = nullptr;
     InputService* inputService_ = nullptr;
     DebugSnapshotService* debugSnapshotService_ = nullptr;
-    std::unique_ptr<IAudioOutputBackend> audioOutput_;
-    mutable SdlFrontendStats stats_{};
+    mutable FrontendStats stats_{};
     std::atomic<std::size_t> videoEvents_{0u};
     std::atomic<std::size_t> framesPrepared_{0u};
     std::atomic<std::size_t> videoPacketsAccepted_{0u};
@@ -924,16 +703,6 @@ private:
     std::atomic<std::int64_t> videoBuildLastNs_{0};
     std::atomic<std::int64_t> videoBuildHighWaterNs_{0};
     std::atomic<std::size_t> videoBuildSamples_{0u};
-    std::atomic<std::size_t> audioEvents_{0u};
-    std::atomic<std::size_t> audioPacketsAccepted_{0u};
-    std::atomic<std::size_t> audioPacketsSkipped_{0u};
-    std::atomic<std::size_t> audioBatchFlushCount_{0u};
-    std::atomic<std::size_t> audioBatchFlushLast_{0u};
-    std::atomic<std::size_t> audioBatchFlushMin_{0u};
-    std::atomic<std::size_t> audioBatchFlushMax_{0u};
-    std::atomic<std::size_t> audioBatchPacketsAccumulated_{0u};
-    std::atomic<std::size_t> audioBatchPacketsFlushed_{0u};
-    std::atomic<std::size_t> audioBatchCurrentSamples_{0u};
     std::atomic<std::size_t> inputEvents_{0u};
     std::atomic<std::size_t> inputSamplesProvided_{0u};
     mutable std::atomic<std::size_t> inputPolls_{0u};
@@ -944,19 +713,223 @@ private:
     bool visibilityRequested_ = false;
     std::vector<std::string> diagnostics_;
     std::optional<VideoDebugFrameModel> lastVideoDebugModel_;
-    std::optional<AudioStateView> lastAudioState_;
-    std::optional<SdlAudioPreviewBuffer> lastAudioPreview_;
     std::optional<DigitalInputStateView> lastInputState_;
-    std::optional<SdlFrameBuffer> lastFrame_;
+    std::optional<FrontendFrameBuffer> lastFrame_;
     std::string lastRenderSummary_;
     std::string lastHostEventSummary_;
     mutable std::string backendName_ = "frontend";
     mutable std::string lastBackendError_;
-    std::vector<std::int16_t> audioBatchSamples_;
-    std::size_t audioBatchPackets_ = 0u;
-    std::uint32_t audioBatchSampleRate_ = 0u;
-    std::uint8_t audioBatchChannels_ = 0u;
-    std::uint64_t audioBatchFrameCounter_ = 0u;
+};
+
+class CAudioOutputAdapter final : public IAudioOutputBackend {
+public:
+    CAudioOutputAdapter(std::shared_ptr<DynamicPluginModule::State> state,
+                        const DynamicPluginModule::State::AudioOutputEntry& entry)
+        : state_(std::move(state)), api_(entry.api), id_(entry.id), displayName_(entry.displayName)
+    {
+        hostApi_ = TimeAudioOutputHostApiV1{
+            sizeof(TimeAudioOutputHostApiV1), TIME_PLUGIN_ABI_VERSION_V1, this,
+            &CAudioOutputAdapter::drainReadyAudio};
+        try { instance_ = api_->create(&hostApi_); }
+        catch (...) { throw std::runtime_error("C audio-output factory threw across the ABI"); }
+        if (instance_ == nullptr) {
+            throw std::runtime_error("C audio-output factory returned null");
+        }
+    }
+
+    ~CAudioOutputAdapter() override
+    {
+        close();
+        if (instance_ != nullptr) {
+            try { api_->destroy(instance_); } catch (...) {}
+            instance_ = nullptr;
+        }
+    }
+
+    std::string_view name() const noexcept override
+    {
+        if (instance_ == nullptr) return displayName_;
+        try {
+            const char* value = api_->backend_name(instance_);
+            return value != nullptr ? std::string_view(value) : std::string_view(displayName_);
+        } catch (...) {
+            return displayName_;
+        }
+    }
+
+    bool open(AudioEngine& engine, const AudioOutputOpenConfig& config) override
+    {
+        close();
+        lastError_.clear();
+        lastErrorCode_ = AudioOutputErrorCode::None;
+        if (instance_ == nullptr || config.audioService == nullptr ||
+            config.channels < 1 || config.channels > 2 || config.requestedSampleRate <= 0 ||
+            config.callbackChunkSamples == 0u ||
+            config.callbackChunkSamples > std::numeric_limits<std::uint32_t>::max()) {
+            setError(AudioOutputErrorCode::InvalidConfig, "Invalid audio-output configuration");
+            return false;
+        }
+
+        service_ = config.audioService;
+        engine_ = &engine;
+        readyQueueChunks_ = std::clamp<std::size_t>(config.readyQueueChunks, 1u, 64u);
+        service_->setBackendPausedOrClosed(true);
+        const TimeAudioOutputConfigV1 cConfig{
+            sizeof(TimeAudioOutputConfigV1),
+            static_cast<std::uint32_t>(config.requestedSampleRate),
+            static_cast<std::uint32_t>(config.channels),
+            static_cast<std::uint32_t>(config.callbackChunkSamples)};
+        TimeAudioOutputDeviceInfoV1 obtained{};
+        obtained.struct_size = sizeof(TimeAudioOutputDeviceInfoV1);
+        bool opened = false;
+        try { opened = api_->open(instance_, &cConfig, &obtained) != 0; }
+        catch (...) { opened = false; }
+        if (!opened) {
+            captureModuleError(AudioOutputErrorCode::DeviceOpenFailed,
+                               "Audio-output module failed to open");
+            service_->setBackendPausedOrClosed(true);
+            engine_ = nullptr;
+            service_ = nullptr;
+            return false;
+        }
+        if (obtained.struct_size < sizeof(TimeAudioOutputDeviceInfoV1) ||
+            obtained.sample_rate == 0u || obtained.channels == 0u || obtained.channels > 2u ||
+            obtained.callback_samples == 0u || obtained.callback_samples > (1u << 24u)) {
+            setError(AudioOutputErrorCode::UnsupportedConfig,
+                     "Audio-output module returned an invalid device format");
+            try { api_->close(instance_); } catch (...) {}
+            service_->setBackendPausedOrClosed(true);
+            engine_ = nullptr;
+            service_ = nullptr;
+            return false;
+        }
+
+        deviceInfo_.sampleRate = config.testForcedDeviceSampleRate > 0
+            ? config.testForcedDeviceSampleRate : static_cast<int>(obtained.sample_rate);
+        deviceInfo_.channels = static_cast<int>(obtained.channels);
+        deviceInfo_.callbackChunkSamples = obtained.callback_samples;
+        engine_->setDeviceSampleRate(deviceInfo_.sampleRate);
+        const bool configured = service_->configureFixedCallbackCapacity(
+                                    deviceInfo_.callbackChunkSamples) &&
+            service_->configureOutputTransport({
+                .deviceSampleRate = deviceInfo_.sampleRate,
+                .channelCount = static_cast<std::uint8_t>(deviceInfo_.channels),
+                .callbackChunkSamples = deviceInfo_.callbackChunkSamples,
+                .readyQueueChunks = readyQueueChunks_,
+            }) && service_->startOutputTransport();
+        if (!configured) {
+            setError(AudioOutputErrorCode::InvalidConfig,
+                     "Host audio transport configuration failed");
+            try { api_->close(instance_); } catch (...) {}
+            service_->stopOutputTransport();
+            service_->setBackendPausedOrClosed(true);
+            engine_ = nullptr;
+            service_ = nullptr;
+            deviceInfo_ = {};
+            return false;
+        }
+        opened_ = true;
+        return true;
+    }
+
+    void service() noexcept override
+    {
+        if (!opened_ || instance_ == nullptr || service_ == nullptr) return;
+        try { (void)api_->service(instance_); } catch (...) {}
+        const bool primed = service_->primedForDrain();
+        if (primed && !started_) {
+            bool started = false;
+            try { started = api_->start(instance_) != 0; } catch (...) { started = false; }
+            if (started) {
+                service_->setBackendDrainActive(true);
+                started_ = true;
+            } else {
+                captureModuleError(AudioOutputErrorCode::RuntimeError,
+                                   "Audio-output module failed to start");
+                opened_ = false;
+            }
+        } else if (!primed && started_) {
+            try { api_->pause(instance_); } catch (...) {}
+            service_->setBackendDrainActive(false);
+            started_ = false;
+        }
+    }
+
+    void close() noexcept override
+    {
+        const bool wasOpen = opened_;
+        if (instance_ != nullptr && wasOpen) {
+            try { api_->pause(instance_); } catch (...) {}
+        }
+        if (service_ != nullptr) service_->setBackendDrainActive(false);
+        opened_ = false;
+        if (instance_ != nullptr && wasOpen) {
+            try { api_->close(instance_); } catch (...) {}
+        }
+        if (service_ != nullptr) {
+            service_->stopOutputTransport();
+            service_->setBackendPausedOrClosed(true);
+        }
+        started_ = false;
+        engine_ = nullptr;
+        service_ = nullptr;
+        deviceInfo_ = {};
+    }
+
+    bool ready() const noexcept override { return opened_; }
+    std::string lastError() const noexcept override { return lastError_; }
+    AudioOutputErrorCode lastErrorCode() const noexcept override { return lastErrorCode_; }
+    AudioOutputDeviceInfo deviceInfo() const noexcept override { return deviceInfo_; }
+
+private:
+    static std::uint32_t drainReadyAudio(void* context, std::int16_t* output,
+                                         std::uint32_t requestedSamples) noexcept
+    {
+        if (context == nullptr || output == nullptr || requestedSamples == 0u) return 0u;
+        auto& self = *static_cast<CAudioOutputAdapter*>(context);
+        if (self.service_ == nullptr || !self.opened_) {
+            std::fill_n(output, requestedSamples, std::int16_t{0});
+            return 0u;
+        }
+        const auto started = std::chrono::steady_clock::now();
+        self.service_->drainReadyOutput(
+            std::span<std::int16_t>(output, static_cast<std::size_t>(requestedSamples)));
+        self.service_->noteDrainCallbackDuration(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - started));
+        return requestedSamples;
+    }
+
+    void setError(AudioOutputErrorCode code, std::string message) noexcept
+    {
+        lastErrorCode_ = code;
+        lastError_ = std::move(message);
+    }
+
+    void captureModuleError(AudioOutputErrorCode code, std::string fallback) noexcept
+    {
+        try {
+            const char* value = api_->last_error(instance_);
+            setError(code, value != nullptr && value[0] != '\0' ? std::string(value)
+                                                                 : std::move(fallback));
+        } catch (...) {
+            setError(code, std::move(fallback));
+        }
+    }
+
+    std::shared_ptr<DynamicPluginModule::State> state_;
+    const TimeAudioOutputApiV1* api_ = nullptr;
+    void* instance_ = nullptr;
+    std::string id_;
+    std::string displayName_;
+    TimeAudioOutputHostApiV1 hostApi_{};
+    AudioEngine* engine_ = nullptr;
+    AudioService* service_ = nullptr;
+    AudioOutputDeviceInfo deviceInfo_{};
+    std::size_t readyQueueChunks_ = 3u;
+    bool opened_ = false;
+    bool started_ = false;
+    std::string lastError_;
+    AudioOutputErrorCode lastErrorCode_ = AudioOutputErrorCode::None;
 };
 
 [[nodiscard]] std::runtime_error loadError(const std::filesystem::path& path,
@@ -1033,6 +1006,21 @@ DynamicPluginModule DynamicPluginModule::load(const std::filesystem::path& path)
             }
             state->frontends.push_back(State::FrontendEntry{
                 descriptor->plugin_id, descriptor->display_name, api});
+        } else if (descriptor->kind == TIME_PLUGIN_KIND_AUDIO_OUTPUT_V1) {
+            if (descriptor->api_size < sizeof(TimeAudioOutputApiV1)) {
+                throw loadError(path, "audio-output API size mismatch");
+            }
+            const auto* api = static_cast<const TimeAudioOutputApiV1*>(descriptor->api);
+            if (api->struct_size < sizeof(TimeAudioOutputApiV1) ||
+                api->abi_version != TIME_PLUGIN_ABI_VERSION_V1 || api->create == nullptr ||
+                api->destroy == nullptr || api->open == nullptr || api->start == nullptr ||
+                api->pause == nullptr || api->service == nullptr || api->close == nullptr ||
+                api->backend_name == nullptr || api->last_error == nullptr ||
+                api->query_stats == nullptr) {
+                throw loadError(path, "incomplete audio-output API");
+            }
+            state->audioOutputs.push_back(State::AudioOutputEntry{
+                descriptor->plugin_id, descriptor->display_name, api});
         } else {
             throw loadError(path, "unsupported plugin kind");
         }
@@ -1091,7 +1079,7 @@ std::vector<std::string> DynamicPluginModule::frontendIds() const
 }
 
 std::unique_ptr<IFrontendPlugin> DynamicPluginModule::createFrontend(
-    std::string_view id, const SdlFrontendConfig& config) const
+    std::string_view id, const FrontendConfig& config) const
 {
     if (state_ == nullptr) throw std::runtime_error("plugin module is empty");
     const auto found = std::find_if(state_->frontends.begin(), state_->frontends.end(),
@@ -1108,6 +1096,27 @@ std::unique_ptr<IFrontendPlugin> DynamicPluginModule::createFrontend(
         throw std::invalid_argument("frontend does not provide digital input: " + std::string(id));
     }
     return std::make_unique<CFrontendAdapter>(state_, *found, config);
+}
+
+std::vector<std::string> DynamicPluginModule::audioOutputIds() const
+{
+    std::vector<std::string> result;
+    if (state_ == nullptr) return result;
+    result.reserve(state_->audioOutputs.size());
+    for (const auto& output : state_->audioOutputs) result.push_back(output.id);
+    return result;
+}
+
+std::unique_ptr<IAudioOutputBackend> DynamicPluginModule::createAudioOutput(
+    std::string_view id) const
+{
+    if (state_ == nullptr) throw std::runtime_error("plugin module is empty");
+    const auto found = std::find_if(state_->audioOutputs.begin(), state_->audioOutputs.end(),
+        [id](const auto& entry) { return entry.id == id; });
+    if (found == state_->audioOutputs.end()) {
+        throw std::invalid_argument("audio output not found in module: " + std::string(id));
+    }
+    return std::make_unique<CAudioOutputAdapter>(state_, *found);
 }
 
 } // namespace BMMQ::Plugin

@@ -9,7 +9,7 @@
 #include <span>
 #include <vector>
 
-#include "SdlAudioResampler.hpp"
+#include "AudioResampler.hpp"
 
 namespace BMMQ {
 
@@ -430,7 +430,7 @@ private:
     }
 
     AudioEngineConfig config_{};
-    SdlAudioResampler resampler_{48000, 48000};
+    AudioResampler resampler_{48000, 48000};
     std::vector<int16_t> buffer_;
     std::atomic<std::size_t> readIndex_{0};
     std::atomic<std::size_t> writeIndex_{0};

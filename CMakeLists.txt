@@ -4,10 +4,17 @@ project(timeEmulator)
 
 option(BMMQ_ENABLE_TSAN "Enable ThreadSanitizer for race detection builds" OFF)
 option(BMMQ_PROFILE_VDP_RENDER "Enable profiling-oriented compile flags for GameGearVDP::renderFramePixels attribution" OFF)
+option(PROTO_TIME_BUILD_SDL_FRONTEND "Build the optional SDL frontend module" ON)
+option(PROTO_TIME_BUILD_SDL_AUDIO "Build the optional SDL audio-output module" ON)
+option(PROTO_TIME_BUILD_GLFW_FRONTEND "Build the optional GLFW frontend module" ON)
 
-find_package(SDL2 QUIET)
-find_package(glfw3 3.3 QUIET)
-if (TARGET glfw OR TARGET glfw3::glfw)
+if (PROTO_TIME_BUILD_SDL_FRONTEND OR PROTO_TIME_BUILD_SDL_AUDIO)
+    find_package(SDL2 QUIET)
+endif()
+if (PROTO_TIME_BUILD_GLFW_FRONTEND)
+    find_package(glfw3 3.3 QUIET)
+endif()
+if (PROTO_TIME_BUILD_GLFW_FRONTEND AND (TARGET glfw OR TARGET glfw3::glfw))
     set(OpenGL_GL_PREFERENCE LEGACY)
     find_package(OpenGL QUIET)
 endif()
@@ -113,10 +120,13 @@ add_library(time-frontend-loader
     machine/plugins/FrontendPluginLoader.cpp
 )
 target_link_libraries(time-frontend-loader PUBLIC time-dynamic-plugin-loader)
-add_library(time-sdl-frontend-loader
-    machine/plugins/SdlFrontendPluginLoader.cpp
+add_library(time-audio-output-loader
+    machine/plugins/AudioOutputPluginLoader.cpp
 )
-target_link_libraries(time-sdl-frontend-loader PUBLIC time-frontend-loader)
+target_link_libraries(time-audio-output-loader PUBLIC time-dynamic-plugin-loader)
+add_library(time-audio-transport-plugin
+    machine/plugins/audio/AudioTransportPlugin.cpp)
+target_link_libraries(time-audio-transport-plugin PUBLIC time-machine-runtime-common)
 add_library(time-emulator-config STATIC
     emulator/EmulatorConfig.cpp
 )
@@ -138,10 +148,6 @@ target_link_libraries(time-emulator-host
         time-machine-factory
         time-emulator-config
 )
-set(BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE 0)
-add_library(time-sdl-audio-output STATIC
-    machine/plugins/sdl_frontend/SdlAudioOutput.cpp
-)
 add_library(time-dummy-audio-output STATIC
     machine/plugins/audio_output/DummyAudioOutput.cpp
 )
@@ -151,49 +157,52 @@ add_library(time-file-audio-output STATIC
 add_library(time-headless-video-adapter STATIC
     machine/plugins/video/adapters/HeadlessFrameDumper.cpp
 )
-add_library(time-sdl-video-adapter STATIC
-    machine/plugins/video/adapters/SdlVideoPresenter.cpp
-)
-add_library(time-hardware-video-adapter STATIC
-    machine/plugins/video/adapters/HardwareVideoPresenter.cpp
-)
-set_target_properties(time-sdl-audio-output PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set_target_properties(time-dummy-audio-output PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set_target_properties(time-file-audio-output PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set_target_properties(time-headless-video-adapter PROPERTIES POSITION_INDEPENDENT_CODE ON)
-set_target_properties(time-sdl-video-adapter PROPERTIES POSITION_INDEPENDENT_CODE ON)
-set_target_properties(time-hardware-video-adapter PROPERTIES POSITION_INDEPENDENT_CODE ON)
-add_library(time-sdl-frontend-plugin SHARED
-    machine/plugins/sdl_frontend/SdlFrontendModule.cpp
-)
-add_library(time-glfw-frontend-plugin SHARED
-    machine/plugins/glfw_frontend/GlfwFrontendModule.cpp
-)
 add_executable(timeEmulator emulator.cpp)
-target_link_libraries(timeEmulator time-emulator-host time-frontend-loader)
-if (TARGET SDL2::SDL2)
-    target_link_libraries(time-sdl-audio-output PRIVATE SDL2::SDL2)
-    target_link_libraries(time-sdl-video-adapter PRIVATE SDL2::SDL2)
-    target_link_libraries(time-hardware-video-adapter PRIVATE SDL2::SDL2)
-    target_link_libraries(time-sdl-frontend-plugin PRIVATE SDL2::SDL2)
-    set(BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE 1)
-elseif (SDL2_FOUND)
-    target_include_directories(time-sdl-audio-output PRIVATE ${SDL2_INCLUDE_DIRS})
-    target_link_libraries(time-sdl-audio-output PRIVATE ${SDL2_LIBRARIES})
-    target_include_directories(time-sdl-video-adapter PRIVATE ${SDL2_INCLUDE_DIRS})
-    target_link_libraries(time-sdl-video-adapter PRIVATE ${SDL2_LIBRARIES})
-    target_include_directories(time-hardware-video-adapter PRIVATE ${SDL2_INCLUDE_DIRS})
-    target_link_libraries(time-hardware-video-adapter PRIVATE ${SDL2_LIBRARIES})
-    target_include_directories(time-sdl-frontend-plugin PRIVATE ${SDL2_INCLUDE_DIRS})
-    target_link_libraries(time-sdl-frontend-plugin PRIVATE ${SDL2_LIBRARIES})
-    set(BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE 1)
+target_link_libraries(timeEmulator PRIVATE time-emulator-host time-frontend-loader
+    time-audio-output-loader time-audio-transport-plugin
+    time-dummy-audio-output time-file-audio-output)
+
+if (PROTO_TIME_BUILD_SDL_FRONTEND)
+    add_library(time-sdl-frontend-plugin SHARED
+        machine/plugins/sdl_frontend/SdlFrontendModule.cpp)
+    set(BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE 0)
+    if (TARGET SDL2::SDL2)
+        target_link_libraries(time-sdl-frontend-plugin PRIVATE SDL2::SDL2)
+        set(BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE 1)
+    elseif (SDL2_FOUND)
+        target_include_directories(time-sdl-frontend-plugin PRIVATE ${SDL2_INCLUDE_DIRS})
+        target_link_libraries(time-sdl-frontend-plugin PRIVATE ${SDL2_LIBRARIES})
+        set(BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE 1)
+    endif()
+    target_compile_definitions(time-sdl-frontend-plugin PRIVATE
+        BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL=${BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE})
 endif()
-target_compile_definitions(time-sdl-audio-output PRIVATE BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL=${BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE})
-target_compile_definitions(time-sdl-video-adapter PUBLIC BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL=${BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE})
-target_compile_definitions(time-hardware-video-adapter PUBLIC BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL=${BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE})
-target_compile_definitions(time-sdl-frontend-plugin PRIVATE BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL=${BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL_VALUE})
+
+if (PROTO_TIME_BUILD_SDL_AUDIO)
+    add_library(time-sdl-audio-output-plugin SHARED
+        machine/plugins/sdl_audio_output/SdlAudioOutputModule.cpp)
+    set(BMMQ_SDL_AUDIO_COMPILED_WITH_SDL_VALUE 0)
+    if (TARGET SDL2::SDL2)
+        target_link_libraries(time-sdl-audio-output-plugin PRIVATE SDL2::SDL2)
+        set(BMMQ_SDL_AUDIO_COMPILED_WITH_SDL_VALUE 1)
+    elseif (SDL2_FOUND)
+        target_include_directories(time-sdl-audio-output-plugin PRIVATE ${SDL2_INCLUDE_DIRS})
+        target_link_libraries(time-sdl-audio-output-plugin PRIVATE ${SDL2_LIBRARIES})
+        set(BMMQ_SDL_AUDIO_COMPILED_WITH_SDL_VALUE 1)
+    endif()
+    target_compile_definitions(time-sdl-audio-output-plugin PRIVATE
+        BMMQ_SDL_AUDIO_COMPILED_WITH_SDL=${BMMQ_SDL_AUDIO_COMPILED_WITH_SDL_VALUE})
+endif()
+
+if (PROTO_TIME_BUILD_GLFW_FRONTEND)
+    add_library(time-glfw-frontend-plugin SHARED
+        machine/plugins/glfw_frontend/GlfwFrontendModule.cpp)
+endif()
 set(BMMQ_GLFW_FRONTEND_COMPILED_WITH_GLFW_VALUE 0)
-if ((TARGET glfw OR TARGET glfw3::glfw) AND TARGET OpenGL::GL)
+if (TARGET time-glfw-frontend-plugin AND (TARGET glfw OR TARGET glfw3::glfw) AND TARGET OpenGL::GL)
     if (TARGET glfw)
         target_link_libraries(time-glfw-frontend-plugin PRIVATE glfw)
     else()
@@ -202,10 +211,10 @@ if ((TARGET glfw OR TARGET glfw3::glfw) AND TARGET OpenGL::GL)
     target_link_libraries(time-glfw-frontend-plugin PRIVATE OpenGL::GL)
     set(BMMQ_GLFW_FRONTEND_COMPILED_WITH_GLFW_VALUE 1)
 endif()
-target_compile_definitions(time-glfw-frontend-plugin PRIVATE
-    BMMQ_GLFW_FRONTEND_COMPILED_WITH_GLFW=${BMMQ_GLFW_FRONTEND_COMPILED_WITH_GLFW_VALUE})
-target_link_libraries(time-dynamic-plugin-loader PUBLIC
-    time-sdl-audio-output time-dummy-audio-output time-file-audio-output)
+if (TARGET time-glfw-frontend-plugin)
+    target_compile_definitions(time-glfw-frontend-plugin PRIVATE
+        BMMQ_GLFW_FRONTEND_COMPILED_WITH_GLFW=${BMMQ_GLFW_FRONTEND_COMPILED_WITH_GLFW_VALUE})
+endif()
 
 enable_testing()
 add_test(NAME smoke-gameboy-corpus-tool
@@ -407,28 +416,44 @@ target_link_libraries(time-smoke-dynamic-frontend-module
     time-gameboy-interpreter-core time-dynamic-plugin-loader)
 add_test(NAME smoke-dynamic-frontend-module
     COMMAND time-smoke-dynamic-frontend-module $<TARGET_FILE:time-test-c-frontend-plugin>)
-add_executable(time-smoke-glfw-frontend-plugin tests/smoke_glfw_frontend_plugin.cpp)
-target_link_libraries(time-smoke-glfw-frontend-plugin time-frontend-loader)
-add_test(NAME smoke-glfw-frontend-plugin
-    COMMAND time-smoke-glfw-frontend-plugin $<TARGET_FILE:time-glfw-frontend-plugin>)
+add_library(time-test-c-audio-output-plugin MODULE tests/fixtures/test_audio_output_plugin.c)
+target_include_directories(time-test-c-audio-output-plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+set_target_properties(time-test-c-audio-output-plugin PROPERTIES PREFIX "")
+add_library(time-test-malformed-audio-output-plugin MODULE
+    tests/fixtures/test_malformed_audio_output_plugin.c)
+target_include_directories(time-test-malformed-audio-output-plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+set_target_properties(time-test-malformed-audio-output-plugin PROPERTIES PREFIX "")
+add_executable(time-smoke-dynamic-audio-output-module
+    tests/smoke_dynamic_audio_output_module.cpp)
+target_link_libraries(time-smoke-dynamic-audio-output-module
+    time-gameboy-interpreter-core time-audio-output-loader)
+add_test(NAME smoke-dynamic-audio-output-module
+    COMMAND time-smoke-dynamic-audio-output-module
+        $<TARGET_FILE:time-test-c-audio-output-plugin>
+        $<TARGET_FILE:time-test-malformed-audio-output-plugin>)
+if (TARGET time-glfw-frontend-plugin)
+    add_executable(time-smoke-glfw-frontend-plugin tests/smoke_glfw_frontend_plugin.cpp)
+    target_link_libraries(time-smoke-glfw-frontend-plugin time-frontend-loader)
+    add_test(NAME smoke-glfw-frontend-plugin
+        COMMAND time-smoke-glfw-frontend-plugin $<TARGET_FILE:time-glfw-frontend-plugin>)
+endif()
 add_executable(time-smoke-plugin-io tests/smoke_plugin_io.cpp)
 target_link_libraries(time-smoke-plugin-io time-gameboy-interpreter-core)
 add_test(NAME smoke-plugin-io COMMAND time-smoke-plugin-io)
-add_executable(time-smoke-sdl-frontend-plugin-api tests/smoke_sdl_frontend_plugin_api.cpp)
-target_link_libraries(time-smoke-sdl-frontend-plugin-api time-sdl-frontend-loader)
-add_test(NAME smoke-sdl-frontend-plugin-api COMMAND time-smoke-sdl-frontend-plugin-api)
-add_executable(time-smoke-sdl-frontend-plugin tests/smoke_sdl_frontend_plugin.cpp)
-target_link_libraries(time-smoke-sdl-frontend-plugin time-gameboy-interpreter-core time-sdl-frontend-loader time-simd-pixel-ops)
-add_test(NAME smoke-sdl-frontend-plugin COMMAND time-smoke-sdl-frontend-plugin)
-add_executable(time-smoke-sdl-frontend-gamegear tests/smoke_sdl_frontend_gamegear.cpp)
-target_link_libraries(time-smoke-sdl-frontend-gamegear time-gamegear-core time-sdl-frontend-loader)
-add_test(NAME smoke-sdl-frontend-gamegear COMMAND time-smoke-sdl-frontend-gamegear)
-add_executable(time-smoke-sdl-audio-transport tests/smoke_sdl_audio_transport.cpp)
-target_link_libraries(time-smoke-sdl-audio-transport time-gameboy-interpreter-core time-sdl-frontend-loader)
-add_test(NAME smoke-sdl-audio-transport COMMAND time-smoke-sdl-audio-transport)
-add_executable(time-smoke-sdl-audio-resampler tests/smoke_sdl_audio_resampler.cpp)
-target_link_libraries(time-smoke-sdl-audio-resampler time-gameboy-interpreter-core)
-add_test(NAME smoke-sdl-audio-resampler COMMAND time-smoke-sdl-audio-resampler)
+if (TARGET time-sdl-frontend-plugin)
+    add_executable(time-smoke-sdl-frontend-plugin-api tests/smoke_sdl_frontend_plugin_api.cpp)
+    target_link_libraries(time-smoke-sdl-frontend-plugin-api time-frontend-loader)
+    add_test(NAME smoke-sdl-frontend-plugin-api COMMAND time-smoke-sdl-frontend-plugin-api)
+    add_executable(time-smoke-sdl-frontend-plugin tests/smoke_sdl_frontend_plugin.cpp)
+    target_link_libraries(time-smoke-sdl-frontend-plugin time-gameboy-interpreter-core time-frontend-loader time-simd-pixel-ops)
+    add_test(NAME smoke-sdl-frontend-plugin COMMAND time-smoke-sdl-frontend-plugin)
+    add_executable(time-smoke-sdl-frontend-gamegear tests/smoke_sdl_frontend_gamegear.cpp)
+    target_link_libraries(time-smoke-sdl-frontend-gamegear time-gamegear-core time-frontend-loader)
+    add_test(NAME smoke-sdl-frontend-gamegear COMMAND time-smoke-sdl-frontend-gamegear)
+endif()
+add_executable(time-smoke-audio-resampler tests/smoke_audio_resampler.cpp)
+target_link_libraries(time-smoke-audio-resampler time-gameboy-interpreter-core)
+add_test(NAME smoke-audio-resampler COMMAND time-smoke-audio-resampler)
 add_executable(time-smoke-audio-engine tests/smoke_audio_engine.cpp)
 target_link_libraries(time-smoke-audio-engine time-gameboy-interpreter-core)
 add_test(NAME smoke-audio-engine COMMAND time-smoke-audio-engine)
@@ -438,9 +463,11 @@ add_executable(time-smoke-input-engine tests/smoke_input_engine.cpp)
 add_test(NAME smoke-input-engine COMMAND time-smoke-input-engine)
 add_executable(time-smoke-input-service tests/smoke_input_service.cpp)
 add_test(NAME smoke-input-service COMMAND time-smoke-input-service)
-add_executable(time-smoke-input-transport tests/smoke_input_transport.cpp)
-target_link_libraries(time-smoke-input-transport time-gameboy-interpreter-core time-sdl-frontend-loader)
-add_test(NAME smoke-input-transport COMMAND time-smoke-input-transport)
+if (TARGET time-sdl-frontend-plugin)
+    add_executable(time-smoke-input-transport tests/smoke_input_transport.cpp)
+    target_link_libraries(time-smoke-input-transport time-gameboy-interpreter-core time-frontend-loader)
+    add_test(NAME smoke-input-transport COMMAND time-smoke-input-transport)
+endif()
 add_executable(time-smoke-input-fallback tests/smoke_input_fallback.cpp)
 add_test(NAME smoke-input-fallback COMMAND time-smoke-input-fallback)
 add_executable(time-smoke-emulator-config tests/smoke_emulator_config.cpp)
@@ -465,7 +492,7 @@ add_executable(time-smoke-video-service tests/smoke_video_service.cpp)
 target_link_libraries(time-smoke-video-service time-gameboy-interpreter-core)
 add_test(NAME smoke-video-service COMMAND time-smoke-video-service)
 add_executable(time-smoke-video-transport tests/smoke_video_transport.cpp)
-target_link_libraries(time-smoke-video-transport time-gameboy-interpreter-core time-headless-video-adapter time-sdl-video-adapter time-hardware-video-adapter)
+target_link_libraries(time-smoke-video-transport time-gameboy-interpreter-core time-headless-video-adapter)
 add_test(NAME smoke-video-transport COMMAND time-smoke-video-transport)
 add_executable(time-smoke-video-fallback tests/smoke_video_fallback.cpp)
 target_link_libraries(time-smoke-video-fallback time-gameboy-interpreter-core)
@@ -501,18 +528,19 @@ add_test(NAME smoke-lifecycle-contract COMMAND time-smoke-lifecycle-contract)
 add_executable(time-smoke-audio-pipeline tests/smoke_audio_pipeline.cpp)
 target_link_libraries(time-smoke-audio-pipeline time-gameboy-interpreter-core)
 add_test(NAME smoke-audio-pipeline COMMAND time-smoke-audio-pipeline)
-add_executable(time-smoke-sdl-audio-output-backend tests/smoke_sdl_audio_output_backend.cpp)
-target_link_libraries(time-smoke-sdl-audio-output-backend time-gameboy-interpreter-core time-sdl-audio-output)
-add_test(NAME smoke-sdl-audio-output-backend COMMAND time-smoke-sdl-audio-output-backend)
+if (TARGET time-sdl-audio-output-plugin)
+    add_executable(time-smoke-sdl-audio-output-module tests/smoke_sdl_audio_output_backend.cpp)
+    target_link_libraries(time-smoke-sdl-audio-output-module
+        time-gameboy-interpreter-core time-audio-output-loader)
+    add_test(NAME smoke-sdl-audio-output-module COMMAND time-smoke-sdl-audio-output-module
+        $<TARGET_FILE:time-sdl-audio-output-plugin>)
+endif()
 add_executable(time-smoke-dummy-audio-output tests/smoke_dummy_audio_output.cpp)
 target_link_libraries(time-smoke-dummy-audio-output time-gameboy-interpreter-core time-dummy-audio-output)
 add_test(NAME smoke-dummy-audio-output COMMAND time-smoke-dummy-audio-output)
 add_executable(time-smoke-file-audio-output tests/smoke_file_audio_output.cpp)
 target_link_libraries(time-smoke-file-audio-output time-gameboy-interpreter-core time-file-audio-output)
 add_test(NAME smoke-file-audio-output COMMAND time-smoke-file-audio-output)
-add_executable(time-smoke-sdl-audio-resampling-integration tests/smoke_sdl_audio_resampling_integration.cpp)
-target_link_libraries(time-smoke-sdl-audio-resampling-integration time-gameboy-interpreter-core time-sdl-frontend-loader)
-add_test(NAME smoke-sdl-audio-resampling-integration COMMAND time-smoke-sdl-audio-resampling-integration)
 add_executable(time-smoke-apu-audio tests/smoke_apu_audio.cpp)
 target_link_libraries(time-smoke-apu-audio time-gameboy-interpreter-core)
 add_test(NAME smoke-apu-audio COMMAND time-smoke-apu-audio)
@@ -551,9 +579,29 @@ add_test(NAME smoke-visual-override-decode-integration COMMAND time-smoke-visual
 add_executable(time-smoke-debug-snapshot-service tests/smoke_debug_snapshot_service.cpp)
 target_link_libraries(time-smoke-debug-snapshot-service time-machine-runtime-common)
 add_test(NAME smoke-debug-snapshot-service COMMAND time-smoke-debug-snapshot-service)
-add_executable(time-smoke-debug-snapshot-sdl-plugin tests/smoke_debug_snapshot_sdl_plugin.cpp)
-target_link_libraries(time-smoke-debug-snapshot-sdl-plugin time-gamegear-core time-sdl-frontend-loader)
-add_test(NAME smoke-debug-snapshot-sdl-plugin COMMAND time-smoke-debug-snapshot-sdl-plugin)
+if (TARGET time-sdl-frontend-plugin)
+    add_executable(time-smoke-debug-snapshot-sdl-plugin tests/smoke_debug_snapshot_sdl_plugin.cpp)
+    target_link_libraries(time-smoke-debug-snapshot-sdl-plugin time-gamegear-core time-frontend-loader)
+    add_test(NAME smoke-debug-snapshot-sdl-plugin COMMAND time-smoke-debug-snapshot-sdl-plugin)
+endif()
+
+if (UNIX AND NOT APPLE)
+    add_test(NAME smoke-time-emulator-no-sdl-dependency
+        COMMAND ${CMAKE_COMMAND}
+            -DEXECUTABLE=$<TARGET_FILE:timeEmulator>
+            -P ${CMAKE_SOURCE_DIR}/tests/check_no_sdl_dependency.cmake)
+endif()
+
+install(TARGETS timeEmulator RUNTIME DESTINATION bin)
+if (TARGET time-sdl-frontend-plugin)
+    install(TARGETS time-sdl-frontend-plugin LIBRARY DESTINATION bin)
+endif()
+if (TARGET time-sdl-audio-output-plugin)
+    install(TARGETS time-sdl-audio-output-plugin LIBRARY DESTINATION bin)
+endif()
+if (TARGET time-glfw-frontend-plugin)
+    install(TARGETS time-glfw-frontend-plugin LIBRARY DESTINATION bin)
+endif()
 add_executable(time-smoke-memory-map tests/smoke_memory_map.cpp)
 target_link_libraries(time-smoke-memory-map time-gameboy-interpreter-core)
 add_test(NAME smoke-memory-map COMMAND time-smoke-memory-map)

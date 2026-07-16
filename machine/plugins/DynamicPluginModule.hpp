@@ -8,7 +8,8 @@
 #include <vector>
 
 #include "inst_cycle/executor/PluginContract.hpp"
-#include "machine/plugins/SdlFrontendPlugin.hpp"
+#include "machine/plugins/AudioOutput.hpp"
+#include "machine/plugins/FrontendPlugin.hpp"
 
 namespace BMMQ::Plugin {
 
@@ -26,6 +27,9 @@ public:
     [[nodiscard]] std::vector<std::string> frontendIds() const;
     [[nodiscard]] std::unique_ptr<IFrontendPlugin> createFrontend(
         std::string_view id, const FrontendConfig& config) const;
+    [[nodiscard]] std::vector<std::string> audioOutputIds() const;
+    [[nodiscard]] std::unique_ptr<IAudioOutputBackend> createAudioOutput(
+        std::string_view id) const;
 
 private:
     explicit DynamicPluginModule(std::shared_ptr<State> state) : state_(std::move(state)) {}

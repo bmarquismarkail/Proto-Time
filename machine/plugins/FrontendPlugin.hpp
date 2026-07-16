@@ -1,5 +1,5 @@
-#ifndef BMMQ_SDL_FRONTEND_PLUGIN_HPP
-#define BMMQ_SDL_FRONTEND_PLUGIN_HPP
+#ifndef BMMQ_FRONTEND_PLUGIN_HPP
+#define BMMQ_FRONTEND_PLUGIN_HPP
 
 #include <cstddef>
 #include <cstdint>
@@ -23,23 +23,12 @@ namespace BMMQ {
 
 class DebugSnapshotService;
 
-struct SdlFrontendConfig {
-    std::string windowTitle = "T.I.M.E. SDL Frontend";
+struct FrontendConfig {
+    std::string windowTitle = "T.I.M.E. Frontend";
     std::uint32_t windowScale = 2;
     int frameWidth = 160;
     int frameHeight = 144;
-    int audioPreviewSampleCount = 128;
-    int audioCallbackChunkSamples = 256;
-    int testForcedAudioDeviceSampleRate = 0;
-    std::string audioBackend = "sdl";
-    std::size_t audioReadyQueueChunks = 3;
-    std::size_t audioBatchChunks = 1;
-    std::filesystem::path audioOutputFilePath;
-    bool audioFileAppend = false;
-    std::size_t audioRingBufferCapacitySamples = 2048;
-    bool enableAudioResamplingDiagnostics = false;
     bool enableVideo = true;
-    bool enableAudio = true;
     bool enableInput = true;
     VideoPresenterMode videoPresenterMode = VideoPresenterMode::Auto;
     bool autoInitializeBackend = false;
@@ -55,7 +44,7 @@ struct SdlFrontendConfig {
     VideoPresenterPolicy videoPresenterPolicy = VideoPresenterPolicy::HardwarePreferredWithFallback;
 };
 
-enum class SdlRenderServiceState : uint8_t {
+enum class RenderServiceState : uint8_t {
     Stopped = 0,
     Starting,
     Active,
@@ -63,14 +52,14 @@ enum class SdlRenderServiceState : uint8_t {
     Faulted,
 };
 
-enum class SdlLifecycleRecoveryTarget : uint8_t {
+enum class LifecycleRecoveryTarget : uint8_t {
     None = 0,
     Video,
     Audio,
     VideoAndAudio,
 };
 
-struct SdlFrontendStats {
+struct FrontendStats {
     std::size_t attachCount = 0;
     std::size_t detachCount = 0;
     std::size_t videoEvents = 0;
@@ -439,7 +428,7 @@ struct SdlFrontendStats {
     std::size_t renderServiceFrameWakeCount = 0;
     std::size_t renderServiceTimeoutWakeCount = 0;
     std::size_t renderServiceDeferredPresentFastSleepCount = 0;
-    SdlRenderServiceState renderServiceState = SdlRenderServiceState::Stopped;
+    RenderServiceState renderServiceState = RenderServiceState::Stopped;
     MachineTransitionOutcome lifecycleLastOutcome = MachineTransitionOutcome::Succeeded;
     MachineTransitionFailureStage lifecycleLastFailureStage = MachineTransitionFailureStage::None;
     std::size_t lifecycleLastRetryCountUsed = 0;
@@ -469,7 +458,7 @@ struct SdlFrontendStats {
     std::size_t lifecycleRecoveryAudioSuccessCount = 0;
     std::size_t lifecycleRecoveryAudioFailureCount = 0;
     std::size_t lifecycleRecoveryCooldownSuppressCount = 0;
-    SdlLifecycleRecoveryTarget lifecycleRecoveryLastTarget = SdlLifecycleRecoveryTarget::None;
+    LifecycleRecoveryTarget lifecycleRecoveryLastTarget = LifecycleRecoveryTarget::None;
     MachineTransitionReason lifecycleRecoveryLastTransitionReason = MachineTransitionReason::ConfigReconfigure;
     MachineTransitionOutcome lifecycleRecoveryLastTransitionOutcome = MachineTransitionOutcome::Succeeded;
     MachineTransitionFailureStage lifecycleRecoveryLastTransitionFailureStage = MachineTransitionFailureStage::None;
@@ -477,14 +466,14 @@ struct SdlFrontendStats {
     bool lifecycleRecoveryLastUsedCoordinator = false;
 };
 
-enum class SdlFrontendHostEventType : uint8_t {
+enum class FrontendHostEventType : uint8_t {
     None = 0,
     KeyDown = 1,
     KeyUp = 2,
     Quit = 3,
 };
 
-enum class SdlFrontendHostKey : uint8_t {
+enum class FrontendHostKey : uint8_t {
     Unknown = 0,
     Right,
     Left,
@@ -502,13 +491,13 @@ enum class SdlFrontendHostKey : uint8_t {
     SaveState,
 };
 
-struct SdlFrontendHostEvent {
-    SdlFrontendHostEventType type = SdlFrontendHostEventType::None;
-    SdlFrontendHostKey key = SdlFrontendHostKey::Unknown;
+struct FrontendHostEvent {
+    FrontendHostEventType type = FrontendHostEventType::None;
+    FrontendHostKey key = FrontendHostKey::Unknown;
     bool repeat = false;
 };
 
-struct SdlFrameBuffer {
+struct FrontendFrameBuffer {
     int width = 160;
     int height = 144;
     std::uint64_t generation = 0;
@@ -525,50 +514,18 @@ struct SdlFrameBuffer {
     }
 };
 
-struct SdlAudioPreviewBuffer {
-    int sampleRate = 48000;
-    int channels = 1;
-    std::vector<int16_t> samples;
-
-    [[nodiscard]] bool empty() const noexcept
-    {
-        return samples.empty();
-    }
-
-    [[nodiscard]] std::size_t sampleCount() const noexcept
-    {
-        return samples.size();
-    }
-};
-
-inline constexpr std::string_view kSdlFrontendPluginId = "bmmq.frontend.sdl";
-inline constexpr std::string_view kSdlFrontendPluginDisplayName = "SDL Frontend Plugin";
-
 class IFrontendPlugin : public IVideoPlugin,
-                           public IAudioPlugin,
                            public IDigitalInputPlugin,
                            public IDigitalInputSourcePlugin {
 public:
     ~IFrontendPlugin() override = default;
 
-    std::string_view id() const override
-    {
-        return kSdlFrontendPluginId;
-    }
-
-    std::string_view displayName() const override
-    {
-        return kSdlFrontendPluginDisplayName;
-    }
-
-    [[nodiscard]] virtual const SdlFrontendConfig& config() const noexcept = 0;
-    [[nodiscard]] virtual SdlFrontendStats stats() const noexcept = 0;
+    [[nodiscard]] virtual const FrontendConfig& config() const noexcept = 0;
+    [[nodiscard]] virtual FrontendStats stats() const noexcept = 0;
     [[nodiscard]] virtual const std::vector<std::string>& diagnostics() const noexcept = 0;
     [[nodiscard]] virtual const std::optional<VideoDebugFrameModel>& lastVideoDebugModel() const noexcept = 0;
-    [[nodiscard]] virtual const std::optional<AudioStateView>& lastAudioState() const noexcept = 0;
-    [[nodiscard]] virtual const std::optional<SdlAudioPreviewBuffer>& lastAudioPreview() const noexcept = 0;
     [[nodiscard]] virtual const std::optional<DigitalInputStateView>& lastInputState() const noexcept = 0;
-    [[nodiscard]] virtual const std::optional<SdlFrameBuffer>& lastFrame() const noexcept = 0;
+    [[nodiscard]] virtual const std::optional<FrontendFrameBuffer>& lastFrame() const noexcept = 0;
     [[nodiscard]] virtual std::string_view lastRenderSummary() const noexcept = 0;
     [[nodiscard]] virtual bool windowVisible() const noexcept = 0;
     [[nodiscard]] virtual bool windowVisibilityRequested() const noexcept = 0;
@@ -586,18 +543,14 @@ public:
     [[nodiscard]] virtual std::string_view lastHostEventSummary() const noexcept = 0;
     [[nodiscard]] virtual std::string_view lastBackendError() const noexcept = 0;
     [[nodiscard]] virtual std::string backendStatusSummary() const = 0;
-    [[nodiscard]] virtual bool handleHostEvent(const SdlFrontendHostEvent& event) = 0;
+    [[nodiscard]] virtual bool handleHostEvent(const FrontendHostEvent& event) = 0;
     [[nodiscard]] virtual std::string_view backendName() const noexcept = 0;
     [[nodiscard]] virtual bool backendReady() const noexcept = 0;
-    [[nodiscard]] virtual bool audioOutputReady() const noexcept = 0;
-    [[nodiscard]] virtual std::size_t bufferedAudioSamples() const noexcept = 0;
-    [[nodiscard]] virtual bool audioQueueBackpressureActive() const noexcept = 0;
-    [[nodiscard]] virtual uint32_t queuedAudioBytes() const noexcept = 0;
     [[nodiscard]] virtual bool tryInitializeBackend() = 0;
     [[nodiscard]] virtual std::size_t pumpBackendEvents() = 0;
 
     /// Inject an optional DebugSnapshotService.  When set, the plugin routes
-    /// video debug model and audio state captures through bounded service queues
+    /// video debug model captures through bounded service queues
     /// (mutex-protected in the current implementation) so the render thread can
     /// drain them from serviceFrontend() without mutating emulation-lane state.
     /// Pass nullptr to disable (falls back to the inline sharedStateMutex_ path).
@@ -605,13 +558,6 @@ public:
     [[nodiscard]] virtual DebugSnapshotService* debugSnapshotService() const noexcept = 0;
 };
 
-// Generic host-side frontend contract. The SDL-prefixed names remain aliases
-// so existing embedders can migrate without an ABI-visible C++ break; dynamic
-// modules cross only the pure-C TimeFrontendApiV1 boundary.
-using FrontendConfig = SdlFrontendConfig;
-using FrontendStats = SdlFrontendStats;
-using ISdlFrontendPlugin = IFrontendPlugin;
-
 } // namespace BMMQ
 
-#endif // BMMQ_SDL_FRONTEND_PLUGIN_HPP
+#endif // BMMQ_FRONTEND_PLUGIN_HPP

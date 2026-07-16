@@ -10,8 +10,8 @@
 #include "cores/gamegear/GameGearMachine.hpp"
 #include "machine/DebugSnapshotService.hpp"
 #include "machine/DebugSnapshotTypes.hpp"
-#include "machine/plugins/SdlFrontendPlugin.hpp"
-#include "machine/plugins/SdlFrontendPluginLoader.hpp"
+#include "machine/plugins/FrontendPlugin.hpp"
+#include "machine/plugins/FrontendPluginLoader.hpp"
 
 namespace {
 
@@ -38,16 +38,15 @@ int main(int argc, char** argv)
     // Test 1: Injection and retrieval — no machine needed
     // -----------------------------------------------------------------------
     {
-        BMMQ::SdlFrontendConfig config;
+        BMMQ::FrontendConfig config;
         config.autoInitializeBackend = false;
-        config.enableAudio = false;
         config.enableVideo = false;
 
         const auto executablePath = (argc > 0 && argv != nullptr)
             ? std::filesystem::path(argv[0])
             : std::filesystem::path("time-smoke-debug-snapshot-sdl-plugin");
-        auto plugin = BMMQ::loadSdlFrontendPlugin(
-            BMMQ::defaultSdlFrontendPluginPath(executablePath), config);
+        auto plugin = BMMQ::loadFrontendPlugin(
+            BMMQ::defaultFrontendPluginPath(executablePath, BMMQ::kDefaultSdlFrontendPluginFilename), config);
 
         // Starts null
         assert(plugin->debugSnapshotService() == nullptr);
@@ -66,11 +65,10 @@ int main(int argc, char** argv)
     // Test 2: With emulation — service receives video snapshots via VBlank
     // -----------------------------------------------------------------------
     {
-        BMMQ::SdlFrontendConfig config;
+        BMMQ::FrontendConfig config;
         config.windowTitle = "Debug Snapshot SDL Smoke";
         config.frameWidth = 160;
         config.frameHeight = 144;
-        config.enableAudio = false;
         config.autoInitializeBackend = false;
         config.autoPresentOnVideoEvent = false;
 
@@ -80,8 +78,8 @@ int main(int argc, char** argv)
         const auto executablePath = (argc > 0 && argv != nullptr)
             ? std::filesystem::path(argv[0])
             : std::filesystem::path("time-smoke-debug-snapshot-sdl-plugin");
-        auto frontendPlugin = BMMQ::loadSdlFrontendPlugin(
-            BMMQ::defaultSdlFrontendPluginPath(executablePath), config);
+        auto frontendPlugin = BMMQ::loadFrontendPlugin(
+            BMMQ::defaultFrontendPluginPath(executablePath, BMMQ::kDefaultSdlFrontendPluginFilename), config);
         auto* frontend = frontendPlugin.get();
 
         BMMQ::DebugSnapshotService svc;

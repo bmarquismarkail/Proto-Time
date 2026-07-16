@@ -1,5 +1,5 @@
-#ifndef BMMQ_SDL_AUDIO_RESAMPLER_HPP
-#define BMMQ_SDL_AUDIO_RESAMPLER_HPP
+#ifndef BMMQ_AUDIO_RESAMPLER_HPP
+#define BMMQ_AUDIO_RESAMPLER_HPP
 
 #include <algorithm>
 #include <cmath>
@@ -9,15 +9,15 @@
 
 namespace BMMQ {
 
-struct SdlAudioResamplerRenderStats {
+struct AudioResamplerRenderStats {
     std::size_t sourceSamplesConsumed = 0;
     std::size_t outputSamplesProduced = 0;
     std::size_t silenceSamplesFilled = 0;
 };
 
-class SdlAudioResampler {
+class AudioResampler {
 public:
-    SdlAudioResampler(int sourceSampleRate, int outputSampleRate, uint8_t channelCount = 1u)
+    AudioResampler(int sourceSampleRate, int outputSampleRate, uint8_t channelCount = 1u)
     {
         configure(sourceSampleRate, outputSampleRate, channelCount);
     }
@@ -72,11 +72,11 @@ public:
     }
 
     template <typename PeekSampleFn, typename ConsumeSamplesFn>
-    [[nodiscard]] SdlAudioResamplerRenderStats render(std::span<int16_t> output,
+    [[nodiscard]] AudioResamplerRenderStats render(std::span<int16_t> output,
                                                       PeekSampleFn&& peekSample,
                                                       ConsumeSamplesFn&& consumeSamples)
     {
-        SdlAudioResamplerRenderStats stats;
+        AudioResamplerRenderStats stats;
         const auto channels = static_cast<std::size_t>(std::max<uint8_t>(channelCount_, 1u));
         if (output.size() < channels) {
             return stats;
@@ -119,7 +119,7 @@ public:
         return stats;
     }
 
-    [[nodiscard]] SdlAudioResamplerRenderStats render(std::span<const int16_t> input,
+    [[nodiscard]] AudioResamplerRenderStats render(std::span<const int16_t> input,
                                                       std::span<int16_t> output)
     {
         std::size_t baseIndex = 0u;
@@ -156,4 +156,4 @@ private:
 
 } // namespace BMMQ
 
-#endif // BMMQ_SDL_AUDIO_RESAMPLER_HPP
+#endif // BMMQ_AUDIO_RESAMPLER_HPP

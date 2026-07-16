@@ -38,7 +38,11 @@
 #include "machine/DebugSnapshotService.hpp"
 #include "machine/ImageDecoder.hpp"
 #include "machine/plugins/FrontendPluginLoader.hpp"
+#include "machine/plugins/AudioOutputPluginLoader.hpp"
 #include "machine/plugins/DynamicPluginModule.hpp"
+#include "machine/plugins/audio_output/DummyAudioOutput.hpp"
+#include "machine/plugins/audio_output/FileAudioOutput.hpp"
+#include "machine/plugins/audio/AudioTransportPlugin.hpp"
 #include "machine/TimingService.hpp"
 #include "cores/gameboy/GameBoyMachine.hpp"
 using GameBoyMachine = GB::GameBoyMachine;
@@ -83,7 +87,11 @@ void printUsage(std::string_view program)
               << "                     Diagnostics sample interval in milliseconds (default: 1000)\n"
               << "  --no-audio         Disable frontend audio output\n"
               << "  --audio-backend <name>\n"
-              << "                     Frontend audio backend: sdl, dummy, or file (default: sdl)\n"
+              << "                     Audio backend: sdl, dummy, or file (default: sdl)\n"
+              << "  --audio-plugin <path>\n"
+              << "                     Load an audio output from a pure-C ABI module\n"
+              << "  --audio-file <path>\n"
+              << "                     Raw signed 16-bit PCM path for the file backend\n"
               << "  --audio-ready-queue-chunks <n>\n"
               << "  --audio-batch-chunks <n>\n"
               << "                     Audio output ready-queue chunk depth (1-64, default: 3)\n"
@@ -162,13 +170,113 @@ void writeJsonDoubleOrNull(std::ostream& output, bool hasValue, double value)
     }
 }
 
+void populateAudioDiagnostics(BMMQ::FrontendStats& result,
+                              const BMMQ::AudioTransportPluginStats& plugin,
+                              const BMMQ::AudioService& service,
+                              const BMMQ::IAudioOutputBackend* output) noexcept
+{
+    result.audioEvents = plugin.events;
+    result.audioRealtimePacketsAccepted = plugin.realtimePacketsAccepted;
+    result.audioRealtimePacketsSkipped = plugin.realtimePacketsSkipped;
+    result.audioBatchFlushCount = plugin.batchFlushCount;
+    result.audioBatchFlushSamplesLast = plugin.batchFlushSamplesLast;
+    result.audioBatchFlushSamplesMin = plugin.batchFlushSamplesMin;
+    result.audioBatchFlushSamplesMax = plugin.batchFlushSamplesMax;
+    result.audioBatchPacketsAccumulated = plugin.batchPacketsAccumulated;
+    result.audioBatchPacketsFlushed = plugin.batchPacketsFlushed;
+    result.audioBatchCurrentSamples = plugin.batchCurrentSamples;
+    result.audioRealtimePacketSamplesLast = plugin.packetSamplesLast;
+    result.audioRealtimePacketSamplesMin = plugin.packetSamplesMin;
+    result.audioRealtimePacketSamplesMax = plugin.packetSamplesMax;
+    result.audioRealtimePacketSampleRateLast = plugin.sampleRateLast;
+    result.audioRealtimePacketChannelCountLast = plugin.channelCountLast;
+    result.audioRealtimePacketPsgChunksEmittedLast = plugin.psgChunksEmittedLast;
+    result.audioRealtimePacketPsgSamplesGeneratedTotalLast =
+        plugin.psgSamplesGeneratedTotalLast;
+    result.audioRealtimePacketPsgChunkSamplesLast = plugin.psgChunkSamplesLast;
+    result.audioRealtimePacketPsgChunkSamplesMin = plugin.psgChunkSamplesMin;
+    result.audioRealtimePacketPsgChunkSamplesMax = plugin.psgChunkSamplesMax;
+    result.audioRealtimePacketPsgPendingSamplesLast = plugin.psgPendingSamplesLast;
+    const auto engine = service.engine().stats();
+    const auto transport = service.transportStats();
+    const auto device = output != nullptr ? output->deviceInfo() : BMMQ::AudioOutputDeviceInfo{};
+    result.audioSourceSampleRate = service.engine().config().sourceSampleRate;
+    result.audioDeviceSampleRate = service.engine().config().deviceSampleRate;
+    result.audioRingBufferCapacitySamples = service.engine().bufferCapacitySamples();
+    result.audioCallbackChunkSamples = device.callbackChunkSamples;
+    result.audioBufferedHighWaterSamples = engine.bufferedHighWaterSamples;
+    result.audioCallbackCount = engine.callbackCount;
+    result.audioSamplesDelivered = engine.samplesDelivered;
+    result.audioUnderrunCount = engine.underrunCount;
+    result.audioSilenceSamplesFilled = engine.silenceSamplesFilled;
+    result.audioOverrunDropCount = engine.overrunDropCount;
+    result.audioDroppedSamples = engine.droppedSamples;
+    result.audioResamplingActive = engine.resamplingActive;
+    result.audioResampleRatio = engine.resampleRatio;
+    result.audioSourceSamplesPushed = engine.sourceSamplesPushed;
+    result.audioAppendCallCount = engine.appendCallCount;
+    result.audioAppendSamplesRequested = engine.appendSamplesRequested;
+    result.audioAppendSamplesAccepted = engine.appendSamplesAccepted;
+    result.audioAppendSamplesRejected = engine.appendSamplesRejected;
+    result.audioAppendSamplesTruncated = engine.appendSamplesTruncated;
+    result.audioAppendBufferedSamplesLast = engine.appendBufferedSamplesLast;
+    result.audioResampleSourceSamplesConsumed = engine.sourceSamplesConsumed;
+    result.audioResampleOutputSamplesProduced = engine.outputSamplesProduced;
+    result.audioPipelineCapacitySkipCount = engine.pipelineCapacitySkipCount;
+    result.audioReadyQueueDepth = transport.readyQueueDepth;
+    result.audioTransportConfiguredReadyQueueChunks = transport.configuredReadyQueueChunks;
+    result.audioTransportPrefillTargetChunks = transport.prefillTargetChunks;
+    result.audioTransportReadyQueueCapacityChunks = transport.readyQueueCapacityChunks;
+    result.audioTransportReadyQueueUsableChunks = transport.readyQueueUsableChunks;
+    result.audioReadyQueueHighWaterChunks = transport.readyQueueHighWaterChunks;
+    result.audioReadyQueueLowWaterChunks = transport.readyQueueLowWaterChunks;
+    result.audioReadyQueueEmptyCount = transport.readyQueueEmptyCount;
+    result.audioTransportDrainCallbackCount = transport.drainCallbackCount;
+    result.audioTransportDrainRequestedSamples = transport.drainRequestedSamples;
+    result.audioTransportDrainReadySamples = transport.drainReadySamples;
+    result.audioTransportUnderrunCount = transport.underrunCount;
+    result.audioTransportSilenceSamplesFilled = transport.silenceSamplesFilled;
+    result.audioTransportWorkerWakeCount = transport.workerWakeCount;
+    result.audioTransportWorkerCallbackWakeCount = transport.workerCallbackWakeCount;
+    result.audioTransportWorkerEmulationWakeCount = transport.workerEmulationWakeCount;
+    result.audioTransportWorkerTimeoutWakeCount = transport.workerTimeoutWakeCount;
+    result.audioTransportAppendRecentPcmCallCount = transport.appendRecentPcmCallCount;
+    result.audioTransportAppendRecentPcmSamplesAppended = transport.appendRecentPcmSamplesAppended;
+    result.audioTransportPrimedForDrain = transport.primedForDrain;
+    result.audioTransportPrimedTransitionCount = transport.primedTransitionCount;
+    result.audioTransportPrimingSilenceCallbackCount = transport.primingSilenceCallbackCount;
+    result.audioTransportPrimingSilenceSamples = transport.primingSilenceSamples;
+    result.audioTransportDrainDurationSampleCount = transport.drainCallbackDurationSampleCount;
+    result.audioTransportDrainDurationLastNanos = transport.drainCallbackDurationLastNanos;
+    result.audioTransportDrainDurationHighWaterNanos = transport.drainCallbackDurationHighWaterNanos;
+    result.audioTransportDrainDurationP50Nanos = transport.drainCallbackDurationP50Nanos;
+    result.audioTransportDrainDurationP95Nanos = transport.drainCallbackDurationP95Nanos;
+    result.audioTransportDrainDurationP99Nanos = transport.drainCallbackDurationP99Nanos;
+    result.audioTransportDrainDurationP999Nanos = transport.drainCallbackDurationP999Nanos;
+    result.audioTransportDrainDurationUnder50usCount = transport.drainCallbackDurationUnder50usCount;
+    result.audioTransportDrainDuration50To100usCount = transport.drainCallbackDuration50To100usCount;
+    result.audioTransportDrainDuration100To250usCount = transport.drainCallbackDuration100To250usCount;
+    result.audioTransportDrainDuration250To500usCount = transport.drainCallbackDuration250To500usCount;
+    result.audioTransportDrainDuration500usTo1msCount = transport.drainCallbackDuration500usTo1msCount;
+    result.audioTransportDrainDuration1To2msCount = transport.drainCallbackDuration1To2msCount;
+    result.audioTransportDrainDuration2To5msCount = transport.drainCallbackDuration2To5msCount;
+    result.audioTransportDrainDuration5To10msCount = transport.drainCallbackDuration5To10msCount;
+    result.audioTransportDrainDurationOver10msCount = transport.drainCallbackDurationOver10msCount;
+    result.audioTransportWorkerEmulationWakeLatencySampleCount =
+        transport.workerEmulationWakeLatencySampleCount;
+    result.audioTransportWorkerEmulationWakeLatencyLastNs =
+        transport.workerEmulationWakeLatencyLastNs;
+    result.audioTransportWorkerEmulationWakeLatencyHighWaterNs =
+        transport.workerEmulationWakeLatencyHighWaterNs;
+}
+
 void writeDiagnosticsSample(std::ostream& output,
                             std::chrono::steady_clock::time_point startedAt,
                             std::chrono::steady_clock::time_point now,
                             std::uint64_t emulatedCycles,
                             std::uint64_t retiredInstructions,
                             std::uint32_t cpuClockHz,
-                            const BMMQ::SdlFrontendStats* frontendStats,
+                            const BMMQ::FrontendStats* frontendStats,
                             const BMMQ::TimingStats& timingStats,
                             const BMMQ::BackgroundTaskStats& backgroundStats,
                             const GameBoyMachine::BlockCacheStats* blockCacheStats,
@@ -185,7 +293,7 @@ void writeDiagnosticsSample(std::ostream& output,
     const auto effectiveSpeed =
         (cpuClockHz != 0u) ? (effectiveCyclesPerSecond / static_cast<double>(cpuClockHz)) : 0.0;
 
-    const BMMQ::SdlFrontendStats defaults{};
+    const BMMQ::FrontendStats defaults{};
     const auto& stats = (frontendStats != nullptr) ? *frontendStats : defaults;
     const auto audioConfiguredChannelCount =
         static_cast<unsigned int>(stats.audioRealtimePacketChannelCountLast);
@@ -696,23 +804,15 @@ int main(int argc, char** argv)
             config.frameWidth = descriptor.defaultFrameWidth;
             config.frameHeight = descriptor.defaultFrameHeight;
             config.autoInitializeBackend = true;
-            // SDL video and event APIs are host-main-thread-affine. The process
-            // main thread is the render lane; guest execution runs separately.
+            // Window/event APIs are host-main-thread-affine. The process main
+            // thread is the render lane; guest execution runs separately.
             config.enableRenderServiceThread = false;
-            // The SDL presenter opens windows hidden; ensure frames are
-            // presented automatically so the window appears during normal runs.
+            // Present automatically so the window appears during normal runs.
             config.createHiddenWindowOnInitialize = false;
             config.pumpBackendEventsOnInputSample = false;
             config.autoPresentOnVideoEvent = true;
             config.showWindowOnPresent = true;
             config.retainDebugSnapshots = options.debugSnapshotsEnabled;
-            config.enableAudio = options.audioEnabled;
-            config.audioBackend = options.audioBackend;
-            config.audioReadyQueueChunks =
-                static_cast<std::size_t>(std::clamp<std::uint32_t>(options.audioReadyQueueChunks, 1u, 64u));
-            config.audioBatchChunks =
-                static_cast<std::size_t>(std::clamp<std::uint32_t>(options.audioBatchChunks, 1u, 16u));
-
             const auto selectedFrontendId = BMMQ::normalizeFrontendId(
                 options.frontendId.value_or(std::string{}));
             const auto defaultFilename = BMMQ::defaultFrontendPluginFilename(
@@ -730,11 +830,64 @@ int main(int argc, char** argv)
                     frontend->setDebugSnapshotService(&debugSnapshotService);
                 }
                 machine.pluginManager().add(std::move(frontendPlugin));
-                machine.pluginManager().initialize(machine.mutableView());
-                frontend->requestWindowVisibility(true);
-                frontend->serviceFrontend();
             } catch (const std::exception& ex) {
                 std::cerr << "warning: " << ex.what() << "; continuing headless\n";
+            }
+        }
+
+        BMMQ::AudioTransportPlugin* audioTransport = nullptr;
+        if (options.audioEnabled) {
+            auto transport = std::make_unique<BMMQ::AudioTransportPlugin>(
+                static_cast<std::size_t>(std::clamp<std::uint32_t>(
+                    options.audioBatchChunks, 1u, 16u)));
+            audioTransport = transport.get();
+            machine.pluginManager().add(std::move(transport));
+        }
+        if (frontend != nullptr || audioTransport != nullptr) {
+            machine.pluginManager().initialize(machine.mutableView());
+        }
+        if (frontend != nullptr) {
+            frontend->requestWindowVisibility(true);
+            frontend->serviceFrontend();
+        }
+
+        std::unique_ptr<BMMQ::IAudioOutputBackend> audioOutput;
+        if (options.audioEnabled) {
+            try {
+                if (options.audioBackend == "sdl") {
+                    const auto executablePath = (argc > 0 && argv != nullptr)
+                        ? std::filesystem::path(argv[0]) : std::filesystem::path("timeEmulator");
+                    const auto audioPluginPath = options.audioPluginPath.value_or(
+                        BMMQ::defaultAudioOutputPluginPath(executablePath));
+                    audioOutput = BMMQ::loadAudioOutputPlugin(audioPluginPath, "sdl");
+                    std::cout << "Audio module: " << audioPluginPath << '\n';
+                } else if (options.audioBackend == "dummy") {
+                    audioOutput = std::make_unique<BMMQ::DummyAudioOutputBackend>();
+                } else if (options.audioBackend == "file") {
+                    audioOutput = std::make_unique<BMMQ::FileAudioOutputBackend>();
+                } else {
+                    throw std::invalid_argument("Unknown audio backend: " + options.audioBackend);
+                }
+                auto& audioService = machine.audioService();
+                const int channels = std::max<int>(audioService.engine().config().channelCount, 1);
+                const bool opened = audioOutput->open(audioService.engine(), {
+                    .backend = options.audioBackend,
+                    .requestedSampleRate = audioService.engine().config().sourceSampleRate,
+                    .callbackChunkSamples = static_cast<std::size_t>(256 * channels),
+                    .readyQueueChunks = static_cast<std::size_t>(
+                        std::clamp<std::uint32_t>(options.audioReadyQueueChunks, 1u, 64u)),
+                    .channels = channels,
+                    .filePath = options.audioOutputFilePath.value_or(std::filesystem::path{}),
+                    .audioService = &audioService,
+                });
+                if (!opened) {
+                    std::cerr << "warning: audio output failed: " << audioOutput->lastError()
+                              << "; continuing without device audio\n";
+                    audioOutput.reset();
+                }
+            } catch (const std::exception& ex) {
+                std::cerr << "warning: " << ex.what() << "; continuing without device audio\n";
+                audioOutput.reset();
             }
         }
 
@@ -758,6 +911,9 @@ int main(int argc, char** argv)
         }
         if (frontend != nullptr) {
             std::cout << "Frontend: " << frontend->backendStatusSummary() << '\n';
+        }
+        if (audioOutput != nullptr) {
+            std::cout << "Audio output: " << audioOutput->name() << '\n';
         }
         if (options.timingProfile.has_value()) {
             std::cout << "Timing profile: " << *options.timingProfile << '\n';
@@ -908,9 +1064,14 @@ int main(int argc, char** argv)
             }
 
             const auto timingStats = timingService.stats();
-            std::optional<BMMQ::SdlFrontendStats> frontendStats;
+            std::optional<BMMQ::FrontendStats> frontendStats;
             if (frontend != nullptr) {
                 frontendStats = frontend->stats();
+            }
+            if (audioTransport != nullptr) {
+                if (!frontendStats.has_value()) frontendStats.emplace();
+                populateAudioDiagnostics(*frontendStats, audioTransport->stats(),
+                                         machine.audioService(), audioOutput.get());
             }
             std::optional<GameBoyMachine::BlockCacheStats> blockCacheStats;
             std::optional<std::string> stateFingerprint;
@@ -965,6 +1126,7 @@ int main(int argc, char** argv)
         };
 
         auto serviceFrontend = [&]() -> bool {
+            if (audioOutput != nullptr) audioOutput->service();
             if (frontend == nullptr) {
                 return false;
             }
@@ -978,7 +1140,7 @@ int main(int argc, char** argv)
         std::exception_ptr emulationFailure;
 
         auto serviceFrontendUntil = [&](SteadyClock::time_point now) -> bool {
-            if (frontend == nullptr || now < nextFrontendService) {
+            if ((frontend == nullptr && audioOutput == nullptr) || now < nextFrontendService) {
                 return false;
             }
 
@@ -1194,8 +1356,7 @@ int main(int argc, char** argv)
 
         std::thread emulationThread(runEmulationLane);
 
-        // SDL requires video setup, event pumping, presentation, and teardown
-        // on the process main thread. This loop is therefore the UI/render lane.
+        // Window/event frontends require host-thread affinity; this is the UI/render lane.
         try {
             while (!emulationFinished.load(std::memory_order_acquire)) {
                 const auto now = SteadyClock::now();
@@ -1203,7 +1364,7 @@ int main(int argc, char** argv)
                     stopRequested.store(true, std::memory_order_release);
                     break;
                 }
-                if (frontend == nullptr) {
+                if (frontend == nullptr && audioOutput == nullptr) {
                     std::this_thread::sleep_for(kFrontendServicePeriod);
                 } else if (nextFrontendService > now) {
                     std::this_thread::sleep_until(nextFrontendService);
@@ -1228,6 +1389,7 @@ int main(int argc, char** argv)
             machine.visualOverrideService().endCapture();
         }
         emitDiagnostics(SteadyClock::now(), true);
+        if (audioOutput != nullptr) audioOutput->close();
         if (!options.visualPackPaths.empty() || options.visualCapturePath.has_value()) {
             (void)machine.visualOverrideService().captureStats();
             std::cout << machine.visualOverrideService().authorDiagnosticsReport();
@@ -1240,8 +1402,7 @@ int main(int argc, char** argv)
         } else {
             std::cout << '\n';
         }
-        // Explicitly detach the frontend while still on the SDL-owning host
-        // thread, before machine/service destruction begins.
+        // Detach the frontend on its owning host thread before service destruction.
         (void)backgroundTaskService.waitUntilIdle(std::chrono::seconds(10));
         machine.pluginManager().shutdown(machine.mutableView());
         machine.flushPendingBackgroundWork();

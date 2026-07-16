@@ -5,7 +5,7 @@
 #include <memory>
 #include <string_view>
 
-#include "SdlFrontendPlugin.hpp"
+#include "FrontendPlugin.hpp"
 
 namespace BMMQ {
 

@@ -19,7 +19,8 @@ extern "C" {
 
 enum TimePluginKindV1 {
     TIME_PLUGIN_KIND_EXECUTOR_POLICY_V1 = 1u,
-    TIME_PLUGIN_KIND_FRONTEND_V1 = 2u
+    TIME_PLUGIN_KIND_FRONTEND_V1 = 2u,
+    TIME_PLUGIN_KIND_AUDIO_OUTPUT_V1 = 3u
 };
 
 enum TimeFrontendCapabilityV1 {
@@ -167,6 +168,57 @@ struct TimeFrontendApiV1 {
     const char* (*backend_name)(const void* instance);
     const char* (*last_error)(const void* instance);
     int32_t (*query_stats)(const void* instance, struct TimeFrontendStatsV1* stats);
+};
+
+struct TimeAudioOutputHostApiV1 {
+    uint32_t struct_size;
+    uint32_t abi_version;
+    void* host_context;
+    uint32_t (*drain_ready_audio)(void* host_context,
+                                  int16_t* output,
+                                  uint32_t requested_samples);
+};
+
+struct TimeAudioOutputConfigV1 {
+    uint32_t struct_size;
+    uint32_t requested_sample_rate;
+    uint32_t requested_channels;
+    uint32_t callback_samples;
+};
+
+struct TimeAudioOutputDeviceInfoV1 {
+    uint32_t struct_size;
+    uint32_t sample_rate;
+    uint32_t channels;
+    uint32_t callback_samples;
+};
+
+struct TimeAudioOutputStatsV1 {
+    uint32_t struct_size;
+    uint64_t callback_count;
+    uint64_t service_calls;
+    uint64_t start_count;
+    uint64_t pause_count;
+    int32_t device_open;
+    int32_t device_started;
+};
+
+struct TimeAudioOutputApiV1 {
+    uint32_t struct_size;
+    uint32_t abi_version;
+    void* (*create)(const struct TimeAudioOutputHostApiV1* host_api);
+    void (*destroy)(void* instance);
+    int32_t (*open)(void* instance,
+                    const struct TimeAudioOutputConfigV1* config,
+                    struct TimeAudioOutputDeviceInfoV1* obtained);
+    int32_t (*start)(void* instance);
+    void (*pause)(void* instance);
+    int32_t (*service)(void* instance);
+    void (*close)(void* instance);
+    const char* (*backend_name)(const void* instance);
+    const char* (*last_error)(const void* instance);
+    int32_t (*query_stats)(const void* instance,
+                           struct TimeAudioOutputStatsV1* stats);
 };
 
 struct TimeExecutorPolicyApiV1 {

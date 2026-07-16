@@ -5,8 +5,8 @@
 
 #include "cores/gameboy/GameBoyMachine.hpp"
 using GameBoyMachine = GB::GameBoyMachine;
-#include "machine/plugins/SdlFrontendPlugin.hpp"
-#include "machine/plugins/SdlFrontendPluginLoader.hpp"
+#include "machine/plugins/FrontendPlugin.hpp"
+#include "machine/plugins/FrontendPluginLoader.hpp"
 
 int main(int argc, char** argv)
 {
@@ -18,9 +18,8 @@ int main(int argc, char** argv)
     ::setenv("SDL_VIDEODRIVER", "dummy", 1);
 #endif
 
-    BMMQ::SdlFrontendConfig config;
+    BMMQ::FrontendConfig config;
     config.enableVideo = false;
-    config.enableAudio = false;
     config.enableInput = true;
     config.autoInitializeBackend = false;
     config.pumpBackendEventsOnInputSample = false;
@@ -33,8 +32,8 @@ int main(int argc, char** argv)
     const auto executablePath = (argc > 0 && argv != nullptr)
         ? std::filesystem::path(argv[0])
         : std::filesystem::path("time-smoke-input-transport");
-    auto frontendPlugin = BMMQ::loadSdlFrontendPlugin(
-        BMMQ::defaultSdlFrontendPluginPath(executablePath),
+    auto frontendPlugin = BMMQ::loadFrontendPlugin(
+        BMMQ::defaultFrontendPluginPath(executablePath, BMMQ::kDefaultSdlFrontendPluginFilename),
         config);
     auto* frontend = frontendPlugin.get();
     machine.pluginManager().add(std::move(frontendPlugin));

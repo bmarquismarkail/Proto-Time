@@ -7,7 +7,7 @@ namespace BMMQ {
 struct InputPluginCapabilities {
     // True when the machine loop may poll the adapter directly without blocking or unsafe mutation.
     bool pollingSafe = false;
-    // True when host event ingestion is safe while the adapter is active, e.g. SDL-style pumps.
+    // True when host event ingestion is safe while the adapter is active.
     bool eventPumpSafe = false;
     // True when visible input state does not depend on wall-clock timing or nondeterministic host behavior.
     bool deterministic = false;

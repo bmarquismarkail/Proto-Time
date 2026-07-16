@@ -171,6 +171,10 @@ void applyConfigValue(EmulatorConfig& config,
             config.audioEnabled = parseBool(text, label);
         } else if (key == "backend") {
             config.audioBackend = text;
+        } else if (key == "plugin") {
+            config.audioPluginPath = resolveConfigPath(configDirectory, text);
+        } else if (key == "output_file") {
+            config.audioOutputFilePath = resolveConfigPath(configDirectory, text);
         } else if (key == "ready_queue_chunks") {
             const auto parsed = parseUnsigned(text, label);
             const auto clamped = std::min<std::uint64_t>(parsed, 64u);
@@ -335,6 +339,12 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     }
     if (overrides.audioBackend.has_value()) {
         config.audioBackend = *overrides.audioBackend;
+    }
+    if (overrides.audioPluginPath.has_value()) {
+        config.audioPluginPath = *overrides.audioPluginPath;
+    }
+    if (overrides.audioOutputFilePath.has_value()) {
+        config.audioOutputFilePath = *overrides.audioOutputFilePath;
     }
     if (overrides.audioReadyQueueChunks.has_value()) {
         config.audioReadyQueueChunks =
@@ -537,6 +547,16 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
                 throw std::invalid_argument("--audio-backend requires a backend name");
             }
             arguments.overrides.audioBackend = argv[++i];
+        } else if (arg == "--audio-plugin") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--audio-plugin requires a path");
+            }
+            arguments.overrides.audioPluginPath = std::filesystem::path(argv[++i]);
+        } else if (arg == "--audio-file") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--audio-file requires a path");
+            }
+            arguments.overrides.audioOutputFilePath = std::filesystem::path(argv[++i]);
         } else if (arg == "--audio-ready-queue-chunks") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--audio-ready-queue-chunks requires a positive integer");

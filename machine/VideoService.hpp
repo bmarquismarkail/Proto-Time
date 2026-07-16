@@ -523,7 +523,7 @@ public:
     // consumeAndProcessFrame: consume the next frame from the engine, run the
     // processor pipeline, and return the processed packet ready for presentation.
     // Returns std::nullopt when in Headless mode (no presenter — caller should
-    // treat this as a successful headless present and skip the SDL call).
+    // treat this as a successful headless present and skip the backend call).
     // The sentinel VideoFramePacket with width==0 is used to signal Headless.
     // Caller must hold sharedStateMutex_ (or equivalent serialisation) for all
     // VideoService/VideoEngine state while this runs.
@@ -636,7 +636,7 @@ public:
         ++diagnostics_.presentCount;
         if (presenter_ == nullptr) {
             setState(VideoLifecycleState::Headless);
-            return std::nullopt;  // headless — no SDL call needed, caller treats as success
+            return std::nullopt;  // headless: no backend call needed; caller treats as success
         }
         return processed;
     }

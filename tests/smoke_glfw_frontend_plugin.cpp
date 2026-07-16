@@ -10,7 +10,6 @@ int main(int argc, char** argv)
     const auto path = std::filesystem::path(argv[1]);
     BMMQ::FrontendConfig config;
     config.enableVideo = false;
-    config.enableAudio = false;
     config.enableInput = false;
     config.autoInitializeBackend = false;
 

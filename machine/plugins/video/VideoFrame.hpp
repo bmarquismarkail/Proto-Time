@@ -106,7 +106,7 @@ struct VideoPresentPacket {
 };
 
 struct VideoPresenterConfig {
-    std::string windowTitle = "T.I.M.E. SDL Frontend";
+    std::string windowTitle = "T.I.M.E. Frontend";
     int scale = 2;
     int frameWidth = 160;
     int frameHeight = 144;

@@ -1,0 +1,11 @@
+if (NOT DEFINED EXECUTABLE)
+    message(FATAL_ERROR "EXECUTABLE is required")
+endif()
+execute_process(COMMAND ldd "${EXECUTABLE}" OUTPUT_VARIABLE dependencies
+                ERROR_VARIABLE error RESULT_VARIABLE result)
+if (NOT result EQUAL 0)
+    message(FATAL_ERROR "ldd failed: ${error}")
+endif()
+if (dependencies MATCHES "SDL")
+    message(FATAL_ERROR "timeEmulator has an SDL runtime dependency:\n${dependencies}")
+endif()
