@@ -1,0 +1,4 @@
+#!/bin/sh
+# Runs after git pull / git merge (fast-forward or true merge).
+git update-server-info
+. "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/graphify-refresh.sh"

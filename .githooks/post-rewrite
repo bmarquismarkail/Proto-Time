@@ -1,0 +1,7 @@
+#!/bin/sh
+# Runs after history-rewriting ops. $1 is 'rebase' or 'amend'.
+# git pull --rebase triggers this with $1=rebase.
+git update-server-info
+if [ "$1" = "rebase" ]; then
+    . "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/graphify-refresh.sh"
+fi
