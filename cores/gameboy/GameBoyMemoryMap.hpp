@@ -49,7 +49,7 @@ public:
     {
         writeObserver_ = std::move(observer);
     }
-    [[nodiscard]] std::function<void(uint16_t, uint8_t)> writeObserver() const noexcept
+    [[nodiscard]] std::function<void(uint16_t, uint8_t)> writeObserver() const
     {
         return writeObserver_;
     }
