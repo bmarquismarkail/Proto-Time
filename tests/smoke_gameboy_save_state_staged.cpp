@@ -43,6 +43,7 @@ void truncateChunkPayload(std::filesystem::path path, std::string_view name) {
     for (auto& chunk : state.chunks) {
         if (chunk.name == name && !chunk.data.empty()) {
             chunk.data.pop_back();
+            chunk.size = static_cast<uint32_t>(chunk.data.size());
             break;
         }
     }
