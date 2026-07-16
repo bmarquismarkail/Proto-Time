@@ -331,7 +331,11 @@ BMMQ::RealtimeVideoSubmission GameBoyPPU::buildRealtimeFrame(const BMMQ::VideoDe
     static constexpr std::array<std::uint32_t, 4u> kPalette{
         0xFFE0F8D0u, 0xFF88C070u, 0xFF346856u, 0xFF081820u,
     };
-    if (packet.width == kDisplayWidth && packet.height == kDisplayHeight && hasCapturedScanlines_) {
+    const bool completeCapturedFrame = hasCapturedScanlines_ &&
+        std::all_of(capturedScanlines_.begin(), capturedScanlines_.end(), [](bool captured) {
+            return captured;
+        });
+    if (packet.width == kDisplayWidth && packet.height == kDisplayHeight && completeCapturedFrame) {
         packet.surface = BMMQ::makeIndexedVideoSurface(
             frameColorIndices_, packet.width, packet.height,
             BMMQ::RealtimeVideoEncoding::Indexed2, kPalette);
