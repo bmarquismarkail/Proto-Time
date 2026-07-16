@@ -394,6 +394,7 @@ public:
   void setHaltFlag(bool f);
   void clearHaltFlag();
   [[nodiscard]] SaveState exportState() const;
+  static void validateState(const SaveState& state);
   void importState(const SaveState& state);
 
   // VRAM Banking Methods

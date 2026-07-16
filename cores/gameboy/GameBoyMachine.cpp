@@ -1680,6 +1680,7 @@ void GameBoyMachine::load_state(const std::filesystem::path& path) {
     nextInput.importState(inputData);
 
     LR3592_DMG::SaveState cpuState = deserializeCpuState(cpuData);
+    LR3592_DMG::validateState(cpuState);
     GameBoyMemoryMap nextMemoryMap;
     nextMemoryMap.importState(memoryData);
 

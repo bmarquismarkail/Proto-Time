@@ -3863,7 +3863,7 @@ LR3592_DMG::SaveState LR3592_DMG::exportState() const
     return state;
 }
 
-void LR3592_DMG::importState(const SaveState& state)
+void LR3592_DMG::validateState(const SaveState& state)
 {
     if (state.currentVramBank > kBankB) {
         throw std::invalid_argument("LR3592 save state has invalid VRAM bank");
@@ -3871,6 +3871,11 @@ void LR3592_DMG::importState(const SaveState& state)
     if (state.spriteContext > 1u) {
         throw std::invalid_argument("LR3592 save state has invalid sprite context");
     }
+}
+
+void LR3592_DMG::importState(const SaveState& state)
+{
+    validateState(state);
 
     if (cpuRegisters_.af != nullptr) cpuRegisters_.af->value = state.af;
     if (cpuRegisters_.bc != nullptr) cpuRegisters_.bc->value = state.bc;
