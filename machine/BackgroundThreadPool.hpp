@@ -162,6 +162,7 @@ public:
         if (cancelled > 0) {
             cancelled_.fetch_add(cancelled, std::memory_order_relaxed);
             if (tasksPending_.load(std::memory_order_acquire) == 0u) {
+                const std::lock_guard<std::mutex> idleLock(idleMutex_);
                 idleCv_.notify_all();
             }
         }
@@ -362,6 +363,7 @@ private:
         categoryCompleted_[categoryIndex].fetch_add(1u, std::memory_order_relaxed);
         tasksCompleted_.fetch_add(1, std::memory_order_relaxed);
         if (tasksPending_.fetch_sub(1, std::memory_order_acq_rel) == 1u) {
+            const std::lock_guard<std::mutex> idleLock(idleMutex_);
             idleCv_.notify_all();
         }
     }
