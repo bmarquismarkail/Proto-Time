@@ -1,12 +1,11 @@
 #include <cassert>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <vector>
-
-#include <unistd.h>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
 
@@ -26,9 +25,11 @@ std::vector<uint8_t> makeRom() {
 }
 
 std::filesystem::path makeSavePath() {
+    static std::atomic<uint64_t> sequence{0u};
     std::ostringstream name;
-    name << "proto-time-gb-staged-" << ::getpid() << "-" << ::getppid() << "-"
-         << std::chrono::steady_clock::now().time_since_epoch().count() << ".ptss";
+    name << "proto-time-gb-staged-"
+         << std::chrono::steady_clock::now().time_since_epoch().count() << "-"
+         << sequence.fetch_add(1u, std::memory_order_relaxed) << ".ptss";
     return std::filesystem::temp_directory_path() / name.str();
 }
 
