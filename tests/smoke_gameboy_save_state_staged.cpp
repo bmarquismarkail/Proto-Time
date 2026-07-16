@@ -38,11 +38,11 @@ void removeIfExists(const std::filesystem::path& path) {
     std::filesystem::remove(path, ec);
 }
 
-void corruptChunkPayload(std::filesystem::path path, std::string_view name) {
+void truncateChunkPayload(std::filesystem::path path, std::string_view name) {
     auto state = BMMQ::SaveStateReader::read(path);
     for (auto& chunk : state.chunks) {
         if (chunk.name == name && !chunk.data.empty()) {
-            chunk.data[0] ^= 0xFFu;
+            chunk.data.pop_back();
             break;
         }
     }
@@ -74,7 +74,7 @@ int main() {
     assert(std::filesystem::exists(savePath));
 
     // Corruption that should make APU deserialization fail.
-    corruptChunkPayload(savePath, "gb.apu");
+    truncateChunkPayload(savePath, "gb.apu");
 
     // Mutate machine after save so a staged restore failure would leave it in this
     // changed state instead of the pre-load state if the import were not atomic.
