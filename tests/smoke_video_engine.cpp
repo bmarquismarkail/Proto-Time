@@ -116,6 +116,16 @@ int main()
 {
     namespace Visual = BMMQ::Tests::Visual;
 
+    BMMQ::VideoPresentPacket emptyPacket;
+    emptyPacket.width = 0;
+    emptyPacket.height = 0;
+    assert(emptyPacket.empty());
+    assert(emptyPacket.pixelCount() == 0u);
+    emptyPacket.width = -1;
+    emptyPacket.height = 4;
+    assert(emptyPacket.empty());
+    assert(emptyPacket.pixelCount() == 0u);
+
     BMMQ::VideoEngine genericEngine({
         .frameWidth = 4,
         .frameHeight = 2,

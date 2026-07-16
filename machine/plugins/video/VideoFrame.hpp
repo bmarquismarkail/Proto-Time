@@ -12,6 +12,12 @@
 
 namespace BMMQ {
 
+[[nodiscard]] inline std::size_t expectedVideoPixelCount(int width, int height) noexcept
+{
+    return static_cast<std::size_t>(std::max(width, 0)) *
+           static_cast<std::size_t>(std::max(height, 0));
+}
+
 enum class VideoFrameFormat : uint8_t {
     Argb8888 = 0,
 };
@@ -46,23 +52,27 @@ struct VideoFramePacket {
 
     [[nodiscard]] bool empty() const noexcept
     {
-        const auto expected = static_cast<std::size_t>(std::max(width, 0)) *
-                              static_cast<std::size_t>(std::max(height, 0));
-        return pixels.size() != expected && !surface.validForDimensions(width, height);
+        const auto expected = expectedPixelCount();
+        return expected == 0u ||
+               (pixels.size() != expected && !surface.validForDimensions(width, height));
+    }
+
+    [[nodiscard]] std::size_t expectedPixelCount() const noexcept
+    {
+        return expectedVideoPixelCount(width, height);
     }
 
     [[nodiscard]] std::size_t pixelCount() const noexcept
     {
         return pixels.empty()
-            ? (empty() ? 0u : static_cast<std::size_t>(width) * static_cast<std::size_t>(height))
+            ? (empty() ? 0u : expectedPixelCount())
             : pixels.size();
     }
 };
 
 [[nodiscard]] inline bool materializeVideoFrameArgb(VideoFramePacket& frame)
 {
-    const auto expected = static_cast<std::size_t>(std::max(frame.width, 0)) *
-                          static_cast<std::size_t>(std::max(frame.height, 0));
+    const auto expected = frame.expectedPixelCount();
     if (frame.pixels.size() == expected) {
         return true;
     }
@@ -86,9 +96,14 @@ struct VideoPresentPacket {
 
     [[nodiscard]] bool empty() const noexcept
     {
-        const auto expected = static_cast<std::size_t>(std::max(width, 0)) *
-                              static_cast<std::size_t>(std::max(height, 0));
-        return pixels.size() != expected && !surface.validForDimensions(width, height);
+        const auto expected = expectedPixelCount();
+        return expected == 0u ||
+               (pixels.size() != expected && !surface.validForDimensions(width, height));
+    }
+
+    [[nodiscard]] std::size_t expectedPixelCount() const noexcept
+    {
+        return expectedVideoPixelCount(width, height);
     }
 
     [[nodiscard]] std::size_t pixelCount() const noexcept
@@ -96,7 +111,7 @@ struct VideoPresentPacket {
         if (!pixels.empty()) {
             return pixels.size();
         }
-        return empty() ? 0u : static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+        return empty() ? 0u : expectedPixelCount();
     }
 
     [[nodiscard]] std::size_t payloadBytes() const noexcept
