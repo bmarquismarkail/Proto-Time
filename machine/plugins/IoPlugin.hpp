@@ -12,6 +12,7 @@
 
 #include "../VideoDebugModel.hpp"
 #include "../RuntimeContext.hpp"
+#include "../AudioPipeline.hpp"
 #include "video/RealtimeVideoSurface.hpp"
 
 namespace BMMQ {
@@ -182,7 +183,7 @@ struct RealtimeVideoSubmission {
 };
 
 struct RealtimeAudioPacket {
-    static constexpr std::uint16_t kContractVersion = 1u;
+    static constexpr std::uint16_t kContractVersion = 2u;
     std::uint16_t contractVersion = kContractVersion;
     std::uint32_t sampleRate = 48000u;
     std::uint8_t channelCount = 1u;
@@ -193,7 +194,11 @@ struct RealtimeAudioPacket {
     std::uint32_t psgChunkSamplesMin = 0;
     std::uint32_t psgChunkSamplesMax = 0;
     std::uint32_t psgPendingSamples = 0;
+    std::uint64_t firstSampleFrame = 0u;
     std::vector<std::int16_t> pcmSamples;
+    std::vector<PsgVoiceDescriptor> voices;
+    std::vector<std::int16_t> voiceStems;
+    std::vector<PsgAudioEvent> events;
 
     [[nodiscard]] bool empty() const noexcept
     {

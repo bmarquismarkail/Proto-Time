@@ -1403,6 +1403,14 @@ std::optional<BMMQ::RealtimeAudioPacket> GameBoyMachine::realtimeAudioPacket() c
     packet.sampleRate = impl_->apu.sampleRate();
     packet.channelCount = 1u;
     packet.frameCounter = impl_->apu.frameCounter();
+    const auto pendingCount = impl_->apu.pendingSampleCount();
+    packet.firstSampleFrame = impl_->apu.sampleCounter() - pendingCount;
+    packet.voices = {
+        {0u, BMMQ::PsgVoiceKind::Pulse}, {1u, BMMQ::PsgVoiceKind::Pulse},
+        {2u, BMMQ::PsgVoiceKind::Wave}, {3u, BMMQ::PsgVoiceKind::Noise},
+    };
+    packet.voiceStems = impl_->apu.copyPendingVoiceStems();
+    packet.events = impl_->apu.takePendingEvents(packet.firstSampleFrame);
     packet.pcmSamples = impl_->apu.takePendingSamples();
     return packet;
 }

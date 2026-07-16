@@ -22,6 +22,19 @@ GameBoyAPU::GameBoyAPU() {
 void GameBoyAPU::reset() {
     apu_ = GameBoyAPUState{};
     apu_.masterEnabled = true;
+    recentVoiceStems_ = {};
+    pendingEvents_.clear();
+    eventSequence_ = 0u;
+    observedGateStates_.fill(false);
+    for (std::uint8_t voice = 0u; voice < 4u; ++voice) {
+        BMMQ::PsgAudioEvent event;
+        event.sequence = ++eventSequence_;
+        event.voiceId = voice;
+        event.voiceKind = voice < 2u ? BMMQ::PsgVoiceKind::Pulse
+            : voice == 2u ? BMMQ::PsgVoiceKind::Wave : BMMQ::PsgVoiceKind::Noise;
+        event.kind = BMMQ::PsgEventKind::StateSnapshot;
+        pendingEvents_.push_back(event);
+    }
 }
 
 uint16_t GameBoyAPU::pulseTimerPeriod(uint16_t frequency) const noexcept
@@ -91,7 +104,10 @@ void GameBoyAPU::step(uint32_t cpuCycles) {
         apu_.sampleAccumulator += kSampleRate;
         while (apu_.sampleAccumulator >= kMasterClockHz) {
             apu_.sampleAccumulator -= kMasterClockHz;
-            pushSample(generateSample());
+            const auto stems = currentVoiceContributions();
+            int mixed = 0;
+            for (const auto stem : stems) mixed += stem;
+            pushSample(static_cast<int16_t>(std::clamp(mixed, -32768, 32767)), stems);
         }
     }
 }
@@ -269,13 +285,30 @@ int16_t GameBoyAPU::mixCurrentSample() const noexcept
     return static_cast<int16_t>(std::clamp((left + right) * 32, -32768, 32767));
 }
 
+std::array<int16_t, 4u> GameBoyAPU::currentVoiceContributions() const noexcept
+{
+    const std::array<int, 4u> raw{{currentPulseSample(apu_.pulse1), currentPulseSample(apu_.pulse2),
+                                   currentWaveSample(), currentNoiseSample()}};
+    const int leftVolume = static_cast<int>((apu_.nr50 >> 4u) & 0x07u) + 1;
+    const int rightVolume = static_cast<int>(apu_.nr50 & 0x07u) + 1;
+    std::array<int16_t, 4u> result{};
+    for (std::size_t voice = 0u; voice < result.size(); ++voice) {
+        const int left = (apu_.nr51 & static_cast<std::uint8_t>(0x10u << voice)) != 0u ? raw[voice] : 0;
+        const int right = (apu_.nr51 & static_cast<std::uint8_t>(0x01u << voice)) != 0u ? raw[voice] : 0;
+        result[voice] = static_cast<int16_t>(std::clamp((left * leftVolume + right * rightVolume) * 32,
+                                                       -32768, 32767));
+    }
+    return result;
+}
+
 int16_t GameBoyAPU::generateSample() {
     return mixCurrentSample();
 }
 
-void GameBoyAPU::pushSample(int16_t sample) {
+void GameBoyAPU::pushSample(int16_t sample, const std::array<int16_t, 4u>& stems) {
     std::size_t cursor = apu_.recentWriteCursor;
     apu_.recentSamples[cursor] = sample;
+    for (std::size_t voice = 0u; voice < stems.size(); ++voice) recentVoiceStems_[voice][cursor] = stems[voice];
     apu_.recentWriteCursor = (cursor + 1) % kHistorySamples;
     if (apu_.recentSampleCount < kHistorySamples) {
         apu_.recentSampleCount++;
@@ -468,6 +501,7 @@ void GameBoyAPU::writeRegister(uint16_t address, uint8_t value) {
         }
         break;
     }
+    recordWriteEvent(address, value);
 }
 
 uint8_t GameBoyAPU::readRegister(uint16_t address) const {
@@ -512,6 +546,90 @@ std::vector<int16_t> GameBoyAPU::takePendingSamples() const {
     }
     apu_.pendingSampleCount = 0;
     return samples;
+}
+
+std::vector<int16_t> GameBoyAPU::copyPendingVoiceStems() const
+{
+    std::vector<int16_t> samples;
+    samples.reserve(apu_.pendingSampleCount * 4u);
+    for (std::size_t voice = 0u; voice < 4u; ++voice) {
+        auto cursor = apu_.pendingReadCursor;
+        for (std::size_t i = 0u; i < apu_.pendingSampleCount; ++i) {
+            samples.push_back(recentVoiceStems_[voice][cursor]);
+            cursor = (cursor + 1u) % kHistorySamples;
+        }
+    }
+    return samples;
+}
+
+std::vector<BMMQ::PsgAudioEvent> GameBoyAPU::takePendingEvents(std::uint64_t firstSampleFrame) const
+{
+    auto events = std::move(pendingEvents_);
+    pendingEvents_.clear();
+    for (auto& event : events) {
+        const auto absolute = static_cast<std::uint64_t>(event.sampleFrameOffset);
+        event.sampleFrameOffset = static_cast<std::uint32_t>(absolute > firstSampleFrame
+            ? absolute - firstSampleFrame : 0u);
+    }
+    return events;
+}
+
+void GameBoyAPU::recordWriteEvent(std::uint16_t address, std::uint8_t value)
+{
+    std::uint8_t voice = 0u;
+    if (address >= 0xFF16u && address <= 0xFF19u) voice = 1u;
+    else if ((address >= 0xFF1Au && address <= 0xFF1Eu) ||
+             (address >= 0xFF30u && address <= 0xFF3Fu)) voice = 2u;
+    else if (address >= 0xFF20u && address <= 0xFF23u) voice = 3u;
+
+    const bool trigger = (address == 0xFF14u || address == 0xFF19u ||
+                          address == 0xFF1Eu || address == 0xFF23u) && (value & 0x80u) != 0u;
+    BMMQ::PsgEventKind kind = trigger ? BMMQ::PsgEventKind::Retrigger : BMMQ::PsgEventKind::TimbreChange;
+    if (address == 0xFF13u || address == 0xFF18u || address == 0xFF1Du ||
+        address == 0xFF14u || address == 0xFF19u || address == 0xFF1Eu || address == 0xFF22u) {
+        kind = trigger ? BMMQ::PsgEventKind::Retrigger : BMMQ::PsgEventKind::PitchChange;
+    } else if (address == 0xFF12u || address == 0xFF17u || address == 0xFF1Cu || address == 0xFF21u) {
+        kind = BMMQ::PsgEventKind::LevelChange;
+    } else if (address == 0xFF24u || address == 0xFF25u) {
+        kind = BMMQ::PsgEventKind::RoutingChange;
+    }
+    const std::array<bool, 4u> gates{{apu_.pulse1.enabled, apu_.pulse2.enabled,
+                                      apu_.wave.enabled, apu_.noise.enabled}};
+    const std::array<std::uint8_t, 4u> levels{{apu_.pulse1.volume, apu_.pulse2.volume,
+                                               static_cast<std::uint8_t>(apu_.wave.outputLevel == 0u ? 0u : 15u),
+                                               apu_.noise.volume}};
+    const auto frequency = voice == 0u ? apu_.pulse1.frequency
+        : voice == 1u ? apu_.pulse2.frequency : voice == 2u ? apu_.wave.frequency : 0u;
+    BMMQ::PsgAudioEvent event;
+    event.sampleFrameOffset = static_cast<std::uint32_t>(apu_.sampleCounter);
+    event.sequence = ++eventSequence_;
+    event.voiceId = voice;
+    event.voiceKind = voice < 2u ? BMMQ::PsgVoiceKind::Pulse
+        : voice == 2u ? BMMQ::PsgVoiceKind::Wave : BMMQ::PsgVoiceKind::Noise;
+    event.kind = kind;
+    if (voice < 3u) {
+        const auto denominator = std::max<std::uint32_t>(2048u - (frequency & 0x07FFu), 1u);
+        const auto numerator = voice == 2u ? 65'536'000ull : 131'072'000ull;
+        event.frequencyMilliHz = static_cast<std::uint32_t>(numerator / denominator);
+    }
+    event.levelQ15 = static_cast<std::uint16_t>((levels[voice] * 32767u) / 15u);
+    event.routingMask = static_cast<std::uint8_t>(((apu_.nr51 & (0x10u << voice)) != 0u ? 1u : 0u) |
+                                                  ((apu_.nr51 & (0x01u << voice)) != 0u ? 2u : 0u));
+    event.timbre = voice == 0u ? apu_.pulse1.duty : voice == 1u ? apu_.pulse2.duty
+        : voice == 2u ? apu_.wave.outputLevel : static_cast<std::uint8_t>((apu_.noise.clockShift << 4u) | apu_.noise.divisorCode);
+    event.rawAddress = address;
+    event.rawValue = value;
+    event.gate = gates[voice];
+    event.hasRawWrite = true;
+    if (!trigger && gates[voice] != observedGateStates_[voice]) {
+        event.kind = gates[voice] ? BMMQ::PsgEventKind::GateOn : BMMQ::PsgEventKind::GateOff;
+    }
+    observedGateStates_[voice] = gates[voice];
+    pendingEvents_.push_back(event);
+    auto raw = event;
+    raw.sequence = ++eventSequence_;
+    raw.kind = BMMQ::PsgEventKind::RawWrite;
+    pendingEvents_.push_back(raw);
 }
 
 // Save state export/import.
@@ -568,6 +686,21 @@ void GameBoyAPU::importState(const GameBoyAPUState& state) {
     apu_.pulse2 = state.pulse2;
     apu_.wave = state.wave;
     apu_.noise = state.noise;
+    recentVoiceStems_ = {};
+    pendingEvents_.clear();
+    observedGateStates_ = {{apu_.pulse1.enabled, apu_.pulse2.enabled,
+                            apu_.wave.enabled, apu_.noise.enabled}};
+    for (std::uint8_t voice = 0u; voice < 4u; ++voice) {
+        BMMQ::PsgAudioEvent event;
+        event.sampleFrameOffset = static_cast<std::uint32_t>(apu_.sampleCounter);
+        event.sequence = ++eventSequence_;
+        event.voiceId = voice;
+        event.voiceKind = voice < 2u ? BMMQ::PsgVoiceKind::Pulse
+            : voice == 2u ? BMMQ::PsgVoiceKind::Wave : BMMQ::PsgVoiceKind::Noise;
+        event.kind = BMMQ::PsgEventKind::StateSnapshot;
+        event.gate = observedGateStates_[voice];
+        pendingEvents_.push_back(event);
+    }
 }
 
 } // namespace GB

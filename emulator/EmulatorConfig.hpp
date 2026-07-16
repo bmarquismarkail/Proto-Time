@@ -9,6 +9,11 @@
 
 namespace BMMQ {
 
+struct AudioProcessorConfigSpec {
+    std::string pluginId;
+    std::filesystem::path jsonPath;
+};
+
 struct EmulatorConfig {
     std::optional<std::string> machineKind;
     std::filesystem::path romPath;
@@ -34,6 +39,8 @@ struct EmulatorConfig {
     std::optional<std::filesystem::path> audioOutputFilePath;
     std::uint32_t audioReadyQueueChunks = 3;
     std::uint32_t audioBatchChunks = 1;
+    std::vector<std::filesystem::path> audioProcessorPluginPaths;
+    std::vector<AudioProcessorConfigSpec> audioProcessorConfigs;
     std::uint32_t backgroundWorkers = 0;
     std::uint32_t backgroundQueueCapacity = 1024;
     bool debugSnapshotsEnabled = false;
@@ -67,6 +74,8 @@ struct CommandLineConfigOverrides {
     std::optional<std::filesystem::path> audioOutputFilePath;
     std::optional<std::uint32_t> audioReadyQueueChunks;
     std::optional<std::uint32_t> audioBatchChunks;
+    std::optional<std::vector<std::filesystem::path>> audioProcessorPluginPaths;
+    std::optional<std::vector<AudioProcessorConfigSpec>> audioProcessorConfigs;
     std::optional<std::uint32_t> backgroundWorkers;
     std::optional<std::uint32_t> backgroundQueueCapacity;
     std::optional<bool> debugSnapshotsEnabled;

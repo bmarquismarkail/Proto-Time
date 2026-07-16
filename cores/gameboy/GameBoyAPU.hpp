@@ -13,6 +13,7 @@
 #include <array>
 #include <cstdint>
 #include <vector>
+#include "machine/AudioPipeline.hpp"
 
 namespace GB {
 
@@ -119,6 +120,10 @@ public:
     // Output queries
     [[nodiscard]] std::vector<int16_t> copyRecentSamples() const;
     [[nodiscard]] std::vector<int16_t> takePendingSamples() const;
+    [[nodiscard]] std::vector<int16_t> copyPendingVoiceStems() const;
+    [[nodiscard]] std::vector<BMMQ::PsgAudioEvent> takePendingEvents(std::uint64_t firstSampleFrame) const;
+    [[nodiscard]] std::size_t pendingSampleCount() const noexcept { return apu_.pendingSampleCount; }
+    [[nodiscard]] std::uint64_t sampleCounter() const noexcept { return apu_.sampleCounter; }
     [[nodiscard]] uint64_t frameCounter() const noexcept { return apu_.frameCounter; }
     [[nodiscard]] uint32_t sampleRate() const noexcept { return kSampleRate; }
     [[nodiscard]] uint8_t outputChannelCount() const noexcept { return 1u; }
@@ -151,13 +156,19 @@ private:
     void tickEnvelope(NoiseChannel& channel);
     void stepFrameSequencer();
     [[nodiscard]] int16_t generateSample();
-    void pushSample(int16_t sample);
+    void pushSample(int16_t sample, const std::array<int16_t, 4u>& stems);
+    [[nodiscard]] std::array<int16_t, 4u> currentVoiceContributions() const noexcept;
+    void recordWriteEvent(std::uint16_t address, std::uint8_t value);
     [[nodiscard]] int currentPulseSample(const PulseChannel& channel) const noexcept;
     [[nodiscard]] int currentWaveSample() const noexcept;
     [[nodiscard]] int currentNoiseSample() const noexcept;
     [[nodiscard]] int16_t mixCurrentSample() const noexcept;
 
     GameBoyAPUState apu_{};
+    std::array<std::array<int16_t, kHistorySamples>, 4u> recentVoiceStems_{};
+    mutable std::vector<BMMQ::PsgAudioEvent> pendingEvents_{};
+    std::uint64_t eventSequence_ = 0u;
+    std::array<bool, 4u> observedGateStates_{};
 };
 
 } // namespace GB

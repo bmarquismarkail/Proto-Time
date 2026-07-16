@@ -354,6 +354,12 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
         config.audioBatchChunks =
             static_cast<std::uint32_t>(std::clamp<std::uint32_t>(*overrides.audioBatchChunks, 1u, 16u));
     }
+    if (overrides.audioProcessorPluginPaths.has_value()) {
+        config.audioProcessorPluginPaths = *overrides.audioProcessorPluginPaths;
+    }
+    if (overrides.audioProcessorConfigs.has_value()) {
+        config.audioProcessorConfigs = *overrides.audioProcessorConfigs;
+    }
     if (overrides.backgroundWorkers.has_value()) {
         config.backgroundWorkers = std::min<std::uint32_t>(*overrides.backgroundWorkers, 256u);
     }
@@ -552,6 +558,23 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
                 throw std::invalid_argument("--audio-plugin requires a path");
             }
             arguments.overrides.audioPluginPath = std::filesystem::path(argv[++i]);
+        } else if (arg == "--audio-processor-plugin") {
+            if (i + 1 >= argc) throw std::invalid_argument("--audio-processor-plugin requires a path");
+            if (!arguments.overrides.audioProcessorPluginPaths.has_value()) {
+                arguments.overrides.audioProcessorPluginPaths = std::vector<std::filesystem::path>{};
+            }
+            arguments.overrides.audioProcessorPluginPaths->emplace_back(argv[++i]);
+        } else if (arg == "--audio-processor-config") {
+            if (i + 1 >= argc) throw std::invalid_argument("--audio-processor-config requires <plugin-id>=<json-file>");
+            const std::string spec = argv[++i];
+            const auto equals = spec.find('=');
+            if (equals == std::string::npos || equals == 0u || equals + 1u >= spec.size()) {
+                throw std::invalid_argument("--audio-processor-config requires <plugin-id>=<json-file>");
+            }
+            if (!arguments.overrides.audioProcessorConfigs.has_value()) {
+                arguments.overrides.audioProcessorConfigs = std::vector<AudioProcessorConfigSpec>{};
+            }
+            arguments.overrides.audioProcessorConfigs->push_back({spec.substr(0u, equals), spec.substr(equals + 1u)});
         } else if (arg == "--audio-file") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--audio-file requires a path");

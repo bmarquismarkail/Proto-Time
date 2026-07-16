@@ -95,6 +95,12 @@ struct DynamicPluginModule::State {
         const TimeAudioOutputApiV1* api = nullptr;
     };
 
+    struct AudioProcessorEntry {
+        std::string id;
+        std::string displayName;
+        const TimeAudioProcessorApiV1* api = nullptr;
+    };
+
     ~State() {
         if (handle != nullptr) dlclose(handle);
     }
@@ -105,9 +111,131 @@ struct DynamicPluginModule::State {
     std::vector<ExecutorEntry> executors;
     std::vector<FrontendEntry> frontends;
     std::vector<AudioOutputEntry> audioOutputs;
+    std::vector<AudioProcessorEntry> audioProcessors;
 };
 
 namespace {
+
+class CAudioProcessorAdapter final : public IAudioProcessor {
+public:
+    CAudioProcessorAdapter(std::shared_ptr<DynamicPluginModule::State> state,
+                           const DynamicPluginModule::State::AudioProcessorEntry& entry,
+                           std::uint32_t sampleRate, std::uint8_t channels,
+                           std::size_t maxBlockSamples, std::string configJson)
+        : state_(std::move(state)), api_(entry.api), configJson_(std::move(configJson))
+    {
+        instance_ = api_->create(&hostApi());
+        if (instance_ == nullptr) throw std::runtime_error("C audio processor factory returned null");
+        const TimeAudioProcessorConfigV1 config{
+            sizeof(TimeAudioProcessorConfigV1), sampleRate, channels,
+            static_cast<std::uint32_t>(std::min<std::size_t>(maxBlockSamples, UINT32_MAX)),
+            configJson_.empty() ? nullptr : configJson_.c_str()};
+        if (api_->open(instance_, &config) == 0) {
+            api_->destroy(instance_);
+            instance_ = nullptr;
+            throw std::runtime_error("C audio processor open failed");
+        }
+        voices_.reserve(8u);
+        events_.reserve(64u);
+    }
+
+    ~CAudioProcessorAdapter() override
+    {
+        if (instance_ != nullptr) {
+            try { api_->close(instance_); } catch (...) {}
+            try { api_->destroy(instance_); } catch (...) {}
+        }
+    }
+
+    AudioProcessorCapabilities capabilities() const noexcept override { return {true, true}; }
+
+    bool process(AudioBufferView input, std::span<int16_t> output,
+                 std::size_t& producedSamples) noexcept override
+    {
+        AudioSourceBlockView block{.mixed = input, .voices = {}, .voiceStems = {}, .events = {}};
+        return processSource(block, output, producedSamples);
+    }
+
+    bool processSource(const AudioSourceBlockView& input, std::span<int16_t> output,
+                       std::size_t& producedSamples) noexcept override
+    {
+        producedSamples = 0u;
+        if (disabled_) {
+            const auto count = std::min(input.mixed.samples.size(), output.size());
+            std::copy_n(input.mixed.samples.begin(), static_cast<std::ptrdiff_t>(count), output.begin());
+            producedSamples = count;
+            return true;
+        }
+        voices_.clear();
+        for (const auto& voice : input.voices) {
+            voices_.push_back(TimePsgVoiceV1{sizeof(TimePsgVoiceV1), voice.voiceId,
+                                             static_cast<std::uint8_t>(voice.kind)});
+        }
+        events_.clear();
+        for (const auto& event : input.events) {
+            events_.push_back(TimePsgEventV1{
+                sizeof(TimePsgEventV1), event.sampleFrameOffset, event.sequence,
+                event.frequencyMilliHz, event.levelQ15, event.rawAddress,
+                event.voiceId, static_cast<std::uint8_t>(event.voiceKind),
+                static_cast<std::uint8_t>(event.kind), event.routingMask, event.timbre,
+                event.rawValue, static_cast<std::uint8_t>(event.gate),
+                static_cast<std::uint8_t>(event.hasRawWrite)});
+        }
+        const TimeAudioSourceBlockV1 block{
+            sizeof(TimeAudioSourceBlockV1), static_cast<std::uint32_t>(input.mixed.sampleRate),
+            input.mixed.channelCount, input.frameCounter, input.firstSampleFrame,
+            input.lifecycleEpoch, input.mixed.samples.data(),
+            static_cast<std::uint32_t>(input.mixed.samples.size()), input.voiceStems.data(),
+            static_cast<std::uint32_t>(input.voiceStems.size()), voices_.data(),
+            static_cast<std::uint32_t>(voices_.size()), events_.data(),
+            static_cast<std::uint32_t>(events_.size())};
+        std::uint32_t produced = 0u;
+        int32_t result = TIME_AUDIO_PROCESSOR_ERROR_V1;
+        try {
+            result = api_->process(instance_, &block, output.data(),
+                                   static_cast<std::uint32_t>(output.size()), &produced);
+        } catch (...) {
+            result = TIME_AUDIO_PROCESSOR_ERROR_V1;
+        }
+        if (result == TIME_AUDIO_PROCESSOR_BYPASS_V1) {
+            const auto count = std::min(input.mixed.samples.size(), output.size());
+            std::copy_n(input.mixed.samples.begin(), static_cast<std::ptrdiff_t>(count), output.begin());
+            producedSamples = count;
+            return true;
+        }
+        if (result != TIME_AUDIO_PROCESSOR_PROCESSED_V1 || produced != input.mixed.samples.size()) {
+            disabled_ = true;
+            const auto count = std::min(input.mixed.samples.size(), output.size());
+            std::copy_n(input.mixed.samples.begin(), static_cast<std::ptrdiff_t>(count), output.begin());
+            producedSamples = count;
+            return true;
+        }
+        producedSamples = produced;
+        return true;
+    }
+
+    void flush(std::uint64_t epoch) noexcept override
+    {
+        if (instance_ != nullptr) {
+            try { api_->flush(instance_, epoch); } catch (...) { disabled_ = true; }
+        }
+    }
+
+private:
+    static const TimeHostApiV1& hostApi() noexcept
+    {
+        static const TimeHostApiV1 api{sizeof(TimeHostApiV1), TIME_PLUGIN_ABI_VERSION_V1,
+                                       nullptr, nullptr};
+        return api;
+    }
+    std::shared_ptr<DynamicPluginModule::State> state_;
+    const TimeAudioProcessorApiV1* api_ = nullptr;
+    void* instance_ = nullptr;
+    std::string configJson_;
+    std::vector<TimePsgVoiceV1> voices_;
+    std::vector<TimePsgEventV1> events_;
+    bool disabled_ = false;
+};
 
 class CExecutorPolicyAdapter final : public IExecutorPolicyPlugin {
 public:
@@ -1021,6 +1149,20 @@ DynamicPluginModule DynamicPluginModule::load(const std::filesystem::path& path)
             }
             state->audioOutputs.push_back(State::AudioOutputEntry{
                 descriptor->plugin_id, descriptor->display_name, api});
+        } else if (descriptor->kind == TIME_PLUGIN_KIND_AUDIO_PROCESSOR_V1) {
+            if (descriptor->api_size < sizeof(TimeAudioProcessorApiV1)) {
+                throw loadError(path, "audio-processor API size mismatch");
+            }
+            const auto* api = static_cast<const TimeAudioProcessorApiV1*>(descriptor->api);
+            if (api->struct_size < sizeof(TimeAudioProcessorApiV1) ||
+                api->abi_version != TIME_PLUGIN_ABI_VERSION_V1 || api->create == nullptr ||
+                api->destroy == nullptr || api->open == nullptr || api->process == nullptr ||
+                api->flush == nullptr || api->close == nullptr || api->last_error == nullptr ||
+                api->query_stats == nullptr) {
+                throw loadError(path, "incomplete audio-processor API");
+            }
+            state->audioProcessors.push_back(State::AudioProcessorEntry{
+                descriptor->plugin_id, descriptor->display_name, api});
         } else {
             throw loadError(path, "unsupported plugin kind");
         }
@@ -1117,6 +1259,29 @@ std::unique_ptr<IAudioOutputBackend> DynamicPluginModule::createAudioOutput(
         throw std::invalid_argument("audio output not found in module: " + std::string(id));
     }
     return std::make_unique<CAudioOutputAdapter>(state_, *found);
+}
+
+std::vector<std::string> DynamicPluginModule::audioProcessorIds() const
+{
+    std::vector<std::string> result;
+    if (state_ == nullptr) return result;
+    result.reserve(state_->audioProcessors.size());
+    for (const auto& processor : state_->audioProcessors) result.push_back(processor.id);
+    return result;
+}
+
+std::unique_ptr<IAudioProcessor> DynamicPluginModule::createAudioProcessor(
+    std::string_view id, std::uint32_t sampleRate, std::uint8_t channels,
+    std::size_t maxBlockSamples, std::string configJson) const
+{
+    if (state_ == nullptr) throw std::runtime_error("plugin module is empty");
+    const auto found = std::find_if(state_->audioProcessors.begin(), state_->audioProcessors.end(),
+        [id](const auto& entry) { return entry.id == id; });
+    if (found == state_->audioProcessors.end()) {
+        throw std::invalid_argument("audio processor not found in module: " + std::string(id));
+    }
+    return std::make_unique<CAudioProcessorAdapter>(state_, *found, sampleRate, channels,
+                                                     maxBlockSamples, std::move(configJson));
 }
 
 } // namespace BMMQ::Plugin

@@ -705,7 +705,14 @@ std::optional<RealtimeAudioPacket> GameGearMachine::realtimeAudioPacket() const
     packet.psgChunkSamplesMin = static_cast<std::uint32_t>(impl->psg.chunkSamplesMin());
     packet.psgChunkSamplesMax = static_cast<std::uint32_t>(impl->psg.chunkSamplesMax());
     packet.psgPendingSamples = static_cast<std::uint32_t>(impl->psg.pendingSamples());
+    packet.firstSampleFrame = impl->psg.recentFirstSampleFrame();
     packet.pcmSamples = impl->psg.copyRecentSamples();
+    packet.voices = {
+        {0u, PsgVoiceKind::Tone}, {1u, PsgVoiceKind::Tone},
+        {2u, PsgVoiceKind::Tone}, {3u, PsgVoiceKind::Noise},
+    };
+    packet.voiceStems = impl->psg.copyRecentVoiceStems();
+    packet.events = impl->psg.copyRecentEvents();
     return packet;
 }
 
