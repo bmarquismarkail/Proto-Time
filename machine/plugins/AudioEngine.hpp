@@ -9,7 +9,7 @@
 #include <span>
 #include <vector>
 
-#include "SdlAudioResampler.hpp"
+#include "AudioResampler.hpp"
 
 namespace BMMQ {
 
@@ -72,6 +72,16 @@ public:
     {
         config_.deviceSampleRate = std::max(deviceSampleRate, 1);
         resampler_.configure(config_.sourceSampleRate, config_.deviceSampleRate, config_.channelCount);
+    }
+
+    void setTransportRateCorrection(double scale) noexcept
+    {
+        resampler_.setStepScale(scale);
+    }
+
+    [[nodiscard]] std::size_t sourceSamplesRequired(std::size_t outputSamples) const noexcept
+    {
+        return resampler_.sourceSamplesRequired(outputSamples);
     }
 
     [[nodiscard]] std::size_t bufferedSamples() const noexcept
@@ -420,7 +430,7 @@ private:
     }
 
     AudioEngineConfig config_{};
-    SdlAudioResampler resampler_{48000, 48000};
+    AudioResampler resampler_{48000, 48000};
     std::vector<int16_t> buffer_;
     std::atomic<std::size_t> readIndex_{0};
     std::atomic<std::size_t> writeIndex_{0};

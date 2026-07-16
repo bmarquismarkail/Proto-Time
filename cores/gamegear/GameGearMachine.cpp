@@ -267,18 +267,29 @@ struct GameGearMachine::Impl {
             return;
         }
 
+        if (pendingSaveSnapshot.has_value()) {
+            auto shared = std::make_shared<GameGearSaveManager::SaveSnapshot>(std::move(*pendingSaveSnapshot));
+            if (backgroundTaskService->submit(BMMQ::BackgroundJobCategory::SaveFlush, [shared]() {
+                    GameGearSaveManager::flushSnapshot(*shared);
+                })) {
+                pendingSaveSnapshot.reset();
+            } else {
+                pendingSaveSnapshot = std::move(*shared);
+                return;
+            }
+        }
+
         auto extracted = saveManager.extractDirtySaveSnapshot(*cart);
         if (!extracted.has_value()) {
             return;
         }
 
-        auto snapshot = std::move(*extracted);
-        auto fallbackSnapshot = snapshot;
-        const bool queued = backgroundTaskService->submit([snapshot = std::move(snapshot)]() mutable {
-            GameGearSaveManager::flushSnapshot(snapshot);
+        auto shared = std::make_shared<GameGearSaveManager::SaveSnapshot>(std::move(*extracted));
+        const bool queued = backgroundTaskService->submit(BMMQ::BackgroundJobCategory::SaveFlush, [shared]() {
+            GameGearSaveManager::flushSnapshot(*shared);
         });
         if (!queued) {
-            GameGearSaveManager::flushSnapshot(fallbackSnapshot);
+            pendingSaveSnapshot = std::move(*shared);
         }
     }
 
@@ -291,7 +302,9 @@ struct GameGearMachine::Impl {
     PluginManager pluginManager;
     GameGearSaveManager saveManager;
     BMMQ::BackgroundTaskService* backgroundTaskService = nullptr;
+    std::optional<GameGearSaveManager::SaveSnapshot> pendingSaveSnapshot;
     Plugin::DefaultStepPolicy defaultPolicy;
+    std::unique_ptr<Plugin::IExecutorPolicyPlugin> ownedPolicy;
     Plugin::IExecutorPolicyPlugin* activePolicy = &defaultPolicy;
     bool romLoaded = false;
     std::optional<std::filesystem::path> pendingRomSourcePath;
@@ -309,9 +322,15 @@ std::span<const IoRegionDescriptor> GameGearMachine::describeIoRegions() const {
     return kIoRegions;
 }
 
-void GameGearMachine::attachExecutorPolicy(Plugin::IExecutorPolicyPlugin& policy) {
-    Plugin::validateExecutorPolicyStartup(policy);
-    impl->activePolicy = &policy;
+void GameGearMachine::attachExecutorPolicy(const Plugin::IExecutorPolicyPlugin& policy) {
+    Plugin::validateExecutorPolicyForRuntime(policy, impl->context);
+    auto owned = policy.clone();
+    if (!owned) {
+        throw std::runtime_error("executor policy clone returned null");
+    }
+    Plugin::validateExecutorPolicyForRuntime(*owned, impl->context);
+    impl->ownedPolicy = std::move(owned);
+    impl->activePolicy = impl->ownedPolicy.get();
 }
 
 const Plugin::IExecutorPolicyPlugin& GameGearMachine::attachedExecutorPolicy() const {
@@ -544,11 +563,25 @@ void GameGearMachine::load_state(const std::filesystem::path& path) {
     inputService().advanceGeneration(impl->inputGeneration);
 }
 
-void GameGearMachine::step() {
+ExecutionSliceResult GameGearMachine::runSlice(
+    const ExecutionBudget& budget,
+    InstructionRetirementSink* observer) {
     if (!impl->romLoaded) {
-        return;
+        ExecutionSliceResult result;
+        result.exitReason = ExecutionSliceExitReason::MachineBoundary;
+        return result;
     }
-    const auto feedback = impl->context.step();
+    return Machine::runSlice(budget, observer);
+}
+
+void GameGearMachine::step() {
+    (void)runSlice(ExecutionBudget{});
+}
+
+InstructionRetirementDecision GameGearMachine::onInstructionRetired(
+    const CpuFeedback& feedback,
+    const ExecutionSliceProgress&)
+{
     ++impl->stepCounter;
     impl->vdp.step(feedback.retiredCycles);
     impl->psg.step(feedback.retiredCycles);
@@ -599,6 +632,11 @@ void GameGearMachine::step() {
             });
         }
     }
+    if (impl->interruptRequested || impl->vdp.isIrqAsserted()) {
+        return InstructionRetirementDecision::exitSlice(
+            ExecutionSliceExitReason::MachineBoundary);
+    }
+    return InstructionRetirementDecision::continueSlice();
 }
 
 void GameGearMachine::serviceInput() {
@@ -649,7 +687,7 @@ std::optional<VideoDebugFrameModel> GameGearMachine::videoDebugFrameModel(
     return impl->vdp.buildFrameModel(request);
 }
 
-std::optional<RealtimeVideoPacket> GameGearMachine::realtimeVideoPacket(
+std::optional<RealtimeVideoSubmission> GameGearMachine::realtimeVideoPacket(
     const VideoDebugRenderRequest& request) const
 {
     return impl->vdp.buildRealtimeFrame(request);
@@ -701,6 +739,15 @@ std::string GameGearMachine::stopSummary() const {
 bool GameGearMachine::flushCartridgeSave() {
     if (!impl->cart) return false;
     return impl->saveManager.flush(*impl->cart);
+}
+
+void GameGearMachine::flushPendingBackgroundWork()
+{
+    if (impl->pendingSaveSnapshot.has_value()) {
+        GameGearSaveManager::flushSnapshot(*impl->pendingSaveSnapshot);
+        impl->pendingSaveSnapshot.reset();
+    }
+    (void)flushCartridgeSave();
 }
 
 void GameGearMachine::setBackgroundTaskService(BMMQ::BackgroundTaskService* service) noexcept {

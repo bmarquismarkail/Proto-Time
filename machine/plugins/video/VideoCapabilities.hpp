@@ -12,6 +12,9 @@ struct VideoPluginCapabilities {
     bool requiresHostThreadAffinity = false;
     bool nonRealtimeOnly = false;
     bool hotSwappable = false;
+    // Presenter can consume VideoFramePacket::surface without first requiring
+    // a materialized VideoFramePacket::pixels array.
+    bool acceptsIndexedSurface = false;
 };
 
 } // namespace BMMQ

@@ -167,7 +167,8 @@ public:
         return true;
     }
     virtual std::span<const IoRegionDescriptor> describeIoRegions() const = 0;
-    virtual void attachExecutorPolicy(Plugin::IExecutorPolicyPlugin& policy) = 0;
+    // Installs an owned clone; callers do not need to extend policy lifetime.
+    virtual void attachExecutorPolicy(const Plugin::IExecutorPolicyPlugin& policy) = 0;
     virtual const Plugin::IExecutorPolicyPlugin& attachedExecutorPolicy() const = 0;
     [[nodiscard]] MachineView view() const {
         const auto regions = describeIoRegions();
@@ -209,8 +210,8 @@ public:
         }
         return adapter->buildFrameModel(*this, request);
     }
-    virtual std::optional<RealtimeVideoPacket> realtimeVideoPacket(const VideoDebugRenderRequest& request) const {
-        const auto model = videoDebugFrameModel(request);
+    virtual std::optional<RealtimeVideoSubmission> realtimeVideoPacket(const VideoDebugRenderRequest& request) const {
+        auto model = videoDebugFrameModel(request);
         if (!model.has_value()) {
             return std::nullopt;
         }
@@ -220,8 +221,11 @@ public:
         packet.displayEnabled = model->displayEnabled;
         packet.inVBlank = model->inVBlank;
         packet.scanlineIndex = model->scanlineIndex;
-        packet.argbPixels = model->argbPixels;
-        return packet;
+        packet.surface = makeArgbVideoSurface(std::move(model->argbPixels), packet.width, packet.height);
+        return RealtimeVideoSubmission{.packet = std::move(packet)};
+    }
+    virtual std::optional<VideoStateView> videoStateSnapshot() const {
+        return std::nullopt;
     }
     virtual std::optional<RealtimeAudioPacket> realtimeAudioPacket() const {
         RealtimeAudioPacket packet;
@@ -256,12 +260,50 @@ public:
     }
     virtual void serviceInput() {
     }
+    virtual ExecutionSliceResult runSlice(
+        const ExecutionBudget& budget,
+        InstructionRetirementSink* observer = nullptr) {
+        class MachineRetirementSink final : public InstructionRetirementSink {
+        public:
+            MachineRetirementSink(Machine& machine, InstructionRetirementSink* observer)
+                : machine_(machine), observer_(observer) {}
+
+            InstructionRetirementDecision retireInstruction(
+                const CpuFeedback& feedback,
+                const ExecutionSliceProgress& progress) override
+            {
+                const auto machineDecision = machine_.onInstructionRetired(feedback, progress);
+                const auto observerDecision = observer_ != nullptr
+                    ? observer_->retireInstruction(feedback, progress)
+                    : InstructionRetirementDecision::continueSlice();
+                if (!machineDecision.continueExecution) {
+                    return machineDecision;
+                }
+                return observerDecision;
+            }
+
+        private:
+            Machine& machine_;
+            InstructionRetirementSink* observer_;
+        } sink(*this, observer);
+
+        return runtimeContext().runSlice(budget, sink);
+    }
     virtual void step() {
-        runtimeContext().step();
+        (void)runSlice(ExecutionBudget{});
     }
     virtual uint16_t readRegisterPair(std::string_view id) const = 0;
     virtual std::string stopSummary() const {
         return {};
+    }
+    virtual void flushPendingBackgroundWork() {}
+
+protected:
+    virtual InstructionRetirementDecision onInstructionRetired(
+        const CpuFeedback&,
+        const ExecutionSliceProgress&)
+    {
+        return InstructionRetirementDecision::continueSlice();
     }
 
 private:
@@ -290,8 +332,13 @@ inline std::optional<VideoDebugFrameModel> queryVideoDebugFrameModel(const Machi
     return machine.videoDebugFrameModel(request);
 }
 
-inline std::optional<RealtimeVideoPacket> queryRealtimeVideoPacket(const Machine& machine,
-                                                                   const VideoDebugRenderRequest& request) {
+inline std::optional<VideoStateView> queryVideoStateSnapshot(const Machine& machine) {
+    return machine.videoStateSnapshot();
+}
+
+inline std::optional<RealtimeVideoSubmission> queryRealtimeVideoPacket(
+    const Machine& machine,
+    const VideoDebugRenderRequest& request) {
     return machine.realtimeVideoPacket(request);
 }
 

@@ -30,6 +30,9 @@ struct HasHasMemoryMap<T, std::void_t<decltype(&T::hasMemoryMap)>> : std::true_t
 int main() {
     struct FakeRuntimeContext final : BMMQ::RuntimeContext {
         struct FakePolicy final : BMMQ::Plugin::IExecutorPolicyPlugin {
+            std::unique_ptr<BMMQ::Plugin::IExecutorPolicyPlugin> clone() const override {
+                return std::make_unique<FakePolicy>(*this);
+            }
             const BMMQ::Plugin::PluginMetadata& metadata() const override {
                 static const BMMQ::Plugin::PluginMetadata meta{
                     sizeof(BMMQ::Plugin::PluginMetadata),
@@ -43,6 +46,7 @@ int main() {
             BMMQ::ExecutionGuarantee guarantee() const override {
                 return BMMQ::ExecutionGuarantee::BaselineFaithful;
             }
+            BMMQ::ExecutionBackend backend() const override { return BMMQ::ExecutionBackend::Baseline; }
             bool shouldRecord(const BMMQ::Plugin::FetchBlock&, const BMMQ::CpuFeedback&) const override { return true; }
             bool shouldSegment(const BMMQ::Plugin::FetchBlock&, const BMMQ::CpuFeedback&) const override { return false; }
         };
@@ -74,6 +78,10 @@ int main() {
     struct ExperimentalPolicy final : BMMQ::Plugin::IExecutorPolicyPlugin {
         using PluginFetchBlock = BMMQ::Plugin::FetchBlock;
 
+        std::unique_ptr<BMMQ::Plugin::IExecutorPolicyPlugin> clone() const override {
+            return std::make_unique<ExperimentalPolicy>(*this);
+        }
+
         const BMMQ::Plugin::PluginMetadata& metadata() const override {
             static const BMMQ::Plugin::PluginMetadata meta{
                 sizeof(BMMQ::Plugin::PluginMetadata),
@@ -86,6 +94,10 @@ int main() {
         }
         BMMQ::ExecutionGuarantee guarantee() const override {
             return BMMQ::ExecutionGuarantee::Experimental;
+        }
+        BMMQ::ExecutionBackend backend() const override { return BMMQ::ExecutionBackend::CachedBlock; }
+        BMMQ::RuntimeCapabilityProfile requiredCapabilities() const override {
+            return {.translation = true, .invalidation = true};
         }
         bool shouldRecord(const PluginFetchBlock&, const BMMQ::CpuFeedback&) const override { return true; }
         bool shouldSegment(const PluginFetchBlock&, const BMMQ::CpuFeedback&) const override { return false; }
@@ -106,7 +118,7 @@ int main() {
         const BMMQ::PluginManager& pluginManager() const override { return manager; }
         std::span<const BMMQ::IoRegionDescriptor> describeIoRegions() const override { return regions; }
         uint16_t readRegisterPair(std::string_view) const override { return 0; }
-        void attachExecutorPolicy(BMMQ::Plugin::IExecutorPolicyPlugin&) override {}
+        void attachExecutorPolicy(const BMMQ::Plugin::IExecutorPolicyPlugin&) override {}
         const BMMQ::Plugin::IExecutorPolicyPlugin& attachedExecutorPolicy() const override { return policy; }
     };
 
@@ -136,9 +148,11 @@ int main() {
     assert(host.runtimeContext().attachedPolicyMetadata() != nullptr);
     assert(host.runtimeContext().attachedPolicyMetadata()->id == "bmmq.executor.policy.default-step");
     assert(!host.runtimeContext().capabilityProfile().interception);
+    assert(host.runtimeContext().capabilityProfile().translation);
+    assert(host.runtimeContext().capabilityProfile().invalidation);
     assert(host.runtimeContext().interceptionCapability() == nullptr);
-    assert(host.runtimeContext().translationCapability() == nullptr);
-    assert(host.runtimeContext().invalidationCapability() == nullptr);
+    assert(host.runtimeContext().translationCapability() != nullptr);
+    assert(host.runtimeContext().invalidationCapability() != nullptr);
     assert(host.runtimeContext().optimizationMetadataCapability() == nullptr);
     assert(host.runtimeContext().read8(0x0100) == 0x3E);
     assert(host.runtimeContext().read16(0x0101) == 0x0012);
@@ -430,16 +444,23 @@ int main() {
         constexpr int kH = 144;
         const auto pkt = machine.realtimeVideoPacket({kW, kH});
         assert(pkt.has_value());
-        assert(pkt->contractVersion == BMMQ::RealtimeVideoPacket::kContractVersion);
-        assert(pkt->width == kW);
-        assert(pkt->height == kH);
-        assert(pkt->argbPixels.size() == static_cast<std::size_t>(kW) * static_cast<std::size_t>(kH));
+        const auto& frame = pkt->packet;
+        assert(frame.contractVersion == BMMQ::RealtimeVideoPacket::kContractVersion);
+        assert(frame.width == kW);
+        assert(frame.height == kH);
+        assert(frame.pixelCount() == static_cast<std::size_t>(kW) * static_cast<std::size_t>(kH));
+        assert(frame.payloadBytes() < frame.pixelCount() * sizeof(std::uint32_t));
+        assert(frame.surface.encoding == BMMQ::RealtimeVideoEncoding::Indexed2);
+        assert(frame.surface.paletteArgb.size() == 4u);
+        assert(frame.uploadHintCount == 1u);
         // pixel data must match the full videoDebugFrameModel path
         const auto full = machine.videoDebugFrameModel({kW, kH});
         assert(full.has_value());
-        assert(full->argbPixels == pkt->argbPixels);
-        assert(pkt->displayEnabled == full->displayEnabled);
-        assert(pkt->inVBlank == full->inVBlank);
+        std::vector<std::uint32_t> decoded;
+        assert(BMMQ::decodeVideoSurface(frame.surface, frame.width, frame.height, decoded));
+        assert(full->argbPixels == decoded);
+        assert(frame.displayEnabled == full->displayEnabled);
+        assert(frame.inVBlank == full->inVBlank);
     }
 
     return 0;

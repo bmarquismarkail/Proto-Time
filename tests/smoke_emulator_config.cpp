@@ -74,9 +74,13 @@ int main()
         CHECK_TRUE(defaults.romPath.empty());
         CHECK_TRUE(!defaults.bootRomPath.has_value());
         CHECK_TRUE(!defaults.pluginPath.has_value());
+        CHECK_TRUE(!defaults.executorPluginPath.has_value());
+        CHECK_TRUE(!defaults.executorPolicyId.has_value());
         CHECK_TRUE(!defaults.stepLimit.has_value());
         CHECK_TRUE(defaults.windowScale == 3u);
         CHECK_TRUE(!defaults.headless);
+        CHECK_TRUE(defaults.cpuMode == "baseline");
+        CHECK_TRUE(!defaults.cpuDetailedTiming);
         CHECK_TRUE(!defaults.unthrottled);
         CHECK_TRUE(std::abs(defaults.speedMultiplier - 1.0) < 0.000001);
         CHECK_TRUE(!defaults.startPaused);
@@ -84,8 +88,13 @@ int main()
         CHECK_TRUE(defaults.diagnosticsIntervalMs == 1000u);
         CHECK_TRUE(defaults.audioEnabled);
         CHECK_TRUE(defaults.audioBackend == "sdl");
+        CHECK_TRUE(!defaults.audioPluginPath.has_value());
+        CHECK_TRUE(!defaults.audioOutputFilePath.has_value());
         CHECK_TRUE(defaults.audioReadyQueueChunks == 3u);
         CHECK_TRUE(defaults.audioBatchChunks == 1u);
+        CHECK_TRUE(defaults.backgroundWorkers == 0u);
+        CHECK_TRUE(defaults.backgroundQueueCapacity == 1024u);
+        CHECK_TRUE(!defaults.debugSnapshotsEnabled);
         CHECK_TRUE(defaults.visualPackPaths.empty());
         CHECK_TRUE(!defaults.visualCapturePath.has_value());
         CHECK_TRUE(!defaults.visualPackReload);
@@ -98,8 +107,12 @@ int main()
         "rom = roms/game.gb\n"
         "boot_rom = boot/dmg.bin\n"
         "plugin = plugins/frontend.so\n"
+        "executor_plugin = plugins/executor.so\n"
+        "executor_policy = example.executor.policy\n"
         "steps = 1000000\n"
         "headless = yes\n"
+        "cpu_mode = block\n"
+        "cpu_detailed_timing = false\n"
         "\n"
         "[video]\n"
         "scale = 5\n"
@@ -113,8 +126,15 @@ int main()
         "[audio]\n"
         "enabled = false\n"
         "backend = file\n"
+        "plugin = plugins/audio.so\n"
+        "output_file = captures/audio.pcm\n"
         "ready_queue_chunks = 8\n"
         "batch_chunks = 4\n"
+        "\n"
+        "[background]\n"
+        "workers = 3\n"
+        "queue_capacity = 77\n"
+        "debug_snapshots = true\n"
         "\n"
         "[visual]\n"
         "pack = packs/base.json\n"
@@ -128,9 +148,13 @@ int main()
     CHECK_TRUE(fileConfig.romPath == tempDir / "roms/game.gb");
     CHECK_TRUE(fileConfig.bootRomPath == tempDir / "boot/dmg.bin");
     CHECK_TRUE(fileConfig.pluginPath == tempDir / "plugins/frontend.so");
+    CHECK_TRUE(fileConfig.executorPluginPath == tempDir / "plugins/executor.so");
+    CHECK_TRUE(fileConfig.executorPolicyId == "example.executor.policy");
     CHECK_TRUE(fileConfig.stepLimit == 1000000u);
     CHECK_TRUE(fileConfig.windowScale == 5u);
     CHECK_TRUE(fileConfig.headless);
+    CHECK_TRUE(fileConfig.cpuMode == "block");
+    CHECK_TRUE(!fileConfig.cpuDetailedTiming);
     CHECK_TRUE(fileConfig.unthrottled);
     CHECK_TRUE(std::abs(fileConfig.speedMultiplier - 2.5) < 0.000001);
     CHECK_TRUE(fileConfig.startPaused);
@@ -140,8 +164,13 @@ int main()
     CHECK_TRUE(fileConfig.diagnosticsIntervalMs == 1000u);
     CHECK_TRUE(!fileConfig.audioEnabled);
     CHECK_TRUE(fileConfig.audioBackend == "file");
+    CHECK_TRUE(fileConfig.audioPluginPath == tempDir / "plugins/audio.so");
+    CHECK_TRUE(fileConfig.audioOutputFilePath == tempDir / "captures/audio.pcm");
     CHECK_TRUE(fileConfig.audioReadyQueueChunks == 8u);
     CHECK_TRUE(fileConfig.audioBatchChunks == 4u);
+    CHECK_TRUE(fileConfig.backgroundWorkers == 3u);
+    CHECK_TRUE(fileConfig.backgroundQueueCapacity == 77u);
+    CHECK_TRUE(fileConfig.debugSnapshotsEnabled);
     CHECK_TRUE(fileConfig.visualPackPaths.size() == 2u);
     CHECK_TRUE(fileConfig.visualPackPaths[0] == tempDir / "packs/base.json");
     CHECK_TRUE(fileConfig.visualPackPaths[1] == tempDir / "packs/compat.json");
@@ -153,9 +182,13 @@ int main()
     overrides.romPath = std::filesystem::path("cli.gb");
     overrides.bootRomPath = std::filesystem::path("cli-boot.bin");
     overrides.pluginPath = std::filesystem::path("cli-plugin.so");
+    overrides.executorPluginPath = std::filesystem::path("cli-executor.so");
+    overrides.executorPolicyId = std::string("bmmq.executor.policy.default-step");
     overrides.stepLimit = 42u;
     overrides.windowScale = 1u;
     overrides.headless = false;
+    overrides.cpuMode = std::string("baseline");
+    overrides.cpuDetailedTiming = false;
     overrides.unthrottled = false;
     overrides.speedMultiplier = 0.5;
     overrides.startPaused = false;
@@ -164,8 +197,13 @@ int main()
     overrides.diagnosticsIntervalMs = 250u;
     overrides.audioEnabled = true;
     overrides.audioBackend = "dummy";
+    overrides.audioPluginPath = std::filesystem::path("cli-audio.so");
+    overrides.audioOutputFilePath = std::filesystem::path("cli-audio.pcm");
     overrides.audioReadyQueueChunks = 6u;
     overrides.audioBatchChunks = 3u;
+    overrides.backgroundWorkers = 2u;
+    overrides.backgroundQueueCapacity = 55u;
+    overrides.debugSnapshotsEnabled = false;
     overrides.visualPackPaths = std::vector<std::filesystem::path>{
         std::filesystem::path("cli-pack-a.json"),
         std::filesystem::path("cli-pack-b.json"),
@@ -178,9 +216,13 @@ int main()
     CHECK_TRUE(fileConfig.romPath == "cli.gb");
     CHECK_TRUE(fileConfig.bootRomPath == "cli-boot.bin");
     CHECK_TRUE(fileConfig.pluginPath == "cli-plugin.so");
+    CHECK_TRUE(fileConfig.executorPluginPath == "cli-executor.so");
+    CHECK_TRUE(fileConfig.executorPolicyId == "bmmq.executor.policy.default-step");
     CHECK_TRUE(fileConfig.stepLimit == 42u);
     CHECK_TRUE(fileConfig.windowScale == 1u);
     CHECK_TRUE(!fileConfig.headless);
+    CHECK_TRUE(fileConfig.cpuMode == "baseline");
+    CHECK_TRUE(!fileConfig.cpuDetailedTiming);
     CHECK_TRUE(!fileConfig.unthrottled);
     CHECK_TRUE(std::abs(fileConfig.speedMultiplier - 0.5) < 0.000001);
     CHECK_TRUE(!fileConfig.startPaused);
@@ -190,8 +232,13 @@ int main()
     CHECK_TRUE(fileConfig.diagnosticsIntervalMs == 250u);
     CHECK_TRUE(fileConfig.audioEnabled);
     CHECK_TRUE(fileConfig.audioBackend == "dummy");
+    CHECK_TRUE(fileConfig.audioPluginPath == "cli-audio.so");
+    CHECK_TRUE(fileConfig.audioOutputFilePath == "cli-audio.pcm");
     CHECK_TRUE(fileConfig.audioReadyQueueChunks == 6u);
     CHECK_TRUE(fileConfig.audioBatchChunks == 3u);
+    CHECK_TRUE(fileConfig.backgroundWorkers == 2u);
+    CHECK_TRUE(fileConfig.backgroundQueueCapacity == 55u);
+    CHECK_TRUE(!fileConfig.debugSnapshotsEnabled);
     CHECK_TRUE(fileConfig.visualPackPaths.size() == 2u);
     CHECK_TRUE(fileConfig.visualPackPaths[0] == "cli-pack-a.json");
     CHECK_TRUE(fileConfig.visualPackPaths[1] == "cli-pack-b.json");
@@ -200,6 +247,111 @@ int main()
 
     CHECK_TRUE(throwsInvalidArgumentContaining("ROM path was provided more than once", [] {
         (void)parseArgs({"timeEmulator", "--rom", "a.gb", "b.gb"});
+    }));
+
+    {
+        const auto arguments = parseArgs({
+            "timeEmulator", "--core", "gameboy", "--rom", "game.gb",
+            "--executor-plugin", "executor.so", "--executor-policy", "example.policy"});
+        CHECK_TRUE(arguments.overrides.executorPluginPath == "executor.so");
+        CHECK_TRUE(arguments.overrides.executorPolicyId == "example.policy");
+    }
+
+    {
+        const auto arguments = parseArgs({
+            "timeEmulator", "--core", "gameboy", "--rom", "game.gb",
+            "--frontend-plugin", "frontend.so", "--frontend", "vendor.frontend.glfw"});
+        CHECK_TRUE(arguments.overrides.pluginPath == "frontend.so");
+        CHECK_TRUE(arguments.overrides.frontendId == "vendor.frontend.glfw");
+    }
+
+    {
+        const auto arguments = parseArgs({
+            "timeEmulator", "--core", "gameboy", "--rom", "game.gb",
+            "--executor-policy", "bmmq.executor.policy.portable-ir"});
+        CHECK_TRUE(arguments.overrides.executorPolicyId ==
+                   "bmmq.executor.policy.portable-ir");
+        auto config = BMMQ::EmulatorConfig{};
+        config.machineKind = std::string("gameboy");
+        config.romPath = "game.gb";
+        config.executorPolicyId = "bmmq.executor.policy.portable-ir";
+        BMMQ::validateEmulatorConfig(config);
+    }
+
+    {
+        const auto arguments = parseArgs({
+            "timeEmulator", "--core", "gameboy", "--rom", "game.gb",
+            "--cpu-mode", "block"});
+        CHECK_TRUE(arguments.overrides.cpuMode == "block");
+    }
+
+    {
+        const auto arguments = parseArgs({
+            "timeEmulator", "--core", "gameboy", "--rom", "game.gb",
+            "--cpu-mode", "ir"});
+        CHECK_TRUE(arguments.overrides.cpuMode == "ir");
+        auto config = BMMQ::EmulatorConfig{};
+        config.machineKind = std::string("gameboy");
+        config.romPath = "game.gb";
+        config.cpuMode = "ir";
+        BMMQ::validateEmulatorConfig(config);
+    }
+
+    {
+        const auto arguments = parseArgs({
+            "timeEmulator", "--core", "gameboy", "--rom", "game.gb",
+            "--cpu-mode", "native"});
+        CHECK_TRUE(arguments.overrides.cpuMode == "native");
+        auto config = BMMQ::EmulatorConfig{};
+        config.machineKind = std::string("gameboy");
+        config.romPath = "game.gb";
+        config.cpuMode = "native";
+        BMMQ::validateEmulatorConfig(config);
+    }
+
+    {
+        const auto arguments = parseArgs({
+            "timeEmulator", "--core", "gameboy", "--rom", "game.gb",
+            "--cpu-mode", "ir", "--cpu-detailed-timing"});
+        CHECK_TRUE(arguments.overrides.cpuDetailedTiming == true);
+        auto config = BMMQ::EmulatorConfig{};
+        config.machineKind = std::string("gameboy");
+        config.romPath = "game.gb";
+        config.cpuMode = "ir";
+        config.cpuDetailedTiming = true;
+        BMMQ::validateEmulatorConfig(config);
+    }
+
+    CHECK_TRUE(throwsInvalidArgumentContaining("requires a portable-IR or native-experimental", [] {
+        BMMQ::EmulatorConfig config;
+        config.machineKind = std::string("gameboy");
+        config.romPath = "game.gb";
+        config.cpuDetailedTiming = true;
+        BMMQ::validateEmulatorConfig(config);
+    }));
+
+    CHECK_TRUE(throwsInvalidArgumentContaining("Unknown CPU mode", [] {
+        BMMQ::EmulatorConfig config;
+        config.machineKind = std::string("gameboy");
+        config.romPath = "game.gb";
+        config.cpuMode = "jit";
+        BMMQ::validateEmulatorConfig(config);
+    }));
+
+    CHECK_TRUE(throwsInvalidArgumentContaining("unsupported by core 'gamegear'", [] {
+        BMMQ::EmulatorConfig config;
+        config.machineKind = std::string("gamegear");
+        config.romPath = "game.gg";
+        config.cpuMode = "block";
+        BMMQ::validateEmulatorConfig(config);
+    }));
+
+    CHECK_TRUE(throwsInvalidArgumentContaining("unsupported by core 'gamegear'", [] {
+        BMMQ::EmulatorConfig config;
+        config.machineKind = std::string("gamegear");
+        config.romPath = "game.gg";
+        config.cpuMode = "ir";
+        BMMQ::validateEmulatorConfig(config);
     }));
 
     CHECK_TRUE(throwsInvalidArgumentContaining("Missing core selection", [] {
@@ -267,6 +419,14 @@ int main()
         (void)parseArgs({"timeEmulator", "--timing-profile"});
     }));
 
+    CHECK_TRUE(throwsInvalidArgumentContaining("--executor-plugin requires a path", [] {
+        (void)parseArgs({"timeEmulator", "--executor-plugin"});
+    }));
+
+    CHECK_TRUE(throwsInvalidArgumentContaining("--executor-policy requires an id", [] {
+        (void)parseArgs({"timeEmulator", "--executor-policy"});
+    }));
+
     CHECK_TRUE(throwsInvalidArgumentContaining("--diagnostics-report requires a path", [] {
         (void)parseArgs({"timeEmulator", "--diagnostics-report"});
     }));
@@ -313,8 +473,13 @@ int main()
                              "--diagnostics-report", "runtime-diag.jsonl",
                              "--diagnostics-interval-ms", "125",
                              "--audio-backend", "dummy",
+                             "--audio-plugin", "runtime-audio.so",
+                             "--audio-file", "runtime-audio.pcm",
                              "--audio-ready-queue-chunks", "12",
                              "--audio-batch-chunks", "5",
+                             "--background-workers", "4",
+                             "--background-queue-capacity", "99",
+                             "--debug-snapshots",
                              "--visual-pack", "cli-pack-a.json",
                              "--texture-pack", "cli-pack-b.json",
                              "--visual-capture", "cli-capture",
@@ -327,8 +492,13 @@ int main()
     CHECK_TRUE(resolved.diagnosticsReportPath == "runtime-diag.jsonl");
     CHECK_TRUE(resolved.diagnosticsIntervalMs == 125u);
     CHECK_TRUE(resolved.audioBackend == "dummy");
+    CHECK_TRUE(resolved.audioPluginPath == "runtime-audio.so");
+    CHECK_TRUE(resolved.audioOutputFilePath == "runtime-audio.pcm");
     CHECK_TRUE(resolved.audioReadyQueueChunks == 12u);
     CHECK_TRUE(resolved.audioBatchChunks == 5u);
+    CHECK_TRUE(resolved.backgroundWorkers == 4u);
+    CHECK_TRUE(resolved.backgroundQueueCapacity == 99u);
+    CHECK_TRUE(resolved.debugSnapshotsEnabled);
     CHECK_TRUE(resolved.visualPackPaths.size() == 2u);
     CHECK_TRUE(resolved.visualPackPaths[0] == "cli-pack-a.json");
     CHECK_TRUE(resolved.visualPackPaths[1] == "cli-pack-b.json");

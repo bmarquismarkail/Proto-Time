@@ -15,6 +15,7 @@
 #include "VisualDebugAdapter.hpp"
 #include "VisualOverrideService.hpp"
 #include "plugins/IoPlugin.hpp"
+#include "plugins/video/RealtimeVideoMailbox.hpp"
 #include "plugins/video/VideoEngine.hpp"
 #include "plugins/video/VideoPlugin.hpp"
 
@@ -56,6 +57,22 @@ struct VideoServiceDiagnostics {
     std::size_t presenterTextureUploadCount = 0;
     std::size_t presenterRenderCount = 0;
     std::string presenterRendererName;
+    std::string simdBackendName;
+    std::size_t presenterDirectIndexedFrameCount = 0;
+    std::size_t presenterArgbFrameCount = 0;
+    std::size_t presenterTextureLockCount = 0;
+    std::uint32_t presenterRendererFlags = 0;
+    bool presenterRendererAccelerated = false;
+    bool presenterRenderTargetSupported = false;
+    std::int64_t presenterExpansionDurationLastNanos = 0;
+    std::int64_t presenterExpansionDurationHighWaterNanos = 0;
+    std::int64_t presenterUploadDurationLastNanos = 0;
+    std::int64_t presenterUploadDurationHighWaterNanos = 0;
+    std::int64_t presenterRenderSubmitDurationLastNanos = 0;
+    std::int64_t presenterRenderSubmitDurationHighWaterNanos = 0;
+    std::int64_t presenterTotalDurationLastNanos = 0;
+    std::int64_t presenterTotalDurationHighWaterNanos = 0;
+    std::size_t presenterStageDurationSampleCount = 0;
     std::size_t publishedDebugFrameCount = 0;
     std::size_t publishedRealtimeFrameCount = 0;
     std::size_t publishedDebugPixelBytes = 0;
@@ -115,6 +132,12 @@ struct VideoServiceDiagnostics {
     std::size_t buildDebugFrameUnknownReasonCount = 0;
     std::size_t buildDebugFrameDebugConsumerActiveCount = 0;
     std::size_t buildDebugFrameDebugConsumerInactiveCount = 0;
+    std::size_t visualOverrideLookupSampleCount = 0;
+    std::uint64_t visualOverrideLookupTotalNs = 0;
+    std::uint64_t visualOverrideLookupHighWaterNs = 0;
+    std::size_t visualOverrideApplySampleCount = 0;
+    std::uint64_t visualOverrideApplyTotalNs = 0;
+    std::uint64_t visualOverrideApplyHighWaterNs = 0;
     std::size_t videoDebugFrameBuildSkippedNoConsumerCount = 0;
     std::size_t videoDebugFrameBuildExecutedCount = 0;
     std::size_t captureBackgroundSubmitCount = 0;
@@ -188,6 +211,8 @@ public:
             return false;
         }
         engine_.configure(config);
+        realtimeMailbox_.resetQuiescent(true);
+        realtimeGeneration_.store(engine_.currentGeneration(), std::memory_order_release);
         bumpLifecycleEpochLocked();
         resetScanlineCapture();
         presenterConfig_.frameWidth = engine_.config().frameWidth;
@@ -435,57 +460,55 @@ public:
                                                    debugConsumerActive));
     }
 
-    [[nodiscard]] bool submitRealtimeVideoPacket(const MachineEvent& event, const RealtimeVideoPacket& packet)
+    [[nodiscard]] bool submitRealtimeVideoPacket(const MachineEvent& event,
+                                                 RealtimeVideoSubmission submission)
     {
-        std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
         if (event.type == MachineEventType::RomLoaded) {
+            std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
             engine_.advanceGeneration();
+            realtimeGeneration_.store(engine_.currentGeneration(), std::memory_order_release);
+            realtimeMailbox_.resetQuiescent(false);
             bumpLifecycleEpochLocked();
             resetScanlineCapture();
             return true;
         }
-
-        if (packet.empty()) {
-            syncEngineDiagnostics();
+        if (event.type != MachineEventType::VBlank) {
             return false;
         }
+        return publishRealtimeVideoPacket(std::move(submission));
+    }
 
-        if (event.type == MachineEventType::VideoScanlineReady) {
-            syncEngineDiagnostics();
+    // Emulation-lane steady-state publication. This function intentionally
+    // performs only validation, scalar metadata assignment, vector moves, and
+    // atomic mailbox operations. Lifecycle/configuration code remains on the
+    // non-real-time mutex-protected control plane.
+    [[nodiscard]] bool publishRealtimeVideoPacket(RealtimeVideoSubmission submission) noexcept
+    {
+        auto& packet = submission.packet;
+        if (packet.eventType != MachineEventType::VBlank || packet.empty() ||
+            packet.contractVersion != RealtimeVideoPacket::kContractVersion) {
             return false;
         }
-
-        const bool shouldPublishFrame =
-            event.type == MachineEventType::VBlank ||
-            engine_.lastValidFrame().has_value() == false ||
-            !packet.displayEnabled ||
-            event.type == MachineEventType::MemoryWriteObserved;
-        if (!shouldPublishFrame) {
-            syncEngineDiagnostics();
-            return false;
+        if (packet.generation == 0u) {
+            packet.generation = realtimeGeneration_.load(std::memory_order_acquire);
         }
+        return realtimeMailbox_.publish(
+            std::move(submission),
+            realtimeLifecycleEpoch_.load(std::memory_order_acquire));
+    }
 
-        if (event.type == MachineEventType::VBlank && hasCompleteScanlineFrameLocked()) {
-            auto frame = *scanlineFrame_;
-            resetScanlineCapture();
-            return submitFrame(frame);
-        }
-        if (event.type == MachineEventType::VBlank && hasPartialScanlineFrameLocked()) {
-            syncEngineDiagnostics();
-            return false;
-        }
+    [[nodiscard]] bool hasPendingRealtimeFrame() const noexcept
+    {
+        return realtimeMailbox_.hasPending();
+    }
 
-        resetScanlineCapture();
-        VideoPresentPacket present;
-        present.width = packet.width;
-        present.height = packet.height;
-        present.generation = packet.generation != 0u ? packet.generation : engine_.currentGeneration();
-        present.lifecycleEpoch = lifecycleEpoch_;
-        present.source = VideoFrameSource::RealtimeSnapshot;
-        present.pixels = packet.argbPixels;
-        const auto submitResult = engine_.submitPresentPacket(present);
-        syncEngineDiagnostics();
-        return submitResult.accepted;
+    // Render-lane diagnostics handoff. The compact pixel payload is deliberately
+    // omitted; timing metadata is consumed under the frontend's render lock.
+    [[nodiscard]] std::optional<RealtimeVideoDiagnostics> takeConsumedRealtimeMetadata() noexcept
+    {
+        auto metadata = std::move(lastConsumedRealtimeMetadata_);
+        lastConsumedRealtimeMetadata_.reset();
+        return metadata;
     }
 
     [[nodiscard]] bool submitFrame(const VideoFramePacket& frame)
@@ -500,26 +523,51 @@ public:
     // consumeAndProcessFrame: consume the next frame from the engine, run the
     // processor pipeline, and return the processed packet ready for presentation.
     // Returns std::nullopt when in Headless mode (no presenter — caller should
-    // treat this as a successful headless present and skip the SDL call).
+    // treat this as a successful headless present and skip the backend call).
     // The sentinel VideoFramePacket with width==0 is used to signal Headless.
     // Caller must hold sharedStateMutex_ (or equivalent serialisation) for all
     // VideoService/VideoEngine state while this runs.
     [[nodiscard]] std::optional<VideoFramePacket> consumeAndProcessFrame()
     {
         std::optional<VideoPresentPacket> frame{};
-        while (true) {
-            frame = engine_.tryConsumeLatestFrame();
-            if (!frame.has_value()) {
-                break;
+        while (auto published = realtimeMailbox_.tryConsumeLatest()) {
+            if (published->lifecycleEpoch !=
+                realtimeLifecycleEpoch_.load(std::memory_order_acquire)) {
+                ++diagnostics_.staleEpochDropCount;
+                continue;
             }
-            if (frame->lifecycleEpoch == lifecycleEpoch_) {
-                break;
+            lastConsumedRealtimeMetadata_ = std::move(published->diagnostics);
+            VideoPresentPacket present;
+            present.width = published->packet.width;
+            present.height = published->packet.height;
+            present.source = VideoFrameSource::RealtimeSnapshot;
+            present.generation = published->packet.generation;
+            present.lifecycleEpoch = published->lifecycleEpoch;
+            present.publishedAtNs = published->publishedAtNs;
+            present.surface = std::move(published->packet.surface);
+            frame = std::move(present);
+            break;
+        }
+        if (!frame.has_value()) {
+            while (true) {
+                frame = engine_.tryConsumeLatestFrame();
+                if (!frame.has_value()) {
+                    break;
+                }
+                if (frame->lifecycleEpoch == lifecycleEpoch_) {
+                    break;
+                }
+                ++diagnostics_.staleEpochDropCount;
             }
-            ++diagnostics_.staleEpochDropCount;
         }
         bool usedFallback = false;
         if (!frame.has_value()) {
-            frame = engine_.fallbackFrame();
+            if (lastProcessedFrame_.has_value()) {
+                frame = makePresentPacket(*lastProcessedFrame_);
+                frame->source = VideoFrameSource::LastValidFallback;
+            } else {
+                frame = engine_.fallbackFrame();
+            }
             frame->lifecycleEpoch = lifecycleEpoch_;
             ++diagnostics_.presentFallbackCount;
             if (frame->source == VideoFrameSource::BlankFallback) {
@@ -538,6 +586,14 @@ public:
         }
 
         VideoFramePacket processed = makeFramePacket(std::move(*frame));
+        const bool presenterAcceptsIndexed = presenter_ != nullptr &&
+            presenter_->capabilities().acceptsIndexedSurface;
+        const bool requiresArgb = !processed.surface.validForDimensions(processed.width, processed.height) ||
+            !presenterAcceptsIndexed || !processors_.empty() || !captures_.empty();
+        if (requiresArgb && !materializeVideoFrameArgb(processed)) {
+            ++diagnostics_.compatibilityFallbackCount;
+            return std::nullopt;
+        }
         for (auto& processor : processors_) {
             if (!isLiveCompatible(processor->capabilities())) {
                 ++diagnostics_.compatibilityFallbackCount;
@@ -556,6 +612,11 @@ public:
 
         dispatchCaptures(processed);
 
+        if (!usedFallback) {
+            lastProcessedFrame_ = processed;
+        }
+
+        syncEngineDiagnostics();
         diagnostics_.lastPresentedGeneration = processed.generation;
         const auto publishedGeneration = diagnostics_.lastPublishedGeneration;
         if (publishedGeneration >= processed.generation) {
@@ -573,12 +634,28 @@ public:
             ++diagnostics_.presentGenerationGap0;
         }
         ++diagnostics_.presentCount;
-        syncEngineDiagnostics();
         if (presenter_ == nullptr) {
             setState(VideoLifecycleState::Headless);
-            return std::nullopt;  // headless — no SDL call needed, caller treats as success
+            return std::nullopt;  // headless: no backend call needed; caller treats as success
         }
         return processed;
+    }
+
+    // Headless/test host path: drain and reconstruct the latest frame even when
+    // no presenter is attached. Production renderers use consumeAndProcessFrame
+    // directly; this compatibility accessor keeps frontend inspection useful
+    // without moving reconstruction back onto the emulation lane.
+    [[nodiscard]] std::optional<VideoFramePacket> consumeHeadlessFrame()
+    {
+        if (auto processed = consumeAndProcessFrame()) {
+            (void)materializeVideoFrameArgb(*processed);
+            return processed;
+        }
+        auto fallback = lastProcessedFrame_;
+        if (fallback.has_value()) {
+            (void)materializeVideoFrameArgb(*fallback);
+        }
+        return fallback;
     }
 
     // recordPresentOutcome: update diagnostics and lifecycle state after an
@@ -615,8 +692,10 @@ public:
 
     void advanceGeneration() noexcept
     {
-        engine_.advanceGeneration();
         std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
+        engine_.advanceGeneration();
+        realtimeGeneration_.store(engine_.currentGeneration(), std::memory_order_release);
+        realtimeMailbox_.resetQuiescent(false);
         bumpLifecycleEpochLocked();
         resetScanlineCapture();
         syncEngineDiagnostics();
@@ -680,26 +759,36 @@ private:
     void syncEngineDiagnostics() const noexcept
     {
         const auto engineStats = engine_.stats();
-        diagnostics_.publishedFrameCount = engineStats.publishedFrameCount;
+        const auto realtimeStats = realtimeMailbox_.stats();
+        diagnostics_.publishedFrameCount =
+            engineStats.publishedFrameCount + realtimeStats.publishedFrameCount;
         diagnostics_.staleFrameDropCount = engineStats.staleFrameDropCount;
         diagnostics_.staleDebugFrameDropCount = engineStats.staleDebugFrameDropCount;
         diagnostics_.staleRealtimeFrameDropCount = engineStats.staleRealtimeFrameDropCount;
-        diagnostics_.overwriteCount = engineStats.overwriteCount;
-        diagnostics_.consumeCount = engineStats.consumedFrameCount;
+        diagnostics_.overwriteCount = engineStats.overwriteCount + realtimeStats.overwriteCount;
+        diagnostics_.consumeCount =
+            engineStats.consumedFrameCount + realtimeStats.consumedFrameCount;
         diagnostics_.overwriteDebugFrameCount = engineStats.overwriteDebugFrameCount;
-        diagnostics_.overwriteRealtimeFrameCount = engineStats.overwriteRealtimeFrameCount;
-        diagnostics_.mailboxDepth = engineStats.mailboxDepth;
-        diagnostics_.mailboxHighWaterMark = engineStats.mailboxHighWaterMark;
+        diagnostics_.overwriteRealtimeFrameCount =
+            engineStats.overwriteRealtimeFrameCount + realtimeStats.overwriteCount;
+        diagnostics_.mailboxDepth = engineStats.mailboxDepth + realtimeStats.mailboxDepth;
+        diagnostics_.mailboxHighWaterMark = std::max(
+            engineStats.mailboxHighWaterMark, realtimeStats.mailboxHighWaterMark);
         diagnostics_.publishedDebugFrameCount = engineStats.publishedDebugFrameCount;
-        diagnostics_.publishedRealtimeFrameCount = engineStats.publishedRealtimeFrameCount;
+        diagnostics_.publishedRealtimeFrameCount =
+            engineStats.publishedRealtimeFrameCount + realtimeStats.publishedFrameCount;
         diagnostics_.publishedDebugPixelBytes = engineStats.publishedDebugPixelBytes;
-        diagnostics_.publishedRealtimePixelBytes = engineStats.publishedRealtimePixelBytes;
-        diagnostics_.publishedPixelBytes = engineStats.publishedPixelBytes;
-        diagnostics_.lastPublishedGeneration = engineStats.lastPublishedGeneration;
+        diagnostics_.publishedRealtimePixelBytes =
+            engineStats.publishedRealtimePixelBytes + realtimeStats.publishedPixelBytes;
+        diagnostics_.publishedPixelBytes =
+            engineStats.publishedPixelBytes + realtimeStats.publishedPixelBytes;
+        diagnostics_.lastPublishedGeneration = std::max(
+            engineStats.lastPublishedGeneration, realtimeStats.lastPublishedGeneration);
         diagnostics_.lifecycleEpoch = lifecycleEpoch_;
         diagnostics_.lifecycleEpochBumpCount = lifecycleEpochBumpCount_;
         diagnostics_.configuredPresenterMode = presenterConfig_.mode;
         diagnostics_.configuredPresenterPolicy = presenterPolicy_;
+        diagnostics_.simdBackendName = SimdPixelOps::active_backend_name();
         if (presenter_ != nullptr) {
             const auto presenterDiagnostics = presenter_->diagnostics();
             diagnostics_.activePresenterMode = presenterDiagnostics.activeMode;
@@ -710,6 +799,21 @@ private:
             diagnostics_.presenterTextureUploadCount = presenterDiagnostics.textureUploadCount;
             diagnostics_.presenterRenderCount = presenterDiagnostics.presentCount;
             diagnostics_.presenterRendererName = std::string(presenterDiagnostics.rendererName);
+            diagnostics_.presenterDirectIndexedFrameCount = presenterDiagnostics.directIndexedFrameCount;
+            diagnostics_.presenterArgbFrameCount = presenterDiagnostics.argbFrameCount;
+            diagnostics_.presenterTextureLockCount = presenterDiagnostics.textureLockCount;
+            diagnostics_.presenterRendererFlags = presenterDiagnostics.rendererFlags;
+            diagnostics_.presenterRendererAccelerated = presenterDiagnostics.rendererAccelerated;
+            diagnostics_.presenterRenderTargetSupported = presenterDiagnostics.renderTargetSupported;
+            diagnostics_.presenterExpansionDurationLastNanos = presenterDiagnostics.expansionDurationLastNanos;
+            diagnostics_.presenterExpansionDurationHighWaterNanos = presenterDiagnostics.expansionDurationHighWaterNanos;
+            diagnostics_.presenterUploadDurationLastNanos = presenterDiagnostics.uploadDurationLastNanos;
+            diagnostics_.presenterUploadDurationHighWaterNanos = presenterDiagnostics.uploadDurationHighWaterNanos;
+            diagnostics_.presenterRenderSubmitDurationLastNanos = presenterDiagnostics.renderSubmitDurationLastNanos;
+            diagnostics_.presenterRenderSubmitDurationHighWaterNanos = presenterDiagnostics.renderSubmitDurationHighWaterNanos;
+            diagnostics_.presenterTotalDurationLastNanos = presenterDiagnostics.totalDurationLastNanos;
+            diagnostics_.presenterTotalDurationHighWaterNanos = presenterDiagnostics.totalDurationHighWaterNanos;
+            diagnostics_.presenterStageDurationSampleCount = presenterDiagnostics.stageDurationSampleCount;
             
                     // Phase 39A: copy presenter timing metrics
                     diagnostics_.presenterPresentDurationLastNanos = presenterDiagnostics.presenterPresentDurationLastNanos;
@@ -731,17 +835,28 @@ private:
         }
         diagnostics_.state = state_;
         diagnostics_.headlessModeActive = state_ == VideoLifecycleState::Headless || presenter_ == nullptr;
-        diagnostics_.frameAgeLastNs = engineStats.frameAgeLastNs;
-        diagnostics_.frameAgeHighWaterNs = engineStats.frameAgeHighWaterNs;
-        diagnostics_.frameAgeUnder50usCount = engineStats.frameAgeUnder50usCount;
-        diagnostics_.frameAge50To100usCount = engineStats.frameAge50To100usCount;
-        diagnostics_.frameAge100To250usCount = engineStats.frameAge100To250usCount;
-        diagnostics_.frameAge250To500usCount = engineStats.frameAge250To500usCount;
-        diagnostics_.frameAge500usTo1msCount = engineStats.frameAge500usTo1msCount;
-        diagnostics_.frameAge1To2msCount = engineStats.frameAge1To2msCount;
-        diagnostics_.frameAge2To5msCount = engineStats.frameAge2To5msCount;
-        diagnostics_.frameAge5To10msCount = engineStats.frameAge5To10msCount;
-        diagnostics_.frameAgeOver10msCount = engineStats.frameAgeOver10msCount;
+        diagnostics_.frameAgeLastNs = realtimeStats.consumedFrameCount != 0u
+            ? realtimeStats.frameAgeLastNs : engineStats.frameAgeLastNs;
+        diagnostics_.frameAgeHighWaterNs = std::max(
+            engineStats.frameAgeHighWaterNs, realtimeStats.frameAgeHighWaterNs);
+        diagnostics_.frameAgeUnder50usCount =
+            engineStats.frameAgeUnder50usCount + realtimeStats.frameAgeUnder50usCount;
+        diagnostics_.frameAge50To100usCount =
+            engineStats.frameAge50To100usCount + realtimeStats.frameAge50To100usCount;
+        diagnostics_.frameAge100To250usCount =
+            engineStats.frameAge100To250usCount + realtimeStats.frameAge100To250usCount;
+        diagnostics_.frameAge250To500usCount =
+            engineStats.frameAge250To500usCount + realtimeStats.frameAge250To500usCount;
+        diagnostics_.frameAge500usTo1msCount =
+            engineStats.frameAge500usTo1msCount + realtimeStats.frameAge500usTo1msCount;
+        diagnostics_.frameAge1To2msCount =
+            engineStats.frameAge1To2msCount + realtimeStats.frameAge1To2msCount;
+        diagnostics_.frameAge2To5msCount =
+            engineStats.frameAge2To5msCount + realtimeStats.frameAge2To5msCount;
+        diagnostics_.frameAge5To10msCount =
+            engineStats.frameAge5To10msCount + realtimeStats.frameAge5To10msCount;
+        diagnostics_.frameAgeOver10msCount =
+            engineStats.frameAgeOver10msCount + realtimeStats.frameAgeOver10msCount;
         diagnostics_.buildDebugFrameCallCount = engineStats.buildDebugFrameCallCount;
         diagnostics_.buildDebugFrameTotalNs = engineStats.buildDebugFrameTotalNs;
         diagnostics_.buildDebugFrameRealtimeReasonCount = engineStats.buildDebugFrameRealtimeReasonCount;
@@ -751,6 +866,12 @@ private:
         diagnostics_.buildDebugFrameDebugConsumerActiveCount = engineStats.buildDebugFrameDebugConsumerActiveCount;
         diagnostics_.buildDebugFrameDebugConsumerInactiveCount =
             engineStats.buildDebugFrameDebugConsumerInactiveCount;
+        diagnostics_.visualOverrideLookupSampleCount = engineStats.visualOverrideLookupSampleCount;
+        diagnostics_.visualOverrideLookupTotalNs = engineStats.visualOverrideLookupTotalNs;
+        diagnostics_.visualOverrideLookupHighWaterNs = engineStats.visualOverrideLookupHighWaterNs;
+        diagnostics_.visualOverrideApplySampleCount = engineStats.visualOverrideApplySampleCount;
+        diagnostics_.visualOverrideApplyTotalNs = engineStats.visualOverrideApplyTotalNs;
+        diagnostics_.visualOverrideApplyHighWaterNs = engineStats.visualOverrideApplyHighWaterNs;
         diagnostics_.videoDebugFrameBuildSkippedNoConsumerCount =
             videoDebugFrameBuildSkippedNoConsumerCount_;
         diagnostics_.videoDebugFrameBuildExecutedCount = videoDebugFrameBuildExecutedCount_;
@@ -766,7 +887,7 @@ private:
             auto captures = captures_;
             auto captureDispatchMutex = captureDispatchMutex_;
             auto frameCopy = frame;
-            const bool queued = backgroundTaskService_->submit([
+            const bool queued = backgroundTaskService_->submit(BackgroundJobCategory::VideoCapture, [
                 captures = std::move(captures),
                 captureDispatchMutex = std::move(captureDispatchMutex),
                 frameCopy = std::move(frameCopy)]() mutable {
@@ -780,6 +901,7 @@ private:
                 return;
             }
             ++diagnostics_.captureBackgroundFallbackCount;
+            return;
         }
 
         std::lock_guard<std::mutex> lock(*captureDispatchMutex_);
@@ -894,7 +1016,10 @@ private:
     void bumpLifecycleEpochLocked() noexcept
     {
         ++lifecycleEpoch_;
+        realtimeLifecycleEpoch_.store(lifecycleEpoch_, std::memory_order_release);
         ++lifecycleEpochBumpCount_;
+        lastConsumedRealtimeMetadata_.reset();
+        lastProcessedFrame_.reset();
     }
 
     struct CaptureRegistration {
@@ -903,6 +1028,7 @@ private:
     };
 
     VideoEngine engine_{};
+    RealtimeVideoMailbox realtimeMailbox_{};
     VisualOverrideService* visualOverrideService_ = nullptr;
     BackgroundTaskService* backgroundTaskService_ = nullptr;
     const IVisualDebugAdapter* visualDebugAdapter_ = nullptr;
@@ -918,6 +1044,8 @@ private:
     std::vector<bool> scanlinesCaptured_{};
     std::size_t scanlineCaptureCount_ = 0;
     uint64_t lifecycleEpoch_ = 1;
+    std::atomic<uint64_t> realtimeLifecycleEpoch_{1u};
+    std::atomic<uint64_t> realtimeGeneration_{0u};
     std::size_t lifecycleEpochBumpCount_ = 0;
     VideoPresenterPolicy presenterPolicy_ = VideoPresenterPolicy::HardwarePreferredWithFallback;
     std::atomic<bool> enforceLifecycleContract_{false};
@@ -925,6 +1053,8 @@ private:
     mutable std::atomic<std::size_t> lifecycleContractDeniedCalls_{0};
     std::size_t videoDebugFrameBuildSkippedNoConsumerCount_ = 0;
     std::size_t videoDebugFrameBuildExecutedCount_ = 0;
+    std::optional<RealtimeVideoDiagnostics> lastConsumedRealtimeMetadata_{};
+    std::optional<VideoFramePacket> lastProcessedFrame_{};
 };
 
 } // namespace BMMQ

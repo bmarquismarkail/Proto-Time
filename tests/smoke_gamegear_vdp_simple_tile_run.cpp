@@ -224,8 +224,14 @@ int main()
     vdp.writeVram(0xBF00u, 0xD0u);
 
     const auto modelFrame = vdp.buildFrameModel({160, 144});
-    const auto realtimeFrame = vdp.buildRealtimeFrame({160, 144});
-    if (modelFrame.argbPixels != realtimeFrame.argbPixels) {
+    const auto realtimeSubmission = vdp.buildRealtimeFrame({160, 144});
+    const auto& realtimeFrame = realtimeSubmission.packet;
+    std::vector<std::uint32_t> decodedRealtimeFrame;
+    if (!BMMQ::decodeVideoSurface(realtimeFrame.surface,
+                                  realtimeFrame.width,
+                                  realtimeFrame.height,
+                                  decodedRealtimeFrame) ||
+        modelFrame.argbPixels != decodedRealtimeFrame) {
         return fail("simple tile-run buildFrameModel and buildRealtimeFrame pixels differ");
     }
 

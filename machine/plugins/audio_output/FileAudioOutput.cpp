@@ -171,8 +171,21 @@ private:
             );
             sleepDuration = std::chrono::milliseconds(std::max(1LL, durationMs));
         }
+        bool drainingStarted = false;
         while (running_.load(std::memory_order_acquire)) {
             try {
+                if (!service_->primedForDrain()) {
+                    if (drainingStarted) {
+                        service_->setBackendDrainActive(false);
+                        drainingStarted = false;
+                    }
+                    std::this_thread::sleep_for(sleepDuration);
+                    continue;
+                }
+                if (!drainingStarted) {
+                    service_->setBackendDrainActive(true);
+                    drainingStarted = true;
+                }
                 service_->drainReadyOutput(buffer);
                 errno = 0;
                 output_.write(reinterpret_cast<const char*>(buffer.data()),

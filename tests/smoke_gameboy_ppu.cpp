@@ -1,5 +1,6 @@
 #include <cassert>
 #include <cstdint>
+#include <vector>
 
 #include "cores/gameboy/GameBoyMemoryMap.hpp"
 #include "cores/gameboy/GameBoyPPU.hpp"
@@ -8,6 +9,13 @@ namespace {
 
 constexpr std::uint32_t kLightest = 0xFFE0F8D0u;
 constexpr std::uint32_t kDarkest = 0xFF081820u;
+
+std::vector<std::uint32_t> decode(const BMMQ::RealtimeVideoPacket& frame)
+{
+    std::vector<std::uint32_t> pixels;
+    assert(BMMQ::decodeVideoSurface(frame.surface, frame.width, frame.height, pixels));
+    return pixels;
+}
 
 void writeSolidTile(GB::GameBoyMemoryMap& memory, std::uint8_t tileIndex, std::uint8_t colorIndex)
 {
@@ -43,8 +51,9 @@ void testCompletedScanlinesKeepTheirOwnScrollState()
     assert(ppu.takeScanlineReady());
 
     const auto frame = ppu.buildRealtimeFrame({.frameWidth = 160, .frameHeight = 144});
-    assert(frame.argbPixels[0] == kLightest);
-    assert(frame.argbPixels[160] == kDarkest);
+    const auto pixels = decode(frame.packet);
+    assert(pixels[0] == kLightest);
+    assert(pixels[160] == kDarkest);
 }
 
 void testHBlankScrollWriteAffectsNextScanlineOnly()
@@ -71,8 +80,9 @@ void testHBlankScrollWriteAffectsNextScanlineOnly()
     assert(ppu.takeScanlineReady());
 
     const auto frame = ppu.buildRealtimeFrame({.frameWidth = 160, .frameHeight = 144});
-    assert(frame.argbPixels[0] == kLightest);
-    assert(frame.argbPixels[160] == kDarkest);
+    const auto pixels = decode(frame.packet);
+    assert(pixels[0] == kLightest);
+    assert(pixels[160] == kDarkest);
 }
 
 void testOamWriteAfterSpriteSearchAffectsNextScanlineOnly()
@@ -100,8 +110,9 @@ void testOamWriteAfterSpriteSearchAffectsNextScanlineOnly()
     assert(ppu.takeScanlineReady());
 
     const auto frame = ppu.buildRealtimeFrame({.frameWidth = 160, .frameHeight = 144});
-    assert(frame.argbPixels[0] == kLightest);
-    assert(frame.argbPixels[160] == kDarkest);
+    const auto pixels = decode(frame.packet);
+    assert(pixels[0] == kLightest);
+    assert(pixels[160] == kDarkest);
 }
 
 void testPpuModeTimingMatchesDmgLinePhases()

@@ -22,7 +22,13 @@ public:
         const BMMQ::Machine& machine,
         const BMMQ::VideoDebugRenderRequest& request) const override
     {
-        auto state = snapshotState(machine);
+        return buildFrameModelFromState(snapshotState(machine), request);
+    }
+
+    [[nodiscard]] std::optional<BMMQ::VideoDebugFrameModel> buildFrameModelFromState(
+        const BMMQ::VideoStateView& state,
+        const BMMQ::VideoDebugRenderRequest& request) const override
+    {
 
         BMMQ::VideoDebugFrameModel model;
         model.width = std::max(request.frameWidth, 1);
@@ -479,7 +485,8 @@ public:
         packet.displayEnabled = model.displayEnabled;
         packet.inVBlank = model.inVBlank;
         packet.scanlineIndex = model.scanlineIndex;
-        packet.argbPixels = std::move(model.argbPixels);
+        packet.surface = BMMQ::makeArgbVideoSurface(
+            std::move(model.argbPixels), packet.width, packet.height);
         return packet;
     }
 };

@@ -1,4 +1,6 @@
 #include "emulator/EmulatorConfig.hpp"
+#include "inst_cycle/executor/ExecutorPolicyRegistry.hpp"
+#include "machine/plugins/DynamicPluginModule.hpp"
 
 #include "emulator/MachineFactory.hpp"
 
@@ -115,12 +117,23 @@ void applyConfigValue(EmulatorConfig& config,
             config.romPath = resolveConfigPath(configDirectory, text);
         } else if (key == "boot_rom") {
             config.bootRomPath = resolveConfigPath(configDirectory, text);
-        } else if (key == "plugin") {
+        } else if (key == "plugin" || key == "frontend_plugin") {
             config.pluginPath = resolveConfigPath(configDirectory, text);
+        } else if (key == "frontend") {
+            config.frontendId = text;
+            config.headless = text == "headless";
+        } else if (key == "executor_plugin") {
+            config.executorPluginPath = resolveConfigPath(configDirectory, text);
+        } else if (key == "executor_policy") {
+            config.executorPolicyId = text;
         } else if (key == "steps") {
             config.stepLimit = parseUnsigned(text, label);
         } else if (key == "headless") {
             config.headless = parseBool(text, label);
+        } else if (key == "cpu_mode") {
+            config.cpuMode = lowerAscii(text);
+        } else if (key == "cpu_detailed_timing") {
+            config.cpuDetailedTiming = parseBool(text, label);
         } else {
             throw std::invalid_argument("Unknown config key: " + label);
         }
@@ -158,6 +171,10 @@ void applyConfigValue(EmulatorConfig& config,
             config.audioEnabled = parseBool(text, label);
         } else if (key == "backend") {
             config.audioBackend = text;
+        } else if (key == "plugin") {
+            config.audioPluginPath = resolveConfigPath(configDirectory, text);
+        } else if (key == "output_file") {
+            config.audioOutputFilePath = resolveConfigPath(configDirectory, text);
         } else if (key == "ready_queue_chunks") {
             const auto parsed = parseUnsigned(text, label);
             const auto clamped = std::min<std::uint64_t>(parsed, 64u);
@@ -178,6 +195,18 @@ void applyConfigValue(EmulatorConfig& config,
             config.visualCapturePath = resolveConfigPath(configDirectory, text);
         } else if (key == "reload") {
             config.visualPackReload = parseBool(text, label);
+        } else {
+            throw std::invalid_argument("Unknown config key: " + label);
+        }
+    } else if (section == "background") {
+        if (key == "workers") {
+            const auto parsed = std::min<std::uint64_t>(parseUnsigned(text, label), 256u);
+            config.backgroundWorkers = static_cast<std::uint32_t>(parsed);
+        } else if (key == "queue_capacity") {
+            const auto parsed = std::clamp<std::uint64_t>(parseUnsigned(text, label), 1u, 65536u);
+            config.backgroundQueueCapacity = static_cast<std::uint32_t>(parsed);
+        } else if (key == "debug_snapshots") {
+            config.debugSnapshotsEnabled = parseBool(text, label);
         } else {
             throw std::invalid_argument("Unknown config key: " + label);
         }
@@ -215,7 +244,7 @@ EmulatorConfig loadEmulatorConfig(const std::filesystem::path& path)
             }
             section = trim(std::string_view(text).substr(1, text.size() - 2));
             if (section != "emulator" && section != "video" && section != "timing" &&
-                section != "audio" && section != "visual") {
+                section != "audio" && section != "visual" && section != "background") {
                 throw std::invalid_argument("Unknown config section: " + section);
             }
             continue;
@@ -262,6 +291,16 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     if (overrides.pluginPath.has_value()) {
         config.pluginPath = *overrides.pluginPath;
     }
+    if (overrides.frontendId.has_value()) {
+        config.frontendId = *overrides.frontendId;
+        config.headless = *overrides.frontendId == "headless";
+    }
+    if (overrides.executorPluginPath.has_value()) {
+        config.executorPluginPath = *overrides.executorPluginPath;
+    }
+    if (overrides.executorPolicyId.has_value()) {
+        config.executorPolicyId = *overrides.executorPolicyId;
+    }
     if (overrides.stepLimit.has_value()) {
         config.stepLimit = *overrides.stepLimit;
     }
@@ -270,6 +309,12 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     }
     if (overrides.headless.has_value()) {
         config.headless = *overrides.headless;
+    }
+    if (overrides.cpuMode.has_value()) {
+        config.cpuMode = lowerAscii(*overrides.cpuMode);
+    }
+    if (overrides.cpuDetailedTiming.has_value()) {
+        config.cpuDetailedTiming = *overrides.cpuDetailedTiming;
     }
     if (overrides.unthrottled.has_value()) {
         config.unthrottled = *overrides.unthrottled;
@@ -295,6 +340,12 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     if (overrides.audioBackend.has_value()) {
         config.audioBackend = *overrides.audioBackend;
     }
+    if (overrides.audioPluginPath.has_value()) {
+        config.audioPluginPath = *overrides.audioPluginPath;
+    }
+    if (overrides.audioOutputFilePath.has_value()) {
+        config.audioOutputFilePath = *overrides.audioOutputFilePath;
+    }
     if (overrides.audioReadyQueueChunks.has_value()) {
         config.audioReadyQueueChunks =
             static_cast<std::uint32_t>(std::clamp<std::uint32_t>(*overrides.audioReadyQueueChunks, 1u, 64u));
@@ -302,6 +353,16 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     if (overrides.audioBatchChunks.has_value()) {
         config.audioBatchChunks =
             static_cast<std::uint32_t>(std::clamp<std::uint32_t>(*overrides.audioBatchChunks, 1u, 16u));
+    }
+    if (overrides.backgroundWorkers.has_value()) {
+        config.backgroundWorkers = std::min<std::uint32_t>(*overrides.backgroundWorkers, 256u);
+    }
+    if (overrides.backgroundQueueCapacity.has_value()) {
+        config.backgroundQueueCapacity =
+            std::clamp<std::uint32_t>(*overrides.backgroundQueueCapacity, 1u, 65536u);
+    }
+    if (overrides.debugSnapshotsEnabled.has_value()) {
+        config.debugSnapshotsEnabled = *overrides.debugSnapshotsEnabled;
     }
     if (overrides.visualPackPaths.has_value()) {
         config.visualPackPaths = *overrides.visualPackPaths;
@@ -322,6 +383,44 @@ void validateEmulatorConfig(const EmulatorConfig& config)
     const auto kind = parseMachineKind(*config.machineKind);
     auto instance = createMachine(kind);
     const auto& descriptor = instance.descriptor;
+
+    if (config.cpuMode != "baseline" && config.cpuMode != "block" &&
+        config.cpuMode != "ir" && config.cpuMode != "native") {
+        throw std::invalid_argument("Unknown CPU mode: " + config.cpuMode +
+                                    ". Use baseline, block, ir, or native.");
+    }
+    std::unique_ptr<Plugin::IExecutorPolicyPlugin> policy;
+    if (config.executorPluginPath.has_value()) {
+        const auto module = Plugin::DynamicPluginModule::load(*config.executorPluginPath);
+        const auto ids = module.executorPolicyIds();
+        const auto selectedId = config.executorPolicyId.has_value()
+            ? *config.executorPolicyId
+            : (ids.size() == 1u ? ids.front() : std::string{});
+        if (selectedId.empty()) {
+            throw std::invalid_argument("--executor-policy is required when a module exposes multiple policies");
+        }
+        policy = module.createExecutorPolicy(selectedId);
+    } else {
+        const auto policyId = config.executorPolicyId.has_value()
+            ? std::string_view(*config.executorPolicyId)
+            : Plugin::executorPolicyIdForLegacyMode(config.cpuMode);
+        policy = Plugin::ExecutorPolicyRegistry::builtins().create(policyId);
+    }
+    try {
+        // Validate the complete machine installation contract, including
+        // platform-specific backend availability and clone ownership.
+        instance.machine->attachExecutorPolicy(*policy);
+    } catch (const std::runtime_error& ex) {
+        const auto selection = config.executorPolicyId.value_or(config.cpuMode);
+        throw std::invalid_argument("Executor selection '" + selection +
+                                    "' is unsupported by core '" + *config.machineKind +
+                                    "': " + ex.what());
+    }
+    if (config.cpuDetailedTiming && policy->backend() != ExecutionBackend::PortableIr &&
+        policy->backend() != ExecutionBackend::NativeExperimental) {
+        throw std::invalid_argument(
+            "Detailed CPU timing requires a portable-IR or native-experimental executor policy");
+    }
 
     if (config.romPath.empty()) {
         throw std::invalid_argument("Missing ROM path. Use --rom <file.gb>.");
@@ -372,11 +471,26 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
                 throw std::invalid_argument("--boot-rom requires a path");
             }
             arguments.overrides.bootRomPath = std::filesystem::path(argv[++i]);
-        } else if (arg == "--plugin") {
+        } else if (arg == "--plugin" || arg == "--frontend-plugin") {
             if (i + 1 >= argc) {
-                throw std::invalid_argument("--plugin requires a path");
+                throw std::invalid_argument(arg + " requires a path");
             }
             arguments.overrides.pluginPath = std::filesystem::path(argv[++i]);
+        } else if (arg == "--frontend") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--frontend requires an id");
+            }
+            arguments.overrides.frontendId = std::string(argv[++i]);
+        } else if (arg == "--executor-plugin") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--executor-plugin requires a path");
+            }
+            arguments.overrides.executorPluginPath = std::filesystem::path(argv[++i]);
+        } else if (arg == "--executor-policy") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--executor-policy requires an id");
+            }
+            arguments.overrides.executorPolicyId = std::string(argv[++i]);
         } else if (arg == "--steps") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--steps requires a count");
@@ -394,6 +508,13 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
             }
         } else if (arg == "--unthrottled") {
             arguments.overrides.unthrottled = true;
+        } else if (arg == "--cpu-mode") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--cpu-mode requires baseline, block, ir, or native");
+            }
+            arguments.overrides.cpuMode = lowerAscii(argv[++i]);
+        } else if (arg == "--cpu-detailed-timing") {
+            arguments.overrides.cpuDetailedTiming = true;
         } else if (arg == "--speed") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--speed requires a numeric multiplier");
@@ -426,6 +547,16 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
                 throw std::invalid_argument("--audio-backend requires a backend name");
             }
             arguments.overrides.audioBackend = argv[++i];
+        } else if (arg == "--audio-plugin") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--audio-plugin requires a path");
+            }
+            arguments.overrides.audioPluginPath = std::filesystem::path(argv[++i]);
+        } else if (arg == "--audio-file") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--audio-file requires a path");
+            }
+            arguments.overrides.audioOutputFilePath = std::filesystem::path(argv[++i]);
         } else if (arg == "--audio-ready-queue-chunks") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--audio-ready-queue-chunks requires a positive integer");
@@ -442,6 +573,21 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
             parsed = std::min(parsed, static_cast<std::uint64_t>(16u));
             arguments.overrides.audioBatchChunks =
                 static_cast<std::uint32_t>(std::max<std::uint64_t>(1u, parsed));
+        } else if (arg == "--background-workers") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--background-workers requires a non-negative integer");
+            }
+            const auto parsed = std::min<std::uint64_t>(parseUnsigned(argv[++i], "--background-workers"), 256u);
+            arguments.overrides.backgroundWorkers = static_cast<std::uint32_t>(parsed);
+        } else if (arg == "--background-queue-capacity") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--background-queue-capacity requires a positive integer");
+            }
+            const auto parsed = std::clamp<std::uint64_t>(
+                parseUnsigned(argv[++i], "--background-queue-capacity"), 1u, 65536u);
+            arguments.overrides.backgroundQueueCapacity = static_cast<std::uint32_t>(parsed);
+        } else if (arg == "--debug-snapshots") {
+            arguments.overrides.debugSnapshotsEnabled = true;
         } else if (arg == "--visual-pack" || arg == "--texture-pack") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument(arg + " requires a path");

@@ -30,11 +30,14 @@ public:
     const PluginManager& pluginManager() const override;
     void save_state(const std::filesystem::path& path) override;
     void load_state(const std::filesystem::path& path) override;
+    ExecutionSliceResult runSlice(
+        const ExecutionBudget& budget,
+        InstructionRetirementSink* observer = nullptr) override;
     void step() override;
     void serviceInput() override;
 
     std::span<const IoRegionDescriptor> describeIoRegions() const override;
-    void attachExecutorPolicy(Plugin::IExecutorPolicyPlugin& policy) override;
+    void attachExecutorPolicy(const Plugin::IExecutorPolicyPlugin& policy) override;
     const Plugin::IExecutorPolicyPlugin& attachedExecutorPolicy() const override;
     uint16_t readRegisterPair(std::string_view id) const override;
     std::optional<uint32_t> currentDigitalInputMask() const override;
@@ -44,16 +47,22 @@ public:
     uint64_t audioFrameCounter() const override;
     std::optional<VideoDebugFrameModel> videoDebugFrameModel(
         const VideoDebugRenderRequest& request) const override;
-    std::optional<RealtimeVideoPacket> realtimeVideoPacket(
+    std::optional<RealtimeVideoSubmission> realtimeVideoPacket(
         const VideoDebugRenderRequest& request) const override;
     std::optional<RealtimeAudioPacket> realtimeAudioPacket() const override;
     uint32_t clockHz() const override;
     std::string stopSummary() const override;
     [[nodiscard]] bool flushCartridgeSave();
+    void flushPendingBackgroundWork() override;
     void setBackgroundTaskService(BMMQ::BackgroundTaskService* service) noexcept;
     void loadExternalBootRom(const std::vector<uint8_t>& bytes) override;
     // Test helper: inspect whether CPU IME is currently set.
     bool cpuInterruptsEnabled() const;
+
+protected:
+    InstructionRetirementDecision onInstructionRetired(
+        const CpuFeedback& feedback,
+        const ExecutionSliceProgress& progress) override;
 
 private:
     struct Impl;

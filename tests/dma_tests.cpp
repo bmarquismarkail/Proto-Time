@@ -16,10 +16,21 @@ BMMQ::CpuFeedback step(LR3592_DMG& dmg)
 
 void startDma(LR3592_DMG& dmg, uint8_t sourceHighByte)
 {
+    const auto invalidationRequests = dmg.blockCacheStats().invalidationRequests;
     const DataType value[] = {sourceHighByte};
     const bool handled = dmg.handleMemoryWrite(0xFF46, std::span<const DataType>{value, 1});
     assert(handled);
+    assert(dmg.blockCacheStats().invalidationRequests == invalidationRequests);
     (void)handled;
+}
+
+void test_rejected_write_does_not_invalidate_code()
+{
+    LR3592_DMG dmg;
+    const auto invalidationRequests = dmg.blockCacheStats().invalidationRequests;
+    const DataType value[] = {0xAAu};
+    assert(dmg.handleMemoryWrite(0xFEA0u, std::span<const DataType>{value, 1}));
+    assert(dmg.blockCacheStats().invalidationRequests == invalidationRequests);
 }
 
 void test_dma_completion_notification()
@@ -56,6 +67,7 @@ int main()
 {
     std::cout << "Running DMA completion notification test..." << std::endl;
     test_dma_completion_notification();
+    test_rejected_write_does_not_invalidate_code();
     std::cout << "All tests passed!" << std::endl;
     return 0;
 }

@@ -5,8 +5,8 @@
 #include <vector>
 
 #include "cores/gamegear/GameGearMachine.hpp"
-#include "machine/plugins/SdlFrontendPlugin.hpp"
-#include "machine/plugins/SdlFrontendPluginLoader.hpp"
+#include "machine/plugins/FrontendPlugin.hpp"
+#include "machine/plugins/FrontendPluginLoader.hpp"
 
 namespace {
 
@@ -99,12 +99,12 @@ int main(int argc, char** argv)
     ::setenv("SDL_VIDEODRIVER", "dummy", 1);
 #endif
 
-    BMMQ::SdlFrontendConfig config;
+    BMMQ::FrontendConfig config;
+    config.retainLastPresentedFrame = true;
     config.windowTitle = "Proto-Time SDL Game Gear Smoke";
     config.windowScale = 2u;
     config.frameWidth = 160;
     config.frameHeight = 144;
-    config.enableAudio = false;
     config.autoInitializeBackend = false;
     config.autoPresentOnVideoEvent = false;
 
@@ -114,8 +114,8 @@ int main(int argc, char** argv)
     const auto executablePath = (argc > 0 && argv != nullptr)
         ? std::filesystem::path(argv[0])
         : std::filesystem::path("time-smoke-sdl-frontend-gamegear");
-    auto frontendPlugin = BMMQ::loadSdlFrontendPlugin(
-        BMMQ::defaultSdlFrontendPluginPath(executablePath),
+    auto frontendPlugin = BMMQ::loadFrontendPlugin(
+        BMMQ::defaultFrontendPluginPath(executablePath, BMMQ::kDefaultSdlFrontendPluginFilename),
         config);
     auto* frontend = frontendPlugin.get();
     machine.pluginManager().add(std::move(frontendPlugin));
@@ -137,8 +137,6 @@ int main(int argc, char** argv)
         directModel->argbPixels.end());
     assert(directColors.size() > 1u);
 
-    assert(frontend->lastVideoDebugModel().has_value());
-    assert(frontend->lastVideoDebugModel()->displayEnabled);
     assert(frontend->lastFrame().has_value());
     std::unordered_set<std::uint32_t> frameColors(
         frontend->lastFrame()->pixels.begin(),

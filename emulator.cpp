@@ -16,6 +16,7 @@
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -30,9 +31,18 @@
 
 #include "emulator/AudioKpiStatus.hpp"
 #include "emulator/EmulatorConfig.hpp"
+#include "emulator/DiagnosticsJson.hpp"
 #include "emulator/EmulatorHost.hpp"
+#include "inst_cycle/executor/ExecutorPolicyRegistry.hpp"
 #include "machine/BackgroundTaskService.hpp"
-#include "machine/plugins/SdlFrontendPluginLoader.hpp"
+#include "machine/DebugSnapshotService.hpp"
+#include "machine/ImageDecoder.hpp"
+#include "machine/plugins/FrontendPluginLoader.hpp"
+#include "machine/plugins/AudioOutputPluginLoader.hpp"
+#include "machine/plugins/DynamicPluginModule.hpp"
+#include "machine/plugins/audio_output/DummyAudioOutput.hpp"
+#include "machine/plugins/audio_output/FileAudioOutput.hpp"
+#include "machine/plugins/audio/AudioTransportPlugin.hpp"
 #include "machine/TimingService.hpp"
 #include "cores/gameboy/GameBoyMachine.hpp"
 using GameBoyMachine = GB::GameBoyMachine;
@@ -56,9 +66,18 @@ void printUsage(std::string_view program)
               << "  --config <path>    Optional INI-style emulator configuration file\n"
               << "  --rom <path>       Cartridge ROM to load\n"
               << "  --boot-rom <path>  Optional external boot ROM for supported cores\n"
-              << "  --plugin <path>    Optional SDL frontend shared object override\n"
+              << "  --frontend-plugin <path>\n"
+              << "                     Load a frontend from a pure-C ABI module (--plugin is an alias)\n"
+              << "  --frontend <id>    Select a module frontend ID, or headless\n"
+              << "  --executor-plugin <path>\n"
+              << "                     Load executor policies from a pure-C ABI module\n"
+              << "  --executor-policy <id>\n"
+              << "                     Select a built-in or module executor policy ID\n"
               << "  --steps <count>    Stop after a fixed number of instruction steps\n"
-              << "  --scale <n>        SDL window scale factor (default: 3)\n"
+              << "  --scale <n>        Frontend window scale factor (default: 3)\n"
+              << "  --cpu-mode <mode>  CPU mode: baseline, block, ir, or native (experimental x86-64/POSIX)\n"
+              << "  --cpu-detailed-timing\n"
+              << "                     Enable intrusive IR guard/lowering/execution timers\n"
               << "  --unthrottled      Run unthrottled (no wall-clock pacing)\n"
               << "  --speed <mult>     Start with speed multiplier (e.g. 2.0)\n"
               << "  --pause            Start paused (use single-step to advance)\n"
@@ -68,21 +87,30 @@ void printUsage(std::string_view program)
               << "                     Diagnostics sample interval in milliseconds (default: 1000)\n"
               << "  --no-audio         Disable frontend audio output\n"
               << "  --audio-backend <name>\n"
-              << "                     Frontend audio backend: sdl, dummy, or file (default: sdl)\n"
+              << "                     Audio backend: sdl, dummy, or file (default: sdl)\n"
+              << "  --audio-plugin <path>\n"
+              << "                     Load an audio output from a pure-C ABI module\n"
+              << "  --audio-file <path>\n"
+              << "                     Raw signed 16-bit PCM path for the file backend\n"
               << "  --audio-ready-queue-chunks <n>\n"
               << "  --audio-batch-chunks <n>\n"
               << "                     Audio output ready-queue chunk depth (1-64, default: 3)\n"
+              << "  --background-workers <n>\n"
+              << "                     Background worker count; 0 selects the reserved-core default\n"
+              << "  --background-queue-capacity <n>\n"
+              << "                     Maximum queued background jobs (default: 1024)\n"
+              << "  --debug-snapshots  Enable optional background debug snapshots\n"
               << "  --visual-pack <path>\n"
               << "                     Load a visual override pack.json; repeat to load multiple packs\n"
               << "  --visual-capture <dir>\n"
               << "                     Capture observed decoded visual resources for pack authoring\n"
               << "  --visual-pack-reload\n"
               << "                     Poll visual pack manifests/assets and reload changed packs\n"
-              << "  --headless         Run without the SDL frontend plugin\n"
+              << "  --headless         Run without a frontend plugin\n"
               << "  -h, --help         Show this help text\n\n"
               << "Controls:\n"
               << "  Arrow keys = directions, Z = Button1, X = Button2,\n"
-              << "  Backspace = Meta1, Enter = Meta2\n";
+              << "  Backspace = Meta1, Enter = Meta2, F1 = save state\n";
 }
 
 std::filesystem::file_time_type fileWriteTime(const std::filesystem::path& path) noexcept
@@ -142,13 +170,120 @@ void writeJsonDoubleOrNull(std::ostream& output, bool hasValue, double value)
     }
 }
 
+void populateAudioDiagnostics(BMMQ::FrontendStats& result,
+                              const BMMQ::AudioTransportPluginStats& plugin,
+                              const BMMQ::AudioService& service,
+                              const BMMQ::IAudioOutputBackend* output) noexcept
+{
+    result.audioEvents = plugin.events;
+    result.audioRealtimePacketsAccepted = plugin.realtimePacketsAccepted;
+    result.audioRealtimePacketsSkipped = plugin.realtimePacketsSkipped;
+    result.audioBatchFlushCount = plugin.batchFlushCount;
+    result.audioBatchFlushSamplesLast = plugin.batchFlushSamplesLast;
+    result.audioBatchFlushSamplesMin = plugin.batchFlushSamplesMin;
+    result.audioBatchFlushSamplesMax = plugin.batchFlushSamplesMax;
+    result.audioBatchPacketsAccumulated = plugin.batchPacketsAccumulated;
+    result.audioBatchPacketsFlushed = plugin.batchPacketsFlushed;
+    result.audioBatchCurrentSamples = plugin.batchCurrentSamples;
+    result.audioRealtimePacketSamplesLast = plugin.packetSamplesLast;
+    result.audioRealtimePacketSamplesMin = plugin.packetSamplesMin;
+    result.audioRealtimePacketSamplesMax = plugin.packetSamplesMax;
+    result.audioRealtimePacketSampleRateLast = plugin.sampleRateLast;
+    result.audioRealtimePacketChannelCountLast = plugin.channelCountLast;
+    result.audioRealtimePacketPsgChunksEmittedLast = plugin.psgChunksEmittedLast;
+    result.audioRealtimePacketPsgSamplesGeneratedTotalLast =
+        plugin.psgSamplesGeneratedTotalLast;
+    result.audioRealtimePacketPsgChunkSamplesLast = plugin.psgChunkSamplesLast;
+    result.audioRealtimePacketPsgChunkSamplesMin = plugin.psgChunkSamplesMin;
+    result.audioRealtimePacketPsgChunkSamplesMax = plugin.psgChunkSamplesMax;
+    result.audioRealtimePacketPsgPendingSamplesLast = plugin.psgPendingSamplesLast;
+    const auto engine = service.engine().stats();
+    const auto transport = service.transportStats();
+    const auto device = output != nullptr ? output->deviceInfo() : BMMQ::AudioOutputDeviceInfo{};
+    result.audioSourceSampleRate = service.engine().config().sourceSampleRate;
+    result.audioDeviceSampleRate = service.engine().config().deviceSampleRate;
+    result.audioRingBufferCapacitySamples = service.engine().bufferCapacitySamples();
+    result.audioCallbackChunkSamples = device.callbackChunkSamples;
+    result.audioBufferedHighWaterSamples = engine.bufferedHighWaterSamples;
+    result.audioCallbackCount = engine.callbackCount;
+    result.audioSamplesDelivered = engine.samplesDelivered;
+    result.audioUnderrunCount = engine.underrunCount;
+    result.audioSilenceSamplesFilled = engine.silenceSamplesFilled;
+    result.audioOverrunDropCount = engine.overrunDropCount;
+    result.audioDroppedSamples = engine.droppedSamples;
+    result.audioResamplingActive = engine.resamplingActive;
+    result.audioResampleRatio = engine.resampleRatio;
+    result.audioSourceSamplesPushed = engine.sourceSamplesPushed;
+    result.audioAppendCallCount = engine.appendCallCount;
+    result.audioAppendSamplesRequested = engine.appendSamplesRequested;
+    result.audioAppendSamplesAccepted = engine.appendSamplesAccepted;
+    result.audioAppendSamplesRejected = engine.appendSamplesRejected;
+    result.audioAppendSamplesTruncated = engine.appendSamplesTruncated;
+    result.audioAppendBufferedSamplesLast = engine.appendBufferedSamplesLast;
+    result.audioResampleSourceSamplesConsumed = engine.sourceSamplesConsumed;
+    result.audioResampleOutputSamplesProduced = engine.outputSamplesProduced;
+    result.audioPipelineCapacitySkipCount = engine.pipelineCapacitySkipCount;
+    result.audioReadyQueueDepth = transport.readyQueueDepth;
+    result.audioTransportConfiguredReadyQueueChunks = transport.configuredReadyQueueChunks;
+    result.audioTransportPrefillTargetChunks = transport.prefillTargetChunks;
+    result.audioTransportReadyQueueCapacityChunks = transport.readyQueueCapacityChunks;
+    result.audioTransportReadyQueueUsableChunks = transport.readyQueueUsableChunks;
+    result.audioReadyQueueHighWaterChunks = transport.readyQueueHighWaterChunks;
+    result.audioReadyQueueLowWaterChunks = transport.readyQueueLowWaterChunks;
+    result.audioReadyQueueEmptyCount = transport.readyQueueEmptyCount;
+    result.audioTransportDrainCallbackCount = transport.drainCallbackCount;
+    result.audioTransportDrainRequestedSamples = transport.drainRequestedSamples;
+    result.audioTransportDrainReadySamples = transport.drainReadySamples;
+    result.audioTransportUnderrunCount = transport.underrunCount;
+    result.audioTransportSilenceSamplesFilled = transport.silenceSamplesFilled;
+    result.audioTransportWorkerWakeCount = transport.workerWakeCount;
+    result.audioTransportWorkerCallbackWakeCount = transport.workerCallbackWakeCount;
+    result.audioTransportWorkerEmulationWakeCount = transport.workerEmulationWakeCount;
+    result.audioTransportWorkerTimeoutWakeCount = transport.workerTimeoutWakeCount;
+    result.audioTransportAppendRecentPcmCallCount = transport.appendRecentPcmCallCount;
+    result.audioTransportAppendRecentPcmSamplesAppended = transport.appendRecentPcmSamplesAppended;
+    result.audioTransportPrimedForDrain = transport.primedForDrain;
+    result.audioTransportPrimedTransitionCount = transport.primedTransitionCount;
+    result.audioTransportPrimingSilenceCallbackCount = transport.primingSilenceCallbackCount;
+    result.audioTransportPrimingSilenceSamples = transport.primingSilenceSamples;
+    result.audioTransportDrainDurationSampleCount = transport.drainCallbackDurationSampleCount;
+    result.audioTransportDrainDurationLastNanos = transport.drainCallbackDurationLastNanos;
+    result.audioTransportDrainDurationHighWaterNanos = transport.drainCallbackDurationHighWaterNanos;
+    result.audioTransportDrainDurationP50Nanos = transport.drainCallbackDurationP50Nanos;
+    result.audioTransportDrainDurationP95Nanos = transport.drainCallbackDurationP95Nanos;
+    result.audioTransportDrainDurationP99Nanos = transport.drainCallbackDurationP99Nanos;
+    result.audioTransportDrainDurationP999Nanos = transport.drainCallbackDurationP999Nanos;
+    result.audioTransportDrainDurationUnder50usCount = transport.drainCallbackDurationUnder50usCount;
+    result.audioTransportDrainDuration50To100usCount = transport.drainCallbackDuration50To100usCount;
+    result.audioTransportDrainDuration100To250usCount = transport.drainCallbackDuration100To250usCount;
+    result.audioTransportDrainDuration250To500usCount = transport.drainCallbackDuration250To500usCount;
+    result.audioTransportDrainDuration500usTo1msCount = transport.drainCallbackDuration500usTo1msCount;
+    result.audioTransportDrainDuration1To2msCount = transport.drainCallbackDuration1To2msCount;
+    result.audioTransportDrainDuration2To5msCount = transport.drainCallbackDuration2To5msCount;
+    result.audioTransportDrainDuration5To10msCount = transport.drainCallbackDuration5To10msCount;
+    result.audioTransportDrainDurationOver10msCount = transport.drainCallbackDurationOver10msCount;
+    result.audioTransportWorkerEmulationWakeLatencySampleCount =
+        transport.workerEmulationWakeLatencySampleCount;
+    result.audioTransportWorkerEmulationWakeLatencyLastNs =
+        transport.workerEmulationWakeLatencyLastNs;
+    result.audioTransportWorkerEmulationWakeLatencyHighWaterNs =
+        transport.workerEmulationWakeLatencyHighWaterNs;
+}
+
 void writeDiagnosticsSample(std::ostream& output,
                             std::chrono::steady_clock::time_point startedAt,
                             std::chrono::steady_clock::time_point now,
                             std::uint64_t emulatedCycles,
+                            std::uint64_t retiredInstructions,
                             std::uint32_t cpuClockHz,
-                            const BMMQ::SdlFrontendStats* frontendStats,
-                            const BMMQ::TimingStats& timingStats) noexcept
+                            const BMMQ::FrontendStats* frontendStats,
+                            const BMMQ::TimingStats& timingStats,
+                            const BMMQ::BackgroundTaskStats& backgroundStats,
+                            const GameBoyMachine::BlockCacheStats* blockCacheStats,
+                            bool detailedIrTimingEnabled,
+                            const std::optional<std::string>& stateFingerprint,
+                            std::string_view executorPolicyId,
+                            BMMQ::ExecutionBackend executionBackend) noexcept
 {
     using namespace std::chrono;
     const auto elapsedNs = duration_cast<nanoseconds>(now - startedAt).count();
@@ -158,7 +293,7 @@ void writeDiagnosticsSample(std::ostream& output,
     const auto effectiveSpeed =
         (cpuClockHz != 0u) ? (effectiveCyclesPerSecond / static_cast<double>(cpuClockHz)) : 0.0;
 
-    const BMMQ::SdlFrontendStats defaults{};
+    const BMMQ::FrontendStats defaults{};
     const auto& stats = (frontendStats != nullptr) ? *frontendStats : defaults;
     const auto audioConfiguredChannelCount =
         static_cast<unsigned int>(stats.audioRealtimePacketChannelCountLast);
@@ -179,10 +314,96 @@ void writeDiagnosticsSample(std::ostream& output,
     output << "{";
     output << "\"host_elapsed_ns\":" << elapsedNs;
     output << ",\"emulated_cycles\":" << emulatedCycles;
+    output << ",\"retired_instructions\":" << retiredInstructions;
+    output << ",\"deterministic_state\":{";
+    output << "\"schema\":";
+    if (blockCacheStats != nullptr) {
+        output << "\"gameboy-v1\"";
+    } else {
+        output << "null";
+    }
+    output << ",\"fingerprint\":";
+    if (stateFingerprint.has_value()) {
+        output << '"' << jsonEscape(*stateFingerprint) << '"';
+    } else {
+        output << "null";
+    }
+    output << "}";
     output << ",\"effective_emulation_speed\":" << effectiveSpeed;
     output << ",\"effective_cycles_per_second\":" << effectiveCyclesPerSecond;
     output << ",\"active_timing_profile\":\""
            << jsonEscape(BMMQ::timingPolicyProfileName(timingStats.activeProfile)) << "\"";
+    output << ",\"executor\":{";
+    output << "\"policy_id\":\"" << jsonEscape(executorPolicyId) << "\"";
+    output << ",\"backend\":\"" << BMMQ::executionBackendName(executionBackend) << "\"";
+    output << "}";
+
+    output << ",\"cpu_block_cache\":{";
+    output << "\"supported\":" << (blockCacheStats != nullptr ? "true" : "false");
+    output << ",\"mode\":\"" << BMMQ::executionBackendName(executionBackend) << "\"";
+    output << ",\"detailed_timing_enabled\":"
+           << (detailedIrTimingEnabled ? "true" : "false");
+    if (blockCacheStats != nullptr) {
+        output << ",\"hits\":" << blockCacheStats->hits.load();
+        output << ",\"misses\":" << blockCacheStats->misses.load();
+        output << ",\"translations\":" << blockCacheStats->translations.load();
+        output << ",\"translated_instructions\":" << blockCacheStats->translatedInstructions.load();
+        output << ",\"invalidations\":" << blockCacheStats->invalidations.load();
+        output << ",\"guard_failures\":" << blockCacheStats->guardFailures.load();
+        output << ",\"chain_continuations\":" << blockCacheStats->chainContinuations.load();
+        output << ",\"unsupported_fallbacks\":" << blockCacheStats->unsupportedFallbacks.load();
+        output << ",\"fast_eligibility_stops\":" << blockCacheStats->fastEligibilityStops.load();
+        output << ",\"invalidation_requests\":" << blockCacheStats->invalidationRequests.load();
+        output << ",\"invalidation_page_skips\":" << blockCacheStats->invalidationPageSkips.load();
+        output << ",\"invalidation_scans\":" << blockCacheStats->invalidationScans.load();
+        output << ",\"invalidation_blocks_examined\":"
+               << blockCacheStats->invalidationBlocksExamined.load();
+        const auto emitOpcodeCounts = [&](std::string_view name, const auto& counts) {
+            output << ",\"" << name << "\":{";
+            bool first = true;
+            for (std::size_t opcode = 0u; opcode < counts.size(); ++opcode) {
+                const auto count = counts[opcode].load();
+                if (count == 0u) continue;
+                if (!first) output << ',';
+                first = false;
+                output << '\"' << "0x" << std::uppercase << std::hex
+                       << std::setw(2) << std::setfill('0') << opcode
+                       << std::dec << std::nouppercase << "\":" << count;
+            }
+            output << '}';
+        };
+        emitOpcodeCounts("unsupported_fallback_opcodes",
+                         blockCacheStats->unsupportedFallbackOpcodes);
+        emitOpcodeCounts("fast_eligibility_stop_opcodes",
+                         blockCacheStats->fastEligibilityStopOpcodes);
+        output << ",\"ir_translations\":" << blockCacheStats->irTranslations.load();
+        output << ",\"ir_executions\":" << blockCacheStats->irExecutions.load();
+        output << ",\"ir_guard_failures\":" << blockCacheStats->irGuardFailures.load();
+        output << ",\"ir_fallbacks\":" << blockCacheStats->irFallbacks.load();
+        output << ",\"ir_lowered_instructions\":" << blockCacheStats->irLoweredInstructions.load();
+        output << ",\"ir_ineligible_translations\":" << blockCacheStats->irIneligibleTranslations.load();
+        output << ",\"ir_lowering_ns\":" << blockCacheStats->irLoweringNanos.load();
+        output << ",\"ir_guard_checks\":" << blockCacheStats->irGuardChecks.load();
+        output << ",\"ir_guard_check_ns\":" << blockCacheStats->irGuardCheckNanos.load();
+        output << ",\"ir_execution_ns\":" << blockCacheStats->irExecutionNanos.load();
+        output << ",\"ir_block_entries\":" << blockCacheStats->irBlockEntries.load();
+        output << ",\"ir_block_continuations\":"
+               << blockCacheStats->irBlockContinuations.load();
+        output << ",\"ir_block_continuation_rejects\":"
+               << blockCacheStats->irBlockContinuationRejects.load();
+    }
+    output << "}";
+
+    output << ",\"render_service\":{";
+    output << "\"state\":" << static_cast<unsigned int>(stats.renderServiceState);
+    output << ",\"loop_count\":" << stats.renderServiceLoopCount;
+    output << ",\"present_attempts\":" << stats.renderServicePresentAttempts;
+    output << ",\"present_successes\":" << stats.renderServicePresentSuccessCount;
+    output << ",\"present_failures\":" << stats.renderServicePresentFailureCount;
+    output << ",\"event_pump_count\":" << stats.renderServiceEventPumpCount;
+    output << ",\"frame_wake_count\":" << stats.renderServiceFrameWakeCount;
+    output << ",\"timeout_wake_count\":" << stats.renderServiceTimeoutWakeCount;
+    output << "}";
 
     output << ",\"video\":{";
     output << "\"frames_submitted\":" << stats.videoFramesPublished;
@@ -209,6 +430,12 @@ void writeDiagnosticsSample(std::ostream& output,
     output << ",\"debug_consumer_inactive_count\":" << stats.videoBuildDebugFrameDebugConsumerInactiveCount;
     output << ",\"skipped_no_consumer_count\":" << stats.videoDebugFrameBuildSkippedNoConsumerCount;
     output << ",\"executed_count\":" << stats.videoDebugFrameBuildExecutedCount;
+    output << ",\"visual_override_lookup_samples\":" << stats.videoVisualOverrideLookupSampleCount;
+    output << ",\"visual_override_lookup_total_ns\":" << stats.videoVisualOverrideLookupTotalNs;
+    output << ",\"visual_override_lookup_high_water_ns\":" << stats.videoVisualOverrideLookupHighWaterNs;
+    output << ",\"visual_override_apply_samples\":" << stats.videoVisualOverrideApplySampleCount;
+    output << ",\"visual_override_apply_total_ns\":" << stats.videoVisualOverrideApplyTotalNs;
+    output << ",\"visual_override_apply_high_water_ns\":" << stats.videoVisualOverrideApplyHighWaterNs;
     output << "}";
     output << ",\"vdp_render_body\":{";
     output << "\"sample_count\":" << stats.videoVdpRenderBodySampleCount;
@@ -300,10 +527,37 @@ void writeDiagnosticsSample(std::ostream& output,
     output << ",\"_5_to_10ms\":" << stats.videoPresenterPresentDuration5To10msCount;
     output << ",\"over_10ms\":" << stats.videoPresenterPresentDurationOver10msCount;
     output << "}";
+    output << ",\"presenter_pipeline\":{";
+    output << "\"sample_count\":" << stats.videoPresenterStageDurationSampleCount;
+    output << ",\"simd_backend\":\"" << jsonEscape(stats.videoSimdBackendName) << "\"";
+    output << ",\"direct_indexed_frames\":" << stats.videoPresenterDirectIndexedFrameCount;
+    output << ",\"argb_frames\":" << stats.videoPresenterArgbFrameCount;
+    output << ",\"texture_locks\":" << stats.videoPresenterTextureLockCount;
+    output << ",\"renderer_flags\":" << stats.videoPresenterRendererFlags;
+    output << ",\"renderer_accelerated\":"
+           << (stats.videoPresenterRendererAccelerated ? "true" : "false");
+    output << ",\"render_target_supported\":"
+           << (stats.videoPresenterRenderTargetSupported ? "true" : "false");
+    output << ",\"expansion_last_ns\":" << stats.videoPresenterExpansionDurationLastNanos;
+    output << ",\"expansion_high_water_ns\":"
+           << stats.videoPresenterExpansionDurationHighWaterNanos;
+    output << ",\"upload_last_ns\":" << stats.videoPresenterUploadDurationLastNanos;
+    output << ",\"upload_high_water_ns\":" << stats.videoPresenterUploadDurationHighWaterNanos;
+    output << ",\"render_submit_last_ns\":"
+           << stats.videoPresenterRenderSubmitDurationLastNanos;
+    output << ",\"render_submit_high_water_ns\":"
+           << stats.videoPresenterRenderSubmitDurationHighWaterNanos;
+    output << ",\"total_last_ns\":" << stats.videoPresenterTotalDurationLastNanos;
+    output << ",\"total_high_water_ns\":" << stats.videoPresenterTotalDurationHighWaterNanos;
+    output << "}";
     output << "}";
 
     output << ",\"audio\":{";
     output << "\"primed_for_drain\":" << (stats.audioTransportPrimedForDrain ? "true" : "false");
+    output << ",\"primed_transition_count\":" << stats.audioTransportPrimedTransitionCount;
+    output << ",\"priming_silence_callback_count\":"
+           << stats.audioTransportPrimingSilenceCallbackCount;
+    output << ",\"priming_silence_samples\":" << stats.audioTransportPrimingSilenceSamples;
     output << ",\"kpi_status\":\"" << BMMQ::audioKpiStatusName(audioKpi.status) << "\"";
     output << ",\"kpi_source_ratio\":";
     writeJsonDoubleOrNull(output, audioKpi.hasSourceRatio, audioKpi.sourceRatio);
@@ -332,6 +586,7 @@ void writeDiagnosticsSample(std::ostream& output,
     output << "}";
     output << ",\"ready_queue\":{";
     output << "\"configured_chunks\":" << stats.audioTransportConfiguredReadyQueueChunks;
+    output << ",\"prefill_target_chunks\":" << stats.audioTransportPrefillTargetChunks;
     output << ",\"capacity_chunks\":" << stats.audioTransportReadyQueueCapacityChunks;
     output << ",\"usable_chunks\":" << stats.audioTransportReadyQueueUsableChunks;
     output << ",\"depth_last\":" << stats.audioReadyQueueDepth;
@@ -405,6 +660,7 @@ void writeDiagnosticsSample(std::ostream& output,
     output << ",\"_5_to_10ms\":" << stats.audioTransportDrainDuration5To10msCount;
     output << ",\"over_10ms\":" << stats.audioTransportDrainDurationOver10msCount;
     output << "}";
+    output << "}";
     output << ",\"append_recent_pcm\":{";
     output << "\"call_count\":" << stats.audioTransportAppendRecentPcmCallCount;
     output << ",\"samples_appended_total\":" << stats.audioTransportAppendRecentPcmSamplesAppended;
@@ -457,15 +713,13 @@ void writeDiagnosticsSample(std::ostream& output,
     output << "}";
     output << "}";
 
-    output << ",\"timing\":{";
-    output << "\"frontend_ticks_scheduled\":" << stats.timingFrontendTicksScheduled;
-    output << ",\"frontend_ticks_executed\":" << stats.timingFrontendTicksExecuted;
-    output << ",\"frontend_ticks_merged\":" << stats.timingFrontendTicksMerged;
-    output << ",\"wake_jitter_under_100us\":" << stats.timingSleepWakeJitterUnder100usCount;
-    output << ",\"wake_jitter_100_to_500us\":" << stats.timingSleepWakeJitter100To500usCount;
-    output << ",\"wake_jitter_500us_to_2ms\":" << stats.timingSleepWakeJitter500usTo2msCount;
-    output << ",\"wake_jitter_over_2ms\":" << stats.timingSleepWakeJitterOver2msCount;
-    output << "}";
+    output << ",\"background_tasks\":";
+    BMMQ::writeBackgroundTaskDiagnosticsJson(output, backgroundStats);
+
+    // TimingService is authoritative in headless and SDL modes. Do not source
+    // these fields from the frontend's asynchronously mirrored stats snapshot.
+    output << ",\"timing\":";
+    BMMQ::writeTimingDiagnosticsJson(output, timingStats);
     output << "}\n";
 }
 
@@ -486,14 +740,51 @@ int main(int argc, char** argv)
         std::signal(SIGTERM, handleSignal);
 #endif
 
-        BMMQ::BackgroundTaskService backgroundTaskService;
+        const std::optional<std::size_t> backgroundWorkers = options.backgroundWorkers == 0u
+            ? std::nullopt
+            : std::optional<std::size_t>(options.backgroundWorkers);
+        BMMQ::BackgroundTaskService backgroundTaskService(
+            static_cast<std::size_t>(options.backgroundQueueCapacity), backgroundWorkers);
         backgroundTaskService.start();
+        BMMQ::ImageDecoder imageDecoder(&backgroundTaskService);
+        BMMQ::DebugSnapshotService debugSnapshotService;
+        debugSnapshotService.setBackgroundTaskService(&backgroundTaskService);
 
         auto bootstrapped = BMMQ::bootstrapMachine(options);
         auto& machine = *bootstrapped.machine;
         const auto& descriptor = bootstrapped.descriptor;
         const auto romSize = bootstrapped.romSize;
+        std::optional<BMMQ::Plugin::DynamicPluginModule> executorModule;
+        std::unique_ptr<BMMQ::Plugin::IExecutorPolicyPlugin> executorPolicy;
+        if (options.executorPluginPath.has_value()) {
+            executorModule = BMMQ::Plugin::DynamicPluginModule::load(*options.executorPluginPath);
+            const auto ids = executorModule->executorPolicyIds();
+            const auto selectedId = options.executorPolicyId.has_value()
+                ? *options.executorPolicyId
+                : (ids.size() == 1u ? ids.front() : std::string{});
+            if (selectedId.empty()) {
+                throw std::invalid_argument(
+                    "--executor-policy is required when a module exposes multiple policies");
+            }
+            executorPolicy = executorModule->createExecutorPolicy(selectedId);
+        } else {
+            const auto executorPolicyId = options.executorPolicyId.has_value()
+                ? std::string_view(*options.executorPolicyId)
+                : BMMQ::Plugin::executorPolicyIdForLegacyMode(options.cpuMode);
+            executorPolicy = BMMQ::Plugin::ExecutorPolicyRegistry::builtins().create(executorPolicyId);
+        }
+        machine.attachExecutorPolicy(*executorPolicy);
+        const auto& activeExecutorPolicy = machine.attachedExecutorPolicy();
+        if (options.cpuDetailedTiming) {
+            auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get());
+            if (gameBoyMachine == nullptr) {
+                throw std::runtime_error("detailed IR timing requires the Game Boy core");
+            }
+            gameBoyMachine->setDetailedIrTimingEnabled(options.cpuDetailedTiming);
+        }
         machine.videoService().setBackgroundTaskService(&backgroundTaskService);
+        machine.visualOverrideService().setBackgroundTaskService(&backgroundTaskService);
+        machine.visualOverrideService().setImageDecoder(&imageDecoder);
         if (auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get());
             gameBoyMachine != nullptr) {
             gameBoyMachine->setBackgroundTaskService(&backgroundTaskService);
@@ -503,46 +794,107 @@ int main(int argc, char** argv)
             gameGearMachine->setBackgroundTaskService(&backgroundTaskService);
         }
 
-        BMMQ::ISdlFrontendPlugin* frontend = nullptr;
-        std::unique_ptr<BMMQ::ISdlFrontendPlugin> frontendPlugin;
+        BMMQ::IFrontendPlugin* frontend = nullptr;
+        std::unique_ptr<BMMQ::IFrontendPlugin> frontendPlugin;
         if (!options.headless) {
-            BMMQ::SdlFrontendConfig config;
+            BMMQ::FrontendConfig config;
             config.windowTitle = "Proto-Time - " + std::string(descriptor.displayName) +
                 " - " + options.romPath.filename().string();
             config.windowScale = std::max(options.windowScale, 1u);
             config.frameWidth = descriptor.defaultFrameWidth;
             config.frameHeight = descriptor.defaultFrameHeight;
             config.autoInitializeBackend = true;
-            // The SDL presenter opens windows hidden; ensure frames are
-            // presented automatically so the window appears during normal runs.
+            // Window/event APIs are host-main-thread-affine. The process main
+            // thread is the render lane; guest execution runs separately.
+            config.enableRenderServiceThread = false;
+            // Present automatically so the window appears during normal runs.
             config.createHiddenWindowOnInitialize = false;
             config.pumpBackendEventsOnInputSample = false;
             config.autoPresentOnVideoEvent = true;
             config.showWindowOnPresent = true;
-            config.enableAudio = options.audioEnabled;
-            config.audioBackend = options.audioBackend;
-            config.audioReadyQueueChunks =
-                static_cast<std::size_t>(std::clamp<std::uint32_t>(options.audioReadyQueueChunks, 1u, 64u));
-            config.audioBatchChunks =
-                static_cast<std::size_t>(std::clamp<std::uint32_t>(options.audioBatchChunks, 1u, 16u));
-
+            config.retainDebugSnapshots = options.debugSnapshotsEnabled;
+            const auto selectedFrontendId = BMMQ::normalizeFrontendId(
+                options.frontendId.value_or(std::string{}));
+            const auto defaultFilename = BMMQ::defaultFrontendPluginFilename(
+                selectedFrontendId);
+            const auto executablePath = (argc > 0 && argv != nullptr)
+                ? std::filesystem::path(argv[0])
+                : std::filesystem::path("timeEmulator");
             const auto pluginPath = options.pluginPath.value_or(
-                BMMQ::defaultSdlFrontendPluginPath((argc > 0 && argv != nullptr)
-                    ? std::filesystem::path(argv[0])
-                    : std::filesystem::path("timeEmulator")));
+                BMMQ::defaultFrontendPluginPath(executablePath, defaultFilename));
             try {
-                frontendPlugin = BMMQ::loadSdlFrontendPlugin(pluginPath, config);
+                frontendPlugin = BMMQ::loadFrontendPlugin(
+                    pluginPath, config, selectedFrontendId);
                 frontend = frontendPlugin.get();
+                if (options.debugSnapshotsEnabled) {
+                    frontend->setDebugSnapshotService(&debugSnapshotService);
+                }
                 machine.pluginManager().add(std::move(frontendPlugin));
-                machine.pluginManager().initialize(machine.mutableView());
-                frontend->requestWindowVisibility(true);
-                frontend->serviceFrontend();
             } catch (const std::exception& ex) {
                 std::cerr << "warning: " << ex.what() << "; continuing headless\n";
             }
         }
 
+        BMMQ::AudioTransportPlugin* audioTransport = nullptr;
+        if (options.audioEnabled) {
+            auto transport = std::make_unique<BMMQ::AudioTransportPlugin>(
+                static_cast<std::size_t>(std::clamp<std::uint32_t>(
+                    options.audioBatchChunks, 1u, 16u)));
+            audioTransport = transport.get();
+            machine.pluginManager().add(std::move(transport));
+        }
+        if (frontend != nullptr || audioTransport != nullptr) {
+            machine.pluginManager().initialize(machine.mutableView());
+        }
+        if (frontend != nullptr) {
+            frontend->requestWindowVisibility(true);
+            frontend->serviceFrontend();
+        }
+
+        std::unique_ptr<BMMQ::IAudioOutputBackend> audioOutput;
+        if (options.audioEnabled) {
+            try {
+                if (options.audioBackend == "sdl") {
+                    const auto executablePath = (argc > 0 && argv != nullptr)
+                        ? std::filesystem::path(argv[0]) : std::filesystem::path("timeEmulator");
+                    const auto audioPluginPath = options.audioPluginPath.value_or(
+                        BMMQ::defaultAudioOutputPluginPath(executablePath));
+                    audioOutput = BMMQ::loadAudioOutputPlugin(audioPluginPath, "sdl");
+                    std::cout << "Audio module: " << audioPluginPath << '\n';
+                } else if (options.audioBackend == "dummy") {
+                    audioOutput = std::make_unique<BMMQ::DummyAudioOutputBackend>();
+                } else if (options.audioBackend == "file") {
+                    audioOutput = std::make_unique<BMMQ::FileAudioOutputBackend>();
+                } else {
+                    throw std::invalid_argument("Unknown audio backend: " + options.audioBackend);
+                }
+                auto& audioService = machine.audioService();
+                const int channels = std::max<int>(audioService.engine().config().channelCount, 1);
+                const bool opened = audioOutput->open(audioService.engine(), {
+                    .backend = options.audioBackend,
+                    .requestedSampleRate = audioService.engine().config().sourceSampleRate,
+                    .callbackChunkSamples = static_cast<std::size_t>(256 * channels),
+                    .readyQueueChunks = static_cast<std::size_t>(
+                        std::clamp<std::uint32_t>(options.audioReadyQueueChunks, 1u, 64u)),
+                    .channels = channels,
+                    .filePath = options.audioOutputFilePath.value_or(std::filesystem::path{}),
+                    .audioService = &audioService,
+                });
+                if (!opened) {
+                    std::cerr << "warning: audio output failed: " << audioOutput->lastError()
+                              << "; continuing without device audio\n";
+                    audioOutput.reset();
+                }
+            } catch (const std::exception& ex) {
+                std::cerr << "warning: " << ex.what() << "; continuing without device audio\n";
+                audioOutput.reset();
+            }
+        }
+
         std::cout << "Core: " << descriptor.id << '\n';
+        std::cout << "Executor policy: " << activeExecutorPolicy.metadata().id << '\n';
+        std::cout << "Execution backend: "
+                  << BMMQ::executionBackendName(activeExecutorPolicy.backend()) << '\n';
         std::cout << "Loaded ROM: " << options.romPath << " ("
             << romSize << " bytes)\n";
         if (options.bootRomPath.has_value()) {
@@ -559,6 +911,9 @@ int main(int argc, char** argv)
         }
         if (frontend != nullptr) {
             std::cout << "Frontend: " << frontend->backendStatusSummary() << '\n';
+        }
+        if (audioOutput != nullptr) {
+            std::cout << "Audio output: " << audioOutput->name() << '\n';
         }
         if (options.timingProfile.has_value()) {
             std::cout << "Timing profile: " << *options.timingProfile << '\n';
@@ -644,7 +999,8 @@ int main(int argc, char** argv)
             }
 
             machine.visualOverrideService().recordAsyncProbeSubmission();
-            const bool queued = backgroundTaskService.submit([&visualReloadPollState, &machine]() {
+            const bool queued = backgroundTaskService.submit(BMMQ::BackgroundJobCategory::VisualReload,
+                [&visualReloadPollState, &machine]() {
                 bool changed = false;
                 {
                     std::lock_guard<std::mutex> lock(visualReloadPollState.mutex);
@@ -664,11 +1020,10 @@ int main(int argc, char** argv)
                 }
 
                 if (changed) {
-                    machine.visualOverrideService().recordAsyncProbeChangeDetected();
                     visualReloadPollState.reloadRequested.store(true, std::memory_order_release);
                 }
                 visualReloadPollState.pollInFlight.store(false, std::memory_order_release);
-            });
+                });
 
             if (!queued) {
                 visualReloadPollState.pollInFlight.store(false, std::memory_order_release);
@@ -709,22 +1064,53 @@ int main(int argc, char** argv)
             }
 
             const auto timingStats = timingService.stats();
-            std::optional<BMMQ::SdlFrontendStats> frontendStats;
+            std::optional<BMMQ::FrontendStats> frontendStats;
             if (frontend != nullptr) {
                 frontendStats = frontend->stats();
+            }
+            if (audioTransport != nullptr) {
+                if (!frontendStats.has_value()) frontendStats.emplace();
+                populateAudioDiagnostics(*frontendStats, audioTransport->stats(),
+                                         machine.audioService(), audioOutput.get());
+            }
+            std::optional<GameBoyMachine::BlockCacheStats> blockCacheStats;
+            std::optional<std::string> stateFingerprint;
+            if (auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(&machine);
+                gameBoyMachine != nullptr) {
+                blockCacheStats = gameBoyMachine->blockCacheStats();
+                // Full guest state hashing is intentionally a terminal-sample
+                // operation so periodic observability does not perturb hot-path
+                // performance measurements.
+                if (force) {
+                    stateFingerprint = gameBoyMachine->deterministicStateFingerprint();
+                }
             }
 
             writeDiagnosticsSample(diagnosticsReport,
                                    runStartedAt,
                                    now,
                                    emulatedCycles,
+                                   steps,
                                    cpuClockHz,
                                    frontendStats.has_value() ? &*frontendStats : nullptr,
-                                   timingStats);
+                                   timingStats,
+                                   backgroundTaskService.stats(),
+                                   blockCacheStats.has_value() ? &*blockCacheStats : nullptr,
+                                   options.cpuDetailedTiming,
+                                   stateFingerprint,
+                                   activeExecutorPolicy.metadata().id,
+                                   activeExecutorPolicy.backend());
             diagnosticsReport.flush();
         };
 
         auto pollVisualPackReload = [&]() {
+            if (machine.visualOverrideService().pollBackgroundWork()) {
+                machine.visualOverrideService().recordAsyncProbeReloadApplied();
+                refreshVisualReloadWatchList();
+            }
+            if (const auto warning = machine.visualOverrideService().takeReloadWarning(); warning.has_value()) {
+                std::cerr << "warning: " << *warning << '\n';
+            }
             if (!options.visualPackReload) {
                 return;
             }
@@ -732,31 +1118,29 @@ int main(int argc, char** argv)
             if (!visualReloadPollState.reloadRequested.exchange(false, std::memory_order_acq_rel)) {
                 return;
             }
+            machine.visualOverrideService().recordAsyncProbeChangeDetected();
 
-            const bool reloaded = machine.visualOverrideService().reloadChangedPacks();
-            if (reloaded) {
-                machine.visualOverrideService().recordAsyncProbeReloadApplied();
-            }
-            refreshVisualReloadWatchList();
-            if (!reloaded) {
-                if (const auto warning = machine.visualOverrideService().takeReloadWarning(); warning.has_value()) {
-                    std::cerr << "warning: " << *warning << '\n';
-                }
+            if (!machine.visualOverrideService().requestReloadChangedPacks()) {
+                visualReloadPollState.reloadRequested.store(true, std::memory_order_release);
             }
         };
 
         auto serviceFrontend = [&]() -> bool {
+            if (audioOutput != nullptr) audioOutput->service();
             if (frontend == nullptr) {
                 return false;
             }
             frontend->serviceFrontend();
-            pollVisualPackReload();
             return frontend->quitRequested();
         };
 
+        std::atomic<bool> stopRequested{false};
+        std::atomic<bool> emulationFinished{false};
+        std::atomic<bool> frontendInputTickPending{false};
+        std::exception_ptr emulationFailure;
+
         auto serviceFrontendUntil = [&](SteadyClock::time_point now) -> bool {
-            bool servicedFrontend = false;
-            if (frontend == nullptr || now < nextFrontendService) {
+            if ((frontend == nullptr && audioOutput == nullptr) || now < nextFrontendService) {
                 return false;
             }
 
@@ -772,7 +1156,6 @@ int main(int argc, char** argv)
             const auto mergedTicks = scheduledTicks - ticksToRun;
 
             for (std::uint32_t tick = 0u; tick < ticksToRun; ++tick) {
-                servicedFrontend = true;
                 ++executedTicks;
                 if (serviceFrontend()) {
                     timingService.noteFrontendServiceTick(scheduledTicks, executedTicks, lateness);
@@ -787,122 +1170,226 @@ int main(int argc, char** argv)
                 nextFrontendService = now + kFrontendServicePeriod;
             }
             timingService.noteFrontendServiceTick(scheduledTicks, executedTicks, lateness);
-            if (servicedFrontend) {
-                timingEngine.applyControl(timingService.takeControlSnapshot());
-                machine.serviceInput();
-            }
+            frontendInputTickPending.store(true, std::memory_order_release);
             return false;
         };
 
-        while (gStopRequested == 0) {
-            if (options.stepLimit.has_value() && steps >= *options.stepLimit) {
-                break;
-            }
+        auto runEmulationLane = [&]() {
+            try {
+                class TimingRetirementSink final : public BMMQ::InstructionRetirementSink {
+                public:
+                    TimingRetirementSink(BMMQ::TimingEngine& engine,
+                                         const BMMQ::TimingConfig& config,
+                                         std::atomic<bool>& stopRequested,
+                                         std::uint64_t& steps,
+                                         std::uint64_t& emulatedCycles,
+                                         double& wakeCycles,
+                                         bool& timingSliceComplete,
+                                         double minInstructionCycles,
+                                         const std::optional<std::uint64_t>& stepLimit)
+                        : engine_(engine), config_(config), stopRequested_(stopRequested),
+                          steps_(steps), emulatedCycles_(emulatedCycles),
+                          wakeCycles_(wakeCycles), timingSliceComplete_(timingSliceComplete),
+                          minInstructionCycles_(minInstructionCycles),
+                          stepLimit_(stepLimit) {}
 
-            const auto now = SteadyClock::now();
-            if (serviceFrontendUntil(now)) {
-                break;
-            }
-
-            timingEngine.applyControl(timingService.takeControlSnapshot());
-            timingEngine.update(now);
-
-            bool executedInstruction = false;
-            bool executionSliceActive = false;
-            std::uint32_t wakeExecutionSlices = 0u;
-            double wakeExecutionCycles = 0.0;
-            while (timingEngine.canExecute() && gStopRequested == 0) {
-                if (options.stepLimit.has_value() && steps >= *options.stepLimit) {
-                    break;
-                }
-                if (wakeExecutionSlices >= timingConfig.maxExecutionSlicesPerWake) {
-                    timingService.noteWakeBurstSliceLimitHit();
-                    break;
-                }
-                if (wakeExecutionCycles >= timingConfig.maxCyclesPerWake) {
-                    timingService.noteWakeBurstCycleLimitHit();
-                    break;
-                }
-
-                if (!executionSliceActive) {
-                    timingEngine.beginExecutionSlice();
-                    executionSliceActive = true;
-                    ++wakeExecutionSlices;
-                }
-
-                machine.step();
-                ++steps;
-                executedInstruction = true;
-                emulatedCycles += machine.runtimeContext().getLastFeedback().retiredCycles;
-
-                const auto retiredCycles = static_cast<double>(machine.runtimeContext().getLastFeedback().retiredCycles);
-                const auto chargedCycles = std::max(kMinInstructionCycles, retiredCycles);
-                wakeExecutionCycles += chargedCycles;
-                timingEngine.charge(retiredCycles);
-                const auto sliceDecision = timingEngine.recordExecutionSliceCycles(chargedCycles);
-
-                if (sliceDecision.frontendServiceDue && serviceFrontendUntil(SteadyClock::now())) {
-                    gStopRequested = 1;
-                    break;
-                }
-                if (sliceDecision.executionSliceComplete) {
-                    break;
-                }
-            }
-            timingService.recordWakeBurst(wakeExecutionCycles, wakeExecutionSlices);
-            timingService.publishEngineStats(timingEngine.stats());
-            emitDiagnostics(SteadyClock::now(), false);
-
-            if (gStopRequested != 0) {
-                break;
-            }
-
-            const auto idleNow = SteadyClock::now();
-            if (serviceFrontendUntil(idleNow)) {
-                break;
-            }
-            if (frontend == nullptr) {
-                pollVisualPackReload();
-            }
-
-            if (!executedInstruction) {
-                const auto nextStepTime = timingEngine.nextWakeTime(idleNow);
-                const auto frontendWakeTime = (frontend != nullptr) ? nextFrontendService : idleNow;
-                const auto nextWakeTime = (frontend != nullptr)
-                    ? std::min(frontendWakeTime, nextStepTime)
-                    : nextStepTime;
-
-                const bool frontendSleepDue = (frontend != nullptr) && (frontendWakeTime > idleNow);
-                const bool timingSleepDue = timingEngine.shouldSleep(idleNow) && (nextStepTime > idleNow);
-
-                if (timingSleepDue || frontendSleepDue) {
-                    if (nextWakeTime > idleNow) {
-                        const auto requestedSleep = std::chrono::duration_cast<std::chrono::nanoseconds>(nextWakeTime - idleNow);
-                        const auto beforeSleep = SteadyClock::now();
-                        if (timingConfig.adaptiveSleepEnabled && requestedSleep > timingConfig.sleepSpinWindow &&
-                            timingConfig.sleepSpinWindow > std::chrono::nanoseconds::zero()) {
-                            const auto coarseWake = nextWakeTime - timingConfig.sleepSpinWindow;
-                            std::this_thread::sleep_until(coarseWake);
-                            const auto spinStart = SteadyClock::now();
-                            while (SteadyClock::now() < nextWakeTime) {
-                                if (SteadyClock::now() - spinStart >= timingConfig.sleepSpinCap) {
-                                    break;
-                                }
-                                std::this_thread::yield();
-                            }
-                        } else {
-                            std::this_thread::sleep_until(nextWakeTime);
+                    BMMQ::InstructionRetirementDecision retireInstruction(
+                        const BMMQ::CpuFeedback& feedback,
+                        const BMMQ::ExecutionSliceProgress&) override
+                    {
+                        ++steps_;
+                        emulatedCycles_ += feedback.retiredCycles;
+                        const auto retiredCycles = static_cast<double>(feedback.retiredCycles);
+                        const auto chargedCycles =
+                            std::max(minInstructionCycles_, retiredCycles);
+                        wakeCycles_ += chargedCycles;
+                        engine_.charge(retiredCycles);
+                        const auto decision = engine_.recordExecutionSliceCycles(chargedCycles);
+                        timingSliceComplete_ = decision.executionSliceComplete;
+                        const bool stepLimitReached =
+                            stepLimit_.has_value() && steps_ >= *stepLimit_;
+                        if (decision.executionSliceComplete || !engine_.canExecute() ||
+                            wakeCycles_ >= config_.maxCyclesPerWake || stepLimitReached ||
+                            stopRequested_.load(std::memory_order_acquire) ||
+                            gStopRequested != 0) {
+                            return BMMQ::InstructionRetirementDecision::exitSlice();
                         }
-                        const auto afterSleep = SteadyClock::now();
-                        const auto actualSleep = std::chrono::duration_cast<std::chrono::nanoseconds>(afterSleep - beforeSleep);
-                        timingService.noteHostSleep(requestedSleep, actualSleep);
+                        return BMMQ::InstructionRetirementDecision::continueSlice();
+                    }
+
+                private:
+                    BMMQ::TimingEngine& engine_;
+                    const BMMQ::TimingConfig& config_;
+                    std::atomic<bool>& stopRequested_;
+                    std::uint64_t& steps_;
+                    std::uint64_t& emulatedCycles_;
+                    double& wakeCycles_;
+                    bool& timingSliceComplete_;
+                    double minInstructionCycles_;
+                    const std::optional<std::uint64_t>& stepLimit_;
+                };
+
+                while (!stopRequested.load(std::memory_order_acquire) && gStopRequested == 0) {
+                    if (options.stepLimit.has_value() && steps >= *options.stepLimit) {
+                        break;
+                    }
+
+                    if (frontend != nullptr && frontend->takeSaveStateRequest()) {
+                        constexpr auto quickSavePath = "quicksave.ptstate";
+                        try {
+                            machine.save_state(quickSavePath);
+                            std::cout << "Saved state: " << quickSavePath << '\n';
+                        } catch (const std::exception& error) {
+                            std::cerr << "warning: failed to save state: " << error.what() << '\n';
+                        }
+                    }
+
+                    const auto now = SteadyClock::now();
+                    if (frontendInputTickPending.exchange(false, std::memory_order_acq_rel)) {
+                        machine.serviceInput();
+                    }
+
+                    timingEngine.applyControl(timingService.takeControlSnapshot());
+                    timingEngine.update(now);
+
+                    bool executedInstruction = false;
+                    bool executionSliceActive = false;
+                    std::uint32_t wakeExecutionSlices = 0u;
+                    double wakeExecutionCycles = 0.0;
+                    while (timingEngine.canExecute() &&
+                           !stopRequested.load(std::memory_order_acquire) &&
+                           gStopRequested == 0) {
+                        if (options.stepLimit.has_value() && steps >= *options.stepLimit) {
+                            break;
+                        }
+                        if (wakeExecutionSlices >= timingConfig.maxExecutionSlicesPerWake) {
+                            timingService.noteWakeBurstSliceLimitHit();
+                            break;
+                        }
+                        if (wakeExecutionCycles >= timingConfig.maxCyclesPerWake) {
+                            timingService.noteWakeBurstCycleLimitHit();
+                            break;
+                        }
+
+                        if (!executionSliceActive) {
+                            timingEngine.beginExecutionSlice();
+                            executionSliceActive = true;
+                            ++wakeExecutionSlices;
+                        }
+
+                        const auto remainingSteps = options.stepLimit.has_value()
+                            ? *options.stepLimit - steps
+                            : std::uint64_t{256u};
+                        const auto instructionBudget =
+                            std::min<std::uint64_t>(remainingSteps, 256u);
+                        const auto remainingWakeCycles = std::max(
+                            1.0, timingConfig.maxCyclesPerWake - wakeExecutionCycles);
+                        bool timingSliceComplete = false;
+                        TimingRetirementSink retirementSink(
+                            timingEngine, timingConfig, stopRequested, steps,
+                            emulatedCycles, wakeExecutionCycles,
+                            timingSliceComplete,
+                            kMinInstructionCycles, options.stepLimit);
+                        const auto sliceResult = machine.runSlice(
+                            BMMQ::ExecutionBudget{
+                                .maxInstructions = instructionBudget,
+                                .maxCycles = static_cast<std::uint64_t>(remainingWakeCycles),
+                                .stopOnSegmentBoundary = false,
+                            },
+                            &retirementSink);
+                        if (sliceResult.progress.retiredInstructions == 0u) {
+                            break;
+                        }
+                        executedInstruction = true;
+                        if (timingSliceComplete) {
+                            break;
+                        }
+                    }
+                    timingService.recordWakeBurst(wakeExecutionCycles, wakeExecutionSlices);
+                    timingService.publishEngineStats(timingEngine.stats());
+                    emitDiagnostics(SteadyClock::now(), false);
+
+                    if (stopRequested.load(std::memory_order_acquire) || gStopRequested != 0) {
+                        break;
+                    }
+
+                    const auto idleNow = SteadyClock::now();
+                    pollVisualPackReload();
+
+                    if (!executedInstruction) {
+                        const auto nextStepTime = timingEngine.nextWakeTime(idleNow);
+                        const bool timingSleepDue =
+                            timingEngine.shouldSleep(idleNow) && (nextStepTime > idleNow);
+
+                        if (timingSleepDue && nextStepTime > idleNow) {
+                            const auto requestedSleep =
+                                std::chrono::duration_cast<std::chrono::nanoseconds>(nextStepTime - idleNow);
+                            const auto beforeSleep = SteadyClock::now();
+                            if (timingConfig.adaptiveSleepEnabled &&
+                                requestedSleep > timingConfig.sleepSpinWindow &&
+                                timingConfig.sleepSpinWindow > std::chrono::nanoseconds::zero()) {
+                                const auto coarseWake = nextStepTime - timingConfig.sleepSpinWindow;
+                                std::this_thread::sleep_until(coarseWake);
+                                const auto spinStart = SteadyClock::now();
+                                while (SteadyClock::now() < nextStepTime) {
+                                    if (SteadyClock::now() - spinStart >= timingConfig.sleepSpinCap) {
+                                        break;
+                                    }
+                                    std::this_thread::yield();
+                                }
+                            } else {
+                                std::this_thread::sleep_until(nextStepTime);
+                            }
+                            const auto afterSleep = SteadyClock::now();
+                            const auto actualSleep =
+                                std::chrono::duration_cast<std::chrono::nanoseconds>(afterSleep - beforeSleep);
+                            timingService.noteHostSleep(requestedSleep, actualSleep);
+                        }
                     }
                 }
+            } catch (...) {
+                emulationFailure = std::current_exception();
+                stopRequested.store(true, std::memory_order_release);
             }
+            emulationFinished.store(true, std::memory_order_release);
+        };
+
+        std::thread emulationThread(runEmulationLane);
+
+        // Window/event frontends require host-thread affinity; this is the UI/render lane.
+        try {
+            while (!emulationFinished.load(std::memory_order_acquire)) {
+                const auto now = SteadyClock::now();
+                if (gStopRequested != 0 || serviceFrontendUntil(now)) {
+                    stopRequested.store(true, std::memory_order_release);
+                    break;
+                }
+                if (frontend == nullptr && audioOutput == nullptr) {
+                    std::this_thread::sleep_for(kFrontendServicePeriod);
+                } else if (nextFrontendService > now) {
+                    std::this_thread::sleep_until(nextFrontendService);
+                } else {
+                    std::this_thread::yield();
+                }
+            }
+        } catch (...) {
+            stopRequested.store(true, std::memory_order_release);
+            emulationThread.join();
+            throw;
+        }
+
+        stopRequested.store(true, std::memory_order_release);
+        emulationThread.join();
+        if (emulationFailure != nullptr) {
+            std::rethrow_exception(emulationFailure);
         }
 
         serviceFrontend();
+        if (machine.visualOverrideService().capturing()) {
+            machine.visualOverrideService().endCapture();
+        }
         emitDiagnostics(SteadyClock::now(), true);
+        if (audioOutput != nullptr) audioOutput->close();
         if (!options.visualPackPaths.empty() || options.visualCapturePath.has_value()) {
             (void)machine.visualOverrideService().captureStats();
             std::cout << machine.visualOverrideService().authorDiagnosticsReport();
@@ -915,6 +1402,10 @@ int main(int argc, char** argv)
         } else {
             std::cout << '\n';
         }
+        // Detach the frontend on its owning host thread before service destruction.
+        (void)backgroundTaskService.waitUntilIdle(std::chrono::seconds(10));
+        machine.pluginManager().shutdown(machine.mutableView());
+        machine.flushPendingBackgroundWork();
         backgroundTaskService.shutdown();
         return EXIT_SUCCESS;
     } catch (const std::invalid_argument& ex) {

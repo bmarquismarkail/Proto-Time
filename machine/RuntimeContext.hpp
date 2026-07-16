@@ -2,11 +2,14 @@
 #define BMMQ_RUNTIME_CONTEXT_HPP
 
 #include <cstdint>
+#include <limits>
+#include <string_view>
 #include <utility>
 
 #include "../inst_cycle/execute/executionBlock.hpp"
 #include "../inst_cycle/fetch/fetchBlock.hpp"
 #include "CPU.hpp"
+#include "ExecutionSlice.hpp"
 #include "RegisterId.hpp"
 
 namespace BMMQ {
@@ -21,6 +24,24 @@ enum class ExecutionGuarantee {
     VisibleStatePreserving,
     Experimental,
 };
+
+enum class ExecutionBackend : std::uint8_t {
+    Baseline = 0,
+    CachedBlock,
+    PortableIr,
+    NativeExperimental,
+};
+
+[[nodiscard]] constexpr std::string_view executionBackendName(ExecutionBackend backend) noexcept
+{
+    switch (backend) {
+    case ExecutionBackend::Baseline: return "baseline";
+    case ExecutionBackend::CachedBlock: return "cached-block";
+    case ExecutionBackend::PortableIr: return "portable-ir";
+    case ExecutionBackend::NativeExperimental: return "native-experimental";
+    }
+    return "unknown";
+}
 
 struct RuntimeCapabilityProfile {
     bool interception = false;
@@ -71,6 +92,57 @@ public:
     virtual CpuFeedback step() {
         auto fetchBlock = fetch();
         return step(fetchBlock);
+    }
+    virtual ExecutionSliceResult runSlice(
+        const ExecutionBudget& budget,
+        InstructionRetirementSink& retirementSink)
+    {
+        ExecutionSliceResult result;
+        if (budget.maxInstructions == 0u) {
+            result.exitReason = ExecutionSliceExitReason::InstructionBudget;
+            return result;
+        }
+        if (budget.maxCycles == 0u) {
+            result.exitReason = ExecutionSliceExitReason::CycleBudget;
+            return result;
+        }
+
+        beginExecutionSlice(budget);
+        struct ExecutionSliceScope final {
+            RuntimeContext& context;
+            ~ExecutionSliceScope() { context.endExecutionSlice(); }
+        } scope{*this};
+
+        while (result.progress.retiredInstructions < budget.maxInstructions &&
+               result.progress.retiredCycles < budget.maxCycles) {
+            result.lastFeedback = stepWithinExecutionSlice();
+            ++result.progress.retiredInstructions;
+            const auto cycles = static_cast<std::uint64_t>(result.lastFeedback.retiredCycles);
+            if (cycles > std::numeric_limits<std::uint64_t>::max() -
+                             result.progress.retiredCycles) {
+                result.progress.retiredCycles = std::numeric_limits<std::uint64_t>::max();
+            } else {
+                result.progress.retiredCycles += cycles;
+            }
+
+            const auto retirement = retirementSink.retireInstruction(
+                result.lastFeedback, result.progress);
+            if (!retirement.continueExecution) {
+                result.exitReason = retirement.exitReason;
+                return result;
+            }
+            if (budget.stopOnSegmentBoundary && result.lastFeedback.segmentBoundaryHint) {
+                result.exitReason = ExecutionSliceExitReason::SegmentBoundary;
+                return result;
+            }
+            if (result.progress.retiredCycles >= budget.maxCycles) {
+                result.exitReason = ExecutionSliceExitReason::CycleBudget;
+                return result;
+            }
+        }
+
+        result.exitReason = ExecutionSliceExitReason::InstructionBudget;
+        return result;
     }
     virtual DataType read8(AddressType address) const = 0;
     virtual DataType peek8(AddressType address) const {
@@ -123,6 +195,14 @@ public:
     virtual const ITranslationCapability* translationCapability() const { return nullptr; }
     virtual const IInvalidationCapability* invalidationCapability() const { return nullptr; }
     virtual const IOptimizationMetadataCapability* optimizationMetadataCapability() const { return nullptr; }
+
+protected:
+    // Backends may retain slice-scoped dispatch state between instructions, but
+    // every step must still return before the retirement sink is invoked. The
+    // default path remains one ordinary RuntimeContext::step() per retirement.
+    virtual void beginExecutionSlice(const ExecutionBudget&) {}
+    virtual CpuFeedback stepWithinExecutionSlice() { return step(); }
+    virtual void endExecutionSlice() noexcept {}
 };
 
 } // namespace BMMQ

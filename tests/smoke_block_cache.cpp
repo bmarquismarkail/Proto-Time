@@ -59,30 +59,46 @@ void test_guard_invalidator() {
     std::cout << "  PASSED" << std::endl;
 }
 
-void test_block_translator() {
-    std::cout << "Test: Block Translator..." << std::endl;
+void test_threaded_block_cache() {
+    std::cout << "Test: Threaded Block Cache..." << std::endl;
 
-    BlockTranslatorImpl<std::uint16_t, std::vector<std::uint8_t>> trans;
+    ThreadedBlockCache<std::uint16_t, std::uint8_t> cache;
+    TranslatedBlockEntry<std::uint16_t, std::uint8_t> block;
+    block.start = 0x1000u;
+    block.end = 0x1002u;
+    block.instructions.push_back({0x1000u, {0x3Eu, 0x12u, 0x00u}, 2u});
+    block.instructions.push_back({0x1002u, {0x00u, 0x00u, 0x00u}, 1u});
+    BMMQ::IR::BlockBuilder irBuilder(0x1000u);
+    irBuilder.beginInstruction(0x1000u, 2u, 8u).endInstruction();
+    irBuilder.beginInstruction(0x1002u, 1u, 4u).endInstruction();
+    block.intermediateRepresentation = irBuilder.finish();
+    cache.insert(std::move(block));
 
-    trans.setNativeHandler(0x00, []() { std::cout << "Handler called\n"; });
-    assert(trans.canTranslate(0x00) == true);
+    const auto entry = cache.lookup(0x1000u);
+    assert(entry);
+    assert(entry.block->intermediateRepresentation);
+    assert(BMMQ::IR::validate(*entry.block->intermediateRepresentation));
+    const auto continuation = cache.lookup(0x1002u);
+    assert(continuation);
+    assert(continuation.instructionIndex == 1u);
+    cache.invalidateRange(0xC000u, 0xC000u);
+    cache.invalidateRange(0x1001u, 0x1001u);
+    assert(!cache.lookup(0x1000u));
+    const auto stats = cache.stats();
+    assert(stats.translations == 1u);
+    assert(stats.translatedInstructions == 2u);
+    assert(stats.chainContinuations == 1u);
+    assert(stats.invalidations == 1u);
+    assert(stats.invalidationRequests == 2u);
+    assert(stats.invalidationPageSkips == 1u);
+    assert(stats.invalidationScans == 1u);
+    assert(stats.invalidationBlocksExamined == 1u);
 
-    trans.clear();
-    assert(trans.canTranslate(0x00) == false);
-
-    std::vector<std::uint8_t> blockData;
-    blockData.push_back(0x01);
-    blockData.push_back(0x02);
-    blockData.push_back(0x03);
-    blockData.push_back(0x04);
-    trans.cacheBlock(0x0010, blockData, 4);
-
-    auto cached = trans.getCachedBlock(0x0010);
-    assert(cached.has_value());
-    assert(cached.value().size() == 4);
-
-    auto stats = trans.getStats();
-    assert(stats.cacheHits >= 1);
+    cache.noteUnsupportedFallback(0xCBu);
+    cache.noteFastEligibilityStop(0xCBu);
+    const auto opcodeStats = cache.stats();
+    assert(opcodeStats.unsupportedFallbackOpcodes[0xCBu] == 1u);
+    assert(opcodeStats.fastEligibilityStopOpcodes[0xCBu] == 1u);
 
     std::cout << "  PASSED" << std::endl;
 }
@@ -143,27 +159,6 @@ void test_cache_stats() {
     std::cout << "  PASSED (hit rate: " << hitRate << ")" << std::endl;
 }
 
-void test_range_invalidation() {
-    std::cout << "Test: Range Invalidation..." << std::endl;
-
-    BlockTranslatorImpl<std::uint16_t, std::vector<std::uint8_t>> trans;
-
-    for (int i = 0; i < 10; i++) {
-        std::vector<std::uint8_t> data;
-        data.push_back(static_cast<uint8_t>(i));
-        trans.cacheBlock(static_cast<std::uint16_t>(0x1000 + i), data, 4);
-    }
-
-    // Invalidate 0x1000 through 0x1004 (inclusive range)
-    trans.invalidateRange(0x1000, 0x1004);
-
-    // 0x1000-0x1004 should be invalidated, 0x1005 should remain
-    assert(trans.getCachedBlock(0x1000) == std::nullopt);
-    assert(trans.getCachedBlock(0x1005) != std::nullopt);
-
-    std::cout << "  PASSED" << std::endl;
-}
-
 void test_range_overlap_invalidation() {
     std::cout << "Test: Range Overlap Invalidation..." << std::endl;
 
@@ -203,12 +198,48 @@ void test_gameboy_cached_fast_path_execution() {
     assert((machine.runtimeContext().readRegister16(GB::RegisterId::AF) >> 8) == 0x12u);
     assert(machine.blockCacheStats().hits.load() >= 1u);
 
+    const auto nonCodeWriteStats = machine.blockCacheStats();
+    machine.runtimeContext().write8(0xC100u, 0x55u);
+    const auto afterNonCodeWrite = machine.blockCacheStats();
+    assert(afterNonCodeWrite.invalidationRequests.load() -
+               nonCodeWriteStats.invalidationRequests.load() == 1u);
+    assert(afterNonCodeWrite.invalidationPageSkips.load() -
+               nonCodeWriteStats.invalidationPageSkips.load() == 1u);
+
     machine.runtimeContext().write8(0xC001u, 0x34u);
     machine.runtimeContext().writeRegister16(GB::RegisterId::PC, 0xC000u);
     machine.runtimeContext().writeRegister16(GB::RegisterId::AF, 0x0000u);
     machine.step();
     assert((machine.runtimeContext().readRegister16(GB::RegisterId::AF) >> 8) == 0x34u);
     assert(machine.blockCacheStats().invalidations.load() >= 1u);
+
+    std::cout << "  PASSED" << std::endl;
+}
+
+void test_unsupported_opcode_ends_cached_block() {
+    std::cout << "Test: Unsupported Opcode Ends Cached Block..." << std::endl;
+
+    GameBoyMachine machine;
+    BMMQ::Plugin::VisibleStatePreservingStepPolicy optimizedPolicy;
+    machine.attachExecutorPolicy(optimizedPolicy);
+    machine.loadRom(std::vector<uint8_t>(0x8000u, 0x00u));
+    machine.runtimeContext().write8(0xC000u, 0x00u); // NOP: cacheable
+    machine.runtimeContext().write8(0xC001u, 0xCBu); // RLC B: baseline only
+    machine.runtimeContext().write8(0xC002u, 0x00u);
+
+    machine.runtimeContext().writeRegister16(GB::RegisterId::PC, 0xC000u);
+    machine.step();
+    machine.step();
+    machine.runtimeContext().writeRegister16(GB::RegisterId::PC, 0xC000u);
+    machine.step();
+
+    const auto stats = machine.blockCacheStats();
+    assert(stats.hits.load() >= 1u);
+    assert(stats.fastEligibilityStops.load() >= 1u);
+    assert(stats.fastEligibilityStopOpcodes[0xCBu].load() >= 1u);
+    assert(stats.unsupportedFallbacks.load() == 0u);
+    assert(stats.unsupportedFallbackOpcodes[0xCBu].load() == 0u);
+    assert(stats.guardFailures.load() == 0u);
 
     std::cout << "  PASSED" << std::endl;
 }
@@ -252,6 +283,22 @@ void assertMachineCoreStateEqual(const GameBoyMachine& lhs, const GameBoyMachine
     assert(leftFeedback.pcBefore == rightFeedback.pcBefore);
     assert(leftFeedback.pcAfter == rightFeedback.pcAfter);
     assert(leftFeedback.retiredCycles == rightFeedback.retiredCycles);
+
+    for (uint16_t address = 0xC000u; address < 0xE000u; ++address) {
+        assert(lhs.runtimeContext().peek8(address) == rhs.runtimeContext().peek8(address));
+    }
+    assert(lhs.audioFrameCounter() == rhs.audioFrameCounter());
+    assert(lhs.recentAudioSamples() == rhs.recentAudioSamples());
+    const auto leftVideo = lhs.videoStateSnapshot();
+    const auto rightVideo = rhs.videoStateSnapshot();
+    assert(leftVideo.has_value() == rightVideo.has_value());
+    if (leftVideo.has_value()) {
+        assert(leftVideo->vram == rightVideo->vram);
+        assert(leftVideo->oam == rightVideo->oam);
+        assert(leftVideo->lcdc == rightVideo->lcdc);
+        assert(leftVideo->stat == rightVideo->stat);
+        assert(leftVideo->ly == rightVideo->ly);
+    }
 }
 
 void test_baseline_policy_disables_cache_execution() {
@@ -332,6 +379,9 @@ void test_control_flow_equivalence_with_cache() {
     BMMQ::Plugin::VisibleStatePreservingStepPolicy optimizedPolicy;
     cached.attachExecutorPolicy(optimizedPolicy);
     baseline.setBlockCacheEnabled(false);
+    const auto capabilities = cached.runtimeContext().capabilityProfile();
+    assert(capabilities.translation);
+    assert(capabilities.invalidation);
 
     for (int stepIndex = 0; stepIndex < 12; ++stepIndex) {
         baseline.step();
@@ -339,6 +389,10 @@ void test_control_flow_equivalence_with_cache() {
         assertMachineCoreStateEqual(baseline, cached);
     }
     assert(cached.blockCacheStats().hits.load() >= 4u);
+    assert(cached.blockCacheStats().translations.load() > 0u);
+    assert(cached.blockCacheStats().translatedInstructions.load() >
+           cached.blockCacheStats().translations.load());
+    assert(cached.blockCacheStats().chainContinuations.load() > 0u);
 
     baseline.runtimeContext().writeRegister16(GB::RegisterId::PC, 0x0120u);
     cached.runtimeContext().writeRegister16(GB::RegisterId::PC, 0x0120u);
@@ -440,12 +494,12 @@ int main() {
 
     test_basic_cache();
     test_guard_invalidator();
-    test_block_translator();
+    test_threaded_block_cache();
     test_cache_eviction();
     test_cache_stats();
-    test_range_invalidation();
     test_range_overlap_invalidation();
     test_gameboy_cached_fast_path_execution();
+    test_unsupported_opcode_ends_cached_block();
     test_baseline_policy_disables_cache_execution();
     test_runtime_cache_disable();
     test_control_flow_equivalence_with_cache();

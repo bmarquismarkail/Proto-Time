@@ -3,6 +3,7 @@
 #endif
 
 #include <cassert>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -112,7 +113,10 @@ int main()
         const auto loaded = service.loadPackManifest(manifestPath);
         assert(loaded);
 
-        const auto resolved = service.resolve(descriptor);
+        auto resolved = service.resolve(descriptor);
+        assert(!resolved.has_value());
+        assert(bgService.waitUntilIdle(std::chrono::seconds(2)));
+        resolved = service.resolve(descriptor);
         assert(resolved.has_value());
         assert(std::holds_alternative<BMMQ::VisualReplacementImage>(resolved->payload));
         const auto& image = std::get<BMMQ::VisualReplacementImage>(resolved->payload);
@@ -154,7 +158,10 @@ int main()
         Visual::writeTextFile(manifestPath, makeTestManifestWithImage("test3.png", descriptor.contentHash));
 
         assert(service.loadPackManifest(manifestPath));
-        const auto resolved = service.resolve(descriptor);
+        auto resolved = service.resolve(descriptor);
+        assert(!resolved.has_value());
+        assert(bgService.waitUntilIdle(std::chrono::seconds(2)));
+        resolved = service.resolve(descriptor);
         assert(resolved.has_value());
 
         // Final diagnostics

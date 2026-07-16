@@ -15,6 +15,9 @@ int main()
 {
     struct CountingRuntimeContext final : BMMQ::RuntimeContext {
         struct CountingPolicy final : BMMQ::Plugin::IExecutorPolicyPlugin {
+            std::unique_ptr<BMMQ::Plugin::IExecutorPolicyPlugin> clone() const override {
+                return std::make_unique<CountingPolicy>(*this);
+            }
             bool segment = false;
             const BMMQ::Plugin::PluginMetadata& metadata() const override {
                 static const BMMQ::Plugin::PluginMetadata meta{
@@ -29,6 +32,7 @@ int main()
             BMMQ::ExecutionGuarantee guarantee() const override {
                 return BMMQ::ExecutionGuarantee::BaselineFaithful;
             }
+            BMMQ::ExecutionBackend backend() const override { return BMMQ::ExecutionBackend::Baseline; }
             bool shouldRecord(const BMMQ::Plugin::FetchBlock&, const BMMQ::CpuFeedback&) const override { return true; }
             bool shouldSegment(const BMMQ::Plugin::FetchBlock&, const BMMQ::CpuFeedback&) const override { return segment; }
         };
@@ -67,6 +71,10 @@ int main()
     struct ExperimentalMachinePolicy final : BMMQ::Plugin::IExecutorPolicyPlugin {
         using PluginFetchBlock = BMMQ::Plugin::FetchBlock;
 
+        std::unique_ptr<BMMQ::Plugin::IExecutorPolicyPlugin> clone() const override {
+            return std::make_unique<ExperimentalMachinePolicy>(*this);
+        }
+
         const BMMQ::Plugin::PluginMetadata& metadata() const override {
             static const BMMQ::Plugin::PluginMetadata meta{
                 sizeof(BMMQ::Plugin::PluginMetadata),
@@ -79,6 +87,10 @@ int main()
         }
         BMMQ::ExecutionGuarantee guarantee() const override {
             return BMMQ::ExecutionGuarantee::Experimental;
+        }
+        BMMQ::ExecutionBackend backend() const override { return BMMQ::ExecutionBackend::CachedBlock; }
+        BMMQ::RuntimeCapabilityProfile requiredCapabilities() const override {
+            return {.translation = true, .invalidation = true};
         }
         bool shouldRecord(const PluginFetchBlock&, const BMMQ::CpuFeedback&) const override { return true; }
         bool shouldSegment(const PluginFetchBlock&, const BMMQ::CpuFeedback& feedback) const override {
@@ -103,6 +115,7 @@ int main()
     host.loadRom(cartridgeRom);
     ExperimentalMachinePolicy machinePolicy;
     host.attachExecutorPolicy(machinePolicy);
+    assert(&host.attachedExecutorPolicy() != &machinePolicy);
 
     BMMQ::Plugin::PluginExecutor executor;
 

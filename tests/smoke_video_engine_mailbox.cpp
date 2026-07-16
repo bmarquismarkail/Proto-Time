@@ -31,6 +31,20 @@ BMMQ::VideoPresentPacket makePacket(std::uint64_t generation, BMMQ::VideoFrameSo
     return pkt;
 }
 
+BMMQ::VideoPresentPacket makePackedPacket(std::uint64_t generation, std::uint32_t color)
+{
+    BMMQ::VideoPresentPacket packet;
+    packet.width = 4;
+    packet.height = 2;
+    packet.generation = generation;
+    packet.source = BMMQ::VideoFrameSource::RealtimeSnapshot;
+    const std::array<std::uint32_t, 1u> palette{color};
+    packet.surface = BMMQ::makeIndexedVideoSurface(
+        std::vector<std::uint8_t>(8u, 0u), packet.width, packet.height,
+        BMMQ::RealtimeVideoEncoding::Indexed2, palette);
+    return packet;
+}
+
 } // namespace
 
 int main()
@@ -119,6 +133,25 @@ int main()
     const auto fb = engine.fallbackFrame();
     assert(fb.generation == 40u);
     assert(fb.source == BMMQ::VideoFrameSource::LastValidFallback);
+
+    // -------------------------------------------------------------------------
+    // 7. Packed frames remain independently decodable after mailbox overwrite.
+    // -------------------------------------------------------------------------
+    BMMQ::VideoEngine packedEngine({.frameWidth = 4, .frameHeight = 2});
+    const auto packedPayloadBytes = makePackedPacket(50u, 0xFF112233u).payloadBytes();
+    assert(packedEngine.submitPresentPacket(makePackedPacket(50u, 0xFF112233u)).accepted);
+    const auto packedOverwrite = packedEngine.submitPresentPacket(makePackedPacket(51u, 0xFF445566u));
+    assert(packedOverwrite.accepted);
+    assert(packedOverwrite.overwroteOldFrame);
+    auto packedLatest = packedEngine.tryConsumeLatestFrame();
+    assert(packedLatest.has_value());
+    auto decodedLatest = BMMQ::makeFramePacket(std::move(*packedLatest));
+    assert(BMMQ::materializeVideoFrameArgb(decodedLatest));
+    assert(decodedLatest.generation == 51u);
+    assert(decodedLatest.pixels == std::vector<std::uint32_t>(8u, 0xFF445566u));
+    assert(packedEngine.stats().publishedRealtimePixelBytes == packedPayloadBytes * 2u);
+    assert(packedEngine.stats().publishedRealtimePixelBytes < decodedLatest.pixelCount() *
+                                                               sizeof(std::uint32_t) * 2u);
 
     return 0;
 }

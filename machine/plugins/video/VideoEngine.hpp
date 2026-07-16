@@ -66,6 +66,12 @@ struct VideoEngineStats {
     std::size_t buildDebugFrameUnknownReasonCount = 0;
     std::size_t buildDebugFrameDebugConsumerActiveCount = 0;
     std::size_t buildDebugFrameDebugConsumerInactiveCount = 0;
+    std::size_t visualOverrideLookupSampleCount = 0;
+    std::uint64_t visualOverrideLookupTotalNs = 0;
+    std::uint64_t visualOverrideLookupHighWaterNs = 0;
+    std::size_t visualOverrideApplySampleCount = 0;
+    std::uint64_t visualOverrideApplyTotalNs = 0;
+    std::uint64_t visualOverrideApplyHighWaterNs = 0;
 };
 
 struct VideoSubmitResult {
@@ -172,8 +178,12 @@ public:
         std::memcpy(frame.pixels.data(), model.argbPixels.data(),
                     copyCount * sizeof(std::uint32_t));
         if (notifyVisualComposition) {
-            std::vector<std::uint8_t> replacementMask(copyCount, 0u);
-            std::vector<std::uint32_t> replacementPixels(copyCount, 0u);
+            if (visualReplacementMask_.size() != copyCount) {
+                visualReplacementMask_.resize(copyCount);
+                visualReplacementPixels_.resize(copyCount);
+            }
+            std::fill(visualReplacementMask_.begin(), visualReplacementMask_.end(), 0u);
+            const auto lookupStartedAt = Clock::now();
             bool hasReplacement = false;
             for (std::size_t i = 0; i < copyCount && i < model.semantics.size(); ++i) {
                 const auto& semantic = model.semantics[i];
@@ -185,18 +195,31 @@ public:
                                                                           semantic.sampleY,
                                                                           generation);
                     replacement.has_value()) {
-                    replacementMask[i] = 1u;
-                    replacementPixels[i] = *replacement;
+                    visualReplacementMask_[i] = 1u;
+                    visualReplacementPixels_[i] = *replacement;
                     hasReplacement = true;
                 }
             }
+            const auto lookupDuration = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - lookupStartedAt).count());
+            ++stats_.visualOverrideLookupSampleCount;
+            stats_.visualOverrideLookupTotalNs += lookupDuration;
+            stats_.visualOverrideLookupHighWaterNs = std::max(
+                stats_.visualOverrideLookupHighWaterNs, lookupDuration);
 
             if (hasReplacement) {
+                const auto applyStartedAt = Clock::now();
                 SimdPixelOps::replace_pixels_with_mask(model.argbPixels.data(),
-                                                       replacementMask.data(),
-                                                       replacementPixels.data(),
+                                                       visualReplacementMask_.data(),
+                                                       visualReplacementPixels_.data(),
                                                        frame.pixels.data(),
                                                        copyCount);
+                const auto applyDuration = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - applyStartedAt).count());
+                ++stats_.visualOverrideApplySampleCount;
+                stats_.visualOverrideApplyTotalNs += applyDuration;
+                stats_.visualOverrideApplyHighWaterNs = std::max(
+                    stats_.visualOverrideApplyHighWaterNs, applyDuration);
             }
         }
 
@@ -213,14 +236,17 @@ public:
         return submitPresentPacket(makePresentPacket(VideoFramePacket(frame)));
     }
 
-    [[nodiscard]] VideoSubmitResult submitPresentPacket(const VideoPresentPacket& frame)
+    [[nodiscard]] VideoSubmitResult submitPresentPacket(VideoPresentPacket frame)
     {
         if (frame.empty()) {
             return {};
         }
 
-        auto stamped = frame;
+        auto stamped = std::move(frame);
         stamped.publishedAtNs = steadyClockNs();
+        const auto publishedSource = stamped.source;
+        const auto publishedPayloadBytes = stamped.payloadBytes();
+        const auto publishedGeneration = stamped.generation;
         lastValidFrame_ = stamped;
 
         // Write frame to the producer's private slot (never touched by consumer).
@@ -238,14 +264,14 @@ public:
 
         // Stats
         ++stats_.publishedFrameCount;
-        if (frame.source == VideoFrameSource::RealtimeSnapshot) {
+        if (publishedSource == VideoFrameSource::RealtimeSnapshot) {
             ++stats_.publishedRealtimeFrameCount;
-            stats_.publishedRealtimePixelBytes += frame.pixelCount() * sizeof(std::uint32_t);
+            stats_.publishedRealtimePixelBytes += publishedPayloadBytes;
         } else {
             ++stats_.publishedDebugFrameCount;
-            stats_.publishedDebugPixelBytes += frame.pixelCount() * sizeof(std::uint32_t);
+            stats_.publishedDebugPixelBytes += publishedPayloadBytes;
         }
-        stats_.publishedPixelBytes += frame.pixelCount() * sizeof(std::uint32_t);
+        stats_.publishedPixelBytes += publishedPayloadBytes;
 
         if (overwroteOldFrame) {
             ++stats_.overwriteCount;
@@ -259,7 +285,7 @@ public:
 
         stats_.mailboxDepth = overwroteOldFrame ? 1u : 1u;
         stats_.mailboxHighWaterMark = std::max(stats_.mailboxHighWaterMark, static_cast<std::size_t>(1u));
-        stats_.lastPublishedGeneration = frame.generation;
+        stats_.lastPublishedGeneration = publishedGeneration;
         return VideoSubmitResult{.accepted = true, .overwroteOldFrame = overwroteOldFrame};
     }
 
@@ -283,7 +309,7 @@ public:
         }
 
         mailboxConsumerSlot_ = static_cast<int>(taken & kMailboxSlotMask);
-        auto frame = mailboxSlots_[mailboxConsumerSlot_];
+        auto frame = std::move(mailboxSlots_[mailboxConsumerSlot_]);
 
         ++stats_.consumedFrameCount;
         stats_.mailboxDepth = 0u;
@@ -782,6 +808,8 @@ private:
     VideoEngineConfig config_{};
     VisualOverrideService* visualOverrideService_ = nullptr;
     mutable std::unordered_map<std::string, VisualResourceCacheEntry> visualResourceCache_{};
+    mutable std::vector<std::uint8_t> visualReplacementMask_{};
+    mutable std::vector<std::uint32_t> visualReplacementPixels_{};
     std::optional<VideoPresentPacket> lastValidFrame_{};
     mutable VideoEngineStats stats_{};
     std::uint64_t currentGeneration_ = 0;

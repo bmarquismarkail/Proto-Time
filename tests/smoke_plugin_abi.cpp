@@ -4,6 +4,7 @@
 
 #include "gameboy/gameboy_plugin_runtime.hpp"
 #include "inst_cycle/executor/PluginContract.hpp"
+#include "inst_cycle/executor/ExecutorPolicyRegistry.hpp"
 
 int main()
 {
@@ -28,6 +29,9 @@ int main()
     };
 
     struct InvalidPolicy final : BMMQ::Plugin::IExecutorPolicyPlugin {
+        std::unique_ptr<BMMQ::Plugin::IExecutorPolicyPlugin> clone() const override {
+            return std::make_unique<InvalidPolicy>(*this);
+        }
         const BMMQ::Plugin::PluginMetadata& metadata() const override {
             static const BMMQ::Plugin::PluginMetadata meta{
                 sizeof(BMMQ::Plugin::PluginMetadata),
@@ -40,6 +44,9 @@ int main()
         }
         BMMQ::ExecutionGuarantee guarantee() const override {
             return BMMQ::ExecutionGuarantee::Experimental;
+        }
+        BMMQ::ExecutionBackend backend() const override {
+            return BMMQ::ExecutionBackend::NativeExperimental;
         }
         bool shouldRecord(const BMMQ::Plugin::FetchBlock&, const BMMQ::CpuFeedback&) const override { return true; }
         bool shouldSegment(const BMMQ::Plugin::FetchBlock&, const BMMQ::CpuFeedback&) const override { return false; }
@@ -87,9 +94,29 @@ int main()
     }
     assert(badAbiThrew);
 
-    BMMQ::Plugin::PluginDescriptorV1 descriptor;
-    assert(descriptor.structSize == sizeof(BMMQ::Plugin::PluginDescriptorV1));
-    assert(BMMQ::Plugin::isAbiCompatible(descriptor.abiVersion));
+    const auto& registry = BMMQ::Plugin::ExecutorPolicyRegistry::builtins();
+    assert(registry.ids().size() == 4u);
+    auto portableIr = registry.create("bmmq.executor.policy.portable-ir");
+    assert(portableIr->backend() == BMMQ::ExecutionBackend::PortableIr);
+    assert(portableIr->guarantee() == BMMQ::ExecutionGuarantee::VisibleStatePreserving);
+    assert(portableIr->requiredCapabilities().translation);
+    assert(portableIr->requiredCapabilities().invalidation);
+    assert(BMMQ::Plugin::executorPolicyIdForLegacyMode("native") ==
+           "bmmq.executor.policy.native-experimental");
+
+    BMMQ::Plugin::ExecutorPolicyRegistry localRegistry;
+    localRegistry.registerFactory("bmmq.executor.policy.default-step", [] {
+        return std::make_unique<BMMQ::Plugin::DefaultStepPolicy>();
+    });
+    bool duplicateRejected = false;
+    try {
+        localRegistry.registerFactory("bmmq.executor.policy.default-step", [] {
+            return std::make_unique<BMMQ::Plugin::DefaultStepPolicy>();
+        });
+    } catch (const std::invalid_argument&) {
+        duplicateRejected = true;
+    }
+    assert(duplicateRejected);
 
     InvalidRuntime invalidRuntime;
     bool invalidRuntimeThrew = false;

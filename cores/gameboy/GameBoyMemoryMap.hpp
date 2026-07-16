@@ -42,12 +42,16 @@ public:
     [[nodiscard]] bool hasBootRom() const noexcept { return !bootRom_.empty(); }
     [[nodiscard]] bool bootRomMapped() const noexcept { return bootRomActive_; }
 
-    // Mapper callback for external RAM reads/writes
+    // Mapper callback for external RAM
     void setMapper(GameBoyMapper* mapper) noexcept { mapper_ = mapper; }
     void setCartridge(GameBoyCartridge* cartridge) noexcept { cartridge_ = cartridge; }
     void setWriteObserver(std::function<void(uint16_t, uint8_t)> observer)
     {
         writeObserver_ = std::move(observer);
+    }
+    [[nodiscard]] std::function<void(uint16_t, uint8_t)> writeObserver() const
+    {
+        return writeObserver_;
     }
     void setIoRegisterRaw(uint16_t address, uint8_t value);
 
@@ -63,6 +67,10 @@ public:
     // Expose raw memory storage for CPU attach (flat 64KB view)
     [[nodiscard]] std::span<uint8_t> storageSpan() noexcept { return storage_; }
     [[nodiscard]] std::span<const uint8_t> storageSpan() const noexcept { return storage_; }
+
+    // Phase 11 IR code guards may inspect only regions whose reads are direct,
+    // stable, and free of mapper/MMIO/device side effects.
+    [[nodiscard]] bool peekExecutableByte(uint16_t address, uint8_t& value) const noexcept;
 
     // Save state export/import.
     std::vector<uint8_t> exportState() const;

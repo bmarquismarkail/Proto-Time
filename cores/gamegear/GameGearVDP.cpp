@@ -471,8 +471,10 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
     for (std::size_t color = 0u; color < backgroundPalette.size(); ++color) {
         backgroundPalette[color] = decodedCram_[color];
         spritePalette[color] = decodedCram_[16u + color];
+        out.paletteArgb[color] = backgroundPalette[color];
+        out.paletteArgb[16u + color] = spritePalette[color];
     }
-    const auto backdrop = spritePalette[static_cast<std::size_t>(registers_[7u] & 0x0Fu)];
+    const auto backdropIndex = static_cast<std::uint8_t>(16u + (registers_[7u] & 0x0Fu));
     const auto vramSize = vram_.size();
     const bool vramPowerOfTwo = (vramSize != 0u) && ((vramSize & (vramSize - 1u)) == 0u);
     const auto vramMask = vramSize != 0u ? (vramSize - 1u) : 0u;
@@ -488,10 +490,10 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
     out.inVBlank = scanline_ >= activeLines + 1u;
     out.scanlineIndex = static_cast<uint8_t>(scanline_ & 0x00FFu);
     const auto pixelCount = static_cast<std::size_t>(out.width) * static_cast<std::size_t>(out.height);
-    out.argbPixels.resize(pixelCount);
+    out.colorIndices.resize(pixelCount);
     addNs(setupNs, renderStart, Clock::now());
     if (!out.displayEnabled) {
-        std::fill_n(out.argbPixels.data(), pixelCount, backdrop);
+        std::fill_n(out.colorIndices.data(), pixelCount, backdropIndex);
         out.renderBodyTiming.totalNs = static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - renderStart).count());
         out.renderBodyTiming.setupNs = setupNs;
@@ -528,7 +530,9 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                 const auto colorCode = static_cast<uint8_t>(foreground ? (color >> 4u) : (color & 0x0Fu));
                 const auto pixelIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(out.width)
                                       + static_cast<std::size_t>(x);
-                out.argbPixels[pixelIndex] = colorCode == 0u ? backdrop : spritePalette[colorCode & 0x0Fu];
+                out.colorIndices[pixelIndex] = colorCode == 0u
+                    ? backdropIndex
+                    : static_cast<std::uint8_t>(16u + (colorCode & 0x0Fu));
             }
         }
         addNs(backgroundNs, backgroundStart, Clock::now());
@@ -584,7 +588,7 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
     thread_local std::vector<uint8_t> spriteMaskScratch;
     auto& spriteMask = spriteMaskScratch;
     if (hasVisibleSprites) {
-        spriteMask.assign(out.argbPixels.size(), 0u);
+        spriteMask.assign(out.colorIndices.size(), 0u);
     }
     const bool useSimpleBackgroundPath =
         mode4SimpleBackgroundPathEligible(scrollX, scrollY, activeLines);
@@ -606,7 +610,7 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
         }
     }
     if (!useSimpleBackgroundPath) {
-        std::fill_n(out.argbPixels.data(), pixelCount, backdrop);
+        std::fill_n(out.colorIndices.data(), pixelCount, backdropIndex);
     }
     const auto simpleStartingColumn = static_cast<std::size_t>((32u - (scrollX >> 3u)) & 0x1Fu);
     if (useSimpleBackgroundPath) {
@@ -661,7 +665,6 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                 const bool flipV = (entry & 0x0400u) != 0u;
                 const bool palette1 = (entry & 0x0800u) != 0u;
                 const bool priority = (entry & 0x1000u) != 0u;
-                const auto* tilePalette = palette1 ? spritePalette.data() : backgroundPalette.data();
                 if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
                     ++out.mode4SimpleBackground.simplePathTileEntriesDecoded;
                 }
@@ -724,7 +727,8 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                     const auto sampleX = flipH ? (7u - tilePixelX) : tilePixelX;
                     const auto colorCode = rowColors[sampleX];
                     const auto pixelIndex = rowOffset + static_cast<std::size_t>(x + run);
-                    out.argbPixels[pixelIndex] = tilePalette[colorCode];
+                    out.colorIndices[pixelIndex] = static_cast<std::uint8_t>(
+                        (palette1 ? 16u : 0u) + colorCode);
                     if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
                         ++out.mode4SimpleBackground.simplePathPixelsWritten;
                     }
@@ -900,9 +904,8 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                     const auto colorCode = decodedPatternRows[tileX][sampleX];
                     const auto dstX = static_cast<std::size_t>(x + run);
                     const auto pixelIndex = rowOffset + dstX;
-                    out.argbPixels[pixelIndex] = decoded.palette1
-                        ? spritePalette[colorCode & 0x0Fu]
-                        : backgroundPalette[colorCode & 0x0Fu];
+                    out.colorIndices[pixelIndex] = static_cast<std::uint8_t>(
+                        (decoded.palette1 ? 16u : 0u) + (colorCode & 0x0Fu));
                     if (hasVisibleSprites) {
                         spriteMask[pixelIndex] = decoded.priority && colorCode != 0u
                             ? kSpriteMaskBackgroundPriority
@@ -1017,7 +1020,7 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                          (kSpriteMaskBackgroundPriority | kSpriteMaskOccupied)) != 0u) {
                         continue;
                     }
-                    out.argbPixels[pixelIndex] = spritePalette[colorCode & 0x0Fu];
+                    out.colorIndices[pixelIndex] = static_cast<std::uint8_t>(16u + (colorCode & 0x0Fu));
                     spriteMask[pixelIndex] |= kSpriteMaskOccupied;
                 }
             }
@@ -1059,11 +1062,13 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
     model.displayEnabled = out.displayEnabled;
     model.inVBlank = out.inVBlank;
     model.scanlineIndex = out.scanlineIndex;
-    model.argbPixels = std::move(out.argbPixels);
+    model.argbPixels.resize(out.colorIndices.size());
+    std::transform(out.colorIndices.begin(), out.colorIndices.end(), model.argbPixels.begin(),
+                   [&out](std::uint8_t index) { return out.paletteArgb[index & 0x1Fu]; });
     return model;
 }
 
-BMMQ::RealtimeVideoPacket GameGearVDP::buildRealtimeFrame(
+BMMQ::RealtimeVideoSubmission GameGearVDP::buildRealtimeFrame(
     const BMMQ::VideoDebugRenderRequest& request) const
 {
     auto out = renderFramePixels(request);
@@ -1073,11 +1078,18 @@ BMMQ::RealtimeVideoPacket GameGearVDP::buildRealtimeFrame(
     packet.displayEnabled = out.displayEnabled;
     packet.inVBlank = out.inVBlank;
     packet.scanlineIndex = out.scanlineIndex;
-    packet.vdpRenderBodyTiming = out.renderBodyTiming;
-    packet.vdpMode4BackgroundAttributes = out.mode4BackgroundAttributes;
-    packet.vdpMode4SimpleBackground = out.mode4SimpleBackground;
-    packet.argbPixels = std::move(out.argbPixels);
-    return packet;
+    packet.surface = BMMQ::makeIndexedVideoSurface(
+        out.colorIndices, packet.width, packet.height,
+        BMMQ::RealtimeVideoEncoding::Indexed5, out.paletteArgb);
+    packet.uploadHints[0] = {0u, 0u, static_cast<std::uint16_t>(packet.width),
+                             static_cast<std::uint16_t>(packet.height)};
+    packet.uploadHintCount = 1u;
+    BMMQ::RealtimeVideoSubmission submission;
+    submission.packet = std::move(packet);
+    submission.diagnostics.vdpRenderBodyTiming = out.renderBodyTiming;
+    submission.diagnostics.vdpMode4BackgroundAttributes = out.mode4BackgroundAttributes;
+    submission.diagnostics.vdpMode4SimpleBackground = out.mode4SimpleBackground;
+    return submission;
 }
 
 uint32_t GameGearVDP::paletteColor(uint8_t shade) noexcept {

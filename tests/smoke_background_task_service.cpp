@@ -46,7 +46,7 @@ int main()
     std::error_code ec;
     std::filesystem::remove(markerPath, ec);
 
-    const bool markerQueued = service.submit([markerPath]() {
+    const bool markerQueued = service.submit(BMMQ::BackgroundJobCategory::VisualCapture, [markerPath]() {
         std::ofstream output(markerPath, std::ios::binary | std::ios::trunc);
         assert(output);
         output << "ok";
@@ -63,6 +63,10 @@ int main()
     assert(stats.tasksCompleted == stats.tasksSubmitted);
     assert(stats.tasksPending == 0u);
     assert(stats.taskFailures == 0u);
+    const auto visualCaptureIndex = static_cast<std::size_t>(BMMQ::BackgroundJobCategory::VisualCapture);
+    assert(stats.categories[visualCaptureIndex].submitted == 1u);
+    assert(stats.categories[visualCaptureIndex].completed == 1u);
+    assert(stats.categories[visualCaptureIndex].executionHighWaterNanos > 0u);
     assert(std::filesystem::exists(markerPath));
 
     const bool queuedAfterShutdown = service.submit([]() {});
@@ -97,7 +101,7 @@ int main()
     // One of these submissions should be rejected once the queue reaches capacity 4.
     bool gotRejection = false;
     for (int i = 0; i < 5; ++i) {
-        if (!boundedService.submit([]() {})) {
+        if (!boundedService.submit(BMMQ::BackgroundJobCategory::SaveFlush, []() {})) {
             gotRejection = true;
             break;
         }
@@ -117,6 +121,8 @@ int main()
     assert(boundedStats.tasksCompleted == boundedStats.tasksSubmitted);
     assert(boundedStats.tasksPending == 0u);
     assert(boundedStats.tasksHighWaterPending >= 4u);
+    const auto saveFlushIndex = static_cast<std::size_t>(BMMQ::BackgroundJobCategory::SaveFlush);
+    assert(boundedStats.categories[saveFlushIndex].rejected >= 1u);
 
     // Preserve BackgroundTaskService's total queue cap when backed by a multi-worker pool.
     BMMQ::BackgroundTaskService globalBoundedService(2u, 2u);

@@ -53,9 +53,9 @@ bool DebugSnapshotService::submitVideoModel(std::optional<VideoDebugFrameModel> 
 
     auto state = state_;
     if (backgroundTaskService_ != nullptr) {
-        auto fallbackModel = *model;
         auto taskModel = std::move(*model);
-        const bool queued = backgroundTaskService_->submit([state, taskModel = std::move(taskModel)]() mutable {
+        const bool queued = backgroundTaskService_->submit(BackgroundJobCategory::DebugSnapshot,
+            [state, taskModel = std::move(taskModel)]() mutable {
             (void)DebugSnapshotService::enqueueVideo(state, std::move(taskModel));
         });
         if (queued) {
@@ -63,7 +63,7 @@ bool DebugSnapshotService::submitVideoModel(std::optional<VideoDebugFrameModel> 
             return true;
         }
         state->videoBackgroundFallbacks.fetch_add(1u, std::memory_order_relaxed);
-        return enqueueVideo(state, std::move(fallbackModel));
+        return false;
     }
 
     return enqueueVideo(state, std::move(*model));
@@ -77,9 +77,9 @@ bool DebugSnapshotService::submitAudioState(std::optional<AudioStateView> stateV
 
     auto state = state_;
     if (backgroundTaskService_ != nullptr) {
-        auto fallbackState = *stateView;
         auto taskState = std::move(*stateView);
-        const bool queued = backgroundTaskService_->submit([state, taskState = std::move(taskState)]() mutable {
+        const bool queued = backgroundTaskService_->submit(BackgroundJobCategory::DebugSnapshot,
+            [state, taskState = std::move(taskState)]() mutable {
             (void)DebugSnapshotService::enqueueAudio(state, std::move(taskState));
         });
         if (queued) {
@@ -87,10 +87,34 @@ bool DebugSnapshotService::submitAudioState(std::optional<AudioStateView> stateV
             return true;
         }
         state->audioBackgroundFallbacks.fetch_add(1u, std::memory_order_relaxed);
-        return enqueueAudio(state, std::move(fallbackState));
+        return false;
     }
 
     return enqueueAudio(state, std::move(*stateView));
+}
+
+bool DebugSnapshotService::submitVideoState(
+    VideoStateView stateView,
+    const IVisualDebugAdapter* adapter,
+    VideoDebugRenderRequest request)
+{
+    if (backgroundTaskService_ == nullptr || adapter == nullptr) {
+        return false;
+    }
+    auto state = state_;
+    const bool queued = backgroundTaskService_->submit(BackgroundJobCategory::DebugSnapshot,
+        [state, stateView = std::move(stateView), adapter, request]() mutable {
+            auto model = adapter->buildFrameModelFromState(stateView, request);
+            if (model.has_value()) {
+                (void)DebugSnapshotService::enqueueVideo(state, std::move(*model));
+            }
+        });
+    if (queued) {
+        state->videoBackgroundSubmissions.fetch_add(1u, std::memory_order_relaxed);
+    } else {
+        state->videoBackgroundFallbacks.fetch_add(1u, std::memory_order_relaxed);
+    }
+    return queued;
 }
 
 std::optional<VideoDebugFrameModel> DebugSnapshotService::tryConsumeVideo()

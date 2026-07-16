@@ -72,6 +72,17 @@ uint16_t GameBoyMemoryMap::resolveEchoAddress(uint16_t address) noexcept {
     return address;
 }
 
+bool GameBoyMemoryMap::peekExecutableByte(uint16_t address, uint8_t& value) const noexcept {
+    const bool stableRom = address < 0x8000u;
+    const bool stableWram = address >= 0xC000u && address < 0xE000u;
+    const bool stableHram = address >= 0xFF80u && address < 0xFFFFu;
+    if (!stableRom && !stableWram && !stableHram) {
+        return false;
+    }
+    value = readRaw(address);
+    return true;
+}
+
 uint8_t GameBoyMemoryMap::readRaw(uint16_t addr) const {
     // Boot ROM overlay (0x0000-0x00FF)
     if (bootRomActive_ && addr < bootRom_.size()) {

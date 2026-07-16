@@ -8,8 +8,15 @@
 #include <vector>
 
 #include "SimdPixelOps.hpp"
+#include "RealtimeVideoSurface.hpp"
 
 namespace BMMQ {
+
+[[nodiscard]] inline std::size_t expectedVideoPixelCount(int width, int height) noexcept
+{
+    return static_cast<std::size_t>(std::max(width, 0)) *
+           static_cast<std::size_t>(std::max(height, 0));
+}
 
 enum class VideoFrameFormat : uint8_t {
     Argb8888 = 0,
@@ -41,17 +48,40 @@ struct VideoFramePacket {
     uint64_t generation = 0;
     uint64_t lifecycleEpoch = 1;
     std::vector<uint32_t> pixels;
+    RealtimeVideoSurface surface;
 
     [[nodiscard]] bool empty() const noexcept
     {
-        return pixels.empty();
+        const auto expected = expectedPixelCount();
+        return expected == 0u ||
+               (pixels.size() != expected && !surface.validForDimensions(width, height));
+    }
+
+    [[nodiscard]] std::size_t expectedPixelCount() const noexcept
+    {
+        return expectedVideoPixelCount(width, height);
     }
 
     [[nodiscard]] std::size_t pixelCount() const noexcept
     {
-        return pixels.size();
+        return pixels.empty()
+            ? (empty() ? 0u : expectedPixelCount())
+            : pixels.size();
     }
 };
+
+[[nodiscard]] inline bool materializeVideoFrameArgb(VideoFramePacket& frame)
+{
+    const auto expected = frame.expectedPixelCount();
+    if (frame.pixels.size() == expected) {
+        return true;
+    }
+    if (!decodeVideoSurface(frame.surface, frame.width, frame.height, frame.pixels)) {
+        return false;
+    }
+    frame.surface = {};
+    return true;
+}
 
 struct VideoPresentPacket {
     int width = 160;
@@ -62,20 +92,36 @@ struct VideoPresentPacket {
     uint64_t lifecycleEpoch = 1;
     uint64_t publishedAtNs = 0;
     std::vector<uint32_t> pixels;
+    RealtimeVideoSurface surface;
 
     [[nodiscard]] bool empty() const noexcept
     {
-        return pixels.empty();
+        const auto expected = expectedPixelCount();
+        return expected == 0u ||
+               (pixels.size() != expected && !surface.validForDimensions(width, height));
+    }
+
+    [[nodiscard]] std::size_t expectedPixelCount() const noexcept
+    {
+        return expectedVideoPixelCount(width, height);
     }
 
     [[nodiscard]] std::size_t pixelCount() const noexcept
     {
-        return pixels.size();
+        if (!pixels.empty()) {
+            return pixels.size();
+        }
+        return empty() ? 0u : expectedPixelCount();
+    }
+
+    [[nodiscard]] std::size_t payloadBytes() const noexcept
+    {
+        return pixels.empty() ? surface.payloadBytes() : pixels.size() * sizeof(std::uint32_t);
     }
 };
 
 struct VideoPresenterConfig {
-    std::string windowTitle = "T.I.M.E. SDL Frontend";
+    std::string windowTitle = "T.I.M.E. Frontend";
     int scale = 2;
     int frameWidth = 160;
     int frameHeight = 144;
@@ -108,6 +154,7 @@ struct VideoPresenterConfig {
     present.generation = frame.generation;
     present.lifecycleEpoch = frame.lifecycleEpoch;
     present.pixels = std::move(frame.pixels);
+    present.surface = std::move(frame.surface);
     return present;
 }
 
@@ -121,6 +168,7 @@ struct VideoPresenterConfig {
     frame.generation = packet.generation;
     frame.lifecycleEpoch = packet.lifecycleEpoch;
     frame.pixels = std::move(packet.pixels);
+    frame.surface = std::move(packet.surface);
     return frame;
 }
 

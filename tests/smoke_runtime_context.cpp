@@ -14,6 +14,9 @@ struct AdvancedOptimizationMetadata final : BMMQ::IOptimizationMetadataCapabilit
 
 struct AdvancedRuntimeContext final : BMMQ::RuntimeContext {
     struct AdvancedPolicy final : BMMQ::Plugin::IExecutorPolicyPlugin {
+        std::unique_ptr<BMMQ::Plugin::IExecutorPolicyPlugin> clone() const override {
+            return std::make_unique<AdvancedPolicy>(*this);
+        }
         const BMMQ::Plugin::PluginMetadata& metadata() const override {
             static const BMMQ::Plugin::PluginMetadata meta{
                 sizeof(BMMQ::Plugin::PluginMetadata),
@@ -27,6 +30,9 @@ struct AdvancedRuntimeContext final : BMMQ::RuntimeContext {
         BMMQ::ExecutionGuarantee guarantee() const override {
             return BMMQ::ExecutionGuarantee::Experimental;
         }
+        BMMQ::ExecutionBackend backend() const override {
+            return BMMQ::ExecutionBackend::NativeExperimental;
+        }
         bool shouldRecord(const BMMQ::Plugin::FetchBlock&, const BMMQ::CpuFeedback&) const override { return true; }
         bool shouldSegment(const BMMQ::Plugin::FetchBlock&, const BMMQ::CpuFeedback&) const override { return false; }
     };
@@ -37,10 +43,21 @@ struct AdvancedRuntimeContext final : BMMQ::RuntimeContext {
     AdvancedInvalidation invalidation;
     AdvancedOptimizationMetadata optimization;
     AdvancedPolicy policy;
+    std::uint64_t sliceBegins = 0u;
+    std::uint64_t sliceSteps = 0u;
+    std::uint64_t sliceEnds = 0u;
 
     FetchBlock fetch() override { return {}; }
     ExecutionBlock decode(FetchBlock&) override { return {}; }
     void execute(const ExecutionBlock&, FetchBlock&) override {}
+    BMMQ::CpuFeedback step() override {
+        feedback.pcBefore = feedback.pcAfter;
+        feedback.pcAfter += 1u;
+        feedback.retiredCycles = 4u;
+        feedback.segmentBoundaryHint = false;
+        feedback.executionPath = BMMQ::ExecutionPathHint::CanonicalFetchDecodeExecute;
+        return feedback;
+    }
     uint8_t read8(AddressType) const override { return 0; }
     void write8(AddressType, DataType) override {}
     uint8_t readRegister8(std::string_view) const override { return 0; }
@@ -62,6 +79,32 @@ struct AdvancedRuntimeContext final : BMMQ::RuntimeContext {
     const BMMQ::ITranslationCapability* translationCapability() const override { return &translation; }
     const BMMQ::IInvalidationCapability* invalidationCapability() const override { return &invalidation; }
     const BMMQ::IOptimizationMetadataCapability* optimizationMetadataCapability() const override { return &optimization; }
+
+protected:
+    void beginExecutionSlice(const BMMQ::ExecutionBudget&) override { ++sliceBegins; }
+    BMMQ::CpuFeedback stepWithinExecutionSlice() override {
+        ++sliceSteps;
+        return step();
+    }
+    void endExecutionSlice() noexcept override { ++sliceEnds; }
+};
+
+struct StopAfterThreeRetirements final : BMMQ::InstructionRetirementSink {
+    std::uint64_t calls = 0u;
+
+    BMMQ::InstructionRetirementDecision retireInstruction(
+        const BMMQ::CpuFeedback& feedback,
+        const BMMQ::ExecutionSliceProgress& progress) override
+    {
+        ++calls;
+        assert(feedback.retiredCycles == 4u);
+        assert(progress.retiredInstructions == calls);
+        assert(progress.retiredCycles == calls * 4u);
+        if (calls == 3u) {
+            return BMMQ::InstructionRetirementDecision::exitSlice();
+        }
+        return BMMQ::InstructionRetirementDecision::continueSlice();
+    }
 };
 
 }
@@ -84,5 +127,20 @@ int main()
     assert(context.translationCapability() != nullptr);
     assert(context.invalidationCapability() != nullptr);
     assert(context.optimizationMetadataCapability() != nullptr);
+
+    StopAfterThreeRetirements retirementSink;
+    const auto slice = context.runSlice({
+        .maxInstructions = 10u,
+        .maxCycles = 100u,
+        .stopOnSegmentBoundary = false,
+    }, retirementSink);
+    assert(retirementSink.calls == 3u);
+    assert(slice.progress.retiredInstructions == 3u);
+    assert(slice.progress.retiredCycles == 12u);
+    assert(slice.lastFeedback.pcAfter == 3u);
+    assert(slice.exitReason == BMMQ::ExecutionSliceExitReason::RetirementRequested);
+    assert(context.sliceBegins == 1u);
+    assert(context.sliceSteps == 3u);
+    assert(context.sliceEnds == 1u);
     return 0;
 }

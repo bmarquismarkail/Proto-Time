@@ -48,6 +48,9 @@ public:
 
     [[nodiscard]] virtual std::string_view name() const noexcept = 0;
     [[nodiscard]] virtual bool open(AudioEngine& engine, const AudioOutputOpenConfig& config) = 0;
+    /// Non-real-time host-lane hook. Starts or pauses backend draining to match
+    /// the AudioService prefill state; never called from an audio callback.
+    virtual void service() noexcept {}
     virtual void close() noexcept = 0;
     [[nodiscard]] virtual bool ready() const noexcept = 0;
     [[nodiscard]] virtual std::string lastError() const noexcept = 0;

@@ -2,6 +2,7 @@
 // SlimAudioPacket, and their Machine/MachineView query paths.
 
 #include <cassert>
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -12,6 +13,29 @@ using GameBoyMachine = GB::GameBoyMachine;
 
 int main()
 {
+    // Production video transport is self-contained, lossless, and materially
+    // smaller than an ARGB framebuffer for the palettes used by 8-bit cores.
+    const std::vector<std::uint8_t> sourceIndices = {0u, 1u, 2u, 0u, 1u, 2u, 0u, 1u};
+    const std::vector<std::uint32_t> palette = {0xFF000000u, 0xFFFFFFFFu, 0xFF00FF00u};
+    const auto surface = BMMQ::makeIndexedVideoSurface(
+        sourceIndices, 4, 2, BMMQ::RealtimeVideoEncoding::Indexed2, palette);
+    assert(surface.validForDimensions(4, 2));
+    assert(surface.encoding == BMMQ::RealtimeVideoEncoding::Indexed2);
+    assert(surface.payloadBytes() < sourceIndices.size() * sizeof(std::uint32_t));
+    std::vector<std::uint32_t> decodedPixels;
+    assert(BMMQ::decodeVideoSurface(surface, 4, 2, decodedPixels));
+    assert(decodedPixels == std::vector<std::uint32_t>({
+        palette[0], palette[1], palette[2], palette[0],
+        palette[1], palette[2], palette[0], palette[1],
+    }));
+    std::array<std::uint32_t, 12> pitchedPixels{};
+    assert(BMMQ::decodeVideoSurfaceToArgb(
+        surface, 4, 2, pitchedPixels.data(), 6u));
+    assert((std::array<std::uint32_t, 12>{
+        palette[0], palette[1], palette[2], palette[0], 0u, 0u,
+        palette[1], palette[2], palette[0], palette[1], 0u, 0u,
+    } == pitchedPixels));
+
     // VideoDirtyRegion defaults
     BMMQ::VideoDirtyRegion region;
     assert(region.empty());

@@ -159,6 +159,10 @@ int main()
             machine.step();
         }
 
+        // An unavailable background lane retains the newest immutable save
+        // snapshot; durability is enforced explicitly at shutdown.
+        assert(!std::filesystem::exists(savePath));
+        machine.flushPendingBackgroundWork();
         assert(std::filesystem::exists(savePath));
     }
 

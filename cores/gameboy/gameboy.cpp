@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <chrono>
 #include <cstdint>
 #include <iomanip>
 #include <sstream>
@@ -467,6 +468,42 @@ bool isControlFlowOpcode(DataType opcode)
     case 0xEF:
     case 0xF7:
     case 0xFF:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Keep block formation aligned with the byte fast path. Unsupported opcodes
+// remain baseline-interpreter work and must never become a cached guard failure.
+constexpr bool supportsFastOpcode(DataType opcode) noexcept
+{
+    if ((opcode >= 0x40u && opcode <= 0x7Fu) ||
+        (opcode >= 0x80u && opcode <= 0xBFu)) {
+        return true;
+    }
+    if ((opcode & 0xC7u) == 0x04u || (opcode & 0xC7u) == 0x05u ||
+        (opcode & 0xC7u) == 0x06u) {
+        return true;
+    }
+    switch (opcode) {
+    case 0x00: case 0x01: case 0x02: case 0x03:
+    case 0x07: case 0x08: case 0x09: case 0x0A: case 0x0B: case 0x0F:
+    case 0x10: case 0x11: case 0x12: case 0x13:
+    case 0x17: case 0x18: case 0x19: case 0x1A: case 0x1B: case 0x1F:
+    case 0x20: case 0x21: case 0x22: case 0x23:
+    case 0x27: case 0x28: case 0x29: case 0x2A: case 0x2B: case 0x2F:
+    case 0x30: case 0x31: case 0x32: case 0x33:
+    case 0x37: case 0x38: case 0x39: case 0x3A: case 0x3B: case 0x3F:
+    case 0xC0: case 0xC1: case 0xC2: case 0xC3: case 0xC4: case 0xC5:
+    case 0xC6: case 0xC7: case 0xC8: case 0xC9:
+    case 0xCA: case 0xCC: case 0xCD: case 0xCE: case 0xCF:
+    case 0xD0: case 0xD1: case 0xD2: case 0xD4: case 0xD5: case 0xD6:
+    case 0xD7: case 0xD8: case 0xD9: case 0xDA: case 0xDC: case 0xDE: case 0xDF:
+    case 0xE0: case 0xE1: case 0xE2: case 0xE5: case 0xE6: case 0xE7:
+    case 0xE8: case 0xE9: case 0xEA: case 0xEE: case 0xEF:
+    case 0xF0: case 0xF1: case 0xF2: case 0xF3: case 0xF5: case 0xF6:
+    case 0xF7: case 0xF8: case 0xF9: case 0xFA: case 0xFB: case 0xFE: case 0xFF:
         return true;
     default:
         return false;
@@ -1800,6 +1837,7 @@ void LR3592_DMG::loadProgram(const std::vector<DataType>& program,
                              AddressType startAddress)
 {
     mem.backingStore().load(std::span<const DataType>(program.data(), program.size()), startAddress);
+    invalidateBlockCacheForWrite(startAddress, program.size());
 }
 
 BMMQ::executionBlock<AddressType, DataType, AddressType>
@@ -1866,9 +1904,19 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
     if (blocks.empty() || blocks.front().data.empty()) {
         return false;
     }
+    return tryFastExecuteBytes(blocks.front().data);
+}
 
-    auto& data = blocks.front().data;
+bool LR3592_DMG::tryFastExecuteBytes(std::span<const DataType> data)
+{
+    if (data.empty()) return false;
     const DataType opcode = data[0];
+    if (!supportsFastOpcode(opcode)) return false;
+    const auto immediate8 = [&]() noexcept { return data[1]; };
+    const auto immediate16 = [&]() noexcept {
+        return static_cast<AddressType>(
+            data[1] | (static_cast<AddressType>(data[2]) << 8u));
+    };
     feedback.pcBefore = (pcRegister_ != nullptr)
         ? static_cast<uint32_t>(pcRegister_->value)
         : 0;
@@ -1896,7 +1944,7 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
         pendingCycleCharge_ = 0;
         if (retiredCycles == 0) {
             if (const auto& entry = opcodeTable[opcode]; entry.has_value()) {
-                const auto cycles = entry->cycles(blocks.front(), 0);
+                const auto cycles = opcodeCyclesFor(opcode);
                 const auto sequentialPc = static_cast<AddressType>(feedback.pcBefore + executedByteCount);
                 retiredCycles = (static_cast<AddressType>(feedback.pcAfter) != sequentialPc)
                     ? cycles.taken
@@ -1994,7 +2042,7 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
     case 0x11:
     case 0x21:
     case 0x31:
-        cachedR16(static_cast<DataType>((opcode >> 4u) & 0x03u)) = fetchImm16(blocks.front(), 0);
+        cachedR16(static_cast<DataType>((opcode >> 4u) & 0x03u)) = immediate16();
         return finalizeFast(3);
     case 0x03:
     case 0x13:
@@ -2013,7 +2061,7 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
         return finalizeFast(1);
     }
     case 0x08:
-        write16(mem, fetchImm16(blocks.front(), 0), static_cast<AddressType>(cpuRegisters_.sp->value));
+        write16(mem, immediate16(), static_cast<AddressType>(cpuRegisters_.sp->value));
         return finalizeFast(3);
     case 0x09:
     case 0x19:
@@ -2030,7 +2078,7 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
         return finalizeFast(1);
     }
     case 0x18: {
-        const int8_t offset = static_cast<int8_t>(fetchImm8(blocks.front(), 0));
+        const int8_t offset = static_cast<int8_t>(immediate8());
         const auto target = static_cast<AddressType>(static_cast<int32_t>(feedback.pcBefore) + 2 + offset);
         pcRegister_->value = static_cast<AddressType>(target - 2u);
         return finalizeFast(2);
@@ -2040,21 +2088,21 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
     case 0x30:
     case 0x38: {
         if (cachedConditionHolds(static_cast<DataType>((opcode >> 3u) & 0x03u))) {
-            const int8_t offset = static_cast<int8_t>(fetchImm8(blocks.front(), 0));
+            const int8_t offset = static_cast<int8_t>(immediate8());
             const auto target = static_cast<AddressType>(static_cast<int32_t>(feedback.pcBefore) + 2 + offset);
             pcRegister_->value = static_cast<AddressType>(target - 2u);
         }
         return finalizeFast(2);
     }
     case 0xC3:
-        pcRegister_->value = static_cast<AddressType>(fetchImm16(blocks.front(), 0) - 3u);
+        pcRegister_->value = static_cast<AddressType>(immediate16() - 3u);
         return finalizeFast(3);
     case 0xC2:
     case 0xCA:
     case 0xD2:
     case 0xDA:
         if (cachedConditionHolds(static_cast<DataType>((opcode >> 3u) & 0x03u))) {
-            pcRegister_->value = static_cast<AddressType>(fetchImm16(blocks.front(), 0) - 3u);
+            pcRegister_->value = static_cast<AddressType>(immediate16() - 3u);
         }
         return finalizeFast(3);
     case 0xC9:
@@ -2073,7 +2121,7 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
         }
         return finalizeFast(1);
     case 0xCD: {
-        const AddressType target = fetchImm16(blocks.front(), 0);
+        const AddressType target = immediate16();
         cachedPush16(static_cast<AddressType>(feedback.pcBefore + 3u));
         pcRegister_->value = static_cast<AddressType>(target - 3u);
         return finalizeFast(3);
@@ -2084,7 +2132,7 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
     case 0xDC:
         if (cachedConditionHolds(static_cast<DataType>((opcode >> 3u) & 0x03u))) {
             cachedPush16(static_cast<AddressType>(feedback.pcBefore + 3u));
-            pcRegister_->value = static_cast<AddressType>(fetchImm16(blocks.front(), 0) - 3u);
+            pcRegister_->value = static_cast<AddressType>(immediate16() - 3u);
         }
         return finalizeFast(3);
     case 0xC1:
@@ -2109,10 +2157,10 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
         pcRegister_->value = static_cast<AddressType>(cpuRegisters_.hl->value - 1u);
         return finalizeFast(1);
     case 0xE0:
-        write8(mem, static_cast<AddressType>(0xFF00u + fetchImm8(blocks.front(), 0)), cachedAccumulator());
+        write8(mem, static_cast<AddressType>(0xFF00u + immediate8()), cachedAccumulator());
         return finalizeFast(2);
     case 0xF0:
-        cachedAccumulator() = read8(mem, static_cast<AddressType>(0xFF00u + fetchImm8(blocks.front(), 0)));
+        cachedAccumulator() = read8(mem, static_cast<AddressType>(0xFF00u + immediate8()));
         return finalizeFast(2);
     case 0xE2:
         write8(mem, static_cast<AddressType>(0xFF00u + static_cast<DataType>(cpuRegisters_.bc->lo)), cachedAccumulator());
@@ -2121,7 +2169,7 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
         cachedAccumulator() = read8(mem, static_cast<AddressType>(0xFF00u + static_cast<DataType>(cpuRegisters_.bc->lo)));
         return finalizeFast(1);
     case 0xE8: {
-        const int8_t offset = static_cast<int8_t>(fetchImm8(blocks.front(), 0));
+        const int8_t offset = static_cast<int8_t>(immediate8());
         const AddressType original = cpuRegisters_.sp->value;
         cpuRegisters_.sp->value = static_cast<AddressType>(static_cast<int32_t>(original) + offset);
         const uint8_t low = static_cast<uint8_t>(original & 0xFFu);
@@ -2131,7 +2179,7 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
         return finalizeFast(2);
     }
     case 0xF8: {
-        const int8_t offset = static_cast<int8_t>(fetchImm8(blocks.front(), 0));
+        const int8_t offset = static_cast<int8_t>(immediate8());
         const AddressType sp = static_cast<AddressType>(cpuRegisters_.sp->value);
         const uint8_t low = static_cast<uint8_t>(sp & 0xFFu);
         const uint8_t imm = static_cast<uint8_t>(offset);
@@ -2144,10 +2192,10 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
         cpuRegisters_.sp->value = cpuRegisters_.hl->value;
         return finalizeFast(1);
     case 0xEA:
-        write8(mem, fetchImm16(blocks.front(), 0), cachedAccumulator());
+        write8(mem, immediate16(), cachedAccumulator());
         return finalizeFast(3);
     case 0xFA:
-        cachedAccumulator() = read8(mem, fetchImm16(blocks.front(), 0));
+        cachedAccumulator() = read8(mem, immediate16());
         return finalizeFast(3);
     case 0xF3:
         setIme(false);
@@ -2223,7 +2271,7 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
     case 0xEE:
     case 0xF6:
     case 0xFE:
-        executeMathOp(opcode, fetchImm8(blocks.front(), 0));
+        executeMathOp(opcode, immediate8());
         return finalizeFast(2);
     case 0xC7:
     case 0xCF:
@@ -2263,7 +2311,7 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
     }
 
     if ((opcode & 0xC7u) == 0x06u) {
-        cachedWriteR8(static_cast<DataType>((opcode >> 3u) & 0x07u), fetchImm8(blocks.front(), 0));
+        cachedWriteR8(static_cast<DataType>((opcode >> 3u) & 0x07u), immediate8());
         return finalizeFast(2);
     }
 
@@ -2301,45 +2349,427 @@ bool LR3592_DMG::tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fb)
 
 
 
-bool LR3592_DMG::tryExecuteFromCache(BMMQ::fetchBlock<AddressType, DataType>& fetchData)
+bool LR3592_DMG::tryExecuteTranslatedBlock()
 {
     if (!blockCacheEnabled_) {
         return false;
     }
 
-    const auto& blocks = fetchData.getblockData();
-    if (blocks.empty() || blocks.front().data.empty()) {
+    const auto pcAddress = pcRegister_ != nullptr ? pcRegister_->value : AddressType{0};
+    if (stopFlag || haltBugPcAdjustPending || pendingCycleCharge_ != 0u ||
+        (dmaActive && !isHramAddress(pcAddress))) return false;
+    const DataType pending = static_cast<DataType>(
+        (readCachedRegister(hardwareRegisters_.interruptFlags) &
+         readCachedRegister(hardwareRegisters_.ie)) & kInterruptMask);
+    if (haltFlag || (ime && pending != 0u)) {
+        // fetchInto owns HALT-bug and interrupt-entry transitions.
         return false;
     }
 
-    const auto pcAddress = static_cast<AddressType>(fetchData.getbaseAddress());
-    if (!blockCache_.guardValid(pcAddress)) {
-        blockCache_.recordMiss();
+    const auto lookup = blockCache_.lookup(pcAddress);
+    if (!lookup) return false;
+    if ((portableIrEnabled_ || nativeIrEnabled_) && !portableIrExecutionSliceActive_ &&
+        lookup.block->intermediateRepresentation) {
+        if (tryExecutePortableIr(*lookup.block, pcAddress, lookup.instructionIndex)) return true;
+        if (!lookup.block->valid) return false;
+    }
+    const auto& instruction = lookup.block->instructions[lookup.instructionIndex];
+    if (!tryFastExecuteBytes(std::span<const DataType>(
+            instruction.bytes.data(), instruction.length))) {
+        blockCache_.invalidate(pcAddress, true);
+        blockCache_.noteUnsupportedFallback(instruction.bytes[0]);
         return false;
     }
-
-    const auto cachedBlock = blockCache_.getBlock(pcAddress);
-    if (!cachedBlock.has_value()) {
-        blockCache_.recordMiss();
-        return false;
-    }
-
-    const auto& currentBytes = blocks.front().data;
-    if (cachedBlock->size() != currentBytes.size() ||
-        !std::equal(cachedBlock->begin(), cachedBlock->end(), currentBytes.begin())) {
-        blockCache_.invalidateGuard(pcAddress);
-        blockCache_.recordMiss();
-        return false;
-    }
-
-    if (!tryFastExecute(fetchData)) {
-        blockCache_.invalidateGuard(pcAddress);
-        blockCache_.recordMiss();
-        return false;
-    }
-
-    blockCache_.recordHit();
     return true;
+}
+
+GB::IRExecution::ExecutionAbiV1 LR3592_DMG::irExecutionAbi()
+{
+    using GB::IRExecution::AluOperation;
+    using GB::IRExecution::ExecutionAbiV1;
+    using GB::IRExecution::Helper;
+    using GB::IRExecution::Register;
+
+    ExecutionAbiV1 abi;
+    abi.opaque = this;
+    abi.readRegister = [](void* opaque, Register reg) -> std::uint64_t {
+        auto& cpu = *static_cast<LR3592_DMG*>(opaque);
+        switch (reg) {
+        case Register::A: return cpu.cachedReadR8(7u);
+        case Register::F: return static_cast<DataType>(cpu.cachedFlags());
+        case Register::B: return cpu.cachedReadR8(0u);
+        case Register::C: return cpu.cachedReadR8(1u);
+        case Register::D: return cpu.cachedReadR8(2u);
+        case Register::E: return cpu.cachedReadR8(3u);
+        case Register::H: return cpu.cachedReadR8(4u);
+        case Register::L: return cpu.cachedReadR8(5u);
+        case Register::AF: return cpu.cpuRegisters_.af->value;
+        case Register::BC: return cpu.cpuRegisters_.bc->value;
+        case Register::DE: return cpu.cpuRegisters_.de->value;
+        case Register::HL: return cpu.cpuRegisters_.hl->value;
+        case Register::SP: return cpu.spRegister_->value;
+        case Register::PC: return cpu.pcRegister_->value;
+        }
+        return 0u;
+    };
+    abi.writeRegister = [](void* opaque, Register reg, std::uint64_t value) {
+        auto& cpu = *static_cast<LR3592_DMG*>(opaque);
+        switch (reg) {
+        case Register::A: cpu.cachedWriteR8(7u, static_cast<DataType>(value)); break;
+        case Register::F: cpu.cachedFlags() = static_cast<DataType>(value & 0xF0u); break;
+        case Register::B: cpu.cachedWriteR8(0u, static_cast<DataType>(value)); break;
+        case Register::C: cpu.cachedWriteR8(1u, static_cast<DataType>(value)); break;
+        case Register::D: cpu.cachedWriteR8(2u, static_cast<DataType>(value)); break;
+        case Register::E: cpu.cachedWriteR8(3u, static_cast<DataType>(value)); break;
+        case Register::H: cpu.cachedWriteR8(4u, static_cast<DataType>(value)); break;
+        case Register::L: cpu.cachedWriteR8(5u, static_cast<DataType>(value)); break;
+        case Register::AF: cpu.cpuRegisters_.af->value = static_cast<AddressType>(value & 0xFFF0u); break;
+        case Register::BC: cpu.cpuRegisters_.bc->value = static_cast<AddressType>(value); break;
+        case Register::DE: cpu.cpuRegisters_.de->value = static_cast<AddressType>(value); break;
+        case Register::HL: cpu.cpuRegisters_.hl->value = static_cast<AddressType>(value); break;
+        case Register::SP: cpu.spRegister_->value = static_cast<AddressType>(value); break;
+        case Register::PC: cpu.pcRegister_->value = static_cast<AddressType>(value); break;
+        }
+    };
+    abi.readMemory8 = [](void* opaque, std::uint16_t address) -> std::uint8_t {
+        auto& cpu = *static_cast<LR3592_DMG*>(opaque);
+        return read8(cpu.mem, static_cast<AddressType>(address));
+    };
+    abi.writeMemory8 = [](void* opaque, std::uint16_t address, std::uint8_t value) {
+        auto& cpu = *static_cast<LR3592_DMG*>(opaque);
+        write8(cpu.mem, static_cast<AddressType>(address), static_cast<DataType>(value));
+    };
+    abi.callHelper = [](void* opaque, Helper helper,
+                        const std::uint64_t* arguments, std::size_t count) -> std::uint64_t {
+        auto& cpu = *static_cast<LR3592_DMG*>(opaque);
+        if (helper == Helper::UpdateIncrementFlags || helper == Helper::UpdateDecrementFlags) {
+            if (count != 2u) throw std::invalid_argument("invalid increment/decrement helper arguments");
+            const auto oldValue = static_cast<DataType>(arguments[0]);
+            const auto newValue = static_cast<DataType>(arguments[1]);
+            const bool carry = (cpu.cachedFlags() & kFlagC) != 0u;
+            if (helper == Helper::UpdateIncrementFlags) {
+                cpu.cachedSetFlags(newValue == 0u, false,
+                                   ((oldValue & 0x0Fu) + 1u) > 0x0Fu, carry);
+            } else {
+                cpu.cachedSetFlags(newValue == 0u, true,
+                                   (oldValue & 0x0Fu) == 0u, carry);
+            }
+            return newValue;
+        }
+        if (helper != Helper::ExecuteAlu8 || count != 3u) {
+            throw std::invalid_argument("invalid portable IR helper invocation");
+        }
+
+        const auto operation = static_cast<AluOperation>(arguments[0]);
+        const auto lhs = static_cast<DataType>(arguments[1]);
+        const auto rhs = static_cast<DataType>(arguments[2]);
+        const bool carryIn = (cpu.cachedFlags() & kFlagC) != 0u;
+        DataType result = lhs;
+        bool z = false;
+        bool n = false;
+        bool h = false;
+        bool c = false;
+        switch (operation) {
+        case AluOperation::Add:
+            result = static_cast<DataType>(lhs + rhs);
+            h = static_cast<uint16_t>((lhs & 0x0Fu) + (rhs & 0x0Fu)) > 0x0Fu;
+            c = static_cast<uint16_t>(lhs) + static_cast<uint16_t>(rhs) > 0xFFu;
+            break;
+        case AluOperation::AddCarry: {
+            const auto sum = static_cast<uint16_t>(lhs) + rhs + (carryIn ? 1u : 0u);
+            result = static_cast<DataType>(sum);
+            h = static_cast<uint16_t>((lhs & 0x0Fu) + (rhs & 0x0Fu) +
+                                      (carryIn ? 1u : 0u)) > 0x0Fu;
+            c = sum > 0xFFu;
+            break;
+        }
+        case AluOperation::Subtract:
+            result = static_cast<DataType>(lhs - rhs);
+            h = (lhs & 0x0Fu) < (rhs & 0x0Fu);
+            c = lhs < rhs;
+            n = true;
+            break;
+        case AluOperation::SubtractCarry: {
+            const auto subtrahend = static_cast<uint16_t>(rhs) + (carryIn ? 1u : 0u);
+            result = static_cast<DataType>(lhs - subtrahend);
+            h = (lhs & 0x0Fu) < ((rhs & 0x0Fu) + (carryIn ? 1u : 0u));
+            c = static_cast<uint16_t>(lhs) < subtrahend;
+            n = true;
+            break;
+        }
+        case AluOperation::And: result = static_cast<DataType>(lhs & rhs); h = true; break;
+        case AluOperation::Xor: result = static_cast<DataType>(lhs ^ rhs); break;
+        case AluOperation::Or: result = static_cast<DataType>(lhs | rhs); break;
+        case AluOperation::Compare:
+            h = (lhs & 0x0Fu) < (rhs & 0x0Fu);
+            c = lhs < rhs;
+            z = lhs == rhs;
+            n = true;
+            cpu.cachedSetFlags(z, n, h, c);
+            return lhs;
+        }
+        z = result == 0u;
+        cpu.cachedSetFlags(z, n, h, c);
+        return result;
+    };
+    abi.retireCpuCycles = [](void* opaque, std::uint32_t cycles) {
+        static_cast<LR3592_DMG*>(opaque)->retireInstruction(cycles);
+    };
+    abi.executionState = [](void* opaque) -> std::uint64_t {
+        return static_cast<LR3592_DMG*>(opaque)->irExecutionState();
+    };
+    return abi;
+}
+
+std::uint64_t LR3592_DMG::irExecutionState() const
+{
+    std::uint64_t state = 0u;
+    if (stopFlag) state |= GB::IRExecution::Stop;
+    if (haltFlag) state |= GB::IRExecution::Halt;
+    if (dmaActive && pcRegister_ != nullptr && !isHramAddress(pcRegister_->value)) {
+        state |= GB::IRExecution::DmaRestricted;
+    }
+    const auto pending = static_cast<DataType>(
+        readCachedRegister(hardwareRegisters_.interruptFlags) &
+        readCachedRegister(hardwareRegisters_.ie) & kInterruptMask);
+    if (ime && pending != 0u) state |= GB::IRExecution::InterruptPending;
+    if (haltBugPcAdjustPending) state |= GB::IRExecution::HaltBugPending;
+    if (pendingCycleCharge_ != 0u) state |= GB::IRExecution::PendingCycleCharge;
+    return state;
+}
+
+GB::IRExecution::GuardFailure LR3592_DMG::irGuardFailure(
+    const BMMQ::IR::Block& block) const noexcept
+{
+    auto* memoryMap = dynamic_cast<const GB::GameBoyMemoryMap*>(&mem.backingStore());
+    const GB::IRExecution::GuardContext context{
+        .mappingGeneration = blockCache_.mappingGeneration(),
+        .executionState = irExecutionState(),
+        .opaque = memoryMap,
+        .peekCodeByte = [](const void* opaque, std::uint16_t address,
+                           std::uint8_t& value) noexcept {
+            if (opaque == nullptr) return false;
+            return static_cast<const GB::GameBoyMemoryMap*>(opaque)
+                ->peekExecutableByte(address, value);
+        },
+    };
+    return GB::IRExecution::validateGuards(block, context);
+}
+
+bool LR3592_DMG::irBlockEligible(
+    std::span<const BMMQ::TranslatedInstruction<AddressType, DataType>> instructions) const noexcept
+{
+    const auto* memoryMap = dynamic_cast<const GB::GameBoyMemoryMap*>(&mem.backingStore());
+    if (memoryMap == nullptr || instructions.empty()) return false;
+    for (const auto& instruction : instructions) {
+        for (std::size_t index = 0u; index < instruction.length; ++index) {
+            std::uint8_t ignored = 0u;
+            const auto address = static_cast<AddressType>(instruction.address + index);
+            if (!memoryMap->peekExecutableByte(address, ignored)) return false;
+        }
+    }
+    return true;
+}
+
+bool LR3592_DMG::tryExecutePortableIr(
+    const BMMQ::TranslatedBlockEntry<AddressType, DataType>& block,
+    AddressType pcAddress,
+    std::size_t instructionIndex)
+{
+    if ((!portableIrEnabled_ && !nativeIrEnabled_) || !block.intermediateRepresentation) return false;
+    const auto& irBlock = *block.intermediateRepresentation;
+    auto guardNanos = std::uint64_t{0};
+    GB::IRExecution::GuardFailure guardFailure;
+    if (detailedIrTimingEnabled_) {
+        const auto guardStarted = std::chrono::steady_clock::now();
+        guardFailure = irGuardFailure(irBlock);
+        guardNanos = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - guardStarted).count());
+    } else {
+        guardFailure = irGuardFailure(irBlock);
+    }
+    blockCache_.noteIrGuardCheck(guardNanos);
+    if (guardFailure != GB::IRExecution::GuardFailure::None) {
+        blockCache_.noteIrGuardFailure();
+        blockCache_.invalidate(pcAddress, true);
+        return false;
+    }
+    return executePortableIrInstruction(block, pcAddress, instructionIndex);
+}
+
+bool LR3592_DMG::executePortableIrInstruction(
+    const BMMQ::TranslatedBlockEntry<AddressType, DataType>& block,
+    AddressType pcAddress,
+    std::size_t instructionIndex)
+{
+    if (!block.intermediateRepresentation) return false;
+    const auto& irBlock = *block.intermediateRepresentation;
+    if (instructionIndex >= irBlock.instructions.size() ||
+        irBlock.instructions[instructionIndex].address != pcAddress) {
+        blockCache_.noteIrFallback();
+        return false;
+    }
+    const auto& instruction = irBlock.instructions[instructionIndex];
+
+    feedback.pcBefore = pcAddress;
+    feedback.isControlFlow = instruction.controlFlow;
+    feedback.segmentBoundaryHint = instruction.controlFlow || instruction.interruptSensitive;
+    const auto abi = irExecutionAbi();
+    auto executionStarted = std::chrono::steady_clock::time_point{};
+    if (detailedIrTimingEnabled_) {
+        executionStarted = std::chrono::steady_clock::now();
+    }
+    GB::IRExecution::InstructionResult result;
+    if (nativeIrEnabled_) {
+        const auto native = std::dynamic_pointer_cast<const GB::NativeExecution::BlockArtifact>(
+            block.backendArtifact);
+        if (!native) {
+            blockCache_.noteIrFallback();
+            return false;
+        }
+        result = native->execute(instructionIndex, abi);
+    } else {
+        result = portableIrExecutor_.execute(instruction, abi);
+    }
+    if (!result.retirementReached) {
+        throw std::logic_error("IR backend instruction did not reach its retirement boundary");
+    }
+    feedback.isControlFlow = feedback.isControlFlow || result.branchTaken;
+    feedback.segmentBoundaryHint = feedback.segmentBoundaryHint || result.exitRequested;
+    const auto retiredCycles = result.cycleCondition
+        ? instruction.cyclesTaken
+        : instruction.cyclesNotTaken;
+    feedback.retiredCycles = retiredCycles;
+    abi.retireCpuCycles(abi.opaque, retiredCycles);
+    feedback.pcAfter = pcRegister_ != nullptr ? pcRegister_->value : pcAddress;
+    feedback.executionPath = nativeIrEnabled_
+        ? BMMQ::ExecutionPathHint::NativeIr
+        : BMMQ::ExecutionPathHint::PortableIr;
+    auto executionNanos = std::uint64_t{0};
+    if (detailedIrTimingEnabled_) {
+        executionNanos = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - executionStarted).count());
+    }
+    blockCache_.noteIrExecution(executionNanos);
+    return true;
+}
+
+bool LR3592_DMG::portableIrBlockContinuationValid() const noexcept
+{
+    if (!portableIrBlockSession_.has_value() ||
+        (!portableIrEnabled_ && !nativeIrEnabled_) || !blockCacheEnabled_) {
+        return false;
+    }
+    const auto& session = *portableIrBlockSession_;
+    if (session.block == nullptr || !session.block->valid ||
+        session.mappingGeneration != blockCache_.mappingGeneration() ||
+        session.block->mappingGeneration != session.mappingGeneration ||
+        !session.block->intermediateRepresentation) {
+        return false;
+    }
+    if (GB::IRExecution::validateContinuationGuards(
+            *session.block->intermediateRepresentation,
+            blockCache_.mappingGeneration(), irExecutionState()) !=
+        GB::IRExecution::GuardFailure::None) {
+        return false;
+    }
+    const auto& instructions = session.block->intermediateRepresentation->instructions;
+    if (session.nextInstructionIndex >= instructions.size() || pcRegister_ == nullptr) {
+        return false;
+    }
+    return instructions[session.nextInstructionIndex].address == pcRegister_->value;
+}
+
+void LR3592_DMG::resetPortableIrBlockSession() noexcept
+{
+    portableIrBlockSession_.reset();
+}
+
+void LR3592_DMG::beginPortableIrExecutionSlice() noexcept
+{
+    resetPortableIrBlockSession();
+    portableIrExecutionSliceActive_ = true;
+}
+
+bool LR3592_DMG::tryExecutePortableIrBlockInstruction()
+{
+    if ((!portableIrEnabled_ && !nativeIrEnabled_) || !blockCacheEnabled_) {
+        resetPortableIrBlockSession();
+        return false;
+    }
+
+    bool continuation = portableIrBlockSession_.has_value();
+    if (continuation && !portableIrBlockContinuationValid()) {
+        blockCache_.noteIrBlockContinuationReject();
+        resetPortableIrBlockSession();
+        return false;
+    }
+
+    if (!portableIrBlockSession_.has_value()) {
+        const auto pcAddress = pcRegister_ != nullptr ? pcRegister_->value : AddressType{0};
+        const auto lookup = blockCache_.lookup(pcAddress);
+        if (!lookup || !lookup.block->intermediateRepresentation) return false;
+
+        auto guardNanos = std::uint64_t{0};
+        GB::IRExecution::GuardFailure guardFailure;
+        if (detailedIrTimingEnabled_) {
+            const auto guardStarted = std::chrono::steady_clock::now();
+            guardFailure = irGuardFailure(*lookup.block->intermediateRepresentation);
+            guardNanos = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - guardStarted).count());
+        } else {
+            guardFailure = irGuardFailure(*lookup.block->intermediateRepresentation);
+        }
+        blockCache_.noteIrGuardCheck(guardNanos);
+        if (guardFailure != GB::IRExecution::GuardFailure::None) {
+            blockCache_.noteIrGuardFailure();
+            if (guardFailure == GB::IRExecution::GuardFailure::ExecutionState) {
+                return false;
+            }
+            blockCache_.invalidate(pcAddress, true);
+            return false;
+        }
+        const auto& instructions = lookup.block->intermediateRepresentation->instructions;
+        if (lookup.instructionIndex >= instructions.size() ||
+            instructions[lookup.instructionIndex].address != pcAddress) {
+            blockCache_.noteIrFallback();
+            return false;
+        }
+        portableIrBlockSession_ = PortableIrBlockSession{
+            .block = lookup.block,
+            .nextInstructionIndex = lookup.instructionIndex,
+            .mappingGeneration = blockCache_.mappingGeneration(),
+        };
+        blockCache_.noteIrBlockEntry();
+    } else if (continuation) {
+        blockCache_.noteIrBlockContinuation();
+    }
+
+    const auto session = *portableIrBlockSession_;
+    const auto pcAddress = pcRegister_ != nullptr ? pcRegister_->value : AddressType{0};
+    if (!executePortableIrInstruction(
+            *session.block, pcAddress, session.nextInstructionIndex)) {
+        resetPortableIrBlockSession();
+        return false;
+    }
+
+    const auto& instructions = session.block->intermediateRepresentation->instructions;
+    const auto nextIndex = session.nextInstructionIndex + 1u;
+    if (feedback.segmentBoundaryHint || nextIndex >= instructions.size()) {
+        resetPortableIrBlockSession();
+    } else {
+        portableIrBlockSession_->nextInstructionIndex = nextIndex;
+    }
+    return true;
+}
+
+void LR3592_DMG::endPortableIrExecutionSlice() noexcept
+{
+    resetPortableIrBlockSession();
+    portableIrExecutionSliceActive_ = false;
 }
 
 void LR3592_DMG::populateBlockCache(BMMQ::fetchBlock<AddressType, DataType>& fetchData)
@@ -2353,12 +2783,99 @@ void LR3592_DMG::populateBlockCache(BMMQ::fetchBlock<AddressType, DataType>& fet
         return;
     }
 
-    const auto pcAddress = static_cast<AddressType>(fetchData.getbaseAddress());
-    blockCache_.setBlock(pcAddress, blocks.front().data, 0xDEADBEEFu);
+    constexpr std::size_t kMaxInstructions = 16u;
+    constexpr std::size_t kMaxBytes = 48u;
+    BMMQ::TranslatedBlockEntry<AddressType, DataType> translated;
+    translated.start = static_cast<AddressType>(fetchData.getbaseAddress());
+    AddressType address = translated.start;
+    std::size_t byteCount = 0u;
+    for (std::size_t index = 0; index < kMaxInstructions && byteCount < kMaxBytes; ++index) {
+        DataType opcode = 0u;
+        std::array<DataType, 3> bytes{};
+        std::uint8_t length = 0u;
+        if (index == 0u) {
+            length = static_cast<std::uint8_t>(std::min<std::size_t>(blocks.front().data.size(), bytes.size()));
+            std::copy_n(blocks.front().data.begin(), length, bytes.begin());
+            opcode = bytes[0];
+        } else {
+            mem.read(std::span<DataType>(&opcode, 1u), address);
+            const auto& entry = opcodeTable[opcode];
+            if (!entry.has_value() || entry->length() == 0u || entry->length() > bytes.size()) {
+                translated.exitReason = BMMQ::TranslatedBlockExitReason::Unsupported;
+                break;
+            }
+            length = entry->length();
+            if (static_cast<std::uint32_t>(address) + length - 1u > UINT16_MAX) {
+                translated.exitReason = BMMQ::TranslatedBlockExitReason::PageBoundary;
+                break;
+            }
+            mem.read(std::span<DataType>(bytes.data(), length), address);
+        }
+        if (length == 0u) break;
+        if (!supportsFastOpcode(opcode)) {
+            blockCache_.noteFastEligibilityStop(opcode);
+            translated.exitReason = BMMQ::TranslatedBlockExitReason::Unsupported;
+            break;
+        }
+        translated.instructions.push_back({.address = address, .bytes = bytes, .length = length});
+        byteCount += length;
+        translated.end = static_cast<AddressType>(address + length - 1u);
+
+        if (isControlFlowOpcode(opcode)) {
+            translated.exitReason = BMMQ::TranslatedBlockExitReason::ControlFlow;
+            break;
+        }
+        if (opcode == 0x10u || opcode == 0x76u || opcode == 0xF3u || opcode == 0xFBu) {
+            translated.exitReason = BMMQ::TranslatedBlockExitReason::InterruptSensitive;
+            break;
+        }
+        const auto next = static_cast<std::uint32_t>(address) + length;
+        if (next > UINT16_MAX || (next >> 8u) != (static_cast<std::uint32_t>(translated.start) >> 8u)) {
+            translated.exitReason = BMMQ::TranslatedBlockExitReason::PageBoundary;
+            break;
+        }
+        address = static_cast<AddressType>(next);
+    }
+    if (portableIrEnabled_ || nativeIrEnabled_) {
+        if (irBlockEligible(translated.instructions)) {
+            auto loweringNanos = std::uint64_t{0};
+            if (detailedIrTimingEnabled_) {
+                const auto loweringStarted = std::chrono::steady_clock::now();
+                translated.intermediateRepresentation = GB::IRExecution::lowerBlock(
+                    translated.instructions, blockCache_.mappingGeneration(), irExecutionState());
+                loweringNanos = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now() - loweringStarted).count());
+            } else {
+                translated.intermediateRepresentation = GB::IRExecution::lowerBlock(
+                    translated.instructions, blockCache_.mappingGeneration(), irExecutionState());
+            }
+            const auto loweredInstructions = translated.intermediateRepresentation
+                ? translated.intermediateRepresentation->instructions.size()
+                : 0u;
+            blockCache_.noteIrLowering(
+                loweredInstructions, loweringNanos);
+            if (nativeIrEnabled_ && translated.intermediateRepresentation) {
+                const auto native = GB::NativeExecution::compile(
+                    *translated.intermediateRepresentation);
+                translated.backendArtifact = native;
+                if (!native) {
+                    blockCache_.noteIrFallback();
+                }
+            }
+        } else {
+            blockCache_.noteIrIneligibleTranslation();
+        }
+    }
+    blockCache_.insert(std::move(translated));
 }
 
 void LR3592_DMG::invalidateBlockCacheForWrite(AddressType address, std::size_t size)
 {
+    if (!blockCacheEnabled_) {
+        return;
+    }
+
     address = normalizeAccessAddress(address);
     if (size == 0u) {
         return;
@@ -2392,6 +2909,7 @@ void LR3592_DMG::setBlockCacheEnabled(bool enabled)
         return;
     }
 
+    resetPortableIrBlockSession();
     blockCacheEnabled_ = enabled;
     if (!enabled) {
         blockCache_.clear();
@@ -2403,9 +2921,29 @@ bool LR3592_DMG::blockCacheEnabled() const noexcept
     return blockCacheEnabled_;
 }
 
-BMMQ::CacheStats LR3592_DMG::blockCacheStats() const
+BMMQ::ThreadedBlockCacheStats LR3592_DMG::blockCacheStats() const
 {
-    return blockCache_.getStats();
+    return blockCache_.stats();
+}
+
+void LR3592_DMG::setPortableIrEnabled(bool enabled) noexcept
+{
+    if (portableIrEnabled_ == enabled) {
+        return;
+    }
+    resetPortableIrBlockSession();
+    portableIrEnabled_ = enabled;
+    if (enabled) nativeIrEnabled_ = false;
+    invalidateAllBlockCache();
+}
+
+void LR3592_DMG::setNativeIrEnabled(bool enabled) noexcept
+{
+    if (nativeIrEnabled_ == enabled) return;
+    resetPortableIrBlockSession();
+    nativeIrEnabled_ = enabled;
+    if (enabled) portableIrEnabled_ = false;
+    invalidateAllBlockCache();
 }
 
 void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, AddressType>& block, BMMQ::fetchBlock<AddressType, DataType>& fb)
@@ -2564,7 +3102,6 @@ bool LR3592_DMG::handleMemoryRead(AddressType address, std::span<DataType> value
 bool LR3592_DMG::handleMemoryWrite(AddressType address, std::span<const DataType> value)
 {
     address = normalizeAccessAddress(address);
-    invalidateBlockCacheForWrite(address, value.size());
     if (value.size() == 1 && address == 0xFF00) {
         const DataType oldLow = joypadLowNibble();
         joypSelect = static_cast<DataType>(value[0] & 0x30u);
@@ -3326,7 +3863,7 @@ LR3592_DMG::SaveState LR3592_DMG::exportState() const
     return state;
 }
 
-void LR3592_DMG::importState(const SaveState& state)
+void LR3592_DMG::validateState(const SaveState& state)
 {
     if (state.currentVramBank > kBankB) {
         throw std::invalid_argument("LR3592 save state has invalid VRAM bank");
@@ -3334,6 +3871,11 @@ void LR3592_DMG::importState(const SaveState& state)
     if (state.spriteContext > 1u) {
         throw std::invalid_argument("LR3592 save state has invalid sprite context");
     }
+}
+
+void LR3592_DMG::importState(const SaveState& state)
+{
+    validateState(state);
 
     if (cpuRegisters_.af != nullptr) cpuRegisters_.af->value = state.af;
     if (cpuRegisters_.bc != nullptr) cpuRegisters_.bc->value = state.bc;

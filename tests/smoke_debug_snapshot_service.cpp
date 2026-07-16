@@ -3,6 +3,7 @@
 #endif
 
 #include <cassert>
+#include <atomic>
 #include <chrono>
 #include <optional>
 #include <thread>
@@ -14,6 +15,43 @@
 #include "machine/plugins/IoPlugin.hpp"
 
 namespace {
+
+class SnapshotAdapter final : public BMMQ::IVisualDebugAdapter {
+public:
+    std::optional<BMMQ::VideoDebugFrameModel> buildFrameModel(
+        const BMMQ::Machine&,
+        const BMMQ::VideoDebugRenderRequest&) const override
+    {
+        return std::nullopt;
+    }
+
+    std::optional<BMMQ::VideoDebugFrameModel> buildFrameModelFromState(
+        const BMMQ::VideoStateView& state,
+        const BMMQ::VideoDebugRenderRequest& request) const override
+    {
+        builds.fetch_add(1u, std::memory_order_relaxed);
+        BMMQ::VideoDebugFrameModel model;
+        model.width = request.frameWidth;
+        model.height = request.frameHeight;
+        model.displayEnabled = true;
+        model.argbPixels.assign(
+            static_cast<std::size_t>(request.frameWidth * request.frameHeight), 0xFF000000u);
+        model.scanlineIndex = state.ly;
+        return model;
+    }
+
+    std::optional<BMMQ::DecodedVisualResource> decodeTile(
+        const std::vector<std::uint8_t>&,
+        std::uint8_t,
+        std::uint8_t,
+        std::uint8_t,
+        const BMMQ::VisualTileDecodeRequest&) const override
+    {
+        return std::nullopt;
+    }
+
+    mutable std::atomic<std::size_t> builds{0};
+};
 
 BMMQ::VideoDebugFrameModel makeVideoModel(int width = 160, int height = 144)
 {
@@ -228,6 +266,33 @@ int main()
         assert(audio.has_value());
         assert(audio->frameCounter == 77u);
 
+        backgroundTasks.shutdown();
+    }
+
+    // Test 9: expensive model construction consumes an immutable state packet
+    // on the categorized background lane.
+    {
+        BMMQ::BackgroundTaskService backgroundTasks(8u, 2u);
+        backgroundTasks.start();
+        BMMQ::DebugSnapshotService svc;
+        svc.setBackgroundTaskService(&backgroundTasks);
+        SnapshotAdapter adapter;
+        BMMQ::VideoStateView state;
+        state.ly = 42u;
+        assert(svc.submitVideoState(std::move(state), &adapter, {
+            .frameWidth = 32,
+            .frameHeight = 24,
+        }));
+        assert(backgroundTasks.waitUntilIdle(std::chrono::seconds(2)));
+        auto model = svc.tryConsumeVideo();
+        assert(model.has_value());
+        assert(model->width == 32 && model->height == 24);
+        assert(model->scanlineIndex == 42u);
+        assert(adapter.builds.load(std::memory_order_relaxed) == 1u);
+        const auto stats = backgroundTasks.stats();
+        const auto category = static_cast<std::size_t>(BMMQ::BackgroundJobCategory::DebugSnapshot);
+        assert(stats.categories[category].submitted == 1u);
+        assert(stats.categories[category].completed == 1u);
         backgroundTasks.shutdown();
     }
 

@@ -15,6 +15,7 @@
 #include "../../common_microcode.hpp"
 #include "../../inst_cycle/opcode.hpp"
 #include "../../inst_cycle/BlockCache.hpp"
+#include "../../inst_cycle/BlockTranslator.hpp"
 #include "../../inst_cycle/execute/executionBlock.hpp"
 #include "../../inst_cycle/fetch/fetchBlock.hpp"
 #include "../../memory/MemoryPool.hpp"
@@ -22,6 +23,8 @@
 #include "../../memory/templ/reg_uint16.impl.hpp"
 #include "register_id.hpp"
 #include "dma_controller.hpp"
+#include "GameBoyIrExecution.hpp"
+#include "GameBoyNativeExecution.hpp"
 #include "vram_manager.hpp"
 
 using AddressType = uint16_t;
@@ -248,6 +251,27 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   void pushApuSample();
   void updateApuStatusRegister();
   void retireInstruction(std::size_t executedByteCount);
+  [[nodiscard]] GB::IRExecution::ExecutionAbiV1 irExecutionAbi();
+  [[nodiscard]] std::uint64_t irExecutionState() const;
+  [[nodiscard]] GB::IRExecution::GuardFailure irGuardFailure(
+      const BMMQ::IR::Block& block) const noexcept;
+  [[nodiscard]] bool irBlockEligible(
+      std::span<const BMMQ::TranslatedInstruction<AddressType, DataType>> instructions) const noexcept;
+  [[nodiscard]] bool executePortableIrInstruction(
+      const BMMQ::TranslatedBlockEntry<AddressType, DataType>& block,
+      AddressType pcAddress,
+      std::size_t instructionIndex);
+  [[nodiscard]] bool tryExecutePortableIr(
+      const BMMQ::TranslatedBlockEntry<AddressType, DataType>& block,
+      AddressType pcAddress,
+      std::size_t instructionIndex);
+  struct PortableIrBlockSession {
+    const BMMQ::TranslatedBlockEntry<AddressType, DataType>* block = nullptr;
+    std::size_t nextInstructionIndex = 0u;
+    std::uint64_t mappingGeneration = 0u;
+  };
+  [[nodiscard]] bool portableIrBlockContinuationValid() const noexcept;
+  void resetPortableIrBlockSession() noexcept;
   [[nodiscard]] bool lcdEnabled() const;
   [[nodiscard]] DataType currentPpuMode() const;
   [[nodiscard]] DataType joypadLowNibble() const;
@@ -312,18 +336,37 @@ public:
                   BMMQ::executionBlock<AddressType, DataType, AddressType>& block);
   bool tryFastExecute(BMMQ::fetchBlock<AddressType, DataType>& fetchData);
 
-  // Phase 10: guarded single-instruction block cache over the LR3592 fast interpreter.
-  bool tryExecuteFromCache(BMMQ::fetchBlock<AddressType, DataType>& fetchData);
+  // Phase 10: guarded multi-instruction threaded blocks over the LR3592 fast interpreter.
+  bool tryExecuteTranslatedBlock();
   void populateBlockCache(BMMQ::fetchBlock<AddressType, DataType>& fetchData);
   void invalidateBlockCacheForWrite(AddressType address, std::size_t size = 1);
   void invalidateAllBlockCache();
   void setBlockCacheEnabled(bool enabled);
+  void setPortableIrEnabled(bool enabled) noexcept;
+  void setNativeIrEnabled(bool enabled) noexcept;
+  void setDetailedIrTimingEnabled(bool enabled) noexcept { detailedIrTimingEnabled_ = enabled; }
+  void beginPortableIrExecutionSlice() noexcept;
+  [[nodiscard]] bool tryExecutePortableIrBlockInstruction();
+  void endPortableIrExecutionSlice() noexcept;
+  [[nodiscard]] bool portableIrEnabled() const noexcept { return portableIrEnabled_; }
+  [[nodiscard]] bool nativeIrEnabled() const noexcept { return nativeIrEnabled_; }
+  [[nodiscard]] static bool nativeIrSupported() noexcept {
+    return GB::NativeExecution::supported();
+  }
+  [[nodiscard]] bool detailedIrTimingEnabled() const noexcept { return detailedIrTimingEnabled_; }
   [[nodiscard]] bool blockCacheEnabled() const noexcept;
-  [[nodiscard]] BMMQ::CacheStats blockCacheStats() const;
+  [[nodiscard]] BMMQ::ThreadedBlockCacheStats blockCacheStats() const;
 
 private:
-  BMMQ::BlockCache<AddressType, std::vector<DataType>> blockCache_;
+  bool tryFastExecuteBytes(std::span<const DataType> data);
+  BMMQ::ThreadedBlockCache<AddressType, DataType> blockCache_;
   bool blockCacheEnabled_ = true;
+  bool portableIrEnabled_ = false;
+  bool nativeIrEnabled_ = false;
+  bool detailedIrTimingEnabled_ = false;
+  GB::IRExecution::PortableExecutor portableIrExecutor_{};
+  std::optional<PortableIrBlockSession> portableIrBlockSession_{};
+  bool portableIrExecutionSliceActive_ = false;
 
 public:
   void
@@ -351,6 +394,7 @@ public:
   void setHaltFlag(bool f);
   void clearHaltFlag();
   [[nodiscard]] SaveState exportState() const;
+  static void validateState(const SaveState& state);
   void importState(const SaveState& state);
 
   // VRAM Banking Methods

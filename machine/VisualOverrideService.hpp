@@ -3,9 +3,13 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <condition_variable>
 #include <filesystem>
 #include <functional>
+#include <future>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <string>
@@ -13,6 +17,7 @@
 #include <vector>
 
 #include "VisualCaptureWriter.hpp"
+#include "ImageDecoder.hpp"
 #include "VisualPackManifest.hpp"
 #include "VisualTypes.hpp"
 #include "plugins/IoPlugin.hpp"
@@ -21,7 +26,6 @@ namespace BMMQ {
 
 // Forward declarations
 class BackgroundTaskService;
-class ImageDecoder;
 
 struct VisualCaptureStats {
     std::size_t uniqueResourcesDumped = 0;
@@ -50,6 +54,9 @@ struct VisualOverrideDiagnostics {
     std::size_t asyncDecodeSubmissions = 0;
     std::size_t asyncDecodePollsReady = 0;
     std::size_t asyncDecodePollsNotReady = 0;
+    std::size_t asyncDecodeRejected = 0;
+    std::size_t asyncReloadRejected = 0;
+    std::size_t asyncCaptureRejected = 0;
 };
 
 struct VisualObservedResourceStat {
@@ -72,6 +79,8 @@ public:
 
     [[nodiscard]] bool loadPackManifest(const std::filesystem::path& manifestPath);
     [[nodiscard]] bool reloadChangedPacks();
+    [[nodiscard]] bool requestReloadChangedPacks();
+    [[nodiscard]] bool pollBackgroundWork();
     [[nodiscard]] std::optional<ResolvedVisualOverride> resolve(const VisualResourceDescriptor& descriptor);
     [[nodiscard]] std::optional<std::string> takeReloadWarning();
 
@@ -87,6 +96,7 @@ public:
 
     // Set optional image decoder service for async PNG decode (Phase 32)
     void setImageDecoder(ImageDecoder* decoder) noexcept;
+    void setBackgroundTaskService(BackgroundTaskService* service) noexcept;
 
     [[nodiscard]] const VisualCaptureStats& captureStats() const noexcept;
     [[nodiscard]] const VisualOverrideDiagnostics& diagnostics() const noexcept;
@@ -134,6 +144,36 @@ private:
         std::vector<WatchedPathStamp> assetStamps;
     };
 
+    struct ReloadResult {
+        std::vector<LoadedPack> packs;
+        std::size_t invalidRulesSkipped = 0;
+        std::size_t missingReplacementImages = 0;
+        std::string error;
+        uint64_t baseGeneration = 0;
+        bool changed = false;
+    };
+
+    struct PendingImageDecode {
+        std::future<DecodeResult> future;
+        uint64_t generation = 0;
+    };
+
+    struct CaptureCompletion {
+        VisualResourceDescriptor descriptor;
+        std::string key;
+        std::string relativePath;
+        std::string error;
+        bool success = false;
+    };
+
+    struct CaptureCompletionQueue {
+        std::mutex mutex;
+        std::condition_variable pendingCv;
+        std::vector<CaptureCompletion> completed;
+        std::size_t pendingWrites = 0u;
+        std::mutex writerMutex;
+    };
+
     [[nodiscard]] static std::filesystem::file_time_type fileWriteTime(const std::filesystem::path& path) noexcept;
     [[nodiscard]] static std::vector<WatchedPathStamp> collectAssetStamps(const VisualPackManifest& manifest);
     [[nodiscard]] static bool watchedAssetChanged(const LoadedPack& pack) noexcept;
@@ -172,6 +212,10 @@ private:
     mutable std::string lastError_;
     EventSink eventSink_;
     ImageDecoder* imageDecoder_ = nullptr;  // Phase 32 async decode
+    BackgroundTaskService* backgroundTaskService_ = nullptr;
+    std::optional<std::future<ReloadResult>> pendingReload_;
+    std::unordered_map<std::string, PendingImageDecode> pendingImageDecodes_;
+    std::shared_ptr<CaptureCompletionQueue> captureCompletions_ = std::make_shared<CaptureCompletionQueue>();
 };
 
 } // namespace BMMQ

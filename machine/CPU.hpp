@@ -13,6 +13,8 @@ enum class ExecutionPathHint {
     Unknown,
     CanonicalFetchDecodeExecute,
     CpuOptimizedFastPath,
+    PortableIr,
+    NativeIr,
 };
 
 struct CpuFeedback {

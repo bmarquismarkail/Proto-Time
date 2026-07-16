@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <limits>
 #include <optional>
 #include <span>
@@ -46,17 +47,18 @@ constexpr std::array<BMMQ::IoRegionDescriptor, 7> kIoRegions{{
     return extension != ".sms"; // Game Boy ROMs allow saves, SMS typically doesn't
 }
 
-inline void flushSaveSnapshotViaBackground(
+[[nodiscard]] inline std::optional<CartridgeSaveManager::SaveSnapshot> flushSaveSnapshotViaBackground(
     BMMQ::BackgroundTaskService& backgroundTaskService,
     CartridgeSaveManager::SaveSnapshot snapshot)
 {
     auto sharedSnapshot = std::make_shared<CartridgeSaveManager::SaveSnapshot>(std::move(snapshot));
-    const bool queued = backgroundTaskService.submit([sharedSnapshot]() {
+    const bool queued = backgroundTaskService.submit(BMMQ::BackgroundJobCategory::SaveFlush, [sharedSnapshot]() {
         CartridgeSaveManager::flushSnapshot(*sharedSnapshot);
     });
     if (!queued) {
-        CartridgeSaveManager::flushSnapshot(*sharedSnapshot);
+        return std::move(*sharedSnapshot);
     }
+    return std::nullopt;
 }
 
 class StateWriter {
@@ -211,7 +213,7 @@ BMMQ::CpuFeedback readCpuFeedback(StateReader& reader)
     feedback.pcAfter = reader.u32();
     feedback.retiredCycles = reader.u32();
     const auto path = reader.u32();
-    if (path > static_cast<uint32_t>(BMMQ::ExecutionPathHint::CpuOptimizedFastPath)) {
+    if (path > static_cast<uint32_t>(BMMQ::ExecutionPathHint::NativeIr)) {
         throw std::invalid_argument("save state execution path invalid");
     }
     feedback.executionPath = static_cast<BMMQ::ExecutionPathHint>(path);
@@ -561,6 +563,44 @@ BMMQ::SaveStateChunk makeChunk(std::string name, std::vector<uint8_t> data)
     return chunk;
 }
 
+class StateFingerprintBuilder {
+public:
+    void add(std::string_view name, std::span<const uint8_t> data) noexcept
+    {
+        addU64(name.size());
+        addBytes(std::as_bytes(std::span(name.data(), name.size())));
+        addU64(data.size());
+        addBytes(std::as_bytes(data));
+    }
+
+    [[nodiscard]] std::string finish() const
+    {
+        std::ostringstream output;
+        output << std::hex << std::setfill('0') << std::setw(16) << hash_;
+        return output.str();
+    }
+
+private:
+    void addU64(std::uint64_t value) noexcept
+    {
+        std::array<std::byte, 8> encoded{};
+        for (std::size_t index = 0; index < encoded.size(); ++index) {
+            encoded[index] = static_cast<std::byte>((value >> (index * 8u)) & 0xFFu);
+        }
+        addBytes(encoded);
+    }
+
+    void addBytes(std::span<const std::byte> bytes) noexcept
+    {
+        for (const auto byte : bytes) {
+            hash_ ^= std::to_integer<std::uint8_t>(byte);
+            hash_ *= 1099511628211ull;
+        }
+    }
+
+    std::uint64_t hash_ = 14695981039346656037ull;
+};
+
 const BMMQ::SaveStateChunk& requireChunk(const BMMQ::SaveStateFile& state, std::string_view name)
 {
     const auto found = std::find_if(state.chunks.begin(), state.chunks.end(), [name](const auto& chunk) {
@@ -573,7 +613,9 @@ const BMMQ::SaveStateChunk& requireChunk(const BMMQ::SaveStateFile& state, std::
 }
 
 // Game Boy runtime context — mirrors GameGearRuntimeContext pattern.
-class GameBoyRuntimeContext final : public BMMQ::RuntimeContext {
+class GameBoyRuntimeContext final : public BMMQ::RuntimeContext,
+                                    public BMMQ::ITranslationCapability,
+                                    public BMMQ::IInvalidationCapability {
 public:
     GameBoyRuntimeContext(LR3592_PluginRuntime& runtime,
                           GameBoyMemoryMap& memoryMap,
@@ -616,8 +658,16 @@ public:
         if (!romLoaded_) {
             throw std::runtime_error("ROM is not loaded");
         }
+        if (fastExecutionAllowed() && runtime_.cpu().tryExecuteTranslatedBlock()) {
+            return runtime_.getLastFeedback();
+        }
         runtime_.cpu().fetchInto(cachedFetchBlock_);
-        return step(cachedFetchBlock_);
+        const auto feedback = step(cachedFetchBlock_);
+        if (fastExecutionAllowed() &&
+            feedback.executionPath == BMMQ::ExecutionPathHint::CpuOptimizedFastPath) {
+            runtime_.cpu().populateBlockCache(cachedFetchBlock_);
+        }
+        return feedback;
     }
 
     uint8_t read8(uint16_t address) const override {
@@ -737,13 +787,35 @@ public:
         return *activePolicy_;
     }
 
+    BMMQ::ITranslationCapability* translationCapability() override { return this; }
+    BMMQ::IInvalidationCapability* invalidationCapability() override { return this; }
+    const BMMQ::ITranslationCapability* translationCapability() const override { return this; }
+    const BMMQ::IInvalidationCapability* invalidationCapability() const override { return this; }
+
     void refreshExecutionMode() {
         allowFastPath_ = activePolicy_ != nullptr &&
-            activePolicy_->guarantee() != BMMQ::ExecutionGuarantee::BaselineFaithful;
+            activePolicy_->backend() != BMMQ::ExecutionBackend::Baseline;
     }
 
     [[nodiscard]] bool fastExecutionAllowed() const noexcept {
         return allowFastPath_;
+    }
+
+protected:
+    void beginExecutionSlice(const BMMQ::ExecutionBudget&) override {
+        runtime_.cpu().beginPortableIrExecutionSlice();
+    }
+
+    BMMQ::CpuFeedback stepWithinExecutionSlice() override {
+        if (fastExecutionAllowed() &&
+            runtime_.cpu().tryExecutePortableIrBlockInstruction()) {
+            return runtime_.getLastFeedback();
+        }
+        return step();
+    }
+
+    void endExecutionSlice() noexcept override {
+        runtime_.cpu().endPortableIrExecutionSlice();
     }
 
 private:
@@ -802,6 +874,7 @@ GameBoyMachine::GameBoyMachine() : impl_(std::make_unique<Impl>()) {
             ((address >= 0xFF00u && address < 0xFF80u) || address == 0xFFFFu)
                 ? impl_->memoryMap.read(address)
                 : value);
+        impl_->cpu.cpu().invalidateBlockCacheForWrite(address);
         impl_->cpu.cpu().syncCachedIoRegisterWrite(address, observedValue);
         if (address == 0xFF00u) {
             impl_->input.writeRegister(value);
@@ -829,9 +902,6 @@ GameBoyMachine::GameBoyMachine() : impl_(std::make_unique<Impl>()) {
         }
         if (address < 0x8000u || (address >= 0xA000u && address < 0xC000u)) {
             impl_->cartridge_.write(address, value);
-        }
-        if (address < 0x8000u) {
-            impl_->cpu.cpu().invalidateAllBlockCache();
         }
         if (address == 0xFF40u) {
             if (impl_->pluginManager.initialized()) {
@@ -944,6 +1014,7 @@ void GameBoyMachine::loadRom(const std::vector<uint8_t>& bytes) {
 
     // Initialize DMG startup registers
     auto& core = impl_->cpu.cpu();
+    core.invalidateAllBlockCache();
     core.setIme(false);
     core.setStopFlag(false);
     core.clearHaltFlag();
@@ -1024,6 +1095,7 @@ void GameBoyMachine::loadExternalBootRom(const std::vector<uint8_t>& bytes) {
     impl_->memoryMap.mapBootRom(bytes.data(), bytes.size());
     impl_->memoryMap.setIoRegisterRaw(0xFF50u, 0x00u);
     impl_->context->writeRegister16(GB::RegisterId::PC, 0x0000u);
+    impl_->cpu.cpu().invalidateAllBlockCache();
 }
 
 void GameBoyMachine::setRomSourcePath(const std::optional<std::filesystem::path>& path) {
@@ -1050,9 +1122,22 @@ std::span<const BMMQ::IoRegionDescriptor> GameBoyMachine::describeIoRegions() co
     return kIoRegions;
 }
 
-void GameBoyMachine::attachExecutorPolicy(BMMQ::Plugin::IExecutorPolicyPlugin& policy) {
-    BMMQ::Plugin::validateExecutorPolicyStartup(policy);
-    impl_->activePolicy = &policy;
+void GameBoyMachine::attachExecutorPolicy(const BMMQ::Plugin::IExecutorPolicyPlugin& policy) {
+    BMMQ::Plugin::validateExecutorPolicyForRuntime(policy, *impl_->context);
+    auto owned = policy.clone();
+    if (!owned) {
+        throw std::runtime_error("executor policy clone returned null");
+    }
+    BMMQ::Plugin::validateExecutorPolicyForRuntime(*owned, *impl_->context);
+    const auto backend = owned->backend();
+    if (backend == BMMQ::ExecutionBackend::NativeExperimental && !nativeIrSupported()) {
+        throw std::runtime_error("native IR requires an x86-64 POSIX host");
+    }
+    impl_->ownedPolicy = std::move(owned);
+    impl_->activePolicy = impl_->ownedPolicy.get();
+    setBlockCacheEnabled(backend != BMMQ::ExecutionBackend::Baseline);
+    setPortableIrEnabled(backend == BMMQ::ExecutionBackend::PortableIr);
+    setNativeIrEnabled(backend == BMMQ::ExecutionBackend::NativeExperimental);
     impl_->context->refreshExecutionMode();
 }
 
@@ -1060,26 +1145,28 @@ const BMMQ::Plugin::IExecutorPolicyPlugin& GameBoyMachine::attachedExecutorPolic
     return *impl_->activePolicy;
 }
 
-void GameBoyMachine::step() {
+BMMQ::ExecutionSliceResult GameBoyMachine::runSlice(
+    const BMMQ::ExecutionBudget& budget,
+    BMMQ::InstructionRetirementSink* observer) {
     if (impl_->bootEntryPending) {
         impl_->bootEntryPending = false;
         impl_->context->writeRegister16(GB::RegisterId::PC, 0x0100u);
-        return;
+        BMMQ::ExecutionSliceResult result;
+        result.exitReason = BMMQ::ExecutionSliceExitReason::MachineBoundary;
+        return result;
     }
-    // Handle boot entry pending (FF50 write during boot ROM)
-    // In the new architecture, boot ROM is handled by memory map intercept
-    // The CPU's handleMemoryWrite will catch FF50 writes
+    return BMMQ::Machine::runSlice(budget, observer);
+}
 
-    auto fetchBlock = impl_->context->fetch();
-    if (!impl_->context->fastExecutionAllowed() ||
-        !impl_->cpu.cpu().tryExecuteFromCache(fetchBlock)) {
-        impl_->context->step(fetchBlock);
-        if (impl_->context->fastExecutionAllowed()) {
-            impl_->cpu.cpu().populateBlockCache(fetchBlock);
-        }
-    }
+void GameBoyMachine::step() {
+    (void)runSlice(BMMQ::ExecutionBudget{});
+}
+
+BMMQ::InstructionRetirementDecision GameBoyMachine::onInstructionRetired(
+    const BMMQ::CpuFeedback& feedback,
+    const BMMQ::ExecutionSliceProgress&)
+{
     ++impl_->stepCounter;
-    const auto& feedback = impl_->context->getLastFeedback();
 
     // Advance PPU by retired cycles
     impl_->ppu.step(feedback.retiredCycles);
@@ -1124,9 +1211,16 @@ void GameBoyMachine::step() {
         if (impl_->backgroundTaskService == nullptr) {
             (void)flushCartridgeSave();
         } else {
-            auto extracted = impl_->saveManager.extractDirtySaveSnapshot(impl_->cartridge_);
-            if (extracted.has_value()) {
-                flushSaveSnapshotViaBackground(*impl_->backgroundTaskService, std::move(*extracted));
+            if (impl_->pendingSaveSnapshot.has_value()) {
+                impl_->pendingSaveSnapshot = flushSaveSnapshotViaBackground(
+                    *impl_->backgroundTaskService, std::move(*impl_->pendingSaveSnapshot));
+            }
+            if (!impl_->pendingSaveSnapshot.has_value()) {
+                auto extracted = impl_->saveManager.extractDirtySaveSnapshot(impl_->cartridge_);
+                if (extracted.has_value()) {
+                    impl_->pendingSaveSnapshot = flushSaveSnapshotViaBackground(
+                        *impl_->backgroundTaskService, std::move(*extracted));
+                }
             }
         }
     }
@@ -1151,12 +1245,29 @@ void GameBoyMachine::step() {
     // Periodic save flush
     if ((impl_->stepCounter % 4096u) == 0u) {
         if (impl_->backgroundTaskService != nullptr) {
-            auto extracted = impl_->saveManager.extractDirtySaveSnapshot(impl_->cartridge_);
-            if (extracted.has_value()) {
-                flushSaveSnapshotViaBackground(*impl_->backgroundTaskService, std::move(*extracted));
+            if (impl_->pendingSaveSnapshot.has_value()) {
+                impl_->pendingSaveSnapshot = flushSaveSnapshotViaBackground(
+                    *impl_->backgroundTaskService, std::move(*impl_->pendingSaveSnapshot));
+            }
+            if (!impl_->pendingSaveSnapshot.has_value()) {
+                auto extracted = impl_->saveManager.extractDirtySaveSnapshot(impl_->cartridge_);
+                if (extracted.has_value()) {
+                    impl_->pendingSaveSnapshot = flushSaveSnapshotViaBackground(
+                        *impl_->backgroundTaskService, std::move(*extracted));
+                }
             }
         }
     }
+
+    // Conservatively leave a multi-instruction slice whenever a device-visible
+    // interrupt is pending. The next CPU entry owns the exact IME/HALT decision.
+    const auto pendingInterrupts = static_cast<uint8_t>(
+        impl_->context->read8(0xFF0Fu) & impl_->context->read8(0xFFFFu) & 0x1Fu);
+    if (pendingInterrupts != 0u) {
+        return BMMQ::InstructionRetirementDecision::exitSlice(
+            BMMQ::ExecutionSliceExitReason::MachineBoundary);
+    }
+    return BMMQ::InstructionRetirementDecision::continueSlice();
 }
 
 void GameBoyMachine::serviceInput() {
@@ -1244,10 +1355,47 @@ std::optional<BMMQ::VideoDebugFrameModel> GameBoyMachine::videoDebugFrameModel(
     return gameBoyVisualDebugAdapter().buildFrameModel(*this, request);
 }
 
-std::optional<BMMQ::RealtimeVideoPacket> GameBoyMachine::realtimeVideoPacket(
+std::optional<BMMQ::RealtimeVideoSubmission> GameBoyMachine::realtimeVideoPacket(
     const BMMQ::VideoDebugRenderRequest& request) const
 {
     return impl_->ppu.buildRealtimeFrame(request);
+}
+
+std::optional<BMMQ::VideoStateView> GameBoyMachine::videoStateSnapshot() const
+{
+    BMMQ::VideoStateView state;
+    for (const auto& region : describeIoRegions()) {
+        if (region.category != BMMQ::PluginCategory::Video) {
+            continue;
+        }
+        if (region.label == "VRAM") {
+            state.vramRegion = region;
+        } else if (region.label == "OAM") {
+            state.oamRegion = region;
+        } else if (region.label == "LCD Registers") {
+            state.registerRegion = region;
+        }
+    }
+    if (state.vramRegion.size == 0u || state.oamRegion.size == 0u || state.registerRegion.size == 0u) {
+        return std::nullopt;
+    }
+
+    const auto vram = impl_->memoryMap.vramSpan();
+    const auto oam = impl_->memoryMap.oamSpan();
+    state.vram.assign(vram.begin(), vram.end());
+    state.oam.assign(oam.begin(), oam.end());
+    state.lcdc = impl_->memoryMap.read(0xFF40u);
+    state.stat = impl_->memoryMap.read(0xFF41u);
+    state.scy = impl_->memoryMap.read(0xFF42u);
+    state.scx = impl_->memoryMap.read(0xFF43u);
+    state.ly = impl_->memoryMap.read(0xFF44u);
+    state.lyc = impl_->memoryMap.read(0xFF45u);
+    state.bgp = impl_->memoryMap.read(0xFF47u);
+    state.obp0 = impl_->memoryMap.read(0xFF48u);
+    state.obp1 = impl_->memoryMap.read(0xFF49u);
+    state.wy = impl_->memoryMap.read(0xFF4Au);
+    state.wx = impl_->memoryMap.read(0xFF4Bu);
+    return state;
 }
 
 std::optional<BMMQ::RealtimeAudioPacket> GameBoyMachine::realtimeAudioPacket() const {
@@ -1265,6 +1413,15 @@ bool GameBoyMachine::flushCartridgeSave() {
     if (!extracted.has_value()) return false;
     GB::CartridgeSaveManager::flushSnapshot(std::move(*extracted));
     return true;
+}
+
+void GameBoyMachine::flushPendingBackgroundWork()
+{
+    if (impl_->pendingSaveSnapshot.has_value()) {
+        CartridgeSaveManager::flushSnapshot(*impl_->pendingSaveSnapshot);
+        impl_->pendingSaveSnapshot.reset();
+    }
+    (void)flushCartridgeSave();
 }
 
 uint16_t GameBoyMachine::readRegisterPair(std::string_view id) const {
@@ -1311,11 +1468,41 @@ void GameBoyMachine::setJoypadState(uint8_t value) {
 
 GameBoyMachine::BlockCacheStats GameBoyMachine::blockCacheStats() const {
     const auto stats = impl_->cpu.cpu().blockCacheStats();
-    return BlockCacheStats{
-        stats.hits.load(std::memory_order_relaxed),
-        stats.misses.load(std::memory_order_relaxed),
-        stats.invalidations.load(std::memory_order_relaxed)
+    BlockCacheStats result{
+        stats.hits,
+        stats.misses,
+        stats.invalidations,
+        stats.translations,
+        stats.translatedInstructions,
+        stats.guardFailures,
+        stats.chainContinuations,
+        stats.unsupportedFallbacks,
+        stats.irTranslations,
+        stats.irExecutions,
+        stats.irGuardFailures,
+        stats.irFallbacks,
+        stats.irLoweredInstructions,
+        stats.irIneligibleTranslations,
+        stats.irLoweringNanos,
+        stats.irGuardChecks,
+        stats.irGuardCheckNanos,
+        stats.irExecutionNanos,
+        stats.irBlockEntries,
+        stats.irBlockContinuations,
+        stats.irBlockContinuationRejects
     };
+    result.fastEligibilityStops.store(stats.fastEligibilityStops);
+    result.invalidationRequests.store(stats.invalidationRequests);
+    result.invalidationPageSkips.store(stats.invalidationPageSkips);
+    result.invalidationScans.store(stats.invalidationScans);
+    result.invalidationBlocksExamined.store(stats.invalidationBlocksExamined);
+    for (std::size_t opcode = 0u; opcode < 256u; ++opcode) {
+        result.unsupportedFallbackOpcodes[opcode].store(
+            stats.unsupportedFallbackOpcodes[opcode]);
+        result.fastEligibilityStopOpcodes[opcode].store(
+            stats.fastEligibilityStopOpcodes[opcode]);
+    }
+    return result;
 }
 
 bool GameBoyMachine::blockCacheEnabled() const {
@@ -1324,6 +1511,37 @@ bool GameBoyMachine::blockCacheEnabled() const {
 
 void GameBoyMachine::setBlockCacheEnabled(bool enabled) {
     impl_->cpu.cpu().setBlockCacheEnabled(enabled);
+}
+
+bool GameBoyMachine::portableIrEnabled() const {
+    return impl_->cpu.cpu().portableIrEnabled();
+}
+
+void GameBoyMachine::setPortableIrEnabled(bool enabled) {
+    impl_->cpu.cpu().setPortableIrEnabled(enabled);
+}
+
+bool GameBoyMachine::nativeIrEnabled() const {
+    return impl_->cpu.cpu().nativeIrEnabled();
+}
+
+bool GameBoyMachine::nativeIrSupported() const {
+    return LR3592_DMG::nativeIrSupported();
+}
+
+void GameBoyMachine::setNativeIrEnabled(bool enabled) {
+    if (enabled && !nativeIrSupported()) {
+        throw std::runtime_error("native IR requires an x86-64 POSIX host");
+    }
+    impl_->cpu.cpu().setNativeIrEnabled(enabled);
+}
+
+bool GameBoyMachine::detailedIrTimingEnabled() const {
+    return impl_->cpu.cpu().detailedIrTimingEnabled();
+}
+
+void GameBoyMachine::setDetailedIrTimingEnabled(bool enabled) {
+    impl_->cpu.cpu().setDetailedIrTimingEnabled(enabled);
 }
 
 void GameBoyMachine::save_state(const std::filesystem::path& path) {
@@ -1357,6 +1575,52 @@ void GameBoyMachine::save_state(const std::filesystem::path& path) {
     state.chunks.push_back(makeChunk("gb.mapper", serializeMapperState(impl_->mapper.exportState())));
     state.chunks.push_back(makeChunk("gb.cartridge", serializeCartridgeState(impl_->cartridge_.exportState())));
     BMMQ::SaveStateReader::write(state, path);
+}
+
+std::string GameBoyMachine::deterministicStateFingerprint() const {
+    if (!impl_->romLoaded) {
+        throw std::runtime_error("Cannot fingerprint Game Boy state before ROM is loaded");
+    }
+
+    StateWriter machineWriter;
+    machineWriter.u64(impl_->stepCounter);
+    machineWriter.u64(impl_->lastAudioFrameCounter);
+    machineWriter.boolean(impl_->bootEntryPending);
+    machineWriter.boolean(impl_->interruptRequested);
+    machineWriter.boolean(impl_->lastDigitalInputMask.has_value());
+    if (impl_->lastDigitalInputMask.has_value()) {
+        machineWriter.u32(*impl_->lastDigitalInputMask);
+    }
+    machineWriter.u64(impl_->inputGeneration);
+
+    auto cpuState = impl_->cpu.cpu().exportState();
+    cpuState.feedback.executionPath = BMMQ::ExecutionPathHint::Unknown;
+
+    StateFingerprintBuilder fingerprint;
+    const auto romCrc = BMMQ::crc32(impl_->mapper.romData().data(), impl_->mapper.romData().size());
+    const std::array<uint8_t, 4> romHash{
+        static_cast<uint8_t>(romCrc),
+        static_cast<uint8_t>(romCrc >> 8u),
+        static_cast<uint8_t>(romCrc >> 16u),
+        static_cast<uint8_t>(romCrc >> 24u),
+    };
+    fingerprint.add("rom.crc32", romHash);
+    fingerprint.add("gb.machine", machineWriter.bytes());
+    const auto cpu = serializeCpuState(cpuState);
+    fingerprint.add("gb.cpu", cpu);
+    const auto memory = impl_->memoryMap.exportState();
+    fingerprint.add("gb.memory", memory);
+    const auto ppu = impl_->ppu.exportState();
+    fingerprint.add("gb.ppu", ppu);
+    const auto apu = serializeApuState(impl_->apu.exportState());
+    fingerprint.add("gb.apu", apu);
+    const auto input = impl_->input.exportState();
+    fingerprint.add("gb.input", input);
+    const auto mapper = serializeMapperState(impl_->mapper.exportState());
+    fingerprint.add("gb.mapper", mapper);
+    const auto cartridge = serializeCartridgeState(impl_->cartridge_.exportState());
+    fingerprint.add("gb.cartridge", cartridge);
+    return fingerprint.finish();
 }
 
 void GameBoyMachine::load_state(const std::filesystem::path& path) {
@@ -1395,13 +1659,43 @@ void GameBoyMachine::load_state(const std::filesystem::path& path) {
         throw std::invalid_argument("Game Boy machine save state has trailing data");
     }
 
-    impl_->mapper.importState(deserializeMapperState(mapperData));
-    impl_->cartridge_.importState(deserializeCartridgeState(cartridgeData));
-    impl_->memoryMap.importState(memoryData);
-    impl_->ppu.importState(ppuData);
-    impl_->apu.importState(deserializeApuState(apuData));
-    impl_->input.importState(inputData);
-    impl_->cpu.cpu().importState(deserializeCpuState(cpuData));
+    // Stage all imports into temporaries so a failure leaves impl_ unchanged.
+    GameBoyMapper::SaveState mapperState = deserializeMapperState(mapperData);
+    GameBoyCartridge::State cartridgeState = deserializeCartridgeState(cartridgeData);
+    GB::GameBoyCartridge nextCartridge = impl_->cartridge_;
+    nextCartridge.importState(cartridgeState);
+
+    GB::GameBoyMapper nextMapper = impl_->mapper;
+    std::vector<uint8_t> romData(impl_->mapper.romData().begin(), impl_->mapper.romData().end());
+    nextMapper.load(romData);
+    nextMapper.importState(mapperState);
+
+    GB::GameBoyAPU nextApu = impl_->apu;
+    nextApu.importState(deserializeApuState(apuData));
+
+    GB::GameBoyPPU nextPpu = impl_->ppu;
+    nextPpu.importState(ppuData);
+
+    GB::GameBoyInput nextInput = impl_->input;
+    nextInput.importState(inputData);
+
+    LR3592_DMG::SaveState cpuState = deserializeCpuState(cpuData);
+    LR3592_DMG::validateState(cpuState);
+    GameBoyMemoryMap nextMemoryMap;
+    nextMemoryMap.importState(memoryData);
+
+    // Preserve the existing memory write observer across the memory-map replacement.
+    const auto preservedWriteObserver = impl_->memoryMap.writeObserver();
+
+    // Commit staged state into the live machine only after all imports succeeded.
+    impl_->mapper = std::move(nextMapper);
+    impl_->cartridge_ = std::move(nextCartridge);
+    impl_->memoryMap = std::move(nextMemoryMap);
+    impl_->memoryMap.setWriteObserver(std::move(preservedWriteObserver));
+    impl_->ppu = std::move(nextPpu);
+    impl_->apu = std::move(nextApu);
+    impl_->input = std::move(nextInput);
+    impl_->cpu.cpu().importState(cpuState);
 
     impl_->stepCounter = stepCounter;
     impl_->lastAudioFrameCounter = lastAudioFrameCounter;
