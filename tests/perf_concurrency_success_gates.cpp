@@ -131,7 +131,8 @@ int main()
                                 audioDurations.size() == 2'000u &&
                                 audioStats.underrunCount == 0u &&
                                 audioStats.silenceSamplesFilled == 0u &&
-                                audioStats.drainCallbackDurationP99Nanos <= kAudioCallbackP99LimitNs;
+                                (!kEnforceWallClockThresholds ||
+                                 audioStats.drainCallbackDurationP99Nanos <= kAudioCallbackP99LimitNs);
     std::cout << "gate audio_integrity underruns=" << audioStats.underrunCount
               << " silence_samples=" << audioStats.silenceSamplesFilled
               << " diagnostics_p99_bound_ns=" << audioStats.drainCallbackDurationP99Nanos
