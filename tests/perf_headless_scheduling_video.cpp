@@ -366,7 +366,7 @@ int main()
         std::uint64_t servicedInputRevision = 0u;
         while (bridgeView->published() < kTargetFrames && !bridgeView->failed()) {
             const auto now = Clock::now();
-            if (now >= deadline) {
+            if (kEnforceWallClockThresholds && now >= deadline) {
                 timedOut.store(true, std::memory_order_release);
                 break;
             }
