@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <condition_variable>
 #include <filesystem>
 #include <functional>
 #include <future>
@@ -167,7 +168,9 @@ private:
 
     struct CaptureCompletionQueue {
         std::mutex mutex;
+        std::condition_variable pendingCv;
         std::vector<CaptureCompletion> completed;
+        std::size_t pendingWrites = 0u;
         std::mutex writerMutex;
     };
 

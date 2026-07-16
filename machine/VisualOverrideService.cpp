@@ -361,7 +361,12 @@ bool VisualOverrideService::beginCapture(const std::filesystem::path& directory,
 void VisualOverrideService::endCapture() noexcept
 {
     if (backgroundTaskService_ != nullptr) {
-        (void)backgroundTaskService_->waitUntilIdle(std::chrono::seconds(10));
+        std::unique_lock<std::mutex> completionLock(captureCompletions_->mutex);
+        (void)captureCompletions_->pendingCv.wait_for(
+            completionLock, std::chrono::seconds(10), [this]() {
+                return captureCompletions_->pendingWrites == 0u;
+            });
+        completionLock.unlock();
         (void)pollBackgroundWork();
     }
     if (captureManifestDirty_) {
@@ -395,6 +400,10 @@ bool VisualOverrideService::observe(const DecodedVisualResource& resource)
     if (backgroundTaskService_ != nullptr) {
         auto completions = captureCompletions_;
         auto taskResource = resource;
+        {
+            std::lock_guard<std::mutex> completionLock(completions->mutex);
+            ++completions->pendingWrites;
+        }
         const bool queued = backgroundTaskService_->submit(BackgroundJobCategory::VisualCapture,
             [completions, resourceDir, fileName, relativePath, key, taskResource = std::move(taskResource)]() mutable {
                 CaptureCompletion completion{
@@ -415,8 +424,15 @@ bool VisualOverrideService::observe(const DecodedVisualResource& resource)
                 }
                 std::lock_guard<std::mutex> completionLock(completions->mutex);
                 completions->completed.push_back(std::move(completion));
+                --completions->pendingWrites;
+                completions->pendingCv.notify_all();
             });
         if (!queued) {
+            {
+                std::lock_guard<std::mutex> completionLock(completions->mutex);
+                --completions->pendingWrites;
+                completions->pendingCv.notify_all();
+            }
             captureSeen_.erase(key);
             ++diagnostics_.asyncCaptureRejected;
         }
