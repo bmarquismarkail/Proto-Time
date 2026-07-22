@@ -1003,6 +1003,7 @@ void GameBoyMachine::loadRom(const std::vector<uint8_t>& bytes) {
     impl_->lastDigitalInputMask.reset();
     impl_->stepCounter = 0u;
     impl_->lastAudioFrameCounter = 0u;
+    impl_->realtimeAudioPacketCache.reset();
     impl_->bootEntryPending = false;
 
     std::array<uint8_t, 0x4000> fixedWindow{};
@@ -1229,7 +1230,12 @@ BMMQ::InstructionRetirementDecision GameBoyMachine::onInstructionRetired(
     const auto audioFrameCounter = impl_->apu.frameCounter();
     if (audioFrameCounter != impl_->lastAudioFrameCounter) {
         impl_->lastAudioFrameCounter = audioFrameCounter;
+        impl_->realtimeAudioPacketCache.reset();
         if (impl_->pluginManager.initialized()) {
+            // Build one immutable packet for the complete plugin dispatch. The
+            // APU pending buffers are consumptive, while MachineView may have
+            // multiple audio clients (for example PCM transport plus PSG-to-MIDI).
+            (void)realtimeAudioPacket();
             impl_->pluginManager.emit(view(), BMMQ::MachineEvent{
                 BMMQ::MachineEventType::AudioFrameReady,
                 BMMQ::PluginCategory::Audio,
@@ -1399,6 +1405,9 @@ std::optional<BMMQ::VideoStateView> GameBoyMachine::videoStateSnapshot() const
 }
 
 std::optional<BMMQ::RealtimeAudioPacket> GameBoyMachine::realtimeAudioPacket() const {
+    if (impl_->realtimeAudioPacketCache.has_value()) {
+        return impl_->realtimeAudioPacketCache;
+    }
     BMMQ::RealtimeAudioPacket packet;
     packet.sampleRate = impl_->apu.sampleRate();
     packet.channelCount = 1u;
@@ -1412,7 +1421,8 @@ std::optional<BMMQ::RealtimeAudioPacket> GameBoyMachine::realtimeAudioPacket() c
     packet.voiceStems = impl_->apu.copyPendingVoiceStems();
     packet.events = impl_->apu.takePendingEvents(packet.firstSampleFrame);
     packet.pcmSamples = impl_->apu.takePendingSamples();
-    return packet;
+    impl_->realtimeAudioPacketCache = std::move(packet);
+    return impl_->realtimeAudioPacketCache;
 }
 
 bool GameBoyMachine::flushCartridgeSave() {
@@ -1707,6 +1717,7 @@ void GameBoyMachine::load_state(const std::filesystem::path& path) {
 
     impl_->stepCounter = stepCounter;
     impl_->lastAudioFrameCounter = lastAudioFrameCounter;
+    impl_->realtimeAudioPacketCache.reset();
     impl_->bootEntryPending = bootEntryPending;
     impl_->interruptRequested = interruptRequested;
     impl_->lastDigitalInputMask = lastDigitalInputMask;

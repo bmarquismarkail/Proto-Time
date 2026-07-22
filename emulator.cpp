@@ -44,6 +44,7 @@
 #include "machine/plugins/audio_output/DummyAudioOutput.hpp"
 #include "machine/plugins/audio_output/FileAudioOutput.hpp"
 #include "machine/plugins/audio/AudioTransportPlugin.hpp"
+#include "machine/plugins/audio/PsgMidiPlugin.hpp"
 #include "machine/TimingService.hpp"
 #include "cores/gameboy/GameBoyMachine.hpp"
 using GameBoyMachine = GB::GameBoyMachine;
@@ -95,6 +96,8 @@ void printUsage(std::string_view program)
               << "                     Load an audio output from a pure-C ABI module\n"
               << "  --audio-file <path>\n"
               << "                     Raw signed 16-bit PCM path for the file backend\n"
+              << "  --midi-file <path>\n"
+              << "                     Translate PSG events to a Standard MIDI File\n"
               << "  --audio-ready-queue-chunks <n>\n"
               << "  --audio-batch-chunks <n>\n"
               << "                     Audio output ready-queue chunk depth (1-64, default: 3)\n"
@@ -846,7 +849,12 @@ int main(int argc, char** argv)
             audioTransport = transport.get();
             machine.pluginManager().add(std::move(transport));
         }
-        if (frontend != nullptr || audioTransport != nullptr) {
+        if (options.midiOutputFilePath.has_value()) {
+            auto sink = std::make_unique<BMMQ::MidiFileSink>(*options.midiOutputFilePath);
+            machine.pluginManager().add(std::make_unique<BMMQ::PsgMidiPlugin>(std::move(sink)));
+            std::cout << "MIDI output: " << *options.midiOutputFilePath << '\n';
+        }
+        if (frontend != nullptr || audioTransport != nullptr || options.midiOutputFilePath.has_value()) {
             machine.pluginManager().initialize(machine.mutableView());
         }
         if (frontend != nullptr) {

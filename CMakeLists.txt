@@ -127,6 +127,9 @@ target_link_libraries(time-audio-output-loader PUBLIC time-dynamic-plugin-loader
 add_library(time-audio-transport-plugin
     machine/plugins/audio/AudioTransportPlugin.cpp)
 target_link_libraries(time-audio-transport-plugin PUBLIC time-machine-runtime-common)
+add_library(time-psg-midi-plugin
+    machine/plugins/audio/PsgMidiPlugin.cpp)
+target_link_libraries(time-psg-midi-plugin PUBLIC time-machine-runtime-common)
 add_library(time-emulator-config STATIC
     emulator/EmulatorConfig.cpp
 )
@@ -162,7 +165,7 @@ set_target_properties(time-file-audio-output PROPERTIES POSITION_INDEPENDENT_COD
 set_target_properties(time-headless-video-adapter PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_executable(timeEmulator emulator.cpp)
 target_link_libraries(timeEmulator PRIVATE time-emulator-host time-frontend-loader
-    time-audio-output-loader time-audio-transport-plugin
+    time-audio-output-loader time-audio-transport-plugin time-psg-midi-plugin
     time-dummy-audio-output time-file-audio-output)
 
 if (PROTO_TIME_BUILD_SDL_FRONTEND)
@@ -362,6 +365,10 @@ add_test(NAME smoke-gamegear-vdp-cache COMMAND time-smoke-gamegear-vdp-cache)
 add_executable(time-smoke-gamegear-psg-subsystem tests/smoke_gamegear_psg_subsystem.cpp)
 target_link_libraries(time-smoke-gamegear-psg-subsystem time-gamegear-core)
 add_test(NAME smoke-gamegear-psg-subsystem COMMAND time-smoke-gamegear-psg-subsystem)
+add_executable(time-smoke-psg-midi-plugin tests/smoke_psg_midi_plugin.cpp)
+target_link_libraries(time-smoke-psg-midi-plugin
+    time-gameboy-interpreter-core time-gamegear-core time-psg-midi-plugin)
+add_test(NAME smoke-psg-midi-plugin COMMAND time-smoke-psg-midi-plugin)
 
 add_executable(time-smoke-gamegear-save-persistence tests/smoke_gamegear_save_persistence.cpp)
 target_link_libraries(time-smoke-gamegear-save-persistence time-gamegear-core)
