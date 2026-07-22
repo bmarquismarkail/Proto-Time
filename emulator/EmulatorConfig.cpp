@@ -177,6 +177,8 @@ void applyConfigValue(EmulatorConfig& config,
             config.audioOutputFilePath = resolveConfigPath(configDirectory, text);
         } else if (key == "midi_file") {
             config.midiOutputFilePath = resolveConfigPath(configDirectory, text);
+        } else if (key == "midi_output") {
+            config.midiOutputPort = text;
         } else if (key == "ready_queue_chunks") {
             const auto parsed = parseUnsigned(text, label);
             const auto clamped = std::min<std::uint64_t>(parsed, 64u);
@@ -350,6 +352,9 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     }
     if (overrides.midiOutputFilePath.has_value()) {
         config.midiOutputFilePath = *overrides.midiOutputFilePath;
+    }
+    if (overrides.midiOutputPort.has_value()) {
+        config.midiOutputPort = *overrides.midiOutputPort;
     }
     if (overrides.audioReadyQueueChunks.has_value()) {
         config.audioReadyQueueChunks =
@@ -590,6 +595,11 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
                 throw std::invalid_argument("--midi-file requires a path");
             }
             arguments.overrides.midiOutputFilePath = std::filesystem::path(argv[++i]);
+        } else if (arg == "--midi-output") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--midi-output requires an ALSA client:port or subscribers");
+            }
+            arguments.overrides.midiOutputPort = argv[++i];
         } else if (arg == "--audio-ready-queue-chunks") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--audio-ready-queue-chunks requires a positive integer");

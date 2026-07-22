@@ -45,6 +45,9 @@
 #include "machine/plugins/audio_output/FileAudioOutput.hpp"
 #include "machine/plugins/audio/AudioTransportPlugin.hpp"
 #include "machine/plugins/audio/PsgMidiPlugin.hpp"
+#if defined(BMMQ_HAS_ALSA_MIDI)
+#include "machine/plugins/audio/AlsaMidiSink.hpp"
+#endif
 #include "machine/TimingService.hpp"
 #include "cores/gameboy/GameBoyMachine.hpp"
 using GameBoyMachine = GB::GameBoyMachine;
@@ -98,6 +101,8 @@ void printUsage(std::string_view program)
               << "                     Raw signed 16-bit PCM path for the file backend\n"
               << "  --midi-file <path>\n"
               << "                     Translate PSG events to a Standard MIDI File\n"
+              << "  --midi-output <client:port|subscribers>\n"
+              << "                     Send PSG events to an ALSA MIDI interface\n"
               << "  --audio-ready-queue-chunks <n>\n"
               << "  --audio-batch-chunks <n>\n"
               << "                     Audio output ready-queue chunk depth (1-64, default: 3)\n"
@@ -854,7 +859,29 @@ int main(int argc, char** argv)
             machine.pluginManager().add(std::make_unique<BMMQ::PsgMidiPlugin>(std::move(sink)));
             std::cout << "MIDI output: " << *options.midiOutputFilePath << '\n';
         }
-        if (frontend != nullptr || audioTransport != nullptr || options.midiOutputFilePath.has_value()) {
+#if defined(BMMQ_HAS_ALSA_MIDI)
+        if (options.midiOutputPort.has_value()) {
+            BMMQ::AlsaMidiSinkConfig midiConfig;
+            if (*options.midiOutputPort != "subscribers") {
+                midiConfig.destination = *options.midiOutputPort;
+            }
+            auto alsaSink = std::make_unique<BMMQ::AlsaMidiSink>(std::move(midiConfig));
+            const auto sourceAddress = alsaSink->sourceAddress();
+            auto asyncSink = std::make_unique<BMMQ::AsyncMidiSink>(std::move(alsaSink));
+            machine.pluginManager().add(std::make_unique<BMMQ::PsgMidiPlugin>(std::move(asyncSink)));
+            std::cout << "MIDI interface: " << sourceAddress;
+            if (*options.midiOutputPort != "subscribers") {
+                std::cout << " -> " << *options.midiOutputPort;
+            }
+            std::cout << '\n';
+        }
+#else
+        if (options.midiOutputPort.has_value()) {
+            throw std::runtime_error("Live MIDI output requires an ALSA-enabled build");
+        }
+#endif
+        if (frontend != nullptr || audioTransport != nullptr ||
+            options.midiOutputFilePath.has_value() || options.midiOutputPort.has_value()) {
             machine.pluginManager().initialize(machine.mutableView());
         }
         if (frontend != nullptr) {

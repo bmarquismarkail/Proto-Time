@@ -38,6 +38,7 @@ struct EmulatorConfig {
     std::optional<std::filesystem::path> audioPluginPath;
     std::optional<std::filesystem::path> audioOutputFilePath;
     std::optional<std::filesystem::path> midiOutputFilePath;
+    std::optional<std::string> midiOutputPort;
     std::uint32_t audioReadyQueueChunks = 3;
     std::uint32_t audioBatchChunks = 1;
     std::vector<std::filesystem::path> audioProcessorPluginPaths;
@@ -74,6 +75,7 @@ struct CommandLineConfigOverrides {
     std::optional<std::filesystem::path> audioPluginPath;
     std::optional<std::filesystem::path> audioOutputFilePath;
     std::optional<std::filesystem::path> midiOutputFilePath;
+    std::optional<std::string> midiOutputPort;
     std::optional<std::uint32_t> audioReadyQueueChunks;
     std::optional<std::uint32_t> audioBatchChunks;
     std::optional<std::vector<std::filesystem::path>> audioProcessorPluginPaths;

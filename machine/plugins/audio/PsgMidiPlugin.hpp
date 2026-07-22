@@ -2,10 +2,13 @@
 #define BMMQ_PSG_MIDI_PLUGIN_HPP
 
 #include <array>
+#include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "machine/plugins/IoPlugin.hpp"
@@ -46,6 +49,47 @@ private:
     std::filesystem::path path_;
     std::vector<MidiMessage> messages_;
     bool flushed_ = false;
+};
+
+struct AsyncMidiSinkStats {
+    std::uint64_t enqueued = 0u;
+    std::uint64_t sent = 0u;
+    std::uint64_t dropped = 0u;
+    std::uint64_t errors = 0u;
+};
+
+// Bounded SPSC handoff from the emulation lane to a MIDI I/O worker. Wrap
+// device sinks with this adapter; file capture remains a detach-time operation.
+class AsyncMidiSink final : public IMidiMessageSink {
+public:
+    explicit AsyncMidiSink(std::unique_ptr<IMidiMessageSink> sink);
+    ~AsyncMidiSink() override;
+    AsyncMidiSink(const AsyncMidiSink&) = delete;
+    AsyncMidiSink& operator=(const AsyncMidiSink&) = delete;
+
+    void send(const MidiMessage& message) override;
+    void flush() override;
+    [[nodiscard]] AsyncMidiSinkStats stats() const noexcept;
+
+private:
+    void run() noexcept;
+    [[nodiscard]] bool empty() const noexcept;
+
+    static constexpr std::size_t kQueueSlots = 1024u;
+    std::unique_ptr<IMidiMessageSink> sink_;
+    std::array<MidiMessage, kQueueSlots> queue_{};
+    alignas(64) std::atomic<std::size_t> head_{0u};
+    alignas(64) std::atomic<std::size_t> tail_{0u};
+    std::atomic<bool> running_{true};
+    std::atomic<bool> inFlight_{false};
+    std::atomic<std::uint64_t> enqueued_{0u};
+    std::atomic<std::uint64_t> sent_{0u};
+    std::atomic<std::uint64_t> dropped_{0u};
+    std::atomic<std::uint64_t> errors_{0u};
+    std::mutex wakeMutex_;
+    std::condition_variable wakeCv_;
+    std::condition_variable drainedCv_;
+    std::thread worker_;
 };
 
 class PsgMidiPlugin final : public IAudioPlugin {

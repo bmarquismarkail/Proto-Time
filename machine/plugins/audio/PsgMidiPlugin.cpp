@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <mutex>
 #include <stdexcept>
 #include <utility>
 
@@ -128,6 +129,90 @@ void MidiFileSink::flush()
     output.write(reinterpret_cast<const char*>(file.data()), static_cast<std::streamsize>(file.size()));
     if (!output) throw std::runtime_error("Unable to write MIDI output: " + path_.string());
     flushed_ = true;
+}
+
+AsyncMidiSink::AsyncMidiSink(std::unique_ptr<IMidiMessageSink> sink) : sink_(std::move(sink))
+{
+    if (sink_ == nullptr) throw std::invalid_argument("Async MIDI sink must not be null");
+    worker_ = std::thread([this]() { run(); });
+}
+
+AsyncMidiSink::~AsyncMidiSink()
+{
+    try {
+        flush();
+    } catch (...) {
+        errors_.fetch_add(1u, std::memory_order_relaxed);
+    }
+    running_.store(false, std::memory_order_release);
+    wakeCv_.notify_one();
+    if (worker_.joinable()) worker_.join();
+}
+
+void AsyncMidiSink::send(const MidiMessage& message)
+{
+    const auto head = head_.load(std::memory_order_relaxed);
+    const auto next = (head + 1u) % kQueueSlots;
+    if (next == tail_.load(std::memory_order_acquire)) {
+        dropped_.fetch_add(1u, std::memory_order_relaxed);
+        return;
+    }
+    queue_[head] = message;
+    head_.store(next, std::memory_order_release);
+    enqueued_.fetch_add(1u, std::memory_order_relaxed);
+    wakeCv_.notify_one();
+}
+
+void AsyncMidiSink::flush()
+{
+    std::unique_lock<std::mutex> lock(wakeMutex_);
+    drainedCv_.wait(lock, [this]() {
+        return empty() && !inFlight_.load(std::memory_order_acquire);
+    });
+    lock.unlock();
+    sink_->flush();
+}
+
+AsyncMidiSinkStats AsyncMidiSink::stats() const noexcept
+{
+    return {
+        .enqueued = enqueued_.load(std::memory_order_relaxed),
+        .sent = sent_.load(std::memory_order_relaxed),
+        .dropped = dropped_.load(std::memory_order_relaxed),
+        .errors = errors_.load(std::memory_order_relaxed),
+    };
+}
+
+bool AsyncMidiSink::empty() const noexcept
+{
+    return head_.load(std::memory_order_acquire) == tail_.load(std::memory_order_acquire);
+}
+
+void AsyncMidiSink::run() noexcept
+{
+    while (running_.load(std::memory_order_acquire) || !empty()) {
+        {
+            std::unique_lock<std::mutex> lock(wakeMutex_);
+            wakeCv_.wait(lock, [this]() {
+                return !running_.load(std::memory_order_acquire) || !empty();
+            });
+        }
+        while (!empty()) {
+            const auto tail = tail_.load(std::memory_order_relaxed);
+            const auto message = queue_[tail];
+            inFlight_.store(true, std::memory_order_release);
+            tail_.store((tail + 1u) % kQueueSlots, std::memory_order_release);
+            try {
+                sink_->send(message);
+                sent_.fetch_add(1u, std::memory_order_relaxed);
+            } catch (...) {
+                errors_.fetch_add(1u, std::memory_order_relaxed);
+            }
+            inFlight_.store(false, std::memory_order_release);
+            drainedCv_.notify_all();
+        }
+    }
+    drainedCv_.notify_all();
 }
 
 PsgMidiPlugin::PsgMidiPlugin(std::unique_ptr<IMidiMessageSink> sink) : sink_(std::move(sink))

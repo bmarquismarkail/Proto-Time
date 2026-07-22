@@ -106,5 +106,19 @@ int main()
     assert(input.gcount() == static_cast<std::streamsize>(header.size()));
     assert(header[0] == 'M' && header[1] == 'T' && header[2] == 'h' && header[3] == 'd');
     std::filesystem::remove(midiPath);
+
+    auto workerTarget = std::make_unique<RecordingMidiSink>();
+    auto* workerRecording = workerTarget.get();
+    BMMQ::AsyncMidiSink asyncSink(std::move(workerTarget));
+    asyncSink.send({0u, 48000u, 0x90u, 60u, 100u, 3u});
+    asyncSink.send({1u, 48000u, 0x80u, 60u, 0u, 3u});
+    asyncSink.flush();
+    const auto asyncStats = asyncSink.stats();
+    assert(asyncStats.enqueued == 2u);
+    assert(asyncStats.sent == 2u);
+    assert(asyncStats.dropped == 0u);
+    assert(asyncStats.errors == 0u);
+    assert(workerRecording->messages.size() == 2u);
+    assert(workerRecording->flushed);
     return 0;
 }

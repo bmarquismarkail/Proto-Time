@@ -91,6 +91,7 @@ int main()
         CHECK_TRUE(!defaults.audioPluginPath.has_value());
         CHECK_TRUE(!defaults.audioOutputFilePath.has_value());
         CHECK_TRUE(!defaults.midiOutputFilePath.has_value());
+        CHECK_TRUE(!defaults.midiOutputPort.has_value());
         CHECK_TRUE(defaults.audioReadyQueueChunks == 3u);
         CHECK_TRUE(defaults.audioBatchChunks == 1u);
         CHECK_TRUE(defaults.backgroundWorkers == 0u);
@@ -130,6 +131,7 @@ int main()
         "plugin = plugins/audio.so\n"
         "output_file = captures/audio.pcm\n"
         "midi_file = captures/audio.mid\n"
+        "midi_output = 128:0\n"
         "ready_queue_chunks = 8\n"
         "batch_chunks = 4\n"
         "\n"
@@ -169,6 +171,7 @@ int main()
     CHECK_TRUE(fileConfig.audioPluginPath == tempDir / "plugins/audio.so");
     CHECK_TRUE(fileConfig.audioOutputFilePath == tempDir / "captures/audio.pcm");
     CHECK_TRUE(fileConfig.midiOutputFilePath == tempDir / "captures/audio.mid");
+    CHECK_TRUE(fileConfig.midiOutputPort == "128:0");
     CHECK_TRUE(fileConfig.audioReadyQueueChunks == 8u);
     CHECK_TRUE(fileConfig.audioBatchChunks == 4u);
     CHECK_TRUE(fileConfig.backgroundWorkers == 3u);
@@ -203,6 +206,7 @@ int main()
     overrides.audioPluginPath = std::filesystem::path("cli-audio.so");
     overrides.audioOutputFilePath = std::filesystem::path("cli-audio.pcm");
     overrides.midiOutputFilePath = std::filesystem::path("cli-audio.mid");
+    overrides.midiOutputPort = std::string("subscribers");
     overrides.audioReadyQueueChunks = 6u;
     overrides.audioBatchChunks = 3u;
     overrides.backgroundWorkers = 2u;
@@ -239,6 +243,7 @@ int main()
     CHECK_TRUE(fileConfig.audioPluginPath == "cli-audio.so");
     CHECK_TRUE(fileConfig.audioOutputFilePath == "cli-audio.pcm");
     CHECK_TRUE(fileConfig.midiOutputFilePath == "cli-audio.mid");
+    CHECK_TRUE(fileConfig.midiOutputPort == "subscribers");
     CHECK_TRUE(fileConfig.audioReadyQueueChunks == 6u);
     CHECK_TRUE(fileConfig.audioBatchChunks == 3u);
     CHECK_TRUE(fileConfig.backgroundWorkers == 2u);
@@ -449,6 +454,9 @@ int main()
     CHECK_TRUE(throwsInvalidArgumentContaining("--midi-file requires a path", [] {
         (void)parseArgs({"timeEmulator", "--midi-file"});
     }));
+    CHECK_TRUE(throwsInvalidArgumentContaining("--midi-output requires", [] {
+        (void)parseArgs({"timeEmulator", "--midi-output"});
+    }));
 
     const auto help = parseArgs({"timeEmulator", "--help", "--unknown-after-help"});
     CHECK_TRUE(help.helpRequested);
@@ -484,6 +492,7 @@ int main()
                              "--audio-plugin", "runtime-audio.so",
                              "--audio-file", "runtime-audio.pcm",
                              "--midi-file", "runtime-audio.mid",
+                             "--midi-output", "130:1",
                              "--audio-ready-queue-chunks", "12",
                              "--audio-batch-chunks", "5",
                              "--audio-processor-plugin", "processor-a.so",
@@ -507,6 +516,7 @@ int main()
     CHECK_TRUE(resolved.audioPluginPath == "runtime-audio.so");
     CHECK_TRUE(resolved.audioOutputFilePath == "runtime-audio.pcm");
     CHECK_TRUE(resolved.midiOutputFilePath == "runtime-audio.mid");
+    CHECK_TRUE(resolved.midiOutputPort == "130:1");
     CHECK_TRUE(resolved.audioReadyQueueChunks == 12u);
     CHECK_TRUE(resolved.audioBatchChunks == 5u);
     CHECK_TRUE(resolved.audioProcessorPluginPaths.size() == 2u);

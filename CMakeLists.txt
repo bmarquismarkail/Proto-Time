@@ -7,6 +7,7 @@ option(BMMQ_PROFILE_VDP_RENDER "Enable profiling-oriented compile flags for Game
 option(PROTO_TIME_BUILD_SDL_FRONTEND "Build the optional SDL frontend module" ON)
 option(PROTO_TIME_BUILD_SDL_AUDIO "Build the optional SDL audio-output module" ON)
 option(PROTO_TIME_BUILD_GLFW_FRONTEND "Build the optional GLFW frontend module" ON)
+option(PROTO_TIME_BUILD_ALSA_MIDI "Build live ALSA sequencer MIDI output" ON)
 
 if (PROTO_TIME_BUILD_SDL_FRONTEND OR PROTO_TIME_BUILD_SDL_AUDIO)
     find_package(SDL2 QUIET)
@@ -19,6 +20,9 @@ if (PROTO_TIME_BUILD_GLFW_FRONTEND AND (TARGET glfw OR TARGET glfw3::glfw))
     find_package(OpenGL QUIET)
 endif()
 find_package(ZLIB REQUIRED)
+if (PROTO_TIME_BUILD_ALSA_MIDI)
+    find_package(ALSA QUIET)
+endif()
 
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
@@ -167,6 +171,14 @@ add_executable(timeEmulator emulator.cpp)
 target_link_libraries(timeEmulator PRIVATE time-emulator-host time-frontend-loader
     time-audio-output-loader time-audio-transport-plugin time-psg-midi-plugin
     time-dummy-audio-output time-file-audio-output)
+if (PROTO_TIME_BUILD_ALSA_MIDI AND ALSA_FOUND)
+    add_library(time-alsa-midi-sink STATIC
+        machine/plugins/audio/AlsaMidiSink.cpp)
+    target_include_directories(time-alsa-midi-sink PRIVATE ${ALSA_INCLUDE_DIRS})
+    target_link_libraries(time-alsa-midi-sink PUBLIC time-psg-midi-plugin ${ALSA_LIBRARIES})
+    target_link_libraries(timeEmulator PRIVATE time-alsa-midi-sink)
+    target_compile_definitions(timeEmulator PRIVATE BMMQ_HAS_ALSA_MIDI=1)
+endif()
 
 if (PROTO_TIME_BUILD_SDL_FRONTEND)
     add_library(time-sdl-frontend-plugin SHARED
