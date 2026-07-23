@@ -152,13 +152,19 @@ private:
 
     void tickLengthCounters();
     void tickSweep();
-    void tickEnvelope(PulseChannel& channel);
-    void tickEnvelope(NoiseChannel& channel);
+    void tickEnvelope(PulseChannel& channel, std::uint8_t voice);
+    void tickEnvelope(NoiseChannel& channel, std::uint8_t voice);
     void stepFrameSequencer();
     [[nodiscard]] int16_t generateSample();
     void pushSample(int16_t sample, const std::array<int16_t, 4u>& stems);
     [[nodiscard]] std::array<int16_t, 4u> currentVoiceContributions() const noexcept;
     void recordWriteEvent(std::uint16_t address, std::uint8_t value);
+    void recordVoiceEvent(std::uint8_t voice, BMMQ::PsgEventKind kind,
+                          std::uint16_t rawAddress = 0u, std::uint8_t rawValue = 0u,
+                          bool hasRawWrite = false);
+    void recordRawWriteEvent(std::uint16_t address, std::uint8_t value);
+    [[nodiscard]] std::uint16_t effectiveVoiceLevelQ15(std::uint8_t voice) const noexcept;
+    [[nodiscard]] std::uint8_t voiceRoutingMask(std::uint8_t voice) const noexcept;
     [[nodiscard]] int currentPulseSample(const PulseChannel& channel) const noexcept;
     [[nodiscard]] int currentWaveSample() const noexcept;
     [[nodiscard]] int currentNoiseSample() const noexcept;

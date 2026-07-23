@@ -112,6 +112,7 @@ private:
         std::uint8_t channel = 0u;
         std::uint8_t velocity = 1u;
         std::uint8_t timbre = 0u;
+        std::uint16_t attackLevelQ15 = 1u;
     };
 
     void processEvent(const PsgAudioEvent& event, std::uint64_t sampleFrame,

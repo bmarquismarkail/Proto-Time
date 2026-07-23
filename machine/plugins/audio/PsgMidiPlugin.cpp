@@ -46,6 +46,13 @@ std::uint8_t velocityFromLevel(std::uint16_t levelQ15)
         (static_cast<std::uint32_t>(levelQ15) * 127u + 16383u) / 32767u, 1u, 127u));
 }
 
+std::uint8_t expressionFromLevel(std::uint16_t levelQ15, std::uint16_t attackLevelQ15)
+{
+    const auto attack = std::max<std::uint32_t>(attackLevelQ15, 1u);
+    return static_cast<std::uint8_t>(std::min<std::uint32_t>(
+        (static_cast<std::uint32_t>(levelQ15) * 127u + attack / 2u) / attack, 127u));
+}
+
 std::uint8_t melodicChannel(std::uint8_t voiceId)
 {
     auto channel = static_cast<std::uint8_t>(voiceId % 15u);
@@ -252,7 +259,6 @@ void PsgMidiPlugin::processEvent(const PsgAudioEvent& event, std::uint64_t sampl
     auto& voice = voices_[event.voiceId];
     voice.channel = event.voiceKind == PsgVoiceKind::Noise ? 9u : melodicChannel(event.voiceId);
     voice.gate = event.gate;
-    voice.velocity = velocityFromLevel(event.levelQ15);
     voice.timbre = event.timbre;
 
     switch (event.kind) {
@@ -273,8 +279,10 @@ void PsgMidiPlugin::processEvent(const PsgAudioEvent& event, std::uint64_t sampl
         if (event.gate) noteOn(voice, event, sampleFrame, sampleRate);
         break;
     case PsgEventKind::LevelChange:
-        emit(sampleFrame, sampleRate, static_cast<std::uint8_t>(0xB0u | voice.channel),
-             11u, static_cast<std::uint8_t>((static_cast<std::uint32_t>(event.levelQ15) * 127u) / 32767u));
+        if (voice.active) {
+            emit(sampleFrame, sampleRate, static_cast<std::uint8_t>(0xB0u | voice.channel),
+                 11u, expressionFromLevel(event.levelQ15, voice.attackLevelQ15));
+        }
         if (!event.gate) noteOff(voice, sampleFrame, sampleRate);
         break;
     case PsgEventKind::RoutingChange: {
@@ -304,7 +312,11 @@ void PsgMidiPlugin::noteOn(VoiceState& voice, const PsgAudioEvent& event,
     const auto note = noteFor(event);
     if (voice.active) noteOff(voice, sampleFrame, sampleRate);
     voice.note = note;
+    voice.attackLevelQ15 = std::max<std::uint16_t>(event.levelQ15, 1u);
+    voice.velocity = velocityFromLevel(event.levelQ15);
     const auto bend = pitchBendFor(event, note);
+    emit(sampleFrame, sampleRate, static_cast<std::uint8_t>(0xB0u | voice.channel),
+         11u, 127u);
     emit(sampleFrame, sampleRate, static_cast<std::uint8_t>(0xE0u | voice.channel),
          static_cast<std::uint8_t>(bend & 0x7Fu), static_cast<std::uint8_t>((bend >> 7u) & 0x7Fu));
     emit(sampleFrame, sampleRate, static_cast<std::uint8_t>(0x90u | voice.channel),
