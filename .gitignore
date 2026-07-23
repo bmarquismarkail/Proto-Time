@@ -14,3 +14,6 @@ __pycache__/
 mempalace.yaml
 entities.json
 .aider*
+
+# graphify knowledge-graph output (generated)
+graphify-out/
