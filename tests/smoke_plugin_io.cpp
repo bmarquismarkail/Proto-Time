@@ -158,10 +158,104 @@ struct FixedDigitalInputPlugin final : BMMQ::IDigitalInputPlugin {
     }
 };
 
+struct ReentrantAttachPlugin final : BMMQ::IPlugin {
+    ReentrantAttachPlugin(BMMQ::PluginManager& manager, std::vector<std::string>& attachmentOrder)
+        : manager(manager), attachmentOrder(attachmentOrder) {}
+
+    BMMQ::PluginManager& manager;
+    int attachCount = 0;
+    bool requestedNestedInitialize = false;
+    std::vector<std::string>& attachmentOrder;
+
+    std::string_view id() const override {
+        return "test.plugin.reentrant-attach";
+    }
+
+    void onAttach(BMMQ::MutableMachineView& view) override {
+        ++attachCount;
+        attachmentOrder.emplace_back("reentrant.begin");
+        if (!requestedNestedInitialize) {
+            requestedNestedInitialize = true;
+            manager.initialize(view);
+        }
+        attachmentOrder.emplace_back("reentrant.end");
+    }
+};
+
+struct OrderedAttachPlugin final : BMMQ::IPlugin {
+    explicit OrderedAttachPlugin(std::vector<std::string>& attachmentOrder)
+        : attachmentOrder(attachmentOrder) {}
+
+    std::vector<std::string>& attachmentOrder;
+
+    std::string_view id() const override {
+        return "test.plugin.ordered-attach";
+    }
+
+    void onAttach(BMMQ::MutableMachineView&) override {
+        attachmentOrder.emplace_back("ordered");
+    }
+};
+
+struct RetryAttachPlugin final : BMMQ::IPlugin {
+    int attachCount = 0;
+    bool shouldThrow = true;
+
+    std::string_view id() const override {
+        return "test.plugin.retry-attach";
+    }
+
+    void onAttach(BMMQ::MutableMachineView&) override {
+        ++attachCount;
+        if (shouldThrow) {
+            throw std::runtime_error("simulated attach failure");
+        }
+    }
+};
+
 } // namespace
 
 int main()
 {
+    {
+        GameBoyMachine reentrantMachine;
+        std::vector<std::string> attachmentOrder;
+        auto reentrantPlugin = std::make_unique<ReentrantAttachPlugin>(
+            reentrantMachine.pluginManager(), attachmentOrder);
+        auto* reentrant = reentrantPlugin.get();
+        reentrantMachine.pluginManager().add(std::move(reentrantPlugin));
+        reentrantMachine.pluginManager().add(std::make_unique<OrderedAttachPlugin>(attachmentOrder));
+
+        reentrantMachine.pluginManager().initialize(reentrantMachine.mutableView());
+
+        assert(reentrant->attachCount == 1);
+        assert((attachmentOrder == std::vector<std::string>{
+            "reentrant.begin", "reentrant.end", "ordered"}));
+    }
+
+    {
+        GameBoyMachine retryMachine;
+        auto retryPlugin = std::make_unique<RetryAttachPlugin>();
+        auto* retry = retryPlugin.get();
+        retryMachine.pluginManager().add(std::move(retryPlugin));
+
+        retryMachine.pluginManager().initialize(retryMachine.mutableView());
+        const auto failedStatus = retryMachine.pluginManager().statusFor(retry->id());
+        assert(failedStatus.has_value());
+        assert(!failedStatus->attached);
+        assert(failedStatus->disabled);
+        assert(failedStatus->failureCount == 1);
+
+        retry->shouldThrow = false;
+        assert(retryMachine.pluginManager().reenable(retry->id()));
+        retryMachine.pluginManager().initialize(retryMachine.mutableView());
+        const auto retriedStatus = retryMachine.pluginManager().statusFor(retry->id());
+        assert(retriedStatus.has_value());
+        assert(retriedStatus->attached);
+        assert(!retriedStatus->disabled);
+        assert(retry->attachCount == 2);
+    }
+
     GameBoyMachine machine;
     std::vector<uint8_t> cartridgeRom(0x8000, 0x00);
     cartridgeRom[0x0100] = 0x00;
