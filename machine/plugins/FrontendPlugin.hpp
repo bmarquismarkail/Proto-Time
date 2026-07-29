@@ -26,6 +26,10 @@ class DebugSnapshotService;
 struct FrontendConfig {
     std::string windowTitle = "T.I.M.E. Frontend";
     std::uint32_t windowScale = 2;
+    // HD texture replacement scale factor. When > 1, output frames are scaled
+    // by this factor and replaced tiles sample their replacement images at the
+    // higher resolution. Default 1 preserves existing behavior. Clamped to [1, 8].
+    std::uint32_t hdScale = 1;
     int frameWidth = 160;
     int frameHeight = 144;
     bool enableVideo = true;

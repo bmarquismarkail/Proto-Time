@@ -80,6 +80,7 @@ void printUsage(std::string_view program)
               << "                     Select a built-in or module executor policy ID\n"
               << "  --steps <count>    Stop after a fixed number of instruction steps\n"
               << "  --scale <n>        Frontend window scale factor (default: 3)\n"
+              << "  --hd-scale <n>     HD texture replacement scale (1-8, default: 1)\n"
               << "  --cpu-mode <mode>  CPU mode: baseline, block, ir, or native (experimental x86-64/POSIX)\n"
               << "  --cpu-detailed-timing\n"
               << "                     Enable intrusive IR guard/lowering/execution timers\n"
@@ -796,6 +797,8 @@ int main(int argc, char** argv)
         machine.videoService().setBackgroundTaskService(&backgroundTaskService);
         machine.visualOverrideService().setBackgroundTaskService(&backgroundTaskService);
         machine.visualOverrideService().setImageDecoder(&imageDecoder);
+        // Note: bootstrapMachine now configures hdScale into VideoService.
+        // Frontend propagation is handled via FrontendConfig.hdScale below.
         if (auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get());
             gameBoyMachine != nullptr) {
             gameBoyMachine->setBackgroundTaskService(&backgroundTaskService);
@@ -812,6 +815,7 @@ int main(int argc, char** argv)
             config.windowTitle = "Proto-Time - " + std::string(descriptor.displayName) +
                 " - " + options.romPath.filename().string();
             config.windowScale = std::max(options.windowScale, 1u);
+            config.hdScale = std::clamp(options.hdScale, 1u, 8u);
             config.frameWidth = descriptor.defaultFrameWidth;
             config.frameHeight = descriptor.defaultFrameHeight;
             config.autoInitializeBackend = true;

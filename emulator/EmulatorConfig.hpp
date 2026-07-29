@@ -24,6 +24,10 @@ struct EmulatorConfig {
     std::optional<std::string> executorPolicyId;
     std::optional<std::uint64_t> stepLimit;
     std::uint32_t windowScale = 3;
+    // HD texture replacement scale factor. When > 1, output frames are scaled
+    // by this factor and replaced tiles sample their replacement images at the
+    // higher resolution. Default 1 preserves existing behavior. Clamped to [1, 8].
+    std::uint32_t hdScale = 1;
     bool headless = false;
     std::string cpuMode = "baseline";
     bool cpuDetailedTiming = false;
@@ -61,6 +65,8 @@ struct CommandLineConfigOverrides {
     std::optional<std::string> executorPolicyId;
     std::optional<std::uint64_t> stepLimit;
     std::optional<std::uint32_t> windowScale;
+    // HD texture replacement scale factor. Clamped to [1, 8] on application.
+    std::optional<std::uint32_t> hdScale;
     std::optional<bool> headless;
     std::optional<std::string> cpuMode;
     std::optional<bool> cpuDetailedTiming;

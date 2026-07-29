@@ -151,8 +151,8 @@ public:
     explicit VideoService(VideoEngineConfig config)
         : engine_(std::move(config))
     {
-        presenterConfig_.frameWidth = engine_.config().frameWidth;
-        presenterConfig_.frameHeight = engine_.config().frameHeight;
+        presenterConfig_.frameWidth = engine_.config().frameWidth * std::max(engine_.config().hdScale, 1);
+        presenterConfig_.frameHeight = engine_.config().frameHeight * std::max(engine_.config().hdScale, 1);
     }
 
     [[nodiscard]] VideoEngine& engine() noexcept
@@ -215,8 +215,9 @@ public:
         realtimeGeneration_.store(engine_.currentGeneration(), std::memory_order_release);
         bumpLifecycleEpochLocked();
         resetScanlineCapture();
-        presenterConfig_.frameWidth = engine_.config().frameWidth;
-        presenterConfig_.frameHeight = engine_.config().frameHeight;
+        const int hdScale = std::max(engine_.config().hdScale, 1);
+        presenterConfig_.frameWidth = engine_.config().frameWidth * hdScale;
+        presenterConfig_.frameHeight = engine_.config().frameHeight * hdScale;
         syncEngineDiagnostics();
         return true;
     }

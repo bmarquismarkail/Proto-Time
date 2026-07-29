@@ -145,6 +145,13 @@ void applyConfigValue(EmulatorConfig& config,
                 throw std::invalid_argument("Scale value too large (max 20): " + std::to_string(parsed));
             }
             config.windowScale = static_cast<std::uint32_t>(std::max<std::uint64_t>(1u, parsed));
+        } else if (key == "hd_scale" || key == "hd-scale") {
+            std::uint64_t parsed = parseUnsigned(text, label);
+            constexpr std::uint64_t kMaxHdScale = 8;
+            if (parsed > kMaxHdScale) {
+                throw std::invalid_argument("HD scale value too large (max 8): " + std::to_string(parsed));
+            }
+            config.hdScale = static_cast<std::uint32_t>(std::max<std::uint64_t>(1u, parsed));
         } else {
             throw std::invalid_argument("Unknown config key: " + label);
         }
@@ -310,6 +317,9 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     }
     if (overrides.windowScale.has_value()) {
         config.windowScale = *overrides.windowScale;
+    }
+    if (overrides.hdScale.has_value()) {
+        config.hdScale = std::clamp(*overrides.hdScale, 1u, 8u);
     }
     if (overrides.headless.has_value()) {
         config.headless = *overrides.headless;
@@ -521,6 +531,15 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
                 // Clamp to uint32_t max to avoid overflow
                 parsed = std::min(parsed, static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max()));
                 arguments.overrides.windowScale = static_cast<std::uint32_t>(std::max<std::uint64_t>(1u, parsed));
+            }
+        } else if (arg == "--hd-scale") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--hd-scale requires a positive integer");
+            }
+            {
+                std::uint64_t parsed = parseUnsigned(argv[++i], "--hd-scale");
+                parsed = std::min(parsed, static_cast<std::uint64_t>(8u));
+                arguments.overrides.hdScale = static_cast<std::uint32_t>(std::max<std::uint64_t>(1u, parsed));
             }
         } else if (arg == "--unthrottled") {
             arguments.overrides.unthrottled = true;

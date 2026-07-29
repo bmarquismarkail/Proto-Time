@@ -309,9 +309,12 @@ public:
         if (config_.enableInput) flags |= TIME_FRONTEND_CONFIG_ENABLE_INPUT_V1;
         if (config_.createHiddenWindowOnInitialize) flags |= TIME_FRONTEND_CONFIG_CREATE_HIDDEN_V1;
         if (config_.showWindowOnPresent) flags |= TIME_FRONTEND_CONFIG_SHOW_ON_PRESENT_V1;
+        const uint32_t clampedHdScale = std::clamp(config_.hdScale, 1u, 8u);
         const TimeFrontendConfigV1 cConfig{
             sizeof(TimeFrontendConfigV1), config_.windowTitle.c_str(), config_.windowScale,
-            config_.frameWidth, config_.frameHeight, flags};
+            static_cast<int32_t>(config_.frameWidth * clampedHdScale),
+            static_cast<int32_t>(config_.frameHeight * clampedHdScale),
+            flags};
         try { instance_ = api_->create(&hostApi_, &cConfig); }
         catch (...) { throw std::runtime_error("C frontend factory threw across the ABI"); }
         if (instance_ == nullptr) throw std::runtime_error("C frontend factory returned null");
@@ -353,10 +356,12 @@ public:
             (void)inputService_->resume();
         }
         if (config_.enableVideo) {
+            const uint32_t clampedHdScale = std::clamp(config_.hdScale, 1u, 8u);
             const bool configured = videoService_->configure({
                 .frameWidth = std::max(config_.frameWidth, 1),
                 .frameHeight = std::max(config_.frameHeight, 1),
                 .mailboxDepthFrames = 1,
+                .hdScale = static_cast<int>(clampedHdScale),
             });
             videoService_->setPresenterPolicy(config_.videoPresenterPolicy);
             const bool presenterConfigured = videoService_->configurePresenter({

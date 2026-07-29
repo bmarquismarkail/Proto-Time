@@ -192,6 +192,7 @@ int main()
     overrides.executorPolicyId = std::string("bmmq.executor.policy.default-step");
     overrides.stepLimit = 42u;
     overrides.windowScale = 1u;
+    overrides.hdScale = 2u;
     overrides.headless = false;
     overrides.cpuMode = std::string("baseline");
     overrides.cpuDetailedTiming = false;
@@ -228,6 +229,7 @@ int main()
     CHECK_TRUE(fileConfig.executorPolicyId == "bmmq.executor.policy.default-step");
     CHECK_TRUE(fileConfig.stepLimit == 42u);
     CHECK_TRUE(fileConfig.windowScale == 1u);
+    CHECK_TRUE(fileConfig.hdScale == 2u);
     CHECK_TRUE(!fileConfig.headless);
     CHECK_TRUE(fileConfig.cpuMode == "baseline");
     CHECK_TRUE(!fileConfig.cpuDetailedTiming);

@@ -602,6 +602,11 @@ add_test(NAME smoke-image-decode-pipeline COMMAND time-smoke-image-decode-pipeli
 add_executable(time-smoke-visual-override-decode-integration tests/smoke_visual_override_decode_integration.cpp)
 target_link_libraries(time-smoke-visual-override-decode-integration time-gameboy-interpreter-core)
 add_test(NAME smoke-visual-override-decode-integration COMMAND time-smoke-visual-override-decode-integration)
+
+# HD texture replacement smoke test
+add_executable(time-smoke-hd-texture-replacement tests/smoke_hd_texture_replacement.cpp)
+target_link_libraries(time-smoke-hd-texture-replacement time-gameboy-interpreter-core time-emulator-host time-emulator-config)
+add_test(NAME smoke-hd-texture-replacement COMMAND time-smoke-hd-texture-replacement)
 add_executable(time-smoke-debug-snapshot-service tests/smoke_debug_snapshot_service.cpp)
 target_link_libraries(time-smoke-debug-snapshot-service time-machine-runtime-common)
 add_test(NAME smoke-debug-snapshot-service COMMAND time-smoke-debug-snapshot-service)
