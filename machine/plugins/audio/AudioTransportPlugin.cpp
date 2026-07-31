@@ -78,6 +78,7 @@ void AudioTransportPlugin::onAudioEvent(const MachineEvent& event, const Machine
     // Rich PSG metadata is sample-aligned per packet, so batching is only used
     // for legacy PCM-only packets. Preserve metadata-bearing packets directly.
     if (!packet->voices.empty() || !packet->events.empty()) {
+        flushBatch();
         const auto sampleCount = packet->pcmSamples.size();
         AudioSourceBlock block;
         block.contractVersion = packet->contractVersion;

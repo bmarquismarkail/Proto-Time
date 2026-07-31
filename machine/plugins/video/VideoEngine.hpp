@@ -578,8 +578,9 @@ private:
         return key;
     }
 
-    // Shared observe+resolve helper. Returns true if a replacement was resolved
-    // and cached; false otherwise. Owned by both HD mask and canonical sampling paths.
+    // Shared observe+resolve helper. Returns a pointer to the cached resolved
+    // override when available; nullptr otherwise. Owned by both HD mask and
+    // canonical sampling paths.
     [[nodiscard]] const ResolvedVisualOverride* resolveReplacementForResource(
         const DecodedVisualResource& resource) const
     {

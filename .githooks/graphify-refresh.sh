@@ -22,6 +22,11 @@ GRAPHIFY=$(command -v graphify 2>/dev/null)
 [ -z "$GRAPHIFY" ] && [ -x "$HOME/.local/bin/graphify" ] && GRAPHIFY="$HOME/.local/bin/graphify"
 [ -z "$GRAPHIFY" ] && exit 0
 
+if ! "$GRAPHIFY" --help 2>&1 | grep -q -- '--force'; then
+    echo "[graphify-refresh] update --force is unsupported (non-fatal); upgrade Graphify."
+    exit 0
+fi
+
 echo "[graphify-refresh] Updating knowledge graph after pull..."
 "$GRAPHIFY" update . --force >/dev/null 2>&1 \
   && echo "[graphify-refresh] graph.json and GRAPH_REPORT.md refreshed." \

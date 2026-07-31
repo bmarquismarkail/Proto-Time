@@ -63,7 +63,7 @@ int main(int argc, char** argv)
     }
     assert(engine.stats().callbackCount >= 1u);
     assert(engine.stats().outputSamplesProduced >= 1u);
-    assert(service.transportStats().drainCallbackCount >= 1u);
+    assert(service.transportStats().drainCallbackCount > drainCallbackCountBeforeService);
     assert(service.transportStats().workerProducedBlocks >= 1u);
 
     output->close();
@@ -128,7 +128,8 @@ int main(int argc, char** argv)
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     assert(stereoEngine.stats().outputSamplesProduced >= 2u);
-    assert(stereoService.transportStats().drainCallbackCount >= 1u);
+    assert(stereoService.transportStats().drainCallbackCount >
+           stereoDrainCallbackCountBeforeService);
     output->close();
 
     return 0;
