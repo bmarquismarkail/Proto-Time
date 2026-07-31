@@ -209,7 +209,13 @@ public:
             producedSamples = count;
             return true;
         }
-        if (fixedCapacitySamples_ == 0u || output.size() < input.mixed.samples.size()) return false;
+        if (fixedCapacitySamples_ == 0u ||
+            input.mixed.samples.size() > fixedCapacitySamples_ ||
+            output.size() < input.mixed.samples.size()) {
+            sourceProcessFailures_.fetch_add(1u, std::memory_order_relaxed);
+            noteSourceDuration(started);
+            return false;
+        }
 
         AudioSourceBlockView current = input;
         bool useA = true;

@@ -17,6 +17,8 @@ struct AlsaMidiSinkConfig {
     std::optional<std::string> destination;
 };
 
+// Performs direct ALSA I/O. Wrap this sink in AsyncMidiSink before using it on
+// the emulation event lane.
 class AlsaMidiSink final : public IMidiMessageSink {
 public:
     explicit AlsaMidiSink(AlsaMidiSinkConfig config = {});

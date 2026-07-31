@@ -106,7 +106,9 @@ BootstrappedMachine bootstrapMachine(const EmulatorConfig& options)
         engineConfig.frameWidth = instance.descriptor.defaultFrameWidth;
         engineConfig.frameHeight = instance.descriptor.defaultFrameHeight;
         engineConfig.hdScale = static_cast<int>(effectiveHdScale);
-        (void)bootstrapped.machine->videoService().configure(engineConfig);
+        if (!bootstrapped.machine->videoService().configure(engineConfig)) {
+            throw std::runtime_error("Unable to configure video service for requested HD scale");
+        }
     }
 
     return bootstrapped;

@@ -1413,6 +1413,8 @@ std::optional<BMMQ::RealtimeAudioPacket> GameBoyMachine::realtimeAudioPacket() c
     packet.channelCount = 1u;
     packet.frameCounter = impl_->apu.frameCounter();
     const auto pendingCount = impl_->apu.pendingSampleCount();
+    // Compute the frame origin and consume stems/events before samples:
+    // takePendingSamples() advances their shared cursor and clears the count.
     packet.firstSampleFrame = impl_->apu.sampleCounter() - pendingCount;
     packet.voices = {
         {0u, BMMQ::PsgVoiceKind::Pulse}, {1u, BMMQ::PsgVoiceKind::Pulse},
@@ -1420,6 +1422,7 @@ std::optional<BMMQ::RealtimeAudioPacket> GameBoyMachine::realtimeAudioPacket() c
     };
     packet.voiceStems = impl_->apu.copyPendingVoiceStems();
     packet.events = impl_->apu.takePendingEvents(packet.firstSampleFrame);
+    packet.psgEventDropCount = impl_->apu.takePendingEventDropCount();
     packet.pcmSamples = impl_->apu.takePendingSamples();
     impl_->realtimeAudioPacketCache = std::move(packet);
     return impl_->realtimeAudioPacketCache;

@@ -9,8 +9,8 @@
 # to this script's location (.githooks/ -> repo root is one dir up).
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 if [ -z "$REPO_ROOT" ]; then
-    HOOK_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-    REPO_ROOT=$(CDPATH= cd -- "$HOOK_DIR/.." && pwd)
+    HOOK_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+    REPO_ROOT=$(CDPATH='' cd -- "$HOOK_DIR/.." && pwd)
 fi
 cd "$REPO_ROOT" 2>/dev/null || exit 0
 
@@ -23,8 +23,8 @@ GRAPHIFY=$(command -v graphify 2>/dev/null)
 [ -z "$GRAPHIFY" ] && exit 0
 
 echo "[graphify-refresh] Updating knowledge graph after pull..."
-"$GRAPHIFY" update . >/dev/null 2>&1 \
+"$GRAPHIFY" update . --force >/dev/null 2>&1 \
   && echo "[graphify-refresh] graph.json and GRAPH_REPORT.md refreshed." \
-  || echo "[graphify-refresh] update failed (non-fatal); run 'graphify update .' manually."
+  || echo "[graphify-refresh] update failed (non-fatal); run 'graphify update . --force' manually."
 
 exit 0

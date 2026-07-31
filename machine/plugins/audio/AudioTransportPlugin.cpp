@@ -56,6 +56,7 @@ void AudioTransportPlugin::onAudioEvent(const MachineEvent& event, const Machine
     psgPendingSamplesLast_.store(packet->psgPendingSamples, std::memory_order_relaxed);
     packetsAccumulated_.fetch_add(1u, std::memory_order_relaxed);
     if (batchChunks_ == 1u) {
+        const auto sampleCount = packet->pcmSamples.size();
         AudioSourceBlock block;
         block.contractVersion = packet->contractVersion;
         block.sampleRate = packet->sampleRate;
@@ -68,15 +69,16 @@ void AudioTransportPlugin::onAudioEvent(const MachineEvent& event, const Machine
         block.events = std::move(packet->events);
         (void)service_->submitSourceBlock(std::move(block));
         flushCount_.fetch_add(1u, std::memory_order_relaxed);
-        flushLast_.store(packet->pcmSamples.size(), std::memory_order_relaxed);
-        atomicMinNonZero(flushMin_, packet->pcmSamples.size());
-        atomicMax(flushMax_, packet->pcmSamples.size());
+        flushLast_.store(sampleCount, std::memory_order_relaxed);
+        atomicMinNonZero(flushMin_, sampleCount);
+        atomicMax(flushMax_, sampleCount);
         packetsFlushed_.fetch_add(1u, std::memory_order_relaxed);
         return;
     }
     // Rich PSG metadata is sample-aligned per packet, so batching is only used
     // for legacy PCM-only packets. Preserve metadata-bearing packets directly.
     if (!packet->voices.empty() || !packet->events.empty()) {
+        const auto sampleCount = packet->pcmSamples.size();
         AudioSourceBlock block;
         block.contractVersion = packet->contractVersion;
         block.sampleRate = packet->sampleRate;
@@ -89,6 +91,9 @@ void AudioTransportPlugin::onAudioEvent(const MachineEvent& event, const Machine
         block.events = std::move(packet->events);
         (void)service_->submitSourceBlock(std::move(block));
         flushCount_.fetch_add(1u, std::memory_order_relaxed);
+        flushLast_.store(sampleCount, std::memory_order_relaxed);
+        atomicMinNonZero(flushMin_, sampleCount);
+        atomicMax(flushMax_, sampleCount);
         packetsFlushed_.fetch_add(1u, std::memory_order_relaxed);
         return;
     }

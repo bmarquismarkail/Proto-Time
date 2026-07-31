@@ -24,6 +24,7 @@ void GameBoyAPU::reset() {
     apu_.masterEnabled = true;
     recentVoiceStems_ = {};
     pendingEvents_.clear();
+    pendingEventDropCount_ = 0u;
     eventSequence_ = 0u;
     observedGateStates_.fill(false);
     for (std::uint8_t voice = 0u; voice < 4u; ++voice) {
@@ -261,32 +262,6 @@ int GameBoyAPU::currentNoiseSample() const noexcept
     return polarity * static_cast<int>(apu_.noise.volume);
 }
 
-int16_t GameBoyAPU::mixCurrentSample() const noexcept
-{
-    const int ch1 = currentPulseSample(apu_.pulse1);
-    const int ch2 = currentPulseSample(apu_.pulse2);
-    const int ch3 = currentWaveSample();
-    const int ch4 = currentNoiseSample();
-
-    const int leftVolume = static_cast<int>((apu_.nr50 >> 4u) & 0x07u) + 1;
-    const int rightVolume = static_cast<int>(apu_.nr50 & 0x07u) + 1;
-
-    int left = 0;
-    int right = 0;
-    if ((apu_.nr51 & 0x10u) != 0u) left += ch1;
-    if ((apu_.nr51 & 0x20u) != 0u) left += ch2;
-    if ((apu_.nr51 & 0x40u) != 0u) left += ch3;
-    if ((apu_.nr51 & 0x80u) != 0u) left += ch4;
-    if ((apu_.nr51 & 0x01u) != 0u) right += ch1;
-    if ((apu_.nr51 & 0x02u) != 0u) right += ch2;
-    if ((apu_.nr51 & 0x04u) != 0u) right += ch3;
-    if ((apu_.nr51 & 0x08u) != 0u) right += ch4;
-
-    left *= leftVolume;
-    right *= rightVolume;
-    return static_cast<int16_t>(std::clamp((left + right) * 32, -32768, 32767));
-}
-
 std::array<int16_t, 4u> GameBoyAPU::currentVoiceContributions() const noexcept
 {
     const std::array<int, 4u> raw{{currentPulseSample(apu_.pulse1), currentPulseSample(apu_.pulse2),
@@ -301,10 +276,6 @@ std::array<int16_t, 4u> GameBoyAPU::currentVoiceContributions() const noexcept
                                                        -32768, 32767));
     }
     return result;
-}
-
-int16_t GameBoyAPU::generateSample() {
-    return mixCurrentSample();
 }
 
 void GameBoyAPU::pushSample(int16_t sample, const std::array<int16_t, 4u>& stems) {
@@ -566,14 +537,24 @@ std::vector<int16_t> GameBoyAPU::copyPendingVoiceStems() const
 
 std::vector<BMMQ::PsgAudioEvent> GameBoyAPU::takePendingEvents(std::uint64_t firstSampleFrame) const
 {
-    auto events = std::move(pendingEvents_);
-    pendingEvents_.clear();
-    for (auto& event : events) {
-        const auto absolute = static_cast<std::uint64_t>(event.sampleFrameOffset);
-        event.sampleFrameOffset = static_cast<std::uint32_t>(absolute > firstSampleFrame
-            ? absolute - firstSampleFrame : 0u);
+    std::vector<BMMQ::PsgAudioEvent> events;
+    events.reserve(pendingEvents_.size());
+    while (!pendingEvents_.empty()) {
+        auto pending = std::move(pendingEvents_.front());
+        pendingEvents_.pop_front();
+        pending.event.sampleFrameOffset = static_cast<std::uint32_t>(
+            pending.absoluteSampleFrame > firstSampleFrame
+                ? pending.absoluteSampleFrame - firstSampleFrame : 0u);
+        events.push_back(std::move(pending.event));
     }
     return events;
+}
+
+std::uint64_t GameBoyAPU::takePendingEventDropCount() const noexcept
+{
+    const auto count = pendingEventDropCount_;
+    pendingEventDropCount_ = 0u;
+    return count;
 }
 
 void GameBoyAPU::recordWriteEvent(std::uint16_t address, std::uint8_t value)
@@ -582,14 +563,14 @@ void GameBoyAPU::recordWriteEvent(std::uint16_t address, std::uint8_t value)
         for (std::uint8_t voice = 0u; voice < 4u; ++voice) {
             recordVoiceEvent(voice, BMMQ::PsgEventKind::LevelChange, address, value, true);
         }
-        recordRawWriteEvent(address, value);
+        recordRawWriteEvent(0u, address, value);
         return;
     }
     if (address == 0xFF25u) {
         for (std::uint8_t voice = 0u; voice < 4u; ++voice) {
             recordVoiceEvent(voice, BMMQ::PsgEventKind::RoutingChange, address, value, true);
         }
-        recordRawWriteEvent(address, value);
+        recordRawWriteEvent(0u, address, value);
         return;
     }
 
@@ -615,7 +596,7 @@ void GameBoyAPU::recordWriteEvent(std::uint16_t address, std::uint8_t value)
     }
     observedGateStates_[voice] = gates[voice];
     recordVoiceEvent(voice, kind, address, value, true);
-    recordRawWriteEvent(address, value);
+    recordRawWriteEvent(voice, address, value);
 }
 
 void GameBoyAPU::recordVoiceEvent(std::uint8_t voice, BMMQ::PsgEventKind kind,
@@ -628,7 +609,6 @@ void GameBoyAPU::recordVoiceEvent(std::uint8_t voice, BMMQ::PsgEventKind kind,
                                       apu_.wave.enabled, apu_.noise.enabled}};
 
     BMMQ::PsgAudioEvent event;
-    event.sampleFrameOffset = static_cast<std::uint32_t>(apu_.sampleCounter);
     event.sequence = ++eventSequence_;
     event.voiceId = voice;
     event.voiceKind = voice < 2u ? BMMQ::PsgVoiceKind::Pulse
@@ -648,12 +628,17 @@ void GameBoyAPU::recordVoiceEvent(std::uint8_t voice, BMMQ::PsgEventKind kind,
     event.rawValue = rawValue;
     event.gate = gates[voice];
     event.hasRawWrite = hasRawWrite;
-    pendingEvents_.push_back(event);
+    if (pendingEvents_.size() == kHistorySamples) {
+        pendingEvents_.pop_front();
+        ++pendingEventDropCount_;
+    }
+    pendingEvents_.push_back({std::move(event), apu_.sampleCounter});
 }
 
-void GameBoyAPU::recordRawWriteEvent(std::uint16_t address, std::uint8_t value)
+void GameBoyAPU::recordRawWriteEvent(std::uint8_t voice, std::uint16_t address,
+                                     std::uint8_t value)
 {
-    recordVoiceEvent(0u, BMMQ::PsgEventKind::RawWrite, address, value, true);
+    recordVoiceEvent(voice, BMMQ::PsgEventKind::RawWrite, address, value, true);
 }
 
 std::uint8_t GameBoyAPU::voiceRoutingMask(std::uint8_t voice) const noexcept
@@ -761,6 +746,7 @@ void GameBoyAPU::importState(const GameBoyAPUState& state) {
     apu_.noise = state.noise;
     recentVoiceStems_ = {};
     pendingEvents_.clear();
+    pendingEventDropCount_ = 0u;
     observedGateStates_ = {{apu_.pulse1.enabled, apu_.pulse2.enabled,
                             apu_.wave.enabled, apu_.noise.enabled}};
     for (std::uint8_t voice = 0u; voice < 4u; ++voice) {

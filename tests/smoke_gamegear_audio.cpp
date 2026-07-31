@@ -26,12 +26,20 @@ struct RecordingAudioPlugin final : BMMQ::IAudioPlugin {
         lastPacket = view.realtimeAudioPacket();
         if (lastPacket.has_value()) {
             totalRealtimeEvents += lastPacket->events.size();
-            const auto perVoice = lastPacket->pcmSamples.size();
-            for (std::size_t sample = 0u; sample < perVoice; ++sample) {
-                int sum = 0;
-                for (std::size_t voice = 0u; voice < 4u; ++voice) sum += lastPacket->voiceStems[voice * perVoice + sample];
-                stemsReconstructMix = stemsReconstructMix &&
-                    lastPacket->pcmSamples[sample] == std::clamp(sum, -32768, 32767);
+            const auto voiceStride = lastPacket->pcmSamples.size();
+            if (lastPacket->voiceStems.size() != voiceStride * 4u) {
+                stemsReconstructMix = false;
+            } else {
+                // Reconstruction assumes no individual voice stem saturates;
+                // stems clamp per voice while the final mix clamps their sum.
+                for (std::size_t sample = 0u; sample < voiceStride; ++sample) {
+                    int sum = 0;
+                    for (std::size_t voice = 0u; voice < 4u; ++voice) {
+                        sum += lastPacket->voiceStems[voice * voiceStride + sample];
+                    }
+                    stemsReconstructMix = stemsReconstructMix &&
+                        lastPacket->pcmSamples[sample] == std::clamp(sum, -32768, 32767);
+                }
             }
         }
     }

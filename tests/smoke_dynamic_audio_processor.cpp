@@ -8,7 +8,7 @@
 
 int main(int argc, char** argv)
 {
-    assert(argc == 2);
+    if (argc != 2) return 1;
     auto module = BMMQ::Plugin::DynamicPluginModule::load(std::filesystem::path(argv[1]));
     const auto ids = module.audioProcessorIds();
     assert(ids.size() == 1u && ids.front() == "test.audio-processor.rich");

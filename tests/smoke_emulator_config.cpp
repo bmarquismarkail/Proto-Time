@@ -118,6 +118,7 @@ int main()
         "\n"
         "[video]\n"
         "scale = 5\n"
+        "hd_scale = 100\n"
         "\n"
         "[timing]\n"
         "unthrottled = on\n"
@@ -129,6 +130,9 @@ int main()
         "enabled = false\n"
         "backend = file\n"
         "plugin = plugins/audio.so\n"
+        "processor_plugin = plugins/processor-a.so\n"
+        "processor_plugin = plugins/processor-b.so\n"
+        "processor_config = test.processor=config/processor.json\n"
         "output_file = captures/audio.pcm\n"
         "midi_file = captures/audio.mid\n"
         "midi_output = 128:0\n"
@@ -156,6 +160,7 @@ int main()
     CHECK_TRUE(fileConfig.executorPolicyId == "example.executor.policy");
     CHECK_TRUE(fileConfig.stepLimit == 1000000u);
     CHECK_TRUE(fileConfig.windowScale == 5u);
+    CHECK_TRUE(fileConfig.hdScale == 8u);
     CHECK_TRUE(fileConfig.headless);
     CHECK_TRUE(fileConfig.cpuMode == "block");
     CHECK_TRUE(!fileConfig.cpuDetailedTiming);
@@ -169,6 +174,12 @@ int main()
     CHECK_TRUE(!fileConfig.audioEnabled);
     CHECK_TRUE(fileConfig.audioBackend == "file");
     CHECK_TRUE(fileConfig.audioPluginPath == tempDir / "plugins/audio.so");
+    CHECK_TRUE(fileConfig.audioProcessorPluginPaths.size() == 2u);
+    CHECK_TRUE(fileConfig.audioProcessorPluginPaths[0] == tempDir / "plugins/processor-a.so");
+    CHECK_TRUE(fileConfig.audioProcessorPluginPaths[1] == tempDir / "plugins/processor-b.so");
+    CHECK_TRUE(fileConfig.audioProcessorConfigs.size() == 1u);
+    CHECK_TRUE(fileConfig.audioProcessorConfigs[0].pluginId == "test.processor");
+    CHECK_TRUE(fileConfig.audioProcessorConfigs[0].jsonPath == tempDir / "config/processor.json");
     CHECK_TRUE(fileConfig.audioOutputFilePath == tempDir / "captures/audio.pcm");
     CHECK_TRUE(fileConfig.midiOutputFilePath == tempDir / "captures/audio.mid");
     CHECK_TRUE(fileConfig.midiOutputPort == "128:0");
@@ -523,6 +534,7 @@ int main()
     CHECK_TRUE(resolved.audioBatchChunks == 5u);
     CHECK_TRUE(resolved.audioProcessorPluginPaths.size() == 2u);
     CHECK_TRUE(resolved.audioProcessorPluginPaths[0] == "processor-a.so");
+    CHECK_TRUE(resolved.audioProcessorPluginPaths[1] == "processor-b.so");
     CHECK_TRUE(resolved.audioProcessorConfigs.size() == 1u);
     CHECK_TRUE(resolved.audioProcessorConfigs[0].pluginId == "test.processor");
     CHECK_TRUE(resolved.audioProcessorConfigs[0].jsonPath == "processor.json");

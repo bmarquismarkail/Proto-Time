@@ -124,14 +124,22 @@ public:
                            std::size_t maxBlockSamples, std::string configJson)
         : state_(std::move(state)), api_(entry.api), configJson_(std::move(configJson))
     {
-        instance_ = api_->create(&hostApi());
+        try { instance_ = api_->create(&hostApi()); }
+        catch (...) { throw std::runtime_error("C audio processor factory threw across the ABI"); }
         if (instance_ == nullptr) throw std::runtime_error("C audio processor factory returned null");
         const TimeAudioProcessorConfigV1 config{
             sizeof(TimeAudioProcessorConfigV1), sampleRate, channels,
             static_cast<std::uint32_t>(std::min<std::size_t>(maxBlockSamples, UINT32_MAX)),
             configJson_.empty() ? nullptr : configJson_.c_str()};
-        if (api_->open(instance_, &config) == 0) {
-            api_->destroy(instance_);
+        bool opened = false;
+        try { opened = api_->open(instance_, &config) != 0; }
+        catch (...) {
+            try { api_->destroy(instance_); } catch (...) {}
+            instance_ = nullptr;
+            throw std::runtime_error("C audio processor open threw across the ABI");
+        }
+        if (!opened) {
+            try { api_->destroy(instance_); } catch (...) {}
             instance_ = nullptr;
             throw std::runtime_error("C audio processor open failed");
         }
@@ -312,8 +320,8 @@ public:
         const uint32_t clampedHdScale = std::clamp(config_.hdScale, 1u, 8u);
         const TimeFrontendConfigV1 cConfig{
             sizeof(TimeFrontendConfigV1), config_.windowTitle.c_str(), config_.windowScale,
-            static_cast<int32_t>(config_.frameWidth * clampedHdScale),
-            static_cast<int32_t>(config_.frameHeight * clampedHdScale),
+            static_cast<int32_t>(std::max(config_.frameWidth, 1) * clampedHdScale),
+            static_cast<int32_t>(std::max(config_.frameHeight, 1) * clampedHdScale),
             flags};
         try { instance_ = api_->create(&hostApi_, &cConfig); }
         catch (...) { throw std::runtime_error("C frontend factory threw across the ABI"); }

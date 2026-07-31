@@ -145,13 +145,11 @@ void applyConfigValue(EmulatorConfig& config,
                 throw std::invalid_argument("Scale value too large (max 20): " + std::to_string(parsed));
             }
             config.windowScale = static_cast<std::uint32_t>(std::max<std::uint64_t>(1u, parsed));
-        } else if (key == "hd_scale" || key == "hd-scale") {
+        } else if (key == "hd_scale") {
             std::uint64_t parsed = parseUnsigned(text, label);
             constexpr std::uint64_t kMaxHdScale = 8;
-            if (parsed > kMaxHdScale) {
-                throw std::invalid_argument("HD scale value too large (max 8): " + std::to_string(parsed));
-            }
-            config.hdScale = static_cast<std::uint32_t>(std::max<std::uint64_t>(1u, parsed));
+            config.hdScale = static_cast<std::uint32_t>(
+                std::clamp<std::uint64_t>(parsed, 1u, kMaxHdScale));
         } else {
             throw std::invalid_argument("Unknown config key: " + label);
         }
@@ -180,6 +178,17 @@ void applyConfigValue(EmulatorConfig& config,
             config.audioBackend = text;
         } else if (key == "plugin") {
             config.audioPluginPath = resolveConfigPath(configDirectory, text);
+        } else if (key == "processor_plugin") {
+            config.audioProcessorPluginPaths.push_back(resolveConfigPath(configDirectory, text));
+        } else if (key == "processor_config") {
+            const auto equals = text.find('=');
+            if (equals == std::string::npos || equals == 0u || equals + 1u >= text.size()) {
+                throw std::invalid_argument(label + " requires <plugin-id>=<json-file>");
+            }
+            config.audioProcessorConfigs.push_back({
+                text.substr(0u, equals),
+                resolveConfigPath(configDirectory, text.substr(equals + 1u)),
+            });
         } else if (key == "output_file") {
             config.audioOutputFilePath = resolveConfigPath(configDirectory, text);
         } else if (key == "midi_file") {
@@ -277,7 +286,8 @@ EmulatorConfig loadEmulatorConfig(const std::filesystem::path& path)
 
         const auto qualifiedKey = section + "." + key;
         const bool repeatableKey =
-            section == "visual" && (key == "pack" || key == "visual_pack" || key == "texture_pack");
+            (section == "visual" && (key == "pack" || key == "visual_pack" || key == "texture_pack")) ||
+            (section == "audio" && key == "processor_plugin");
         if (!repeatableKey && !seenKeys.insert(qualifiedKey).second) {
             throw std::invalid_argument("Duplicate config key: " + qualifiedKey);
         }

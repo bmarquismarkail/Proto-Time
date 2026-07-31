@@ -213,48 +213,53 @@ struct RetryAttachPlugin final : BMMQ::IPlugin {
     }
 };
 
+void testReentrantAttachmentOrdering()
+{
+    GameBoyMachine machine;
+    std::vector<std::string> attachmentOrder;
+    auto plugin = std::make_unique<ReentrantAttachPlugin>(
+        machine.pluginManager(), attachmentOrder);
+    auto* reentrant = plugin.get();
+    machine.pluginManager().add(std::move(plugin));
+    machine.pluginManager().add(std::make_unique<OrderedAttachPlugin>(attachmentOrder));
+
+    machine.pluginManager().initialize(machine.mutableView());
+
+    assert(reentrant->attachCount == 1);
+    assert((attachmentOrder == std::vector<std::string>{
+        "reentrant.begin", "reentrant.end", "ordered"}));
+}
+
+void testFailedAttachmentRetry()
+{
+    GameBoyMachine machine;
+    auto plugin = std::make_unique<RetryAttachPlugin>();
+    auto* retry = plugin.get();
+    machine.pluginManager().add(std::move(plugin));
+
+    machine.pluginManager().initialize(machine.mutableView());
+    const auto failedStatus = machine.pluginManager().statusFor(retry->id());
+    assert(failedStatus.has_value());
+    assert(!failedStatus->attached);
+    assert(failedStatus->disabled);
+    assert(failedStatus->failureCount == 1);
+
+    retry->shouldThrow = false;
+    assert(machine.pluginManager().reenable(retry->id()));
+    machine.pluginManager().initialize(machine.mutableView());
+    const auto retriedStatus = machine.pluginManager().statusFor(retry->id());
+    assert(retriedStatus.has_value());
+    assert(retriedStatus->attached);
+    assert(!retriedStatus->disabled);
+    assert(retry->attachCount == 2);
+}
+
 } // namespace
 
 int main()
 {
-    {
-        GameBoyMachine reentrantMachine;
-        std::vector<std::string> attachmentOrder;
-        auto reentrantPlugin = std::make_unique<ReentrantAttachPlugin>(
-            reentrantMachine.pluginManager(), attachmentOrder);
-        auto* reentrant = reentrantPlugin.get();
-        reentrantMachine.pluginManager().add(std::move(reentrantPlugin));
-        reentrantMachine.pluginManager().add(std::make_unique<OrderedAttachPlugin>(attachmentOrder));
-
-        reentrantMachine.pluginManager().initialize(reentrantMachine.mutableView());
-
-        assert(reentrant->attachCount == 1);
-        assert((attachmentOrder == std::vector<std::string>{
-            "reentrant.begin", "reentrant.end", "ordered"}));
-    }
-
-    {
-        GameBoyMachine retryMachine;
-        auto retryPlugin = std::make_unique<RetryAttachPlugin>();
-        auto* retry = retryPlugin.get();
-        retryMachine.pluginManager().add(std::move(retryPlugin));
-
-        retryMachine.pluginManager().initialize(retryMachine.mutableView());
-        const auto failedStatus = retryMachine.pluginManager().statusFor(retry->id());
-        assert(failedStatus.has_value());
-        assert(!failedStatus->attached);
-        assert(failedStatus->disabled);
-        assert(failedStatus->failureCount == 1);
-
-        retry->shouldThrow = false;
-        assert(retryMachine.pluginManager().reenable(retry->id()));
-        retryMachine.pluginManager().initialize(retryMachine.mutableView());
-        const auto retriedStatus = retryMachine.pluginManager().statusFor(retry->id());
-        assert(retriedStatus.has_value());
-        assert(retriedStatus->attached);
-        assert(!retriedStatus->disabled);
-        assert(retry->attachCount == 2);
-    }
+    testReentrantAttachmentOrdering();
+    testFailedAttachmentRetry();
 
     GameBoyMachine machine;
     std::vector<uint8_t> cartridgeRom(0x8000, 0x00);

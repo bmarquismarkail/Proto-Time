@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <iostream>
 #include <mutex>
 #include <stdexcept>
 #include <utility>
@@ -91,6 +92,10 @@ MidiFileSink::MidiFileSink(std::filesystem::path path) : path_(std::move(path))
 void MidiFileSink::send(const MidiMessage& message)
 {
     if (message.size < 2u || message.size > 3u || message.sampleRate == 0u) return;
+    if (messages_.size() == kMaxMessages) {
+        ++droppedMessages_;
+        return;
+    }
     messages_.push_back(message);
     flushed_ = false;
 }
@@ -152,7 +157,7 @@ AsyncMidiSink::~AsyncMidiSink()
         errors_.fetch_add(1u, std::memory_order_relaxed);
     }
     running_.store(false, std::memory_order_release);
-    wakeCv_.notify_one();
+    wakeSemaphore_.release();
     if (worker_.joinable()) worker_.join();
 }
 
@@ -167,12 +172,12 @@ void AsyncMidiSink::send(const MidiMessage& message)
     queue_[head] = message;
     head_.store(next, std::memory_order_release);
     enqueued_.fetch_add(1u, std::memory_order_relaxed);
-    wakeCv_.notify_one();
+    wakeSemaphore_.release();
 }
 
 void AsyncMidiSink::flush()
 {
-    std::unique_lock<std::mutex> lock(wakeMutex_);
+    std::unique_lock<std::mutex> lock(drainMutex_);
     drainedCv_.wait(lock, [this]() {
         return empty() && !inFlight_.load(std::memory_order_acquire);
     });
@@ -198,12 +203,7 @@ bool AsyncMidiSink::empty() const noexcept
 void AsyncMidiSink::run() noexcept
 {
     while (running_.load(std::memory_order_acquire) || !empty()) {
-        {
-            std::unique_lock<std::mutex> lock(wakeMutex_);
-            wakeCv_.wait(lock, [this]() {
-                return !running_.load(std::memory_order_acquire) || !empty();
-            });
-        }
+        wakeSemaphore_.acquire();
         while (!empty()) {
             const auto tail = tail_.load(std::memory_order_relaxed);
             const auto message = queue_[tail];
@@ -215,7 +215,10 @@ void AsyncMidiSink::run() noexcept
             } catch (...) {
                 errors_.fetch_add(1u, std::memory_order_relaxed);
             }
-            inFlight_.store(false, std::memory_order_release);
+            {
+                std::lock_guard<std::mutex> lock(drainMutex_);
+                inFlight_.store(false, std::memory_order_release);
+            }
             drainedCv_.notify_all();
         }
     }
@@ -237,7 +240,13 @@ void PsgMidiPlugin::onAttach(MutableMachineView&)
 void PsgMidiPlugin::onDetach(MutableMachineView&)
 {
     for (auto& voice : voices_) noteOff(voice, lastSampleFrame_, lastSampleRate_);
-    sink_->flush();
+    try {
+        sink_->flush();
+    } catch (const std::exception& error) {
+        std::cerr << "PSG MIDI sink flush failed during detach: " << error.what() << '\n';
+    } catch (...) {
+        std::cerr << "PSG MIDI sink flush failed during detach\n";
+    }
 }
 
 void PsgMidiPlugin::onAudioEvent(const MachineEvent& event, const MachineView& view)
@@ -275,8 +284,19 @@ void PsgMidiPlugin::processEvent(const PsgAudioEvent& event, std::uint64_t sampl
         if (event.gate) noteOn(voice, event, sampleFrame, sampleRate);
         break;
     case PsgEventKind::PitchChange:
-        if (voice.active) noteOff(voice, sampleFrame, sampleRate);
-        if (event.gate) noteOn(voice, event, sampleFrame, sampleRate);
+        if (!event.gate) {
+            noteOff(voice, sampleFrame, sampleRate);
+            break;
+        }
+        if (voice.active && noteFor(event) == voice.note) {
+            const auto bend = pitchBendFor(event, voice.note);
+            emit(sampleFrame, sampleRate, static_cast<std::uint8_t>(0xE0u | voice.channel),
+                 static_cast<std::uint8_t>(bend & 0x7Fu),
+                 static_cast<std::uint8_t>((bend >> 7u) & 0x7Fu));
+        } else {
+            if (voice.active) noteOff(voice, sampleFrame, sampleRate);
+            noteOn(voice, event, sampleFrame, sampleRate);
+        }
         break;
     case PsgEventKind::LevelChange:
         if (voice.active) {

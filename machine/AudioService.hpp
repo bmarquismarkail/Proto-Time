@@ -608,8 +608,8 @@ public:
             transportAppendRecentPcmCallCount_.load(std::memory_order_relaxed);
         stats.appendRecentPcmSamplesAppended =
             transportAppendRecentPcmSamplesAppended_.load(std::memory_order_relaxed);
-        // Epoch checks removed from drain path (Phase 3): not populated.
-        stats.staleEpochDropCount = 0;
+        stats.staleEpochDropCount =
+            transportStaleEpochDropCount_.load(std::memory_order_relaxed);
         stats.epochBumpCount = transportEpochBumpCount_.load(std::memory_order_relaxed);
         stats.lifecycleEpoch = transportEpoch_.load(std::memory_order_acquire);
         stats.primedTransitionCount =
@@ -729,6 +729,7 @@ private:
 
     void drainSourceBlocks(bool chunkOversize = true) noexcept
     {
+        std::lock_guard<std::mutex> sourceDrainLock(sourceDrainMutex_);
         auto read = sourceReadIndex_.load(std::memory_order_relaxed);
         const auto write = sourceWriteIndex_.load(std::memory_order_acquire);
         while (read != write) {
@@ -743,6 +744,8 @@ private:
             if (!pipeline_.empty()) {
                 if (pipelineOutputScratch_.size() < samples.size()) {
                     if (chunkOversize && block.voices.empty() && block.events.empty() && !pipelineOutputScratch_.empty()) {
+                        auto originalSamples = block.mixedSamples;
+                        bool processingFailed = false;
                         for (std::size_t offset = 0u; offset < block.mixedSamples.size();
                              offset += pipelineOutputScratch_.size()) {
                             const auto count = std::min(pipelineOutputScratch_.size(),
@@ -760,10 +763,14 @@ private:
                             std::size_t produced = 0u;
                             if (!pipeline_.processSource(view, pipelineOutputScratch_, produced) || produced != count) {
                                 engine_.notePipelineCapacitySkip();
+                                processingFailed = true;
                                 break;
                             }
                             std::copy_n(pipelineOutputScratch_.begin(), static_cast<std::ptrdiff_t>(count),
                                         block.mixedSamples.begin() + static_cast<std::ptrdiff_t>(offset));
+                        }
+                        if (processingFailed) {
+                            block.mixedSamples = std::move(originalSamples);
                         }
                         samples = block.mixedSamples;
                     } else {
@@ -780,8 +787,11 @@ private:
                         .lifecycleEpoch = block.lifecycleEpoch,
                     };
                     std::size_t produced = 0u;
-                    if (pipeline_.processSource(view, pipelineOutputScratch_, produced)) {
+                    if (pipeline_.processSource(view, pipelineOutputScratch_, produced) &&
+                        produced == samples.size()) {
                         samples = std::span<const std::int16_t>(pipelineOutputScratch_.data(), produced);
+                    } else {
+                        engine_.notePipelineCapacitySkip();
                     }
                 }
             }
@@ -907,6 +917,7 @@ private:
 
     void bumpTransportEpochLocked() noexcept
     {
+        std::lock_guard<std::mutex> sourceDrainLock(sourceDrainMutex_);
         const auto epoch = transportEpoch_.fetch_add(1u, std::memory_order_release) + 1u;
         transportEpochBumpCount_.fetch_add(1u, std::memory_order_relaxed);
         clearReadyQueue();
@@ -1164,6 +1175,9 @@ private:
     std::vector<int16_t> transportPipelineScratch_{};
     static constexpr std::size_t kSourceQueueSlots = 9u;
     std::array<AudioSourceBlock, kSourceQueueSlots> sourceBlocks_{};
+    // Source slots and read-index reclamation have one logical consumer at a
+    // time: the transport worker or an explicit synchronous compatibility call.
+    mutable std::mutex sourceDrainMutex_;
     alignas(64) std::atomic<std::size_t> sourceReadIndex_{0u};
     alignas(64) std::atomic<std::size_t> sourceWriteIndex_{0u};
     std::atomic<std::size_t> sourceQueueOverrunCount_{0u};

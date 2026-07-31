@@ -98,7 +98,7 @@ Use the same match rules as standard texture packs:
 - `decodedHash` — Content hash of the decoded tile
 - `width` / `height` — Dimensions in canonical pixels (always 8 for tiles)
 
-The engine does not validate that replacement images match the expected dimensions. Authors should ensure replacements are multiples of 8×8 for proper alignment.
+Under the default policy, the engine accepts replacement images that do not match the expected dimensions and resamples them. Authors should use multiples of 8×8 for proper alignment; the `exact` scale policy rejects mismatched dimensions.
 
 ### Transparency Handling
 
@@ -122,11 +122,11 @@ HD replacements preserve all existing priority semantics:
 
 HD texture replacement uses integer output-resource coordinates to ensure exact 1:1 mapping between output pixels and replacement texels when dimensions match.
 
-For a canonical semantic coordinate `s` and HD scale factor `hdScale`:
+For canonical semantic coordinates `sx` and `sy` and HD scale factor `hdScale`:
 
-```
-qx = s * hdScale + subX
-qy = s * hdScale + subY
+```text
+qx = sx * hdScale + subX
+qy = sy * hdScale + subY
 ```
 
 where `subX = ox % hdScale` and `subY = oy % hdScale` are the sub-pixel indices within each HD block.
@@ -135,7 +135,7 @@ When replacement dimensions equal `source_dimensions × hdScale`, q-space coordi
 
 **Example (2x scale, 8×8 source → 16×16 replacement):**
 
-```
+```text
 Canonical (8×8)          HD Output (16×16) with replacement
 ┌──────┐                ┌──────────────────┐
 │ A B  │   →            │ A₁A₂ B₁B₂        │
@@ -175,7 +175,7 @@ When a tile has no replacement:
 
 With 2x HD scale and a 16×8 frame (2 tiles wide, 1 tall):
 
-```
+```text
 Tile 0 (replaced)    Tile 1 (unreplaced)
 ┌──────────────┬──────────────┐
 │ R₁R₂ G₁G₂   │ O₁O₂ O₃O₄   │
@@ -216,7 +216,7 @@ The HD path adds:
 - One lookup pass per pixel (same as standard override)
 - One upscale pass (linear in output pixel count)
 
-For 2x scale on a 160×144 frame, this is ~92K additional pixels to process per frame — typically sub-millisecond on modern hardware.
+For 2x scale on a 160×144 frame, the output contains 92,160 pixels, or 69,120 additional pixels compared with canonical resolution — typically sub-millisecond on modern hardware.
 
 ### GPU Upload
 

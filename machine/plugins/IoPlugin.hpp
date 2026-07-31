@@ -194,6 +194,7 @@ struct RealtimeAudioPacket {
     std::uint32_t psgChunkSamplesMin = 0;
     std::uint32_t psgChunkSamplesMax = 0;
     std::uint32_t psgPendingSamples = 0;
+    std::uint64_t psgEventDropCount = 0;
     std::uint64_t firstSampleFrame = 0u;
     std::vector<std::int16_t> pcmSamples;
     std::vector<PsgVoiceDescriptor> voices;

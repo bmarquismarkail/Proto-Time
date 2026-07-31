@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <semaphore>
 #include <string_view>
 #include <thread>
 #include <vector>
@@ -44,10 +45,13 @@ public:
 
     [[nodiscard]] const std::filesystem::path& path() const noexcept { return path_; }
     [[nodiscard]] std::size_t messageCount() const noexcept { return messages_.size(); }
+    [[nodiscard]] std::size_t droppedMessageCount() const noexcept { return droppedMessages_; }
 
 private:
     std::filesystem::path path_;
     std::vector<MidiMessage> messages_;
+    static constexpr std::size_t kMaxMessages = 262'144u;
+    std::size_t droppedMessages_ = 0u;
     bool flushed_ = false;
 };
 
@@ -86,9 +90,9 @@ private:
     std::atomic<std::uint64_t> sent_{0u};
     std::atomic<std::uint64_t> dropped_{0u};
     std::atomic<std::uint64_t> errors_{0u};
-    std::mutex wakeMutex_;
-    std::condition_variable wakeCv_;
+    std::mutex drainMutex_;
     std::condition_variable drainedCv_;
+    std::counting_semaphore<kQueueSlots> wakeSemaphore_{0};
     std::thread worker_;
 };
 

@@ -3,10 +3,14 @@
 #endif
 
 #include <cassert>
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <iostream>
 #include <set>
+#include <stdexcept>
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
@@ -196,12 +200,7 @@ int main()
         // a 16x16 replacement, output coordinate q maps exactly to replacement q.
         for (std::size_t y = 0; y < 16u; ++y) {
             for (std::size_t x = 0; x < 16u; ++x) {
-                // Output coordinate maps directly to replacement coordinate
-                const std::uint8_t r = static_cast<std::uint8_t>((y << 4u) | (x >> 0u));
-                const std::uint8_t g = static_cast<std::uint8_t>((x << 4u) & 0xF0u);
-                const std::uint32_t expected = (0xFFu << 24u) | (static_cast<std::uint32_t>(r) << 16u) |\
-                                               (static_cast<std::uint32_t>(g) << 8u);
-                assert(frame.pixels[y * 16u + x] == expected);
+                assert(frame.pixels[y * 16u + x] == expectedReplacementPixel(x, y));
             }
         }
 
@@ -418,23 +417,28 @@ int main()
     // Test 8: HD scale parser tests for edge cases
     // ========================================================================
     {
-        std::vector<char*> argv1 = {"timeEmulator", "--hd-scale", "4"};
+        char program[] = "timeEmulator";
+        char hdScaleOption[] = "--hd-scale";
+        char scaleFour[] = "4";
+        char scaleHundred[] = "100";
+        char scaleZero[] = "0";
+        std::vector<char*> argv1 = {program, hdScaleOption, scaleFour};
         auto args = BMMQ::parseEmulatorArguments(3, argv1.data());
         assert(args.overrides.hdScale.has_value());
         assert(*args.overrides.hdScale == 4u);
 
-        std::vector<char*> argv2 = {"timeEmulator", "--hd-scale", "100"};
+        std::vector<char*> argv2 = {program, hdScaleOption, scaleHundred};
         args = BMMQ::parseEmulatorArguments(3, argv2.data());
         assert(args.overrides.hdScale.has_value());
         assert(*args.overrides.hdScale == 8u);
 
-        std::vector<char*> argv3 = {"timeEmulator", "--hd-scale", "0"};
+        std::vector<char*> argv3 = {program, hdScaleOption, scaleZero};
         args = BMMQ::parseEmulatorArguments(3, argv3.data());
         assert(args.overrides.hdScale.has_value());
         assert(*args.overrides.hdScale == 1u);
 
         // Test missing value throws
-        std::vector<char*> argv4 = {"timeEmulator", "--hd-scale"};
+        std::vector<char*> argv4 = {program, hdScaleOption};
         bool threw = false;
         try {
             args = BMMQ::parseEmulatorArguments(2, argv4.data());
@@ -455,8 +459,13 @@ int main()
         std::vector<std::uint8_t> gameBoyRom(0x8000u, 0x00u);
         gameBoyRom[0x0100] = 0x00u;
         const auto romPath = tempDir / "test.gb";
-        std::ofstream output(romPath, std::ios::binary);
-        output.write(reinterpret_cast<const char*>(gameBoyRom.data()), gameBoyRom.size());
+        {
+            std::ofstream output(romPath, std::ios::binary);
+            output.write(reinterpret_cast<const char*>(gameBoyRom.data()),
+                         static_cast<std::streamsize>(gameBoyRom.size()));
+            output.close();
+            assert(output.good());
+        }
 
         BMMQ::EmulatorConfig config;
         config.machineKind = std::string("gameboy");

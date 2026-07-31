@@ -55,9 +55,10 @@ int main(int argc, char** argv)
     }
     assert(service.primedForDrain());
     assert(service.transportStats().readyQueueDepth >= service.transportStats().prefillTargetChunks);
+    const auto drainCallbackCountBeforeService = service.transportStats().drainCallbackCount;
     output->service();
     for (int attempt = 0; attempt < 100
-         && service.transportStats().drainCallbackCount == 0u; ++attempt) {
+         && service.transportStats().drainCallbackCount == drainCallbackCountBeforeService; ++attempt) {
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     assert(engine.stats().callbackCount >= 1u);
@@ -118,9 +119,12 @@ int main(int argc, char** argv)
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     assert(stereoService.primedForDrain());
+    const auto stereoDrainCallbackCountBeforeService =
+        stereoService.transportStats().drainCallbackCount;
     output->service();
     for (int attempt = 0; attempt < 100
-         && stereoService.transportStats().drainCallbackCount == 0u; ++attempt) {
+         && stereoService.transportStats().drainCallbackCount ==
+                stereoDrainCallbackCountBeforeService; ++attempt) {
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     assert(stereoEngine.stats().outputSamplesProduced >= 2u);

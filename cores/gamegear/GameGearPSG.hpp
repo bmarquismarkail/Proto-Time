@@ -63,7 +63,8 @@ private:
     void updateCompatStatus() noexcept;
     [[nodiscard]] std::array<int16_t, 2> mixFrame() noexcept;
     void recordWrite(std::uint16_t address, std::uint8_t value,
-                     std::uint8_t voice, BMMQ::PsgEventKind kind);
+                     std::uint8_t voice, BMMQ::PsgEventKind kind,
+                     bool hasRawWrite = true);
     [[nodiscard]] int channelAmplitude(std::size_t channel) const noexcept;
     [[nodiscard]] bool channelRoutedLeft(std::size_t channel) const noexcept;
     [[nodiscard]] bool channelRoutedRight(std::size_t channel) const noexcept;
