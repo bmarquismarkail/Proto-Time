@@ -277,6 +277,7 @@ private:
         uint64_t inputGeneration = 0u;
         uint64_t stepCounter = 0u;
         uint64_t lastAudioFrameCounter = 0u;
+        mutable std::optional<BMMQ::RealtimeAudioPacket> realtimeAudioPacketCache;
         bool bootEntryPending = false;
         // Interrupt request raised by PPU (VBlank). Consumed atomically by CPU.
         bool interruptRequested = false;

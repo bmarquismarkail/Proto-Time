@@ -29,6 +29,10 @@ struct AudioOutputTransportConfig {
 };
 
 struct AudioOutputTransportStats {
+    std::size_t sourceQueueDepth = 0;
+    std::size_t sourceQueueCapacity = 0;
+    std::size_t sourceQueueOverruns = 0;
+    std::size_t sourceBlocksProcessed = 0;
     std::size_t configuredReadyQueueChunks = 0;
     std::size_t prefillTargetChunks = 0;
     std::size_t readyQueueCapacityChunks = 0;
@@ -422,17 +426,40 @@ public:
 
     void appendRecentPcm(std::span<const int16_t> pcm, uint64_t frameCounter)
     {
-        engine_.appendRecentPcm(pcm, frameCounter);
+        AudioSourceBlock block;
+        block.sampleRate = static_cast<std::uint32_t>(std::max(engine_.config().sourceSampleRate, 1));
+        block.channelCount = engine_.config().channelCount;
+        block.frameCounter = frameCounter;
+        block.lifecycleEpoch = transportEpoch_.load(std::memory_order_acquire);
+        block.mixedSamples.assign(pcm.begin(), pcm.end());
+        (void)submitSourceBlock(std::move(block));
+    }
+
+    [[nodiscard]] bool submitSourceBlock(AudioSourceBlock block) noexcept
+    {
+        if (block.mixedSamples.empty()) return true;
+        block.lifecycleEpoch = transportEpoch_.load(std::memory_order_acquire);
+        const auto write = sourceWriteIndex_.load(std::memory_order_relaxed);
+        const auto next = (write + 1u) % sourceBlocks_.size();
+        if (next == sourceReadIndex_.load(std::memory_order_acquire)) {
+            sourceQueueOverrunCount_.fetch_add(1u, std::memory_order_relaxed);
+            return false;
+        }
+        const auto sampleCount = block.mixedSamples.size();
+        sourceBlocks_[write] = std::move(block);
+        sourceWriteIndex_.store(next, std::memory_order_release);
         transportAppendRecentPcmCallCount_.fetch_add(1u, std::memory_order_relaxed);
-        transportAppendRecentPcmSamplesAppended_.fetch_add(pcm.size(), std::memory_order_relaxed);
+        transportAppendRecentPcmSamplesAppended_.fetch_add(sampleCount, std::memory_order_relaxed);
         appendNotifyTimeNs_.store(
             std::chrono::steady_clock::now().time_since_epoch().count(),
             std::memory_order_relaxed);
         outputTransportCv_.notify_one();
+        return true;
     }
 
     [[nodiscard]] bool produceReadyOutputBlock() noexcept
     {
+        drainSourceBlocks();
         transportWorkerProductionAttemptCount_.fetch_add(1u, std::memory_order_relaxed);
         if (!outputTransportConfigured_ || producerScratch_.empty()) {
             transportWorkerProductionSourceBufferedSamplesFailureLast_.store(0u, std::memory_order_relaxed);
@@ -526,6 +553,13 @@ public:
     [[nodiscard]] AudioOutputTransportStats transportStats() const noexcept
     {
         AudioOutputTransportStats stats;
+        const auto sourceRead = sourceReadIndex_.load(std::memory_order_acquire);
+        const auto sourceWrite = sourceWriteIndex_.load(std::memory_order_acquire);
+        stats.sourceQueueDepth = sourceWrite >= sourceRead ? sourceWrite - sourceRead
+            : sourceBlocks_.size() - sourceRead + sourceWrite;
+        stats.sourceQueueCapacity = sourceBlocks_.size() - 1u;
+        stats.sourceQueueOverruns = sourceQueueOverrunCount_.load(std::memory_order_relaxed);
+        stats.sourceBlocksProcessed = sourceBlocksProcessed_.load(std::memory_order_relaxed);
         stats.configuredReadyQueueChunks = outputTransportConfig_.readyQueueChunks;
         stats.prefillTargetChunks = prefillTargetChunks();
         const auto queueCapacity = readyBlocks_.empty() ? 0u : (readyBlocks_.size() - 1u);
@@ -574,8 +608,8 @@ public:
             transportAppendRecentPcmCallCount_.load(std::memory_order_relaxed);
         stats.appendRecentPcmSamplesAppended =
             transportAppendRecentPcmSamplesAppended_.load(std::memory_order_relaxed);
-        // Epoch checks removed from drain path (Phase 3): not populated.
-        stats.staleEpochDropCount = 0;
+        stats.staleEpochDropCount =
+            transportStaleEpochDropCount_.load(std::memory_order_relaxed);
         stats.epochBumpCount = transportEpochBumpCount_.load(std::memory_order_relaxed);
         stats.lifecycleEpoch = transportEpoch_.load(std::memory_order_acquire);
         stats.primedTransitionCount =
@@ -665,6 +699,7 @@ public:
     // perform render/resample/pipeline work.
     void renderForOutput(std::span<int16_t> output) noexcept
     {
+        drainSourceBlocks(output.size() <= pipelineOutputScratch_.size());
         renderForOutputWithScratch(output, pipelineOutputScratch_);
     }
 
@@ -689,35 +724,79 @@ private:
     void renderForOutputWithScratch(std::span<int16_t> output, std::vector<int16_t>& scratch) noexcept
     {
         engine_.render(output);
+        (void)scratch;
+    }
 
-        if (pipeline_.empty()) {
-            return;
-        }
-
-        AudioBufferView input{std::span<const int16_t>(output.data(), output.size()),
-                              engine_.config().deviceSampleRate,
-                              engine_.config().channelCount};
-        if (scratch.size() < output.size()) {
-            engine_.notePipelineCapacitySkip();
-            return;
-        }
-
-        std::size_t producedSamples = 0;
-        const bool processed = pipeline_.process(
-            input,
-            std::span<int16_t>(scratch.data(), scratch.size()),
-            producedSamples);
-        if (!processed) {
-            std::fill(output.begin(), output.end(), 0);
-            return;
-        }
-
-        const auto copyCount = std::min(output.size(), producedSamples);
-        if (copyCount > 0u) {
-            std::memmove(output.data(), scratch.data(), copyCount * sizeof(int16_t));
-        }
-        if (copyCount < output.size()) {
-            std::fill(output.begin() + static_cast<std::ptrdiff_t>(copyCount), output.end(), 0);
+    void drainSourceBlocks(bool chunkOversize = true) noexcept
+    {
+        std::lock_guard<std::mutex> sourceDrainLock(sourceDrainMutex_);
+        auto read = sourceReadIndex_.load(std::memory_order_relaxed);
+        const auto write = sourceWriteIndex_.load(std::memory_order_acquire);
+        while (read != write) {
+            AudioSourceBlock block = std::move(sourceBlocks_[read]);
+            read = (read + 1u) % sourceBlocks_.size();
+            sourceReadIndex_.store(read, std::memory_order_release);
+            if (block.lifecycleEpoch != transportEpoch_.load(std::memory_order_acquire)) {
+                transportStaleEpochDropCount_.fetch_add(1u, std::memory_order_relaxed);
+                continue;
+            }
+            std::span<const std::int16_t> samples = block.mixedSamples;
+            if (!pipeline_.empty()) {
+                if (pipelineOutputScratch_.size() < samples.size()) {
+                    if (chunkOversize && block.voices.empty() && block.events.empty() && !pipelineOutputScratch_.empty()) {
+                        auto originalSamples = block.mixedSamples;
+                        bool processingFailed = false;
+                        for (std::size_t offset = 0u; offset < block.mixedSamples.size();
+                             offset += pipelineOutputScratch_.size()) {
+                            const auto count = std::min(pipelineOutputScratch_.size(),
+                                                        block.mixedSamples.size() - offset);
+                            AudioSourceBlockView view{
+                                .mixed = {std::span<const std::int16_t>(block.mixedSamples.data() + offset, count),
+                                          static_cast<int>(block.sampleRate), block.channelCount},
+                                .voices = {},
+                                .voiceStems = {},
+                                .events = {},
+                                .frameCounter = block.frameCounter,
+                                .firstSampleFrame = block.firstSampleFrame + offset / std::max<std::uint8_t>(block.channelCount, 1u),
+                                .lifecycleEpoch = block.lifecycleEpoch,
+                            };
+                            std::size_t produced = 0u;
+                            if (!pipeline_.processSource(view, pipelineOutputScratch_, produced) || produced != count) {
+                                engine_.notePipelineCapacitySkip();
+                                processingFailed = true;
+                                break;
+                            }
+                            std::copy_n(pipelineOutputScratch_.begin(), static_cast<std::ptrdiff_t>(count),
+                                        block.mixedSamples.begin() + static_cast<std::ptrdiff_t>(offset));
+                        }
+                        if (processingFailed) {
+                            block.mixedSamples = std::move(originalSamples);
+                        }
+                        samples = block.mixedSamples;
+                    } else {
+                        engine_.notePipelineCapacitySkip();
+                    }
+                } else {
+                    AudioSourceBlockView view{
+                        .mixed = {samples, static_cast<int>(block.sampleRate), block.channelCount},
+                        .voices = block.voices,
+                        .voiceStems = block.voiceStems,
+                        .events = block.events,
+                        .frameCounter = block.frameCounter,
+                        .firstSampleFrame = block.firstSampleFrame,
+                        .lifecycleEpoch = block.lifecycleEpoch,
+                    };
+                    std::size_t produced = 0u;
+                    if (pipeline_.processSource(view, pipelineOutputScratch_, produced) &&
+                        produced == samples.size()) {
+                        samples = std::span<const std::int16_t>(pipelineOutputScratch_.data(), produced);
+                    } else {
+                        engine_.notePipelineCapacitySkip();
+                    }
+                }
+            }
+            engine_.appendRecentPcm(samples, block.frameCounter);
+            sourceBlocksProcessed_.fetch_add(1u, std::memory_order_relaxed);
         }
     }
 
@@ -838,9 +917,12 @@ private:
 
     void bumpTransportEpochLocked() noexcept
     {
-        transportEpoch_.fetch_add(1u, std::memory_order_release);
+        std::lock_guard<std::mutex> sourceDrainLock(sourceDrainMutex_);
+        const auto epoch = transportEpoch_.fetch_add(1u, std::memory_order_release) + 1u;
         transportEpochBumpCount_.fetch_add(1u, std::memory_order_relaxed);
         clearReadyQueue();
+        sourceReadIndex_.store(sourceWriteIndex_.load(std::memory_order_acquire), std::memory_order_release);
+        pipeline_.flush(epoch);
     }
 
     [[nodiscard]] std::chrono::milliseconds outputTransportWakePeriod() const noexcept
@@ -1091,6 +1173,15 @@ private:
     std::vector<ReadyBlock> readyBlocks_{};
     std::vector<int16_t> producerScratch_{};
     std::vector<int16_t> transportPipelineScratch_{};
+    static constexpr std::size_t kSourceQueueSlots = 9u;
+    std::array<AudioSourceBlock, kSourceQueueSlots> sourceBlocks_{};
+    // Source slots and read-index reclamation have one logical consumer at a
+    // time: the transport worker or an explicit synchronous compatibility call.
+    mutable std::mutex sourceDrainMutex_;
+    alignas(64) std::atomic<std::size_t> sourceReadIndex_{0u};
+    alignas(64) std::atomic<std::size_t> sourceWriteIndex_{0u};
+    std::atomic<std::size_t> sourceQueueOverrunCount_{0u};
+    std::atomic<std::size_t> sourceBlocksProcessed_{0u};
     alignas(64) std::atomic<std::size_t> readyReadIndex_{0};   // written by device callback, read by worker
     alignas(64) std::atomic<std::size_t> readyWriteIndex_{0};  // written by worker, read by device callback
     std::atomic<bool> outputTransportRunning_{false};

@@ -14,13 +14,92 @@
 extern "C" {
 #endif
 
+struct TimeHostApiV1;
+
 #define TIME_PLUGIN_ABI_VERSION_V1 1u
 #define TIME_PLUGIN_MODULE_ENTRYPOINT_V1 "time_get_plugin_module_v1"
 
 enum TimePluginKindV1 {
     TIME_PLUGIN_KIND_EXECUTOR_POLICY_V1 = 1u,
     TIME_PLUGIN_KIND_FRONTEND_V1 = 2u,
-    TIME_PLUGIN_KIND_AUDIO_OUTPUT_V1 = 3u
+    TIME_PLUGIN_KIND_AUDIO_OUTPUT_V1 = 3u,
+    TIME_PLUGIN_KIND_AUDIO_PROCESSOR_V1 = 4u
+};
+
+enum TimeAudioProcessorResultV1 {
+    TIME_AUDIO_PROCESSOR_ERROR_V1 = -1,
+    TIME_AUDIO_PROCESSOR_BYPASS_V1 = 0,
+    TIME_AUDIO_PROCESSOR_PROCESSED_V1 = 1
+};
+
+struct TimePsgVoiceV1 {
+    uint32_t struct_size;
+    uint8_t voice_id;
+    uint8_t voice_kind;
+};
+
+struct TimePsgEventV1 {
+    uint32_t struct_size;
+    uint32_t sample_frame_offset;
+    uint64_t sequence;
+    uint32_t frequency_millihz;
+    uint16_t level_q15;
+    uint16_t raw_address;
+    uint8_t voice_id;
+    uint8_t voice_kind;
+    uint8_t event_kind;
+    uint8_t routing_mask;
+    uint8_t timbre;
+    uint8_t raw_value;
+    uint8_t gate;
+    uint8_t has_raw_write;
+};
+
+struct TimeAudioProcessorConfigV1 {
+    uint32_t struct_size;
+    uint32_t sample_rate;
+    uint32_t channels;
+    uint32_t max_block_samples;
+    const char* config_json;
+};
+
+struct TimeAudioSourceBlockV1 {
+    uint32_t struct_size;
+    uint32_t sample_rate;
+    uint32_t channels;
+    uint64_t frame_counter;
+    uint64_t first_sample_frame;
+    uint64_t lifecycle_epoch;
+    const int16_t* mixed_samples;
+    uint32_t mixed_sample_count;
+    const int16_t* voice_stems;
+    uint32_t voice_stem_sample_count;
+    const struct TimePsgVoiceV1* voices;
+    uint32_t voice_count;
+    const struct TimePsgEventV1* events;
+    uint32_t event_count;
+};
+
+struct TimeAudioProcessorStatsV1 {
+    uint32_t struct_size;
+    uint64_t process_calls;
+    uint64_t bypass_count;
+    uint64_t error_count;
+};
+
+struct TimeAudioProcessorApiV1 {
+    uint32_t struct_size;
+    uint32_t abi_version;
+    void* (*create)(const struct TimeHostApiV1* host_api);
+    void (*destroy)(void* instance);
+    int32_t (*open)(void* instance, const struct TimeAudioProcessorConfigV1* config);
+    int32_t (*process)(void* instance, const struct TimeAudioSourceBlockV1* input,
+                       int16_t* output, uint32_t output_capacity_samples,
+                       uint32_t* produced_samples);
+    void (*flush)(void* instance, uint64_t lifecycle_epoch);
+    void (*close)(void* instance);
+    const char* (*last_error)(const void* instance);
+    int32_t (*query_stats)(const void* instance, struct TimeAudioProcessorStatsV1* stats);
 };
 
 enum TimeFrontendCapabilityV1 {

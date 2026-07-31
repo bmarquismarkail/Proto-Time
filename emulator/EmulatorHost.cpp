@@ -98,6 +98,19 @@ BootstrappedMachine bootstrapMachine(const EmulatorConfig& options)
     bootstrapped.machine = std::move(instance.machine);
     bootstrapped.romSize = romBytes.size();
     bootstrapped.captureStarted = captureStarted;
+
+    // Wire hdScale into VideoService before execution so headless and frontend paths both get it
+    if (options.hdScale > 1u) {
+        const uint32_t effectiveHdScale = std::clamp(options.hdScale, 1u, 8u);
+        BMMQ::VideoEngineConfig engineConfig;
+        engineConfig.frameWidth = instance.descriptor.defaultFrameWidth;
+        engineConfig.frameHeight = instance.descriptor.defaultFrameHeight;
+        engineConfig.hdScale = static_cast<int>(effectiveHdScale);
+        if (!bootstrapped.machine->videoService().configure(engineConfig)) {
+            throw std::runtime_error("Unable to configure video service for requested HD scale");
+        }
+    }
+
     return bootstrapped;
 }
 

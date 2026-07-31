@@ -145,6 +145,11 @@ void applyConfigValue(EmulatorConfig& config,
                 throw std::invalid_argument("Scale value too large (max 20): " + std::to_string(parsed));
             }
             config.windowScale = static_cast<std::uint32_t>(std::max<std::uint64_t>(1u, parsed));
+        } else if (key == "hd_scale") {
+            std::uint64_t parsed = parseUnsigned(text, label);
+            constexpr std::uint64_t kMaxHdScale = 8;
+            config.hdScale = static_cast<std::uint32_t>(
+                std::clamp<std::uint64_t>(parsed, 1u, kMaxHdScale));
         } else {
             throw std::invalid_argument("Unknown config key: " + label);
         }
@@ -173,8 +178,23 @@ void applyConfigValue(EmulatorConfig& config,
             config.audioBackend = text;
         } else if (key == "plugin") {
             config.audioPluginPath = resolveConfigPath(configDirectory, text);
+        } else if (key == "processor_plugin") {
+            config.audioProcessorPluginPaths.push_back(resolveConfigPath(configDirectory, text));
+        } else if (key == "processor_config") {
+            const auto equals = text.find('=');
+            if (equals == std::string::npos || equals == 0u || equals + 1u >= text.size()) {
+                throw std::invalid_argument(label + " requires <plugin-id>=<json-file>");
+            }
+            config.audioProcessorConfigs.push_back({
+                text.substr(0u, equals),
+                resolveConfigPath(configDirectory, text.substr(equals + 1u)),
+            });
         } else if (key == "output_file") {
             config.audioOutputFilePath = resolveConfigPath(configDirectory, text);
+        } else if (key == "midi_file") {
+            config.midiOutputFilePath = resolveConfigPath(configDirectory, text);
+        } else if (key == "midi_output") {
+            config.midiOutputPort = text;
         } else if (key == "ready_queue_chunks") {
             const auto parsed = parseUnsigned(text, label);
             const auto clamped = std::min<std::uint64_t>(parsed, 64u);
@@ -266,7 +286,8 @@ EmulatorConfig loadEmulatorConfig(const std::filesystem::path& path)
 
         const auto qualifiedKey = section + "." + key;
         const bool repeatableKey =
-            section == "visual" && (key == "pack" || key == "visual_pack" || key == "texture_pack");
+            (section == "visual" && (key == "pack" || key == "visual_pack" || key == "texture_pack")) ||
+            (section == "audio" && key == "processor_plugin");
         if (!repeatableKey && !seenKeys.insert(qualifiedKey).second) {
             throw std::invalid_argument("Duplicate config key: " + qualifiedKey);
         }
@@ -307,6 +328,9 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     if (overrides.windowScale.has_value()) {
         config.windowScale = *overrides.windowScale;
     }
+    if (overrides.hdScale.has_value()) {
+        config.hdScale = std::clamp(*overrides.hdScale, 1u, 8u);
+    }
     if (overrides.headless.has_value()) {
         config.headless = *overrides.headless;
     }
@@ -346,6 +370,12 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     if (overrides.audioOutputFilePath.has_value()) {
         config.audioOutputFilePath = *overrides.audioOutputFilePath;
     }
+    if (overrides.midiOutputFilePath.has_value()) {
+        config.midiOutputFilePath = *overrides.midiOutputFilePath;
+    }
+    if (overrides.midiOutputPort.has_value()) {
+        config.midiOutputPort = *overrides.midiOutputPort;
+    }
     if (overrides.audioReadyQueueChunks.has_value()) {
         config.audioReadyQueueChunks =
             static_cast<std::uint32_t>(std::clamp<std::uint32_t>(*overrides.audioReadyQueueChunks, 1u, 64u));
@@ -353,6 +383,12 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     if (overrides.audioBatchChunks.has_value()) {
         config.audioBatchChunks =
             static_cast<std::uint32_t>(std::clamp<std::uint32_t>(*overrides.audioBatchChunks, 1u, 16u));
+    }
+    if (overrides.audioProcessorPluginPaths.has_value()) {
+        config.audioProcessorPluginPaths = *overrides.audioProcessorPluginPaths;
+    }
+    if (overrides.audioProcessorConfigs.has_value()) {
+        config.audioProcessorConfigs = *overrides.audioProcessorConfigs;
     }
     if (overrides.backgroundWorkers.has_value()) {
         config.backgroundWorkers = std::min<std::uint32_t>(*overrides.backgroundWorkers, 256u);
@@ -506,6 +542,15 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
                 parsed = std::min(parsed, static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max()));
                 arguments.overrides.windowScale = static_cast<std::uint32_t>(std::max<std::uint64_t>(1u, parsed));
             }
+        } else if (arg == "--hd-scale") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--hd-scale requires a positive integer");
+            }
+            {
+                std::uint64_t parsed = parseUnsigned(argv[++i], "--hd-scale");
+                parsed = std::min(parsed, static_cast<std::uint64_t>(8u));
+                arguments.overrides.hdScale = static_cast<std::uint32_t>(std::max<std::uint64_t>(1u, parsed));
+            }
         } else if (arg == "--unthrottled") {
             arguments.overrides.unthrottled = true;
         } else if (arg == "--cpu-mode") {
@@ -552,11 +597,38 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
                 throw std::invalid_argument("--audio-plugin requires a path");
             }
             arguments.overrides.audioPluginPath = std::filesystem::path(argv[++i]);
+        } else if (arg == "--audio-processor-plugin") {
+            if (i + 1 >= argc) throw std::invalid_argument("--audio-processor-plugin requires a path");
+            if (!arguments.overrides.audioProcessorPluginPaths.has_value()) {
+                arguments.overrides.audioProcessorPluginPaths = std::vector<std::filesystem::path>{};
+            }
+            arguments.overrides.audioProcessorPluginPaths->emplace_back(argv[++i]);
+        } else if (arg == "--audio-processor-config") {
+            if (i + 1 >= argc) throw std::invalid_argument("--audio-processor-config requires <plugin-id>=<json-file>");
+            const std::string spec = argv[++i];
+            const auto equals = spec.find('=');
+            if (equals == std::string::npos || equals == 0u || equals + 1u >= spec.size()) {
+                throw std::invalid_argument("--audio-processor-config requires <plugin-id>=<json-file>");
+            }
+            if (!arguments.overrides.audioProcessorConfigs.has_value()) {
+                arguments.overrides.audioProcessorConfigs = std::vector<AudioProcessorConfigSpec>{};
+            }
+            arguments.overrides.audioProcessorConfigs->push_back({spec.substr(0u, equals), spec.substr(equals + 1u)});
         } else if (arg == "--audio-file") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--audio-file requires a path");
             }
             arguments.overrides.audioOutputFilePath = std::filesystem::path(argv[++i]);
+        } else if (arg == "--midi-file") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--midi-file requires a path");
+            }
+            arguments.overrides.midiOutputFilePath = std::filesystem::path(argv[++i]);
+        } else if (arg == "--midi-output") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--midi-output requires an ALSA client:port or subscribers");
+            }
+            arguments.overrides.midiOutputPort = argv[++i];
         } else if (arg == "--audio-ready-queue-chunks") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--audio-ready-queue-chunks requires a positive integer");

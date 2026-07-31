@@ -1,6 +1,7 @@
 #include <cassert>
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -61,6 +62,43 @@ int main()
 
     assert(boundaryWriteMap.read8(0xFFFE) == 0x34);
     assert(boundaryWriteMap.read8(0xFFFF) == 0x12);
+
+    using SignedAddress = std::int64_t;
+    BMMQ::MemoryStorage<SignedAddress, uint8_t> signedStorage;
+    signedStorage.addReadWriteMem({10, 4});
+    const std::array<uint8_t, 1> signedValue {0x5A};
+
+    for (const auto address : {
+             SignedAddress{9},
+             std::numeric_limits<SignedAddress>::min(),
+             std::numeric_limits<SignedAddress>::max()}) {
+        bool signedWriteThrew = false;
+        try {
+            signedStorage.write(signedValue, address);
+        } catch (const std::out_of_range&) {
+            signedWriteThrew = true;
+        }
+        assert(signedWriteThrew);
+
+        bool signedSpanThrew = false;
+        try {
+            (void)signedStorage.writableSpan(address, 1);
+        } catch (const std::out_of_range&) {
+            signedSpanThrew = true;
+        }
+        assert(signedSpanThrew);
+
+        bool signedReadableSpanThrew = false;
+        try {
+            (void)signedStorage.readableSpan(address, 1);
+        } catch (const std::out_of_range&) {
+            signedReadableSpanThrew = true;
+        }
+        assert(signedReadableSpanThrew);
+    }
+
+    signedStorage.write(signedValue, 10);
+    assert(signedStorage.readableSpan(10, 1).front() == signedValue.front());
 
     return 0;
 }

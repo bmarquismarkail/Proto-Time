@@ -12,6 +12,9 @@ namespace {
 struct RecordingAudioPlugin final : BMMQ::IAudioPlugin {
     int audioEventCount = 0;
     std::optional<BMMQ::AudioStateView> lastAudioState;
+    std::optional<BMMQ::RealtimeAudioPacket> lastPacket;
+    std::size_t totalRealtimeEvents = 0u;
+    bool stemsReconstructMix = true;
 
     std::string_view id() const override {
         return "test.audio.gamegear";
@@ -20,6 +23,25 @@ struct RecordingAudioPlugin final : BMMQ::IAudioPlugin {
     void onAudioEvent(const BMMQ::MachineEvent&, const BMMQ::MachineView& view) override {
         ++audioEventCount;
         lastAudioState = view.audioState();
+        lastPacket = view.realtimeAudioPacket();
+        if (lastPacket.has_value()) {
+            totalRealtimeEvents += lastPacket->events.size();
+            const auto voiceStride = lastPacket->pcmSamples.size();
+            if (lastPacket->voiceStems.size() != voiceStride * 4u) {
+                stemsReconstructMix = false;
+            } else {
+                // Reconstruction assumes no individual voice stem saturates;
+                // stems clamp per voice while the final mix clamps their sum.
+                for (std::size_t sample = 0u; sample < voiceStride; ++sample) {
+                    int sum = 0;
+                    for (std::size_t voice = 0u; voice < 4u; ++voice) {
+                        sum += lastPacket->voiceStems[voice * voiceStride + sample];
+                    }
+                    stemsReconstructMix = stemsReconstructMix &&
+                        lastPacket->pcmSamples[sample] == std::clamp(sum, -32768, 32767);
+                }
+            }
+        }
     }
 };
 
@@ -92,6 +114,13 @@ int main()
     assert(recorder->lastAudioState->frameCounter >= 1u);
     assert(!recorder->lastAudioState->pcmSamples.empty());
     assert(hasNonZeroSample(recorder->lastAudioState->pcmSamples));
+    assert(recorder->lastPacket.has_value());
+    assert(recorder->lastPacket->voices.size() == 4u);
+    assert(recorder->lastPacket->voiceStems.size() == recorder->lastPacket->pcmSamples.size() * 4u);
+    assert(recorder->totalRealtimeEvents > 0u);
+    assert(recorder->stemsReconstructMix);
+    assert(std::is_sorted(recorder->lastPacket->events.begin(), recorder->lastPacket->events.end(),
+        [](const auto& lhs, const auto& rhs) { return lhs.sequence < rhs.sequence; }));
 
     machine.pluginManager().shutdown(machine.mutableView());
     return 0;

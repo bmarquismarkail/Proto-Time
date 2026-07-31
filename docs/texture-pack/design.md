@@ -572,7 +572,13 @@ So the recommendation is clear: texture packs should be implemented as a machine
 
 This design aligns with:
 
-- machine-owned shared abstractions rather than frontend-owned console-specific contracts fileciteturn0file0
-- machine-owned runtime and service direction with frontends/plugins depending on machine contracts rather than owning machine semantics fileciteturn0file1
-- typed machine-driven I/O observation and the “push events, pull data” model for plugins and tooling fileciteturn0file2
-- machine-owned shared service ownership patterns already being introduced for audio fileciteturn0file4
+- machine-owned shared abstractions rather than frontend-owned console-specific contracts
+- machine-owned runtime and service direction with frontends/plugins depending on machine contracts rather than owning machine semantics
+- typed machine-driven I/O observation and the “push events, pull data” model for plugins and tooling
+- machine-owned shared service ownership patterns already being introduced for audio
+
+## HD Texture Replacement
+
+For information on enabling higher-resolution texture replacements, see:
+
+- [HD Texture Replacement Guide](hd-replacement.md) — configuration, authoring, and rendering behavior

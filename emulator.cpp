@@ -27,6 +27,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 #include "emulator/AudioKpiStatus.hpp"
@@ -43,6 +44,10 @@
 #include "machine/plugins/audio_output/DummyAudioOutput.hpp"
 #include "machine/plugins/audio_output/FileAudioOutput.hpp"
 #include "machine/plugins/audio/AudioTransportPlugin.hpp"
+#include "machine/plugins/audio/PsgMidiPlugin.hpp"
+#if defined(BMMQ_HAS_ALSA_MIDI)
+#include "machine/plugins/audio/AlsaMidiSink.hpp"
+#endif
 #include "machine/TimingService.hpp"
 #include "cores/gameboy/GameBoyMachine.hpp"
 using GameBoyMachine = GB::GameBoyMachine;
@@ -75,6 +80,7 @@ void printUsage(std::string_view program)
               << "                     Select a built-in or module executor policy ID\n"
               << "  --steps <count>    Stop after a fixed number of instruction steps\n"
               << "  --scale <n>        Frontend window scale factor (default: 3)\n"
+              << "  --hd-scale <n>     HD texture replacement scale (1-8, default: 1)\n"
               << "  --cpu-mode <mode>  CPU mode: baseline, block, ir, or native (experimental x86-64/POSIX)\n"
               << "  --cpu-detailed-timing\n"
               << "                     Enable intrusive IR guard/lowering/execution timers\n"
@@ -90,8 +96,16 @@ void printUsage(std::string_view program)
               << "                     Audio backend: sdl, dummy, or file (default: sdl)\n"
               << "  --audio-plugin <path>\n"
               << "                     Load an audio output from a pure-C ABI module\n"
+              << "  --audio-processor-plugin <path> (repeatable)\n"
+              << "                     Load audio processors from a pure-C ABI module\n"
+              << "  --audio-processor-config <id>=<json-file>\n"
+              << "                     Configure an audio processor from a JSON file\n"
               << "  --audio-file <path>\n"
               << "                     Raw signed 16-bit PCM path for the file backend\n"
+              << "  --midi-file <path>\n"
+              << "                     Translate PSG events to a Standard MIDI File\n"
+              << "  --midi-output <client:port|subscribers>\n"
+              << "                     Send PSG events to an ALSA MIDI interface\n"
               << "  --audio-ready-queue-chunks <n>\n"
               << "  --audio-batch-chunks <n>\n"
               << "                     Audio output ready-queue chunk depth (1-64, default: 3)\n"
@@ -785,6 +799,8 @@ int main(int argc, char** argv)
         machine.videoService().setBackgroundTaskService(&backgroundTaskService);
         machine.visualOverrideService().setBackgroundTaskService(&backgroundTaskService);
         machine.visualOverrideService().setImageDecoder(&imageDecoder);
+        // Note: bootstrapMachine now configures hdScale into VideoService.
+        // Frontend propagation is handled via FrontendConfig.hdScale below.
         if (auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get());
             gameBoyMachine != nullptr) {
             gameBoyMachine->setBackgroundTaskService(&backgroundTaskService);
@@ -801,6 +817,7 @@ int main(int argc, char** argv)
             config.windowTitle = "Proto-Time - " + std::string(descriptor.displayName) +
                 " - " + options.romPath.filename().string();
             config.windowScale = std::max(options.windowScale, 1u);
+            config.hdScale = std::clamp(options.hdScale, 1u, 8u);
             config.frameWidth = descriptor.defaultFrameWidth;
             config.frameHeight = descriptor.defaultFrameHeight;
             config.autoInitializeBackend = true;
@@ -843,12 +860,69 @@ int main(int argc, char** argv)
             audioTransport = transport.get();
             machine.pluginManager().add(std::move(transport));
         }
-        if (frontend != nullptr || audioTransport != nullptr) {
+        if (options.midiOutputFilePath.has_value()) {
+            auto sink = std::make_unique<BMMQ::MidiFileSink>(*options.midiOutputFilePath);
+            machine.pluginManager().add(std::make_unique<BMMQ::PsgMidiPlugin>(std::move(sink)));
+            std::cout << "MIDI output: " << *options.midiOutputFilePath << '\n';
+        }
+#if defined(BMMQ_HAS_ALSA_MIDI)
+        if (options.midiOutputPort.has_value()) {
+            BMMQ::AlsaMidiSinkConfig midiConfig;
+            if (*options.midiOutputPort != "subscribers") {
+                midiConfig.destination = *options.midiOutputPort;
+            }
+            auto alsaSink = std::make_unique<BMMQ::AlsaMidiSink>(std::move(midiConfig));
+            const auto sourceAddress = alsaSink->sourceAddress();
+            auto asyncSink = std::make_unique<BMMQ::AsyncMidiSink>(std::move(alsaSink));
+            machine.pluginManager().add(std::make_unique<BMMQ::PsgMidiPlugin>(std::move(asyncSink)));
+            std::cout << "MIDI interface: " << sourceAddress;
+            if (*options.midiOutputPort != "subscribers") {
+                std::cout << " -> " << *options.midiOutputPort;
+            }
+            std::cout << '\n';
+        }
+#else
+        if (options.midiOutputPort.has_value()) {
+            throw std::runtime_error("Live MIDI output requires an ALSA-enabled build");
+        }
+#endif
+        if (frontend != nullptr || audioTransport != nullptr ||
+            options.midiOutputFilePath.has_value() || options.midiOutputPort.has_value()) {
             machine.pluginManager().initialize(machine.mutableView());
         }
         if (frontend != nullptr) {
             frontend->requestWindowVisibility(true);
             frontend->serviceFrontend();
+        }
+
+        std::unordered_set<std::string> loadedAudioProcessorIds;
+        for (const auto& processorPath : options.audioProcessorPluginPaths) {
+            auto module = BMMQ::Plugin::DynamicPluginModule::load(processorPath);
+            const auto ids = module.audioProcessorIds();
+            if (ids.empty()) {
+                throw std::runtime_error("Audio processor module has no processors: " + processorPath.string());
+            }
+            for (const auto& id : ids) {
+                if (!loadedAudioProcessorIds.emplace(id).second) {
+                    throw std::runtime_error("Duplicate audio processor id: " + id);
+                }
+                std::string configJson;
+                const auto config = std::find_if(options.audioProcessorConfigs.begin(),
+                    options.audioProcessorConfigs.end(), [&id](const auto& item) { return item.pluginId == id; });
+                if (config != options.audioProcessorConfigs.end()) {
+                    std::ifstream input(config->jsonPath, std::ios::binary);
+                    if (!input) throw std::runtime_error("Unable to read audio processor config: " + config->jsonPath.string());
+                    configJson.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+                }
+                const auto& engineConfig = machine.audioService().engine().config();
+                auto processor = module.createAudioProcessor(
+                    id, static_cast<std::uint32_t>(engineConfig.sourceSampleRate),
+                    engineConfig.channelCount, engineConfig.frameChunkSamples, std::move(configJson));
+                if (!machine.audioService().addProcessor(std::move(processor))) {
+                    throw std::runtime_error("Unable to attach audio processor: " + id);
+                }
+                std::cout << "Audio processor: " << id << " (" << processorPath << ")\n";
+            }
         }
 
         std::unique_ptr<BMMQ::IAudioOutputBackend> audioOutput;

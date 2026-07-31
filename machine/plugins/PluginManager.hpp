@@ -114,18 +114,29 @@ public:
 
     void initialize(MutableMachineView view)
     {
-        for (auto& entry : plugins_) {
-            if (entry.disabled || entry.attached) {
+        if (initializing_) {
+            return;
+        }
+        initializing_ = true;
+        for (std::size_t index = 0; index < plugins_.size(); ++index) {
+            auto& entry = plugins_[index];
+            if (entry.disabled || entry.attached || entry.attaching) {
                 continue;
             }
+            entry.attaching = true;
+            auto* plugin = entry.plugin.get();
             try {
-                entry.plugin->onAttach(view);
-                entry.attached = true;
+                plugin->onAttach(view);
+                plugins_[index].attached = true;
+                plugins_[index].attaching = false;
             } catch (...) {
-                entry.attached = false;
-                markFailure(entry);
+                auto& failedEntry = plugins_[index];
+                failedEntry.attached = false;
+                failedEntry.attaching = false;
+                markFailure(failedEntry);
             }
         }
+        initializing_ = false;
         initialized_ = true;
     }
 
@@ -231,6 +242,7 @@ private:
         ISerialPlugin* serial = nullptr;
         IParallelPlugin* parallel = nullptr;
         bool attached = false;
+        bool attaching = false;
         bool disabled = false;
         std::size_t failureCount = 0;
         std::string lastError;
@@ -322,6 +334,7 @@ private:
     }
 
     std::vector<Entry> plugins_;
+    bool initializing_ = false;
     bool initialized_ = false;
 };
 

@@ -7,6 +7,7 @@ option(BMMQ_PROFILE_VDP_RENDER "Enable profiling-oriented compile flags for Game
 option(PROTO_TIME_BUILD_SDL_FRONTEND "Build the optional SDL frontend module" ON)
 option(PROTO_TIME_BUILD_SDL_AUDIO "Build the optional SDL audio-output module" ON)
 option(PROTO_TIME_BUILD_GLFW_FRONTEND "Build the optional GLFW frontend module" ON)
+option(PROTO_TIME_BUILD_ALSA_MIDI "Build live ALSA sequencer MIDI output" ON)
 
 if (PROTO_TIME_BUILD_SDL_FRONTEND OR PROTO_TIME_BUILD_SDL_AUDIO)
     find_package(SDL2 QUIET)
@@ -19,6 +20,9 @@ if (PROTO_TIME_BUILD_GLFW_FRONTEND AND (TARGET glfw OR TARGET glfw3::glfw))
     find_package(OpenGL QUIET)
 endif()
 find_package(ZLIB REQUIRED)
+if (PROTO_TIME_BUILD_ALSA_MIDI)
+    find_package(ALSA QUIET)
+endif()
 
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
@@ -127,6 +131,9 @@ target_link_libraries(time-audio-output-loader PUBLIC time-dynamic-plugin-loader
 add_library(time-audio-transport-plugin
     machine/plugins/audio/AudioTransportPlugin.cpp)
 target_link_libraries(time-audio-transport-plugin PUBLIC time-machine-runtime-common)
+add_library(time-psg-midi-plugin
+    machine/plugins/audio/PsgMidiPlugin.cpp)
+target_link_libraries(time-psg-midi-plugin PUBLIC time-machine-runtime-common)
 add_library(time-emulator-config STATIC
     emulator/EmulatorConfig.cpp
 )
@@ -162,8 +169,16 @@ set_target_properties(time-file-audio-output PROPERTIES POSITION_INDEPENDENT_COD
 set_target_properties(time-headless-video-adapter PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_executable(timeEmulator emulator.cpp)
 target_link_libraries(timeEmulator PRIVATE time-emulator-host time-frontend-loader
-    time-audio-output-loader time-audio-transport-plugin
+    time-audio-output-loader time-audio-transport-plugin time-psg-midi-plugin
     time-dummy-audio-output time-file-audio-output)
+if (PROTO_TIME_BUILD_ALSA_MIDI AND ALSA_FOUND)
+    add_library(time-alsa-midi-sink STATIC
+        machine/plugins/audio/AlsaMidiSink.cpp)
+    target_include_directories(time-alsa-midi-sink PRIVATE ${ALSA_INCLUDE_DIRS})
+    target_link_libraries(time-alsa-midi-sink PUBLIC time-psg-midi-plugin ${ALSA_LIBRARIES})
+    target_link_libraries(timeEmulator PRIVATE time-alsa-midi-sink)
+    target_compile_definitions(timeEmulator PRIVATE BMMQ_HAS_ALSA_MIDI=1)
+endif()
 
 if (PROTO_TIME_BUILD_SDL_FRONTEND)
     add_library(time-sdl-frontend-plugin SHARED
@@ -362,6 +377,10 @@ add_test(NAME smoke-gamegear-vdp-cache COMMAND time-smoke-gamegear-vdp-cache)
 add_executable(time-smoke-gamegear-psg-subsystem tests/smoke_gamegear_psg_subsystem.cpp)
 target_link_libraries(time-smoke-gamegear-psg-subsystem time-gamegear-core)
 add_test(NAME smoke-gamegear-psg-subsystem COMMAND time-smoke-gamegear-psg-subsystem)
+add_executable(time-smoke-psg-midi-plugin tests/smoke_psg_midi_plugin.cpp)
+target_link_libraries(time-smoke-psg-midi-plugin
+    time-gameboy-interpreter-core time-gamegear-core time-psg-midi-plugin)
+add_test(NAME smoke-psg-midi-plugin COMMAND time-smoke-psg-midi-plugin)
 
 add_executable(time-smoke-gamegear-save-persistence tests/smoke_gamegear_save_persistence.cpp)
 target_link_libraries(time-smoke-gamegear-save-persistence time-gamegear-core)
@@ -419,6 +438,13 @@ add_test(NAME smoke-dynamic-frontend-module
 add_library(time-test-c-audio-output-plugin MODULE tests/fixtures/test_audio_output_plugin.c)
 target_include_directories(time-test-c-audio-output-plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 set_target_properties(time-test-c-audio-output-plugin PROPERTIES PREFIX "")
+add_library(time-test-c-audio-processor-plugin MODULE tests/fixtures/test_audio_processor_plugin.c)
+target_include_directories(time-test-c-audio-processor-plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+set_target_properties(time-test-c-audio-processor-plugin PROPERTIES PREFIX "")
+add_executable(time-smoke-dynamic-audio-processor tests/smoke_dynamic_audio_processor.cpp)
+target_link_libraries(time-smoke-dynamic-audio-processor time-dynamic-plugin-loader time-machine-runtime-common)
+add_test(NAME smoke-dynamic-audio-processor
+    COMMAND time-smoke-dynamic-audio-processor $<TARGET_FILE:time-test-c-audio-processor-plugin>)
 add_library(time-test-malformed-audio-output-plugin MODULE
     tests/fixtures/test_malformed_audio_output_plugin.c)
 target_include_directories(time-test-malformed-audio-output-plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -576,6 +602,11 @@ add_test(NAME smoke-image-decode-pipeline COMMAND time-smoke-image-decode-pipeli
 add_executable(time-smoke-visual-override-decode-integration tests/smoke_visual_override_decode_integration.cpp)
 target_link_libraries(time-smoke-visual-override-decode-integration time-gameboy-interpreter-core)
 add_test(NAME smoke-visual-override-decode-integration COMMAND time-smoke-visual-override-decode-integration)
+
+# HD texture replacement smoke test
+add_executable(time-smoke-hd-texture-replacement tests/smoke_hd_texture_replacement.cpp)
+target_link_libraries(time-smoke-hd-texture-replacement time-gameboy-interpreter-core time-emulator-host time-emulator-config)
+add_test(NAME smoke-hd-texture-replacement COMMAND time-smoke-hd-texture-replacement)
 add_executable(time-smoke-debug-snapshot-service tests/smoke_debug_snapshot_service.cpp)
 target_link_libraries(time-smoke-debug-snapshot-service time-machine-runtime-common)
 add_test(NAME smoke-debug-snapshot-service COMMAND time-smoke-debug-snapshot-service)

@@ -9,6 +9,38 @@
 
 namespace BMMQ {
 
+namespace {
+
+template<typename AddressType>
+bool mappedOffset(
+    AddressType address,
+    AddressType base,
+    AddressType length,
+    std::size_t& offset)
+{
+    if (address < base) {
+        return false;
+    }
+    if constexpr (std::is_signed_v<AddressType>) {
+        if (length <= 0) {
+            return false;
+        }
+    } else if (length == 0) {
+        return false;
+    }
+
+    using UnsignedAddressType = std::make_unsigned_t<AddressType>;
+    const auto distance = static_cast<UnsignedAddressType>(address)
+        - static_cast<UnsignedAddressType>(base);
+    if (distance >= static_cast<UnsignedAddressType>(length)) {
+        return false;
+    }
+    offset = static_cast<std::size_t>(distance);
+    return true;
+}
+
+} // namespace
+
 template<typename AddressType, typename DataType>
 void MemoryStorage<AddressType, DataType>::addMemBlock(
     std::tuple<AddressType, AddressType, memAccess> memBlock)
@@ -50,12 +82,12 @@ std::span<const DataType> MemoryStorage<AddressType, DataType>::readableSpan(
         const auto base = std::get<0>(entry);
         const auto length = std::get<1>(entry);
         const auto access = std::get<2>(entry);
-        if (base <= address && static_cast<AddressType>(address - base) < length) {
+        std::size_t localOffset = 0;
+        if (mappedOffset(address, base, length, localOffset)) {
             if (!hasAccess(access, memAccess::Read)) {
                 throw std::out_of_range("address is not readable");
             }
 
-            const auto localOffset = static_cast<std::size_t>(address - base);
             const auto available = static_cast<std::size_t>(length) - localOffset;
             if (count > available) {
                 std::ostringstream oss;
@@ -85,12 +117,12 @@ std::span<DataType> MemoryStorage<AddressType, DataType>::writableSpan(
         const auto base = std::get<0>(entry);
         const auto length = std::get<1>(entry);
         const auto access = std::get<2>(entry);
-        if (base <= address && static_cast<AddressType>(address - base) < length) {
+        std::size_t localOffset = 0;
+        if (mappedOffset(address, base, length, localOffset)) {
             if (!hasAccess(access, memAccess::Write)) {
                 throw std::out_of_range("address is not writable");
             }
 
-            const auto localOffset = static_cast<std::size_t>(address - base);
             const auto available = static_cast<std::size_t>(length) - localOffset;
             if (count > available) {
                 std::ostringstream oss;
@@ -141,8 +173,8 @@ void MemoryStorage<AddressType, DataType>::write(std::span<const DataType> value
         const auto base = std::get<0>(entry);
         const auto length = std::get<1>(entry);
         const auto access = std::get<2>(entry);
-        const auto localOffset = foundStart ? 0 : static_cast<std::size_t>(address - base);
-        const auto startsInBlock = base <= address && static_cast<AddressType>(address - base) < length;
+        std::size_t localOffset = 0;
+        const auto startsInBlock = !foundStart && mappedOffset(address, base, length, localOffset);
         const auto continuesInBlock = foundStart && address == base;
 
         if (!startsInBlock && !continuesInBlock) {

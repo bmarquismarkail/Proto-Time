@@ -27,6 +27,10 @@ struct VideoEngineConfig {
     int frameWidth = 160;
     int frameHeight = 144;
     std::size_t mailboxDepthFrames = 1;
+    // HD texture replacement scale factor. When > 1, output frames are scaled
+    // by this factor and replaced tiles sample their replacement images at the
+    // higher resolution. Default 1 preserves existing behavior.
+    int hdScale = 1;
 };
 
 struct VideoEngineStats {
@@ -147,9 +151,13 @@ public:
             ++stats_.buildDebugFrameDebugConsumerInactiveCount;
         }
 
+        const int hdScale = std::max(config_.hdScale, 1);
+        const int outWidth = config_.frameWidth * hdScale;
+        const int outHeight = config_.frameHeight * hdScale;
+
         VideoFramePacket frame;
-        frame.width = config_.frameWidth;
-        frame.height = config_.frameHeight;
+        frame.width = outWidth;
+        frame.height = outHeight;
         frame.generation = generation;
         frame.source = VideoFrameSource::MachineSnapshot;
 
@@ -159,25 +167,121 @@ public:
             visualOverrideService_->notifyFrameCompositionStarted(generation);
         }
 
-        const auto pixelCount = static_cast<std::size_t>(frame.width) * static_cast<std::size_t>(frame.height);
-        frame.pixels.resize(pixelCount);
-        // Phase 8: SIMD-accelerated fill for black background
-        SimdPixelOps::fill_pixels(frame.pixels.data(), 0xFF000000u, pixelCount);
+        const auto pixelCount = static_cast<std::size_t>(config_.frameWidth) * static_cast<std::size_t>(config_.frameHeight);
+        std::vector<std::uint32_t> canonicalPixels(pixelCount);
+        SimdPixelOps::fill_pixels(canonicalPixels.data(), 0xFF000000u, pixelCount);
+
         if (model.empty()) {
             if (notifyVisualComposition) {
                 visualOverrideService_->notifyFrameCompositionCompleted(generation);
+            }
+            // Upscale blank frame to HD if needed
+            if (hdScale > 1) {
+                const auto hdPixelCount = static_cast<std::size_t>(outWidth) * static_cast<std::size_t>(outHeight);
+                frame.pixels.assign(hdPixelCount, canonicalPixels.front());
+            } else {
+                frame.pixels = std::move(canonicalPixels);
             }
             stats_.buildDebugFrameTotalNs += static_cast<std::uint64_t>(
                 std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - startedAt).count());
             return frame;
         }
 
-        resetVisualResourceCache();
-        const auto copyCount = std::min(frame.pixels.size(), model.argbPixels.size());
+        resetVisualResourceCache(model.resources.size());
 
-        std::memcpy(frame.pixels.data(), model.argbPixels.data(),
+        // HD replacement tracking: which canonical pixels have replacements
+        // Use reusable scratch buffers to avoid per-frame allocation on the composition lane
+        if (hdResolvedOverrides_.size() != pixelCount) {
+            hdResolvedOverrides_.resize(pixelCount);
+        }
+        std::fill(hdResolvedOverrides_.begin(), hdResolvedOverrides_.end(), nullptr);
+
+        const auto copyCount = std::min(canonicalPixels.size(), model.argbPixels.size());
+        std::memcpy(canonicalPixels.data(), model.argbPixels.data(),
                     copyCount * sizeof(std::uint32_t));
-        if (notifyVisualComposition) {
+
+        if (hdScale > 1) {
+            // HD path: sample replacements at HD resolution with proper sub-pixel coordinates
+            const auto lookupStartedAt = Clock::now();
+
+            // First pass: identify which canonical pixels have replacements and cache the resolved overrides
+            bool hasReplacement = false;
+            if (visualOverrideService_ != nullptr) {
+                for (std::size_t i = 0; i < copyCount && i < model.semantics.size(); ++i) {
+                    const auto& semantic = model.semantics[i];
+                    if (!semantic.hasResource() || semantic.resourceIndex >= model.resources.size()) {
+                        continue;
+                    }
+                    // Use shared observe+resolve helper to preserve capture path
+                    if (const auto* resolved =
+                            resolveReplacementForResource(model.resources[semantic.resourceIndex])) {
+                        hdResolvedOverrides_[i] = resolved;
+                        hasReplacement = true;
+                    }
+                }
+            }
+
+            const auto lookupDuration = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - lookupStartedAt).count());
+            ++stats_.visualOverrideLookupSampleCount;
+            stats_.visualOverrideLookupTotalNs += lookupDuration;
+            stats_.visualOverrideLookupHighWaterNs = std::max(
+                stats_.visualOverrideLookupHighWaterNs, lookupDuration);
+
+            // Build HD output frame
+            const auto hdPixelCount = static_cast<std::size_t>(outWidth) * static_cast<std::size_t>(outHeight);
+            frame.pixels.resize(hdPixelCount);
+
+            if (hasReplacement) {
+                const auto applyStartedAt = Clock::now();
+                // For each HD output pixel, compute proper sub-pixel coordinates
+                for (std::size_t oy = 0; oy < static_cast<std::size_t>(outHeight); ++oy) {
+                    const std::size_t srcY = oy / hdScale;
+                    const std::size_t dstRowStart = oy * static_cast<std::size_t>(outWidth);
+                    for (std::size_t ox = 0; ox < static_cast<std::size_t>(outWidth); ++ox) {
+                        const std::size_t srcIdx = srcY * static_cast<std::size_t>(config_.frameWidth) + (ox / hdScale);
+
+                        if (const auto* resolved = hdResolvedOverrides_[srcIdx]) {
+                            // HD sampling: compute integer output coordinates directly
+                            // qx = semantic.sampleX * hdScale + subX gives exact 1:1 mapping
+                            // when replacement dimensions equal source dimensions * hdScale
+                            const auto& semantic = model.semantics[srcIdx];
+                            const auto& resource = model.resources[semantic.resourceIndex];
+                            // Compute integer output coordinates with sub-pixel index
+                            const std::size_t qx = semantic.sampleX * static_cast<std::size_t>(hdScale) + (ox % hdScale);
+                            const std::size_t qy = semantic.sampleY * static_cast<std::size_t>(hdScale) + (oy % hdScale);
+
+                                // For HD sampling, pass q-space coordinates to the shared sampler.
+                                // The sampler normalizes against resource.descriptor.width*hdScale to
+                                // preserve exact 1:1 mapping when replacement dimensions match.
+                            const double sampleX = static_cast<double>(qx);
+                            const double sampleY = static_cast<double>(qy);
+
+                            if (const auto replacement = sampleReplacementPixelAtCoordinate(
+                                    *resolved, resource, sampleX, sampleY, generation,
+                                    static_cast<std::uint32_t>(resource.descriptor.width) * static_cast<std::uint32_t>(hdScale),
+                                    static_cast<std::uint32_t>(resource.descriptor.height) * static_cast<std::uint32_t>(hdScale))) {
+                                frame.pixels[dstRowStart + ox] = *replacement;
+                                continue;
+                            }
+                            // Fallback to canonical pixel if sampling fails
+                        }
+                        frame.pixels[dstRowStart + ox] = canonicalPixels[srcIdx];
+                    }
+                }
+                const auto applyDuration = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - applyStartedAt).count());
+                ++stats_.visualOverrideApplySampleCount;
+                stats_.visualOverrideApplyTotalNs += applyDuration;
+                stats_.visualOverrideApplyHighWaterNs = std::max(
+                    stats_.visualOverrideApplyHighWaterNs, applyDuration);
+            } else {
+                // No replacements: simple nearest-neighbor upscale
+                upscaleNearest(canonicalPixels, config_.frameWidth, config_.frameHeight,
+                               hdScale, frame.pixels);
+            }
+        } else if (notifyVisualComposition) {
+            // Non-HD path: existing behavior
             if (visualReplacementMask_.size() != copyCount) {
                 visualReplacementMask_.resize(copyCount);
                 visualReplacementPixels_.resize(copyCount);
@@ -209,10 +313,10 @@ public:
 
             if (hasReplacement) {
                 const auto applyStartedAt = Clock::now();
-                SimdPixelOps::replace_pixels_with_mask(model.argbPixels.data(),
+                SimdPixelOps::replace_pixels_with_mask(canonicalPixels.data(),
                                                        visualReplacementMask_.data(),
                                                        visualReplacementPixels_.data(),
-                                                       frame.pixels.data(),
+                                                       canonicalPixels.data(),
                                                        copyCount);
                 const auto applyDuration = static_cast<std::uint64_t>(
                     std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - applyStartedAt).count());
@@ -221,6 +325,9 @@ public:
                 stats_.visualOverrideApplyHighWaterNs = std::max(
                     stats_.visualOverrideApplyHighWaterNs, applyDuration);
             }
+            frame.pixels = std::move(canonicalPixels);
+        } else {
+            frame.pixels = std::move(canonicalPixels);
         }
 
         if (notifyVisualComposition) {
@@ -331,7 +438,9 @@ public:
             frame.source = VideoFrameSource::LastValidFallback;
             return frame;
         }
-        return makePresentPacket(makeBlankVideoFrame(config_.frameWidth, config_.frameHeight, currentGeneration_));
+        const int hdScale = std::max(config_.hdScale, 1);
+        return makePresentPacket(makeBlankVideoFrame(
+            config_.frameWidth * hdScale, config_.frameHeight * hdScale, currentGeneration_));
     }
 
     [[nodiscard]] const std::optional<VideoPresentPacket>& lastValidFrame() const noexcept
@@ -400,6 +509,8 @@ private:
         config.frameWidth = std::max(config.frameWidth, 1);
         config.frameHeight = std::max(config.frameHeight, 1);
         config.mailboxDepthFrames = 1u;
+        // Clamp hdScale to [1, 8] for direct API callers.
+        config.hdScale = std::clamp(config.hdScale, 1, 8);
         return config;
     }
 
@@ -420,9 +531,27 @@ private:
         stats_.mailboxDepth = 0u;
     }
 
-    void resetVisualResourceCache() const
+    void resetVisualResourceCache(std::size_t expectedResources) const
     {
         visualResourceCache_.clear();
+        visualResourceCache_.reserve(expectedResources);
+    }
+
+    static void upscaleNearest(std::span<const std::uint32_t> source,
+                               int width, int height, int scale,
+                               std::vector<std::uint32_t>& output)
+    {
+        const auto outWidth = static_cast<std::size_t>(width * scale);
+        const auto outHeight = static_cast<std::size_t>(height * scale);
+        output.resize(outWidth * outHeight);
+        for (std::size_t y = 0; y < outHeight; ++y) {
+            const auto sourceRow = (y / static_cast<std::size_t>(scale)) *
+                                   static_cast<std::size_t>(width);
+            const auto outputRow = y * outWidth;
+            for (std::size_t x = 0; x < outWidth; ++x) {
+                output[outputRow + x] = source[sourceRow + x / static_cast<std::size_t>(scale)];
+            }
+        }
     }
 
     [[nodiscard]] static std::string resourceCacheKey(const VisualResourceDescriptor& descriptor)
@@ -449,13 +578,14 @@ private:
         return key;
     }
 
-    [[nodiscard]] std::optional<std::uint32_t> replacementPixelForResource(const DecodedVisualResource& resource,
-                                                                           std::uint8_t sampleX,
-                                                                           std::uint8_t sampleY,
-                                                                           std::uint64_t generation) const
+    // Shared observe+resolve helper. Returns a pointer to the cached resolved
+    // override when available; nullptr otherwise. Owned by both HD mask and
+    // canonical sampling paths.
+    [[nodiscard]] const ResolvedVisualOverride* resolveReplacementForResource(
+        const DecodedVisualResource& resource) const
     {
         if (visualOverrideService_ == nullptr || !visualOverrideService_->hasActiveWork()) {
-            return std::nullopt;
+            return nullptr;
         }
 
         auto& entry = visualResourceCache_[resourceCacheKey(resource.descriptor)];
@@ -465,32 +595,6 @@ private:
             visualOverrideService_->notifyResourceDecoded(resource.descriptor);
             (void)visualOverrideService_->observe(resource);
         }
-
-        if (!visualOverrideService_->hasLoadedPacks()) {
-            return std::nullopt;
-        }
-
-        const auto hasResolvedPayload = [](const ResolvedVisualOverride& resolved) noexcept {
-            switch (resolved.mode) {
-            case VisualOverrideMode::ReplaceImage: {
-                const auto* image = std::get_if<VisualReplacementImage>(&resolved.payload);
-                return image != nullptr && !image->empty();
-            }
-            case VisualOverrideMode::CompositeLayers: {
-                const auto* layers = std::get_if<std::vector<VisualReplacementImage>>(&resolved.payload);
-                return layers != nullptr && !layers->empty();
-            }
-            case VisualOverrideMode::AnimationGroup: {
-                const auto* animation = std::get_if<VisualAnimationGroup>(&resolved.payload);
-                return animation != nullptr && !animation->frames.empty();
-            }
-            case VisualOverrideMode::ReplacePalette:
-                return std::holds_alternative<VisualReplacementPalette>(resolved.payload);
-            case VisualOverrideMode::None:
-                break;
-            }
-            return false;
-        };
 
         if (!entry.resolveAttempted) {
             entry.resolveAttempted = true;
@@ -506,10 +610,42 @@ private:
             }
         }
 
-        if (!entry.resolved.has_value()) {
+        return entry.resolved.has_value() ? &*entry.resolved : nullptr;
+    }
+
+    [[nodiscard]] std::optional<std::uint32_t> replacementPixelForResource(const DecodedVisualResource& resource,
+                                                                           std::uint8_t sampleX,
+                                                                           std::uint8_t sampleY,
+                                                                           std::uint64_t generation) const
+    {
+        const auto* resolved = resolveReplacementForResource(resource);
+        if (resolved == nullptr) {
             return std::nullopt;
         }
-        return sampleReplacementPixel(*entry.resolved, resource, sampleX, sampleY, generation);
+        return sampleReplacementPixel(*resolved, resource, sampleX, sampleY, generation);
+    }
+
+    [[nodiscard]] static bool hasResolvedPayload(const ResolvedVisualOverride& resolved) noexcept
+    {
+        switch (resolved.mode) {
+        case VisualOverrideMode::ReplaceImage: {
+            const auto* image = std::get_if<VisualReplacementImage>(&resolved.payload);
+            return image != nullptr && !image->empty();
+        }
+        case VisualOverrideMode::CompositeLayers: {
+            const auto* layers = std::get_if<std::vector<VisualReplacementImage>>(&resolved.payload);
+            return layers != nullptr && !layers->empty();
+        }
+        case VisualOverrideMode::AnimationGroup: {
+            const auto* animation = std::get_if<VisualAnimationGroup>(&resolved.payload);
+            return animation != nullptr && !animation->frames.empty();
+        }
+        case VisualOverrideMode::ReplacePalette:
+            return std::holds_alternative<VisualReplacementPalette>(resolved.payload);
+        case VisualOverrideMode::None:
+            break;
+        }
+        return false;
     }
 
     [[nodiscard]] static std::optional<std::uint32_t> sampleReplacementPixel(const ResolvedVisualOverride& resolved,
@@ -518,6 +654,26 @@ private:
                                                                               std::uint8_t sampleY,
                                                                               std::uint64_t generation) noexcept
     {
+        return sampleReplacementPixelAtCoordinate(resolved, resource,
+                                                  static_cast<double>(sampleX),
+                                                  static_cast<double>(sampleY),
+                                                  generation,
+                                                  0u, 0u);
+    }
+
+    // HD path: sample replacement at continuous coordinates with sub-pixel precision
+    [[nodiscard]] static std::optional<std::uint32_t> sampleReplacementPixelAtCoordinate(
+        const ResolvedVisualOverride& resolved,
+        const DecodedVisualResource& resource,
+        double sampleX,
+        double sampleY,
+        std::uint64_t generation,
+        std::uint32_t effectiveSourceWidth = 0u,
+        std::uint32_t effectiveSourceHeight = 0u) noexcept
+    {
+        const std::uint32_t srcW = effectiveSourceWidth != 0u ? effectiveSourceWidth : resource.descriptor.width;
+        const std::uint32_t srcH = effectiveSourceHeight != 0u ? effectiveSourceHeight : resource.descriptor.height;
+
         const auto applyPostEffects = [&resolved](std::uint32_t pixel) noexcept {
             auto result = pixel;
             for (const auto& effect : resolved.effects) {
@@ -569,17 +725,20 @@ private:
             if (palette == nullptr) {
                 return std::nullopt;
             }
-            if (sampleX >= resource.descriptor.width || sampleY >= resource.descriptor.height || resource.stride == 0u) {
+            // Map q-space coordinates back to canonical tile coordinates for palette lookup
+            const std::size_t canonX = srcW > 1u ? static_cast<std::size_t>(std::floor(sampleX * static_cast<double>(resource.descriptor.width) / srcW)) : 0u;
+            const std::size_t canonY = srcH > 1u ? static_cast<std::size_t>(std::floor(sampleY * static_cast<double>(resource.descriptor.height) / srcH)) : 0u;
+            if (canonX >= resource.descriptor.width || canonY >= resource.descriptor.height || resource.stride == 0u) {
                 return std::nullopt;
             }
-            const auto index = static_cast<std::size_t>(sampleY) * resource.stride + sampleX;
+            const auto index = canonY * resource.stride + canonX;
             if (index >= resource.pixels.size()) {
                 return std::nullopt;
             }
             return applyPostEffects((*palette)[resource.pixels[index] & 0x03u]);
         }
 
-        const auto sampleImagePixel = [&resolved, &resource, sampleX, sampleY](const VisualReplacementImage& image)
+        const auto sampleImagePixel = [&resolved, &resource, sampleX, sampleY, srcW, srcH](const VisualReplacementImage& image)
             -> std::optional<std::uint32_t> {
             if (image.empty()) {
                 return std::nullopt;
@@ -598,54 +757,55 @@ private:
                 return std::nullopt;
             }
             if (resolved.scalePolicy == "exact" &&
-                (sampleWidth != resource.descriptor.width || sampleHeight != resource.descriptor.height)) {
+                (sampleWidth != srcW || sampleHeight != srcH)) {
                 return std::nullopt;
             }
 
             const auto applyTransform =
-                [&resolved](std::size_t x, std::size_t y, std::size_t width, std::size_t height) noexcept {
-                    std::size_t tx = x;
-                    std::size_t ty = y;
+                [&resolved](double x, double y, std::size_t width, std::size_t height) noexcept {
+                    double tx = x;
+                    double ty = y;
                     if (resolved.transform.flipX && width > 0u) {
-                        tx = width - 1u - tx;
+                        tx = static_cast<double>(width - 1u) - x;
                     }
                     if (resolved.transform.flipY && height > 0u) {
-                        ty = height - 1u - ty;
+                        ty = static_cast<double>(height - 1u) - y;
                     }
                     switch (resolved.transform.rotateDegrees) {
                     case 90u:
-                        return std::pair<std::size_t, std::size_t>{ty, width - 1u - tx};
+                        return std::pair<double, double>{ty, static_cast<double>(width - 1u) - tx};
                     case 180u:
-                        return std::pair<std::size_t, std::size_t>{width - 1u - tx, height - 1u - ty};
+                        return std::pair<double, double>{static_cast<double>(width - 1u) - tx, static_cast<double>(height - 1u) - ty};
                     case 270u:
-                        return std::pair<std::size_t, std::size_t>{height - 1u - ty, tx};
+                        return std::pair<double, double>{static_cast<double>(height - 1u) - ty, tx};
                     default:
-                        return std::pair<std::size_t, std::size_t>{tx, ty};
+                        return std::pair<double, double>{tx, ty};
                     }
                 };
 
             if (resolved.scalePolicy == "crop") {
                 const auto [x, y] = applyTransform(
-                    cropCoordinate(sampleX, static_cast<std::uint32_t>(sampleWidth), resource.descriptor.width, resolved.anchor),
-                    cropCoordinate(sampleY, static_cast<std::uint32_t>(sampleHeight), resource.descriptor.height, resolved.anchor),
+                    cropCoordinateDouble(sampleX, static_cast<std::uint32_t>(sampleWidth), srcW, resolved.anchor),
+                    cropCoordinateDouble(sampleY, static_cast<std::uint32_t>(sampleHeight), srcH, resolved.anchor),
                     sampleWidth,
                     sampleHeight);
-                return sampleNearest(image, sliceX + x, sliceY + y);
+                return sampleNearest(image,
+                    sliceX + static_cast<std::size_t>(std::llround(std::max(x, 0.0))),
+                    sliceY + static_cast<std::size_t>(std::llround(std::max(y, 0.0))));
             }
 
-            const auto x = scaledCoordinate(sampleX, static_cast<std::uint32_t>(sampleWidth), resource.descriptor.width);
-            const auto y = scaledCoordinate(sampleY, static_cast<std::uint32_t>(sampleHeight), resource.descriptor.height);
-            const auto [tx, ty] = applyTransform(static_cast<std::size_t>(x),
-                                                 static_cast<std::size_t>(y),
-                                                 sampleWidth,
-                                                 sampleHeight);
+            const auto x = scaledCoordinateDouble(sampleX, static_cast<std::uint32_t>(sampleWidth), srcW);
+            const auto y = scaledCoordinateDouble(sampleY, static_cast<std::uint32_t>(sampleHeight), srcH);
+            const auto [tx, ty] = applyTransform(x, y, sampleWidth, sampleHeight);
             if (resolved.filterPolicy == "linear" && resolved.transform.rotateDegrees == 0u &&
                 !resolved.transform.flipX && !resolved.transform.flipY) {
                 return sampleLinear(image,
                                     static_cast<double>(sliceX) + x,
                                     static_cast<double>(sliceY) + y);
             }
-            return sampleNearest(image, sliceX + tx, sliceY + ty);
+            return sampleNearest(image,
+                sliceX + static_cast<std::size_t>(std::llround(std::max(tx, 0.0))),
+                sliceY + static_cast<std::size_t>(std::llround(std::max(ty, 0.0))));
         };
 
         const auto alphaOver = [](std::uint32_t dst, std::uint32_t src) noexcept {
@@ -706,21 +866,23 @@ private:
         return applyPostEffects(composed);
     }
 
-    [[nodiscard]] static double scaledCoordinate(std::uint8_t sourceCoordinate,
-                                                 std::uint32_t replacementSize,
-                                                 std::uint32_t sourceSize) noexcept
+    // HD path: double-precision version for sub-pixel sampling
+    [[nodiscard]] static double scaledCoordinateDouble(double sourceCoordinate,
+                                                       std::uint32_t replacementSize,
+                                                       std::uint32_t sourceSize) noexcept
     {
         if (sourceSize <= 1u || replacementSize <= 1u) {
             return 0.0;
         }
-        return static_cast<double>(sourceCoordinate) * static_cast<double>(replacementSize - 1u) /
+        return sourceCoordinate * static_cast<double>(replacementSize - 1u) /
                static_cast<double>(sourceSize - 1u);
     }
 
-    [[nodiscard]] static std::size_t cropCoordinate(std::uint8_t sourceCoordinate,
-                                                    std::uint32_t replacementSize,
-                                                    std::uint32_t sourceSize,
-                                                    const std::string& anchor) noexcept
+    // HD path: double-precision version for sub-pixel sampling
+    [[nodiscard]] static std::size_t cropCoordinateDouble(double sourceCoordinate,
+                                                          std::uint32_t replacementSize,
+                                                          std::uint32_t sourceSize,
+                                                          const std::string& anchor) noexcept
     {
         std::size_t offset = 0;
         if (replacementSize > sourceSize) {
@@ -810,6 +972,8 @@ private:
     mutable std::unordered_map<std::string, VisualResourceCacheEntry> visualResourceCache_{};
     mutable std::vector<std::uint8_t> visualReplacementMask_{};
     mutable std::vector<std::uint32_t> visualReplacementPixels_{};
+    // HD scratch buffers for replacement-aware upscaling
+    mutable std::vector<const ResolvedVisualOverride*> hdResolvedOverrides_{};
     std::optional<VideoPresentPacket> lastValidFrame_{};
     mutable VideoEngineStats stats_{};
     std::uint64_t currentGeneration_ = 0;

@@ -43,6 +43,13 @@ void GameGearPSG::reset() {
     waveRam_.fill(0u);
     currentFrameSamples_.clear();
     recentSamples_.clear();
+    currentVoiceStems_.clear();
+    recentVoiceStems_.clear();
+    currentEvents_.clear();
+    recentEvents_.clear();
+    eventSequence_ = 0u;
+    recentFirstSampleFrame_ = 0u;
+    observedGateStates_.fill(false);
     chunkSamplesLast_ = 0u;
     chunkSamplesMin_ = 0u;
     chunkSamplesMax_ = 0u;
@@ -52,6 +59,9 @@ void GameGearPSG::reset() {
     latchedChannel_ = 0u;
     latchedVolume_ = false;
     compatRegisters_[0x16u] = 0x80u;
+    for (std::uint8_t voice = 0u; voice < 4u; ++voice) {
+        recordWrite(0u, 0u, voice, BMMQ::PsgEventKind::StateSnapshot, false);
+    }
 }
 
 void GameGearPSG::step(uint32_t cpuCycles) {
@@ -89,10 +99,17 @@ void GameGearPSG::writeData(uint8_t value) {
         tones_[latchedChannel_].enabled = true;
     }
     updateCompatStatus();
+    recordWrite(0x007Fu, value, latchedChannel_, latchedVolume_
+        ? BMMQ::PsgEventKind::LevelChange
+        : (latchedChannel_ == 3u ? BMMQ::PsgEventKind::TimbreChange
+                                 : BMMQ::PsgEventKind::PitchChange));
 }
 
-void GameGearPSG::writeStereoControl(uint8_t value) noexcept {
+void GameGearPSG::writeStereoControl(uint8_t value) {
     stereoControl_ = value;
+    for (std::uint8_t voice = 0u; voice < 4u; ++voice) {
+        recordWrite(0x0006u, value, voice, BMMQ::PsgEventKind::RoutingChange);
+    }
 }
 
 uint8_t GameGearPSG::readCompatRegister(uint16_t addr) const noexcept {
@@ -125,6 +142,11 @@ void GameGearPSG::writeCompatRegister(uint16_t addr, uint8_t value) {
                 }
                 currentFrameSamples_.clear();
                 recentSamples_.clear();
+                currentVoiceStems_.clear();
+                recentVoiceStems_.clear();
+                currentEvents_.clear();
+                recentEvents_.clear();
+                recentFirstSampleFrame_ = 0u;
             }
             break;
         default:
@@ -150,6 +172,10 @@ void GameGearPSG::writeWaveRam(uint16_t addr, uint8_t value) noexcept {
 std::vector<int16_t> GameGearPSG::copyRecentSamples() const {
     return recentSamples_;
 }
+
+std::vector<int16_t> GameGearPSG::copyRecentVoiceStems() const { return recentVoiceStems_; }
+std::vector<BMMQ::PsgAudioEvent> GameGearPSG::copyRecentEvents() const { return recentEvents_; }
+std::uint64_t GameGearPSG::recentFirstSampleFrame() const noexcept { return recentFirstSampleFrame_; }
 
 uint32_t GameGearPSG::sampleRate() const noexcept {
     return kSampleRate;
@@ -209,20 +235,93 @@ std::size_t GameGearPSG::pendingSamples() const noexcept {
 void GameGearPSG::produceFrame() {
     advanceGenerators();
     const auto frame = mixFrame();
+    for (std::size_t channel = 0u; channel < 4u; ++channel) {
+        int contribution = 0;
+        if (channel < tones_.size()) {
+            if (tones_[channel].enabled && tones_[channel].attenuation < 0x0Fu) {
+                const int amplitude = channelAmplitude(channel);
+                contribution = tones_[channel].outputHigh ? amplitude : -amplitude;
+            }
+        } else if (noiseAttenuation_ < 0x0Fu) {
+            const int amplitude = channelAmplitude(channel);
+            contribution = noiseOutputHigh_ ? amplitude : -amplitude;
+        }
+        currentVoiceStems_.push_back(channelRoutedLeft(channel) ? clampSample(contribution) : 0);
+        currentVoiceStems_.push_back(channelRoutedRight(channel) ? clampSample(contribution) : 0);
+    }
     currentFrameSamples_.push_back(frame[0]);
     currentFrameSamples_.push_back(frame[1]);
     samplesGeneratedTotal_ += 2u;
     if (currentFrameSamples_.size() >= kFramesPerChunk * kOutputChannelCount) {
-        const auto chunkSamples = currentFrameSamples_.size();
-        recentSamples_ = currentFrameSamples_;
+        constexpr auto kChunkSamples = kFramesPerChunk * kOutputChannelCount;
+        const auto chunkSamples = std::min(currentFrameSamples_.size(), kChunkSamples);
+        recentSamples_.assign(currentFrameSamples_.begin(),
+                              currentFrameSamples_.begin() + static_cast<std::ptrdiff_t>(kChunkSamples));
+        recentVoiceStems_.assign(kChunkSamples * 4u, 0);
+        for (std::size_t frameIndex = 0u; frameIndex < kFramesPerChunk; ++frameIndex) {
+            for (std::size_t voice = 0u; voice < 4u; ++voice) {
+                for (std::size_t outputChannel = 0u; outputChannel < kOutputChannelCount; ++outputChannel) {
+                    const auto source = (frameIndex * 4u + voice) * kOutputChannelCount + outputChannel;
+                    const auto target = (voice * kFramesPerChunk + frameIndex) * kOutputChannelCount + outputChannel;
+                    recentVoiceStems_[target] = currentVoiceStems_[source];
+                }
+            }
+        }
+        recentEvents_ = currentEvents_;
+        const auto generatedFrames = samplesGeneratedTotal_ / kOutputChannelCount;
+        recentFirstSampleFrame_ = generatedFrames >= kFramesPerChunk
+            ? generatedFrames - kFramesPerChunk : 0u;
         chunkSamplesLast_ = chunkSamples;
         if (chunkSamplesMin_ == 0u || chunkSamples < chunkSamplesMin_) {
             chunkSamplesMin_ = chunkSamples;
         }
         chunkSamplesMax_ = std::max(chunkSamplesMax_, chunkSamples);
         currentFrameSamples_.clear();
+        currentVoiceStems_.clear();
+        currentEvents_.clear();
         ++frameCounter_;
     }
+}
+
+void GameGearPSG::recordWrite(std::uint16_t address, std::uint8_t value,
+                              std::uint8_t voice, BMMQ::PsgEventKind kind,
+                              bool hasRawWrite)
+{
+    voice = std::min<std::uint8_t>(voice, 3u);
+    const bool gate = voice < 3u
+        ? tones_[voice].enabled && tones_[voice].attenuation < 0x0Fu
+        : noiseAttenuation_ < 0x0Fu;
+    const auto period = voice < 3u ? std::max<std::uint16_t>(tones_[voice].period, 1u)
+                                   : std::uint16_t{1u};
+    const auto attenuation = voice < 3u ? tones_[voice].attenuation : noiseAttenuation_;
+    BMMQ::PsgAudioEvent event;
+    event.sampleFrameOffset = static_cast<std::uint32_t>(currentFrameSamples_.size() / kOutputChannelCount);
+    event.sequence = ++eventSequence_;
+    event.voiceId = voice;
+    event.voiceKind = voice == 3u ? BMMQ::PsgVoiceKind::Noise : BMMQ::PsgVoiceKind::Tone;
+    event.kind = kind;
+    event.frequencyMilliHz = voice == 3u ? 0u
+        : static_cast<std::uint32_t>((static_cast<std::uint64_t>(kClockHz) * 1000u) / (32u * period));
+    event.levelQ15 = static_cast<std::uint16_t>(((15u - std::min<std::uint8_t>(attenuation, 15u)) * 32767u) / 15u);
+    event.routingMask = static_cast<std::uint8_t>((channelRoutedLeft(voice) ? 1u : 0u) |
+                                                  (channelRoutedRight(voice) ? 2u : 0u));
+    event.timbre = voice == 3u ? noiseControl_ : 0u;
+    event.rawAddress = address;
+    event.rawValue = value;
+    event.gate = gate;
+    event.hasRawWrite = hasRawWrite;
+    currentEvents_.push_back(event);
+    if (kind != BMMQ::PsgEventKind::StateSnapshot &&
+        kind != BMMQ::PsgEventKind::Retrigger && gate != observedGateStates_[voice]) {
+        currentEvents_.back().kind = gate ? BMMQ::PsgEventKind::GateOn : BMMQ::PsgEventKind::GateOff;
+    }
+    observedGateStates_[voice] = gate;
+
+    if (kind == BMMQ::PsgEventKind::StateSnapshot) return;
+    auto raw = event;
+    raw.sequence = ++eventSequence_;
+    raw.kind = BMMQ::PsgEventKind::RawWrite;
+    currentEvents_.push_back(raw);
 }
 
 void GameGearPSG::advanceGenerators() {
@@ -493,6 +592,10 @@ void GameGearPSG::importState(const std::vector<uint8_t>& state) {
     readBytes(nextWaveRam);
     auto nextCurrent = readSamples(kFramesPerChunk * kOutputChannelCount);
     auto nextRecent = readSamples(8192u);
+    if (nextCurrent.size() >= kFramesPerChunk * kOutputChannelCount ||
+        (nextCurrent.size() % kOutputChannelCount) != 0u) {
+        throw std::invalid_argument("Game Gear PSG pending sample chunk invalid");
+    }
     const auto nextChunkLast = static_cast<std::size_t>(readU64());
     const auto nextChunkMin = static_cast<std::size_t>(readU64());
     const auto nextChunkMax = static_cast<std::size_t>(readU64());
@@ -526,4 +629,12 @@ void GameGearPSG::importState(const std::vector<uint8_t>& state) {
     frameCounter_ = nextFrameCounter;
     latchedChannel_ = nextLatchedChannel;
     latchedVolume_ = nextLatchedVolume;
+    currentVoiceStems_.assign(currentFrameSamples_.size() * 4u, 0);
+    recentVoiceStems_.assign(recentSamples_.size() * 4u, 0);
+    currentEvents_.clear();
+    recentEvents_.clear();
+    observedGateStates_.fill(false);
+    for (std::uint8_t voice = 0u; voice < 4u; ++voice) {
+        recordWrite(0u, 0u, voice, BMMQ::PsgEventKind::StateSnapshot, false);
+    }
 }

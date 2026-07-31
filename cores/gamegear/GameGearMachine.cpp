@@ -312,6 +312,7 @@ struct GameGearMachine::Impl {
     uint64_t inputGeneration = 0u;
     uint64_t stepCounter = 0u;
     uint64_t lastAudioFrameCounter = 0u;
+    mutable std::optional<RealtimeAudioPacket> realtimeAudioPacketCache;
     // Interrupt request raised by VDP (VBlank) or other devices. Consumed
     // atomically by the Z80 interrupt provider.
     bool interruptRequested = false;
@@ -420,6 +421,7 @@ void GameGearMachine::loadRom(const std::vector<uint8_t>& bytes) {
     impl->lastDigitalInputMask.reset();
     impl->stepCounter = 0u;
     impl->lastAudioFrameCounter = 0u;
+    impl->realtimeAudioPacketCache.reset();
     impl->cpu.reset();
     if (impl->pluginManager.size() != 0u) {
         impl->pluginManager.emit(view(), MachineEvent{
@@ -553,6 +555,7 @@ void GameGearMachine::load_state(const std::filesystem::path& path) {
     impl->cpu = std::move(nextCpu);
     impl->stepCounter = nextStepCounter;
     impl->lastAudioFrameCounter = nextLastAudioFrameCounter;
+    impl->realtimeAudioPacketCache.reset();
     impl->interruptRequested = interrupt != 0u;
     impl->lastDigitalInputMask = nextLastDigitalInputMask;
     impl->inputGeneration = nextInputGeneration;
@@ -620,6 +623,7 @@ InstructionRetirementDecision GameGearMachine::onInstructionRetired(
     const auto audioFrameCounter = impl->psg.frameCounter();
     if (audioFrameCounter != impl->lastAudioFrameCounter) {
         impl->lastAudioFrameCounter = audioFrameCounter;
+        impl->realtimeAudioPacketCache.reset();
         if (impl->pluginManager.size() != 0u) {
             impl->pluginManager.emit(view(), MachineEvent{
                 MachineEventType::AudioFrameReady,
@@ -695,18 +699,31 @@ std::optional<RealtimeVideoSubmission> GameGearMachine::realtimeVideoPacket(
 
 std::optional<RealtimeAudioPacket> GameGearMachine::realtimeAudioPacket() const
 {
+    const auto frameCounter = impl->psg.frameCounter();
+    if (impl->realtimeAudioPacketCache.has_value() &&
+        impl->realtimeAudioPacketCache->frameCounter == frameCounter) {
+        return impl->realtimeAudioPacketCache;
+    }
     RealtimeAudioPacket packet;
     packet.sampleRate = impl->psg.sampleRate();
     packet.channelCount = impl->psg.outputChannelCount();
-    packet.frameCounter = impl->psg.frameCounter();
+    packet.frameCounter = frameCounter;
     packet.psgChunksEmitted = impl->psg.chunksEmitted();
     packet.psgSamplesGeneratedTotal = impl->psg.samplesGeneratedTotal();
     packet.psgChunkSamplesLast = static_cast<std::uint32_t>(impl->psg.chunkSamplesLast());
     packet.psgChunkSamplesMin = static_cast<std::uint32_t>(impl->psg.chunkSamplesMin());
     packet.psgChunkSamplesMax = static_cast<std::uint32_t>(impl->psg.chunkSamplesMax());
     packet.psgPendingSamples = static_cast<std::uint32_t>(impl->psg.pendingSamples());
+    packet.firstSampleFrame = impl->psg.recentFirstSampleFrame();
     packet.pcmSamples = impl->psg.copyRecentSamples();
-    return packet;
+    packet.voices = {
+        {0u, PsgVoiceKind::Tone}, {1u, PsgVoiceKind::Tone},
+        {2u, PsgVoiceKind::Tone}, {3u, PsgVoiceKind::Noise},
+    };
+    packet.voiceStems = impl->psg.copyRecentVoiceStems();
+    packet.events = impl->psg.copyRecentEvents();
+    impl->realtimeAudioPacketCache = std::move(packet);
+    return impl->realtimeAudioPacketCache;
 }
 
 uint32_t GameGearMachine::clockHz() const {
