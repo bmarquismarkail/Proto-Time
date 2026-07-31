@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace BMMQ {
@@ -93,6 +94,7 @@ struct AudioPipelineStats {
     std::uint64_t sourceProcessFailures = 0u;
     std::int64_t sourceProcessDurationLastNs = 0;
     std::int64_t sourceProcessDurationHighWaterNs = 0;
+    std::string lastProcessorError;
 };
 
 class IAudioProcessor {
@@ -119,6 +121,11 @@ public:
     }
 
     virtual void flush(std::uint64_t) noexcept {}
+
+    [[nodiscard]] virtual std::string lastError() const
+    {
+        return {};
+    }
 };
 
 class AudioPipeline {
@@ -237,12 +244,19 @@ public:
         return true;
     }
 
-    [[nodiscard]] AudioPipelineStats stats() const noexcept
+    [[nodiscard]] AudioPipelineStats stats() const
     {
-        return {sourceProcessCalls_.load(std::memory_order_relaxed),
-                sourceProcessFailures_.load(std::memory_order_relaxed),
-                sourceProcessDurationLastNs_.load(std::memory_order_relaxed),
-                sourceProcessDurationHighWaterNs_.load(std::memory_order_relaxed)};
+        AudioPipelineStats result{
+            sourceProcessCalls_.load(std::memory_order_relaxed),
+            sourceProcessFailures_.load(std::memory_order_relaxed),
+            sourceProcessDurationLastNs_.load(std::memory_order_relaxed),
+            sourceProcessDurationHighWaterNs_.load(std::memory_order_relaxed),
+            {}};
+        for (const auto& processor : processors_) {
+            auto error = processor->lastError();
+            if (!error.empty()) result.lastProcessorError = std::move(error);
+        }
+        return result;
     }
 
     void flush(std::uint64_t lifecycleEpoch) noexcept

@@ -212,6 +212,7 @@ public:
             return true;
         }
         if (result != TIME_AUDIO_PROCESSOR_PROCESSED_V1 || produced != input.mixed.samples.size()) {
+            captureLastError();
             disabled_ = true;
             const auto count = std::min(input.mixed.samples.size(), output.size());
             std::copy_n(input.mixed.samples.begin(), static_cast<std::ptrdiff_t>(count), output.begin());
@@ -229,7 +230,27 @@ public:
         }
     }
 
+    [[nodiscard]] std::string lastError() const override
+    {
+        std::lock_guard<std::mutex> lock(diagnosticMutex_);
+        return lastError_;
+    }
+
 private:
+    void captureLastError() noexcept
+    {
+        try {
+            const char* error = api_->last_error(instance_);
+            std::lock_guard<std::mutex> lock(diagnosticMutex_);
+            lastError_ = error != nullptr ? error : "C audio processor failed without an error message";
+        } catch (...) {
+            try {
+                std::lock_guard<std::mutex> lock(diagnosticMutex_);
+                lastError_ = "C audio processor last_error threw across the ABI";
+            } catch (...) {}
+        }
+    }
+
     static const TimeHostApiV1& hostApi() noexcept
     {
         static const TimeHostApiV1 api{sizeof(TimeHostApiV1), TIME_PLUGIN_ABI_VERSION_V1,
@@ -242,6 +263,8 @@ private:
     std::string configJson_;
     std::vector<TimePsgVoiceV1> voices_;
     std::vector<TimePsgEventV1> events_;
+    mutable std::mutex diagnosticMutex_;
+    std::string lastError_;
     bool disabled_ = false;
 };
 

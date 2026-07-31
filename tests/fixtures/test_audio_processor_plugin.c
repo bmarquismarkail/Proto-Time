@@ -6,6 +6,7 @@
 struct Processor {
     struct TimeAudioProcessorStatsV1 stats;
     int open;
+    const char* last_error;
 };
 
 static void* create_processor(const struct TimeHostApiV1* host)
@@ -39,6 +40,7 @@ static int32_t process_audio(void* instance, const struct TimeAudioSourceBlockV1
     if (input->voice_count == 0u || input->event_count == 0u ||
         input->voice_stem_sample_count == 0u) {
         ++processor->stats.error_count;
+        processor->last_error = "rich audio metadata required";
         return TIME_AUDIO_PROCESSOR_ERROR_V1;
     }
     for (i = 0u; i < input->mixed_sample_count; ++i) {
@@ -53,7 +55,11 @@ static int32_t process_audio(void* instance, const struct TimeAudioSourceBlockV1
 
 static void flush_processor(void* instance, uint64_t epoch) { (void)instance; (void)epoch; }
 static void close_processor(void* instance) { if (instance != NULL) ((struct Processor*)instance)->open = 0; }
-static const char* last_error(const void* instance) { (void)instance; return ""; }
+static const char* last_error(const void* instance)
+{
+    const struct Processor* processor = (const struct Processor*)instance;
+    return processor != NULL && processor->last_error != NULL ? processor->last_error : "";
+}
 static int32_t query_stats(const void* instance, struct TimeAudioProcessorStatsV1* stats)
 {
     const struct Processor* processor = (const struct Processor*)instance;

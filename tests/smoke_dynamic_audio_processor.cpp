@@ -32,5 +32,21 @@ int main(int argc, char** argv)
     std::vector<std::int16_t> output(4u, 0);
     service.renderForOutput(output);
     assert((output == std::vector<std::int16_t>{101, 102, 103, 104}));
+
+    auto failingProcessor = module.createAudioProcessor(ids.front(), 48000u, 1u, 4u);
+    BMMQ::AudioPipeline failingPipeline;
+    failingPipeline.configureFixedCapacity(4u);
+    failingPipeline.addProcessor(std::move(failingProcessor));
+    const std::vector<std::int16_t> input{1, 2, 3, 4};
+    std::vector<std::int16_t> passthrough(4u, 0);
+    std::size_t produced = 0u;
+    assert(failingPipeline.process({input, 48000, 1u}, passthrough, produced));
+    assert(produced == input.size());
+    assert(passthrough == input);
+    assert(failingPipeline.stats().lastProcessorError == "rich audio metadata required");
+
+    std::fill(passthrough.begin(), passthrough.end(), 0);
+    assert(failingPipeline.process({input, 48000, 1u}, passthrough, produced));
+    assert(passthrough == input);
     return 0;
 }
