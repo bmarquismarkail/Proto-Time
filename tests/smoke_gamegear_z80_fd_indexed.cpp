@@ -111,5 +111,36 @@ int main() {
         CHECK_OR_FAIL(memory[0x4003u] == 0x80u, "FD34 should increment the memory byte at IY+d");
     }
 
+    // FD 76: DD/FD-prefixed HALT -- must take 8 cycles, set halted, and advance PC past both bytes
+    {
+        std::vector<uint8_t> memory(0x10000u, 0x00u);
+        auto cpu = makeCpu(memory);
+
+        memory[0x0000u] = 0xFDu; memory[0x0001u] = 0x76u; // FD76: HALT with FD prefix
+
+        const auto initialState = cpu.exportState();
+        CHECK_OR_FAIL(initialState.size() == 32u, "Z80 state must be 32 bytes");
+        CHECK_OR_FAIL(initialState[30u] == 0u, "CPU should not start halted");
+        CHECK_OR_FAIL(cpu.step() == 8u, "FD76 should take 8 cycles");
+        const auto finalState = cpu.exportState();
+        CHECK_OR_FAIL(finalState[30u] == 1u, "FD76 should set halted");
+        CHECK_OR_FAIL(cpu.PC == 0x0002u, "FD76 should advance PC past the two-byte instruction");
+    }
+
+    // DD FD 21 34 12: stray DD then FD 21 nn -- last prefix wins (IY), IX stays 0, 18 cycles, PC=5
+    {
+        std::vector<uint8_t> memory(0x10000u, 0x00u);
+        auto cpu = makeCpu(memory);
+
+        memory[0x0000u] = 0xDDu; memory[0x0001u] = 0xFDu; memory[0x0002u] = 0x21u;
+        memory[0x0003u] = 0x34u; memory[0x0004u] = 0x12u; // DD FD 21 34 12
+
+        CHECK_OR_FAIL(cpu.IX == 0u, "IX should start at 0");
+        CHECK_OR_FAIL(cpu.step() == 18u, "DD FD 21 nn should take 18 cycles (4 stray DD + 14 FD 21)");
+        CHECK_OR_FAIL(cpu.IY == 0x1234u, "FD 21 nn should load IY with nn");
+        CHECK_OR_FAIL(cpu.IX == 0u, "stray DD must not mutate IX");
+        CHECK_OR_FAIL(cpu.PC == 0x0005u, "PC must advance past all five bytes");
+    }
+
     return 0;
 }

@@ -636,6 +636,15 @@ uint32_t Z80Interpreter::executeIndexedOpcode(uint8_t prefix, uint8_t opcode) {
         return src == 6u ? 19u : 8u;
     }
 
+    if (opcode == 0x76u) {
+        halted_ = true;
+        return 8u;
+    }
+    if (opcode == 0xDDu || opcode == 0xFDu) {
+        // Stray outer DD/FD prefixes each consume four cycles before the
+        // final prefix selects IX or IY for the following instruction.
+        return 4u + executeOpcode(opcode);
+    }
     return executeOpcode(opcode);
 }
 

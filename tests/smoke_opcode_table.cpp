@@ -724,5 +724,45 @@ int main()
 
     requireDecodeFailure({0xD3, 0x00, 0x00});
 
+    {
+        LR3592_DMG cpu;
+        pair(cpu, GB::RegisterId::AF)->lo = 0x00;
+        loadAndSetPc(cpu, 0x0000, {0x37, 0x00, 0x00});
+        const auto scfZeroFeedback = fastStep(cpu);
+        assert(scfZeroFeedback.executionPath == BMMQ::ExecutionPathHint::CpuOptimizedFastPath);
+        assert(scfZeroFeedback.retiredCycles == 4u);
+        assert(pair(cpu, GB::RegisterId::AF)->lo == 0x10);
+    }
+
+    {
+        LR3592_DMG cpu;
+        pair(cpu, GB::RegisterId::AF)->lo = 0x90;
+        loadAndSetPc(cpu, 0x0000, {0x37, 0x00, 0x00});
+        const auto scfZcFeedback = fastStep(cpu);
+        assert(scfZcFeedback.executionPath == BMMQ::ExecutionPathHint::CpuOptimizedFastPath);
+        assert(scfZcFeedback.retiredCycles == 4u);
+        assert(pair(cpu, GB::RegisterId::AF)->lo == 0x90);
+    }
+
+    {
+        LR3592_DMG cpu;
+        pair(cpu, GB::RegisterId::AF)->lo = 0x50;
+        loadAndSetPc(cpu, 0x0000, {0x3F, 0x00, 0x00});
+        const auto ccfZeroFeedback = fastStep(cpu);
+        assert(ccfZeroFeedback.executionPath == BMMQ::ExecutionPathHint::CpuOptimizedFastPath);
+        assert(ccfZeroFeedback.retiredCycles == 4u);
+        assert(pair(cpu, GB::RegisterId::AF)->lo == 0x00);
+    }
+
+    {
+        LR3592_DMG cpu;
+        pair(cpu, GB::RegisterId::AF)->lo = 0x10;
+        loadAndSetPc(cpu, 0x0000, {0x3F, 0x00, 0x00});
+        const auto ccfCarryFeedback = fastStep(cpu);
+        assert(ccfCarryFeedback.executionPath == BMMQ::ExecutionPathHint::CpuOptimizedFastPath);
+        assert(ccfCarryFeedback.retiredCycles == 4u);
+        assert(pair(cpu, GB::RegisterId::AF)->lo == 0x00);
+    }
+
     return 0;
 }
