@@ -7,17 +7,32 @@ T.I.M.E (The Infinite Modder's Emulator) is an emulator framework prototype focu
 - Memory/register snapshotting for traceability
 - Executor-driven orchestration
 - Registry-backed machine providers and executor policies
-- A versioned pure-C function-table ABI for dynamically loaded executor policies
+- A versioned pure-C function-table ABI for executor, frontend, audio-output,
+  and audio-processor plugins
 
 ## Current Status
 
-This repository is still pre-alpha and intentionally incomplete in several areas, but it now has:
+This repository is still pre-alpha and intentionally incomplete. Since
+`c2f961d` (`Add interchangeable GLFW frontend plugin`), the working framework
+has expanded substantially:
 
-- A minimal Game Boy reference machine shell
-- A minimal runnable instruction-cycle slice
-- CPU feedback hooks from core to executor
-- A plugin contract layer
-- Smoke tests covering snapshots, instruction cycle, machine-owned execution, and plugin executor flow
+- Game Boy and work-in-progress Game Gear machines selected through the machine
+  registry
+- Machine-owned CPU, PPU/VDP, APU/PSG, input, mapper, save-state, and timing
+  paths with hardened state and memory validation
+- Built-in baseline, block-cache, portable-IR, and experimental native Game Boy
+  execution policies, plus dynamically loaded pure-C executor policies
+- Interchangeable SDL and GLFW frontends, a headless path, and audio output that
+  is selected independently from the window/input/video frontend
+- A prepared audio transport, rich PSG voice stems and events, fixed-capacity
+  audio-processor plugins, Standard MIDI File export, and optional live ALSA
+  MIDI output
+- Visual override packs with asynchronous image decoding and capture, optional
+  hot reload, and 1x-8x HD texture replacement
+- Periodic JSON-lines runtime diagnostics covering timing, video, audio, and
+  background-work interference
+- Broad CTest smoke, differential, corruption, lifecycle, concurrency, and
+  performance coverage
 
 ## Build
 
@@ -26,30 +41,43 @@ cmake -S . -B build-working
 cmake --build build-working -j4
 ```
 
-This build produces the host executable plus interchangeable SDL and GLFW
-frontend modules: `libtime-sdl-frontend-plugin.so` and
-`libtime-glfw-frontend-plugin.so`. GLFW/OpenGL support is enabled when GLFW 3.3+
-and OpenGL are available at configure time; otherwise the GLFW module reports a
-deterministic backend-unavailable error.
+Zlib is required. SDL2, GLFW 3.3/OpenGL, and ALSA are detected as optional host
+dependencies. The corresponding features can also be controlled with
+`PROTO_TIME_BUILD_SDL_FRONTEND`, `PROTO_TIME_BUILD_SDL_AUDIO`,
+`PROTO_TIME_BUILD_GLFW_FRONTEND`, and `PROTO_TIME_BUILD_ALSA_MIDI`.
 
-`timeEmulator` will auto-load that shared object from the executable directory by default. Use `--frontend-plugin <path>` to load any compatible pure-C frontend module, `--frontend <id>` when it exposes multiple frontends, or `--headless` to skip frontend loading. `--plugin` remains a path alias.
+The default build produces `timeEmulator` and, when enabled, independent shared
+modules for the SDL frontend, GLFW frontend, and SDL audio output:
+
+- `libtime-sdl-frontend-plugin.so`
+- `libtime-glfw-frontend-plugin.so`
+- `libtime-sdl-audio-output-plugin.so`
+
+The modules report deterministic backend-unavailable errors when their optional
+host dependency is unavailable.
+
+`timeEmulator` auto-loads the selected frontend module from the executable
+directory by default. Use `--frontend-plugin <path>` to load any compatible
+pure-C frontend module, `--frontend <id>` when it exposes multiple frontends, or
+`--headless` to skip frontend loading. `--plugin` remains a path alias.
 
 SDL remains the default. Switch window, input, and video presentation to GLFW
 with:
 
 ```bash
-timeEmulator --core gameboy --rom path/to/rom.gb --frontend glfw
+./build-working/timeEmulator --core gameboy --rom path/to/rom.gb --frontend glfw
 ```
 
 `--frontend sdl` selects SDL explicitly. Audio output is host-owned and selected
-independently with `--audio-backend sdl|dummy|file`.
+independently with `--audio-backend sdl|dummy|file`; external audio-output
+modules use `--audio-plugin <path>`.
 
 Executor policies are a separate extension layer. Built-in policies can be
 selected by stable ID, while external modules use the pure-C ABI in
 `machine/plugins/abi/TimePluginAbi.h`:
 
 ```bash
-timeEmulator --core gameboy --rom path/to/rom.gb \
+./build-working/timeEmulator --core gameboy --rom path/to/rom.gb \
   --executor-plugin path/to/executor-module.so \
   --executor-policy vendor.executor.policy
 ```
@@ -59,19 +87,74 @@ omitted. The legacy `--cpu-mode baseline|block|ir|native` options remain aliases
 for the built-in policy IDs. Frontends use the same module ABI with a distinct
 frontend descriptor and function table.
 
+Audio processors use another descriptor in the same ABI and run in the
+fixed-capacity source pipeline before device output:
+
+```bash
+./build-working/timeEmulator --core gameboy --rom path/to/rom.gb \
+  --audio-processor-plugin path/to/processor-module.so \
+  --audio-processor-config vendor.processor=processor-config.json
+```
+
+Processor modules and configuration mappings are repeatable. A processor that
+returns an invalid result is permanently disabled for that instance, passes the
+original samples through, and exposes its captured ABI error through pipeline
+diagnostics.
+
 Run tests:
 
 ```bash
-ctest --test-dir build-working --output-on-failure
+(cd build-working && ctest --output-on-failure)
 ```
 
-## Runtime Diagnostics + Perf Baseline (Phase 42)
+Discover the tests registered by the configured build rather than relying on a
+hardcoded list:
+
+```bash
+(cd build-working && ctest -N)
+```
+
+## Runtime Examples
+
+Run either registered machine core:
+
+```bash
+./build-working/timeEmulator --core gameboy --rom path/to/game.gb
+./build-working/timeEmulator --core gamegear --rom path/to/game.gg
+```
+
+Load a visual pack and preserve higher-resolution replacement texels at 4x
+output scale:
+
+```bash
+./build-working/timeEmulator --core gameboy --rom path/to/game.gb \
+  --visual-pack path/to/pack.json --hd-scale 4
+```
+
+See `docs/texture-pack/design.md` and
+`docs/texture-pack/hd-replacement.md` for the pack and HD sampling contracts.
+
+Translate PSG events to MIDI, or send them to an ALSA sequencer destination
+when ALSA MIDI support was built:
+
+```bash
+./build-working/timeEmulator --core gameboy --rom path/to/game.gb \
+  --midi-file output.mid
+
+./build-working/timeEmulator --core gameboy --rom path/to/game.gb \
+  --midi-output 128:0
+```
+
+With an active frontend, `F1` writes `quicksave.ptstate` in the current working
+directory. Both registered machines implement the machine save-state contract.
+
+## Runtime Diagnostics and Performance Baseline
 
 `timeEmulator` supports periodic runtime diagnostics snapshots without changing
 emulation behavior:
 
 ```bash
-timeEmulator \
+./build-working/timeEmulator \
 	--core gameboy \
 	--rom path/to/rom.gb \
 	--timing-profile balanced \
@@ -83,15 +166,15 @@ Timing profile examples:
 
 ```bash
 # balanced
-timeEmulator --core gameboy --rom path/to/rom.gb --timing-profile balanced \
+./build-working/timeEmulator --core gameboy --rom path/to/rom.gb --timing-profile balanced \
 	--diagnostics-report diagnostics-balanced.jsonl --diagnostics-interval-ms 1000
 
 # low_latency
-timeEmulator --core gameboy --rom path/to/rom.gb --timing-profile low_latency \
+./build-working/timeEmulator --core gameboy --rom path/to/rom.gb --timing-profile low_latency \
 	--diagnostics-report diagnostics-low-latency.jsonl --diagnostics-interval-ms 1000
 
 # deterministic_test
-timeEmulator --core gameboy --rom path/to/rom.gb --timing-profile deterministic_test \
+./build-working/timeEmulator --core gameboy --rom path/to/rom.gb --timing-profile deterministic_test \
 	--diagnostics-report diagnostics-deterministic.jsonl --diagnostics-interval-ms 1000
 ```
 
@@ -122,7 +205,9 @@ perf report
 
 ### 1. Native Machine Host
 
-`GameBoyMachine` is the first reference machine shell. It owns the CPU plugin instance and exposes a `RuntimeContext` that executors run against.
+The machine registry currently provides `GameBoyMachine` and the work-in-progress
+`GameGearMachine`. Each owns its guest hardware state and exposes a
+`RuntimeContext` that the attached executor policy runs against.
 
 For lab-style experiments, `GameBoyMachine` also provides `loadBootRom(...)`, which accepts a user-supplied Game Boy boot ROM that must be exactly `256` bytes long.
 
@@ -130,6 +215,7 @@ For lab-style experiments, `GameBoyMachine` also provides `loadBootRom(...)`, wh
 
 - `loadRom(...)`
 - `step()`
+- `save_state(...)` / `load_state(...)`
 - `guarantee()`
 - `readRegisterPair(...)`
 - `runtimeContext()`
@@ -137,6 +223,7 @@ For lab-style experiments, `GameBoyMachine` also provides `loadBootRom(...)`, wh
 Relevant files:
 
 - `cores/gameboy/GameBoyMachine.hpp`
+- `cores/gamegear/GameGearMachine.hpp`
 - `machine/Machine.hpp`
 - `machine/RuntimeContext.hpp`
 
@@ -206,7 +293,7 @@ Defines:
 - `PluginMetadata`
 - `AbiVersion` + host ABI constants
 - compatibility helpers (`isAbiCompatible`, `validateMetadata`)
-- `PluginDescriptorV1` C-entrypoint descriptor for future dynamic loading
+- `PluginDescriptorV1` C-entrypoint descriptor for dynamic modules
 - `DefaultStepPolicy`
 - `VisibleStatePreservingStepPolicy`
 
@@ -226,7 +313,7 @@ Runs a machine-owned runtime context through the same cycle and delegates record
 - `recordedSegments()`
 - save/load block-script playback
 
-### 5. Game Boy Core Adapter
+### 5. Core Adapters
 
 `LR3592_DMG` implements the CPU contract and produces `CpuFeedback`.
 
@@ -236,17 +323,24 @@ Plugin runtime adapter:
 
 This wraps `LR3592_DMG` into `ICpuCoreRuntime`, while `GameBoyMachine` hosts the runtime and ROM-backed memory path.
 
-### 6. Frontend Plugins
+`GameGearMachine` hosts its Z80 interpreter, cartridge/mapper, VDP, PSG, input,
+BIOS, and memory-map paths behind the same machine and runtime contracts. It
+remains a work in progress.
 
-The SDL frontend is no longer compiled directly into the emulator executable. The host uses:
+### 6. Host I/O Plugins
+
+The SDL frontend and SDL audio output are no longer compiled directly into the
+emulator executable. The host uses:
 
 - `machine/plugins/abi/TimePluginAbi.h` for the stable pure-C module boundary
 - `machine/plugins/DynamicPluginModule.hpp` for validated loading and the host adapter
-- `machine/plugins/SdlFrontendPlugin.hpp` for the temporary internal C++ compatibility interface
+- `machine/plugins/FrontendPlugin.hpp` for the internal frontend contract
+- `machine/plugins/AudioOutput.hpp` for the independent audio-output contract
 
 The implementations live in:
 
 - `machine/plugins/sdl_frontend/SdlFrontendModule.cpp`
+- `machine/plugins/sdl_audio_output/SdlAudioOutputModule.cpp`
 - `machine/plugins/glfw_frontend/GlfwFrontendModule.cpp`
 
 At runtime the emulator loads `libtime-sdl-frontend-plugin.so`, validates its
@@ -259,23 +353,21 @@ glfw`, or select any external implementation with `--frontend-plugin` and its
 descriptor ID. If loading fails, the emulator logs a warning and continues in
 headless mode.
 
+The machine-owned host services keep guest state single-writer while separating
+deadline domains: the emulation lane emits immutable audio/video data, the
+audio worker prepares device-rate blocks, the backend callback drains prepared
+samples, and the main/render lane owns window events and presentation.
+
+PSG-aware audio processors receive mixed PCM plus voice descriptors, voice-major
+stems, register-derived events, frame counters, sample positions, and lifecycle
+epochs. `PsgMidiPlugin` consumes the same event stream for file or asynchronous
+ALSA output.
+
 ## Tests
 
-Current smoke tests:
-
-- `tests/smoke_snapshot.cpp`
-- `tests/smoke_register_snapshot.cpp`
-- `tests/smoke_instruction_cycle.cpp`
-- `tests/smoke_machine_boot.cpp`
-- `tests/smoke_executor.cpp`
-- `tests/smoke_plugin_executor.cpp`
-- `tests/smoke_plugin_abi.cpp`
-- `tests/smoke_plugin_io.cpp`
-- `tests/smoke_sdl_frontend_plugin.cpp`
-- `tests/smoke_apu_audio.cpp`
-- `tests/smoke_trace_executor.cpp`
-
-These verify:
+CTest targets are defined authoritatively in `CMakeLists.txt`; use `ctest -N` to
+discover the set available for the configured optional dependencies. Coverage
+includes:
 
 - Snapshot memory read-through and overlay behavior
 - Register snapshot copy/isolation behavior
@@ -285,14 +377,43 @@ These verify:
 - Plugin executor orchestration and feedback-driven policy behavior
 - Plugin ABI compatibility, metadata validation, and guarantee labeling
 - Host-side I/O plugin lifecycle and failure handling
-- Runtime loading of the SDL frontend shared object without losing video, audio, input, or diagnostics behavior
+- Runtime loading and validation of executor, frontend, audio-output, and
+  audio-processor pure-C modules
+- Independent SDL/GLFW frontend and SDL/dummy/file audio-output behavior
+- Game Boy and Game Gear CPU, video, audio, mapper, BIOS/boot, interrupt, input,
+  persistence, and save-state paths
+- Audio resampling, transport queues, rich PSG stems/events, processor failure
+  fallback, MIDI translation, and callback behavior
+- Visual manifests, capture, asynchronous decode/reload, HD replacement,
+  nearest/linear filtering, palette handling, and mixed replaced/unreplaced
+  frames
+- Lifecycle epochs, mailbox behavior, background queues, corruption rejection,
+  memory bounds, timing, concurrency success gates, and performance baselines
 - Baseline-vs-optimized visible-state equivalence for the Game Boy core (`smoke_trace_executor`)
 - Game Boy hardware-sensitive behavior such as `STOP` wake-on-input and `LY` / `STAT` write semantics
+
+## Development Hooks
+
+Tracked post-merge and post-rewrite hooks can refresh an existing Graphify
+knowledge graph after pulls and rebases. Activate the tracked hook directory in
+each checkout:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The refresh remains non-fatal, does not bootstrap a missing graph, and checks
+that the installed Graphify supports deletion-safe `update --force` first.
 
 ## Short-Term Direction
 
 The next practical expansion points are:
 
-- Extend the machine host beyond the initial Game Boy shell
-- Grow `RuntimeContext` from a narrow baseline API into a capability-based boundary
-- Add more opcode coverage while preserving executor/plugin interfaces
+- Continue Game Boy and Game Gear compatibility and timing work while
+  preserving machine-owned deterministic state
+- Measure and reduce audio callback tail latency, FIFO starvation, host pacing
+  jitter, render age, and snapshot-copy interference
+- Keep slimming immutable realtime packets and strengthening lifecycle/epoch
+  barriers before introducing more cross-thread execution
+- Mature block-cache and IR coverage through differential testing; keep native
+  execution, JIT, and DBT experimental until host deadline domains are stable
