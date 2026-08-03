@@ -29,6 +29,19 @@ class IExecutorPolicyPlugin;
 
 namespace BMMQ {
 
+namespace IR {
+class IIrCoreAdapter;
+class IIrExecutionBackend;
+}
+
+class IIrComponentAwareMachine {
+public:
+    virtual ~IIrComponentAwareMachine() = default;
+    [[nodiscard]] virtual std::uint32_t irArchitectureId() const noexcept = 0;
+    virtual void setIrComponents(std::unique_ptr<IR::IIrCoreAdapter> adapter,
+                                 std::unique_ptr<IR::IIrExecutionBackend> backend) = 0;
+};
+
 class IExternalBootRomMachine {
 public:
     virtual ~IExternalBootRomMachine() = default;

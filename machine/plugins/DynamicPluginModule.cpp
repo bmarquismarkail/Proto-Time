@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cassert>
 #include <chrono>
 #include <cstdint>
 #include <dlfcn.h>
@@ -12,6 +13,8 @@
 #include <unordered_set>
 #include <utility>
 
+#include "inst_cycle/IrExecutionService.hpp"
+#include "inst_cycle/IntermediateRepresentationInterpreter.hpp"
 #include "machine/AudioService.hpp"
 #include "machine/DebugSnapshotService.hpp"
 #include "machine/Machine.hpp"
@@ -23,6 +26,70 @@
 
 namespace BMMQ::Plugin {
 namespace {
+
+constexpr std::array kCppValueTypes{
+    IR::ValueType::Void, IR::ValueType::Bool, IR::ValueType::I8,
+    IR::ValueType::I16, IR::ValueType::I32, IR::ValueType::I64};
+constexpr std::array<std::uint32_t, kCppValueTypes.size()> kCValueTypes{
+    TIME_IR_VALUE_VOID_V1, TIME_IR_VALUE_BOOL_V1, TIME_IR_VALUE_I8_V1,
+    TIME_IR_VALUE_I16_V1, TIME_IR_VALUE_I32_V1, TIME_IR_VALUE_I64_V1};
+constexpr std::array kCppOperandKinds{
+    IR::OperandKind::Value, IR::OperandKind::Immediate,
+    IR::OperandKind::GuestRegister, IR::OperandKind::GuestAddress,
+    IR::OperandKind::BlockTarget, IR::OperandKind::Helper};
+constexpr std::array<std::uint32_t, kCppOperandKinds.size()> kCOperandKinds{
+    TIME_IR_OPERAND_VALUE_V1, TIME_IR_OPERAND_IMMEDIATE_V1,
+    TIME_IR_OPERAND_GUEST_REGISTER_V1, TIME_IR_OPERAND_GUEST_ADDRESS_V1,
+    TIME_IR_OPERAND_BLOCK_TARGET_V1, TIME_IR_OPERAND_HELPER_V1};
+constexpr std::array kCppOpcodes{
+    IR::Opcode::Constant, IR::Opcode::ReadRegister, IR::Opcode::WriteRegister,
+    IR::Opcode::LoadMemory, IR::Opcode::StoreMemory, IR::Opcode::Add,
+    IR::Opcode::Subtract, IR::Opcode::Multiply, IR::Opcode::BitAnd,
+    IR::Opcode::BitOr, IR::Opcode::BitXor, IR::Opcode::ShiftLeft,
+    IR::Opcode::ShiftRightLogical, IR::Opcode::ShiftRightArithmetic,
+    IR::Opcode::BitNot, IR::Opcode::CompareEqual, IR::Opcode::CompareNotEqual,
+    IR::Opcode::CompareUnsignedLess, IR::Opcode::CompareSignedLess,
+    IR::Opcode::Select, IR::Opcode::SetProgramCounter, IR::Opcode::Branch,
+    IR::Opcode::BranchIf, IR::Opcode::CallHelper, IR::Opcode::Exit,
+    IR::Opcode::RetireInstruction};
+constexpr std::array<std::uint32_t, kCppOpcodes.size()> kCOpcodes{
+    TIME_IR_OPCODE_CONSTANT_V1, TIME_IR_OPCODE_READ_REGISTER_V1,
+    TIME_IR_OPCODE_WRITE_REGISTER_V1, TIME_IR_OPCODE_LOAD_MEMORY_V1,
+    TIME_IR_OPCODE_STORE_MEMORY_V1, TIME_IR_OPCODE_ADD_V1,
+    TIME_IR_OPCODE_SUBTRACT_V1, TIME_IR_OPCODE_MULTIPLY_V1,
+    TIME_IR_OPCODE_BIT_AND_V1, TIME_IR_OPCODE_BIT_OR_V1,
+    TIME_IR_OPCODE_BIT_XOR_V1, TIME_IR_OPCODE_SHIFT_LEFT_V1,
+    TIME_IR_OPCODE_SHIFT_RIGHT_LOGICAL_V1,
+    TIME_IR_OPCODE_SHIFT_RIGHT_ARITHMETIC_V1, TIME_IR_OPCODE_BIT_NOT_V1,
+    TIME_IR_OPCODE_COMPARE_EQUAL_V1, TIME_IR_OPCODE_COMPARE_NOT_EQUAL_V1,
+    TIME_IR_OPCODE_COMPARE_UNSIGNED_LESS_V1,
+    TIME_IR_OPCODE_COMPARE_SIGNED_LESS_V1, TIME_IR_OPCODE_SELECT_V1,
+    TIME_IR_OPCODE_SET_PROGRAM_COUNTER_V1, TIME_IR_OPCODE_BRANCH_V1,
+    TIME_IR_OPCODE_BRANCH_IF_V1, TIME_IR_OPCODE_CALL_HELPER_V1,
+    TIME_IR_OPCODE_EXIT_V1, TIME_IR_OPCODE_RETIRE_INSTRUCTION_V1};
+
+template <typename Enum, std::size_t Size>
+consteval bool enumValuesMatch(const std::array<Enum, Size>& cppValues,
+                               const std::array<std::uint32_t, Size>& cValues)
+{
+    for (std::size_t index = 0u; index < Size; ++index) {
+        if (static_cast<std::uint32_t>(cppValues[index]) != cValues[index]) return false;
+    }
+    return true;
+}
+
+static_assert(enumValuesMatch(kCppValueTypes, kCValueTypes));
+static_assert(enumValuesMatch(kCppOperandKinds, kCOperandKinds));
+static_assert(enumValuesMatch(kCppOpcodes, kCOpcodes));
+static_assert(static_cast<std::uint32_t>(IR::MemoryClass::Generic) == TIME_IR_MEMORY_GENERIC_V1);
+static_assert(static_cast<std::uint32_t>(IR::MemoryClass::Cartridge) == TIME_IR_MEMORY_CARTRIDGE_V1);
+static_assert(static_cast<std::uint32_t>(IR::GuardKind::MappingGeneration) ==
+              TIME_IR_GUARD_MAPPING_GENERATION_V1);
+static_assert(static_cast<std::uint32_t>(IR::GuardKind::HelperAbi) == TIME_IR_GUARD_HELPER_ABI_V1);
+static_assert(static_cast<std::uint32_t>(IR::BlockExit::Sequential) ==
+              TIME_IR_BLOCK_EXIT_SEQUENTIAL_V1);
+static_assert(static_cast<std::uint32_t>(IR::BlockExit::Unsupported) ==
+              TIME_IR_BLOCK_EXIT_UNSUPPORTED_V1);
 
 [[nodiscard]] ExecutionBackend mapBackend(std::uint32_t value)
 {
@@ -101,6 +168,18 @@ struct DynamicPluginModule::State {
         const TimeAudioProcessorApiV1* api = nullptr;
     };
 
+    struct IrExecutionBackendEntry {
+        std::string id;
+        std::string displayName;
+        const TimeIrExecutionBackendApiV1* api = nullptr;
+    };
+
+    struct IrCoreAdapterEntry {
+        std::string id;
+        std::string displayName;
+        const TimeIrCoreAdapterApiV1* api = nullptr;
+    };
+
     ~State() {
         if (handle != nullptr) dlclose(handle);
     }
@@ -112,6 +191,8 @@ struct DynamicPluginModule::State {
     std::vector<FrontendEntry> frontends;
     std::vector<AudioOutputEntry> audioOutputs;
     std::vector<AudioProcessorEntry> audioProcessors;
+    std::vector<IrCoreAdapterEntry> irAdapters;
+    std::vector<IrExecutionBackendEntry> irBackends;
 };
 
 namespace {
@@ -266,6 +347,575 @@ private:
     mutable std::mutex diagnosticMutex_;
     std::string lastError_;
     bool disabled_ = false;
+};
+
+[[nodiscard]] const TimeHostApiV1& irHostApi() noexcept
+{
+    static const TimeHostApiV1 api{sizeof(TimeHostApiV1), TIME_PLUGIN_ABI_VERSION_V1,
+                                   nullptr, nullptr};
+    return api;
+}
+
+[[nodiscard]] std::string cLastError(const char* (*lastError)(const void*),
+                                     const void* instance,
+                                     std::string fallback)
+{
+    try {
+        const char* message = lastError(instance);
+        if (message != nullptr && message[0] != '\0') return message;
+    } catch (...) {
+    }
+    return fallback;
+}
+
+class IrBlockViewStorage {
+public:
+    explicit IrBlockViewStorage(const BMMQ::IR::Block& block)
+    {
+        guards_.reserve(block.guards.size());
+        for (const auto& guard : block.guards) {
+            guards_.push_back({sizeof(TimeIrGuardV1), static_cast<std::uint32_t>(guard.kind),
+                               guard.subject, guard.expected, guard.mask,
+                               static_cast<std::uint32_t>(guard.bytes.size()),
+                               guard.bytes.empty() ? nullptr : guard.bytes.data()});
+        }
+
+        // Exposed TimeIrOperationV1.operands and TimeIrInstructionV1.operations
+        // pointers remain valid only because every owning vector is fully
+        // reserved before emplace_back stores them.
+        operands_.reserve(block.instructions.size());
+        operations_.reserve(block.instructions.size());
+        instructions_.reserve(block.instructions.size());
+#ifndef NDEBUG
+        const auto operandsCapacity = operands_.capacity();
+        const auto operationsCapacity = operations_.capacity();
+        const auto instructionsCapacity = instructions_.capacity();
+#endif
+        for (const auto& instruction : block.instructions) {
+            operands_.emplace_back();
+            operations_.emplace_back();
+            assert(operands_.capacity() == operandsCapacity);
+            assert(operations_.capacity() == operationsCapacity);
+            auto& instructionOperands = operands_.back();
+            auto& instructionOperations = operations_.back();
+            instructionOperands.reserve(instruction.operations.size());
+            instructionOperations.reserve(instruction.operations.size());
+#ifndef NDEBUG
+            const auto instructionOperandsCapacity = instructionOperands.capacity();
+            const auto instructionOperationsCapacity = instructionOperations.capacity();
+#endif
+            for (const auto& operation : instruction.operations) {
+                instructionOperands.emplace_back();
+                assert(instructionOperands.capacity() == instructionOperandsCapacity);
+                auto& operationOperands = instructionOperands.back();
+                operationOperands.reserve(operation.operands.size());
+#ifndef NDEBUG
+                const auto operationOperandsCapacity = operationOperands.capacity();
+#endif
+                for (const auto& operand : operation.operands) {
+                    operationOperands.push_back({sizeof(TimeIrOperandV1),
+                                                 static_cast<std::uint32_t>(operand.kind),
+                                                 static_cast<std::uint32_t>(operand.type),
+                                                 operand.payload});
+                    assert(operationOperands.capacity() == operationOperandsCapacity);
+                }
+                instructionOperations.push_back({
+                    sizeof(TimeIrOperationV1), static_cast<std::uint32_t>(operation.opcode),
+                    operation.result.value_or(0u),
+                    static_cast<std::uint32_t>(operation.resultType),
+                    static_cast<std::uint32_t>(operation.memoryClass),
+                    static_cast<std::uint32_t>(operationOperands.size()),
+                    operationOperands.empty() ? nullptr : operationOperands.data()});
+                assert(instructionOperations.capacity() == instructionOperationsCapacity);
+            }
+            std::uint32_t flags = 0u;
+            if (instruction.controlFlow) flags |= TIME_IR_INSTRUCTION_CONTROL_FLOW_V1;
+            if (instruction.interruptSensitive) {
+                flags |= TIME_IR_INSTRUCTION_INTERRUPT_SENSITIVE_V1;
+            }
+            instructions_.push_back({
+                sizeof(TimeIrInstructionV1), instruction.address, instruction.length,
+                instruction.cyclesNotTaken, instruction.cyclesTaken,
+                instruction.takenCondition.value_or(0u), flags,
+                static_cast<std::uint32_t>(instructionOperations.size()),
+                instructionOperations.empty() ? nullptr : instructionOperations.data()});
+            assert(instructions_.capacity() == instructionsCapacity);
+            assert(operands_.capacity() == operandsCapacity);
+            assert(operations_.capacity() == operationsCapacity);
+        }
+
+        view_ = {sizeof(TimeIrBlockViewV1), TIME_IR_ABI_VERSION_V1,
+                 block.guestStart, block.guestEnd, block.mappingGeneration,
+                 static_cast<std::uint32_t>(block.exit),
+                 static_cast<std::uint32_t>(guards_.size()),
+                 guards_.empty() ? nullptr : guards_.data(),
+                 static_cast<std::uint32_t>(instructions_.size()),
+                 instructions_.empty() ? nullptr : instructions_.data()};
+    }
+
+    [[nodiscard]] const TimeIrBlockViewV1* get() const noexcept { return &view_; }
+
+private:
+    std::vector<TimeIrGuardV1> guards_{};
+    std::vector<std::vector<std::vector<TimeIrOperandV1>>> operands_{};
+    std::vector<std::vector<TimeIrOperationV1>> operations_{};
+    std::vector<TimeIrInstructionV1> instructions_{};
+    TimeIrBlockViewV1 view_{};
+};
+
+struct IrBuilderContext {
+    BMMQ::IR::Block block{};
+    bool blockBegun = false;
+    bool instructionOpen = false;
+    bool finished = false;
+    bool failed = false;
+    std::string error{};
+
+    int fail(std::string message) noexcept
+    {
+        failed = true;
+        try { error = std::move(message); } catch (...) {}
+        return TIME_IR_ERROR_V1;
+    }
+};
+
+template <typename Callback>
+int32_t protectIrBuilderCallback(void* opaque, Callback&& callback) noexcept
+{
+    if (opaque == nullptr) return TIME_IR_ERROR_V1;
+    auto& context = *static_cast<IrBuilderContext*>(opaque);
+    try {
+        return callback(context);
+    } catch (...) {
+        context.failed = true;
+        try { context.error = "IR builder callback failed while copying plugin data"; }
+        catch (...) {}
+        return TIME_IR_ERROR_V1;
+    }
+}
+
+[[nodiscard]] bool validValueType(std::uint32_t value) noexcept
+{
+    return value <= static_cast<std::uint32_t>(BMMQ::IR::ValueType::I64);
+}
+
+int32_t irBeginBlock(void* opaque, std::uint64_t guestStart,
+                     std::uint64_t mappingGeneration) noexcept
+{
+    return protectIrBuilderCallback(opaque, [&](IrBuilderContext& context) -> int32_t {
+        if (context.failed || context.blockBegun) return context.fail("invalid begin_block order");
+        context.block = {};
+        context.block.guestStart = guestStart;
+        context.block.mappingGeneration = mappingGeneration;
+        context.blockBegun = true;
+        return TIME_IR_OK_V1;
+    });
+}
+
+int32_t irAddGuard(void* opaque, const TimeIrGuardV1* guard) noexcept
+{
+    return protectIrBuilderCallback(opaque, [&](IrBuilderContext& context) -> int32_t {
+        if (context.failed || !context.blockBegun || context.instructionOpen || context.finished ||
+            guard == nullptr || guard->struct_size < sizeof(TimeIrGuardV1) ||
+            guard->kind > static_cast<std::uint32_t>(BMMQ::IR::GuardKind::HelperAbi) ||
+            context.block.guards.size() >= BMMQ::IR::IrExecutionService::Limits::kMaxGuards ||
+            guard->byte_count > BMMQ::IR::IrExecutionService::Limits::kMaxGuestBytes ||
+            (guard->byte_count != 0u && guard->bytes == nullptr)) {
+            return context.fail("invalid IR guard supplied by plugin");
+        }
+        BMMQ::IR::Guard copied{.kind = static_cast<BMMQ::IR::GuardKind>(guard->kind),
+                               .subject = guard->subject,
+                               .expected = guard->expected,
+                               .mask = guard->mask};
+        if (guard->byte_count != 0u) {
+            copied.bytes.assign(guard->bytes, guard->bytes + guard->byte_count);
+        }
+        context.block.guards.push_back(std::move(copied));
+        return TIME_IR_OK_V1;
+    });
+}
+
+int32_t irBeginInstruction(void* opaque, const TimeIrInstructionV1* instruction) noexcept
+{
+    return protectIrBuilderCallback(opaque, [&](IrBuilderContext& context) -> int32_t {
+        constexpr std::uint32_t knownFlags = TIME_IR_INSTRUCTION_CONTROL_FLOW_V1 |
+                                             TIME_IR_INSTRUCTION_INTERRUPT_SENSITIVE_V1;
+        if (context.failed || !context.blockBegun || context.instructionOpen || context.finished ||
+            instruction == nullptr || instruction->struct_size < sizeof(TimeIrInstructionV1) ||
+            instruction->length == 0u || instruction->length > UINT8_MAX ||
+            instruction->cycles_not_taken == 0u || instruction->cycles_taken == 0u ||
+            (instruction->flags & ~knownFlags) != 0u ||
+            context.block.instructions.size() >=
+                BMMQ::IR::IrExecutionService::Limits::kMaxInstructions) {
+            return context.fail("invalid IR instruction supplied by plugin");
+        }
+        context.block.instructions.push_back({
+            .address = instruction->address,
+            .length = static_cast<std::uint8_t>(instruction->length),
+            .cyclesNotTaken = instruction->cycles_not_taken,
+            .cyclesTaken = instruction->cycles_taken,
+            .takenCondition = instruction->taken_condition == 0u
+                                  ? std::nullopt
+                                  : std::optional<BMMQ::IR::ValueId>(instruction->taken_condition),
+            .controlFlow = (instruction->flags & TIME_IR_INSTRUCTION_CONTROL_FLOW_V1) != 0u,
+            .interruptSensitive =
+                (instruction->flags & TIME_IR_INSTRUCTION_INTERRUPT_SENSITIVE_V1) != 0u,
+        });
+        context.instructionOpen = true;
+        return TIME_IR_OK_V1;
+    });
+}
+
+int32_t irEmitOperation(void* opaque, const TimeIrOperationV1* operation) noexcept
+{
+    return protectIrBuilderCallback(opaque, [&](IrBuilderContext& context) -> int32_t {
+        if (context.failed || !context.instructionOpen || operation == nullptr ||
+            operation->struct_size < sizeof(TimeIrOperationV1) ||
+            operation->opcode > static_cast<std::uint32_t>(BMMQ::IR::Opcode::Exit) ||
+            !validValueType(operation->result_type) ||
+            operation->memory_class > static_cast<std::uint32_t>(BMMQ::IR::MemoryClass::Cartridge) ||
+            operation->operand_count > BMMQ::IR::IrExecutionService::Limits::kMaxOperandsPerOp ||
+            (operation->operand_count != 0u && operation->operands == nullptr) ||
+            operation->result_id > BMMQ::IR::IrExecutionService::Limits::kMaxValues ||
+            context.block.instructions.back().operations.size() >=
+                BMMQ::IR::IrExecutionService::Limits::kMaxOpsPerInstruction - 1u) {
+            return context.fail("invalid IR operation supplied by plugin");
+        }
+
+        BMMQ::IR::Operation copied{
+            .opcode = static_cast<BMMQ::IR::Opcode>(operation->opcode),
+            .result = operation->result_id == 0u
+                          ? std::nullopt
+                          : std::optional<BMMQ::IR::ValueId>(operation->result_id),
+            .resultType = static_cast<BMMQ::IR::ValueType>(operation->result_type),
+            .memoryClass = static_cast<BMMQ::IR::MemoryClass>(operation->memory_class)};
+        copied.operands.reserve(operation->operand_count);
+        for (std::uint32_t index = 0u; index < operation->operand_count; ++index) {
+            const auto& operand = operation->operands[index];
+            if (operand.struct_size < sizeof(TimeIrOperandV1) ||
+                operand.kind > static_cast<std::uint32_t>(BMMQ::IR::OperandKind::Helper) ||
+                !validValueType(operand.type)) {
+                return context.fail("invalid IR operand supplied by plugin");
+            }
+            copied.operands.push_back({.kind = static_cast<BMMQ::IR::OperandKind>(operand.kind),
+                                       .type = static_cast<BMMQ::IR::ValueType>(operand.type),
+                                       .payload = operand.payload});
+        }
+        context.block.instructions.back().operations.push_back(std::move(copied));
+        return TIME_IR_OK_V1;
+    });
+}
+
+int32_t irEndInstruction(void* opaque) noexcept
+{
+    return protectIrBuilderCallback(opaque, [](IrBuilderContext& context) -> int32_t {
+        if (context.failed || !context.instructionOpen) {
+            return context.fail("invalid end_instruction order");
+        }
+        context.block.instructions.back().operations.push_back(
+            {.opcode = BMMQ::IR::Opcode::RetireInstruction});
+        context.instructionOpen = false;
+        return TIME_IR_OK_V1;
+    });
+}
+
+int32_t irFinishBlock(void* opaque, std::uint32_t exitKind) noexcept
+{
+    return protectIrBuilderCallback(opaque, [&](IrBuilderContext& context) -> int32_t {
+        if (context.failed || !context.blockBegun || context.instructionOpen || context.finished ||
+            context.block.instructions.empty() ||
+            exitKind > static_cast<std::uint32_t>(BMMQ::IR::BlockExit::Unsupported)) {
+            return context.fail("invalid finish_block order or exit kind");
+        }
+        const auto& last = context.block.instructions.back();
+        if (last.length > UINT64_MAX - last.address) {
+            return context.fail("IR block end address overflows");
+        }
+        context.block.guestEnd = last.address + last.length - 1u;
+        context.block.exit = static_cast<BMMQ::IR::BlockExit>(exitKind);
+        context.finished = true;
+        return TIME_IR_OK_V1;
+    });
+}
+
+class CIrCoreAdapter final : public BMMQ::IR::IIrCoreAdapter {
+public:
+    CIrCoreAdapter(std::shared_ptr<DynamicPluginModule::State> state,
+                   const DynamicPluginModule::State::IrCoreAdapterEntry& entry)
+        : state_(std::move(state)), api_(entry.api)
+    {
+        try { instance_ = api_->create(&irHostApi()); }
+        catch (...) { throw std::runtime_error("C IR adapter factory threw across the ABI"); }
+        if (instance_ == nullptr) throw std::runtime_error("C IR adapter factory returned null");
+    }
+
+    ~CIrCoreAdapter() override
+    {
+        if (instance_ != nullptr) {
+            try { api_->destroy(instance_); } catch (...) {}
+        }
+    }
+
+    std::uint32_t architectureId() const noexcept override { return api_->architecture_id; }
+    std::uint32_t irAbiVersion() const noexcept override { return api_->ir_abi_version; }
+
+    BMMQ::IR::BlockPtr lower(const BMMQ::IR::LoweringRequest& request,
+                             std::string* error) override
+    {
+        if (request.instructions.empty() ||
+            request.instructions.size() >
+                BMMQ::IR::IrExecutionService::Limits::kMaxInstructions) {
+            if (error != nullptr) *error = "invalid C IR lowering request";
+            return {};
+        }
+        std::vector<TimeIrSourceInstructionV1> source;
+        source.reserve(request.instructions.size());
+        std::size_t guestBytes = 0u;
+        for (const auto& instruction : request.instructions) {
+            if (instruction.length == 0u || instruction.length > instruction.bytes.size()) {
+                if (error != nullptr) *error = "invalid source instruction length";
+                return {};
+            }
+            guestBytes += instruction.length;
+            if (guestBytes > BMMQ::IR::IrExecutionService::Limits::kMaxGuestBytes) {
+                if (error != nullptr) *error = "C IR lowering request exceeds byte limit";
+                return {};
+            }
+            TimeIrSourceInstructionV1 copied{sizeof(TimeIrSourceInstructionV1),
+                                             instruction.address, {}, instruction.length};
+            std::copy(instruction.bytes.begin(), instruction.bytes.end(), copied.bytes);
+            source.push_back(copied);
+        }
+        const TimeIrLoweringRequestV1 cRequest{
+            sizeof(TimeIrLoweringRequestV1), TIME_IR_ABI_VERSION_V1,
+            request.mappingGeneration, request.executionState,
+            static_cast<std::uint32_t>(source.size()), source.data()};
+        IrBuilderContext context;
+        const TimeIrBuilderV1 builder{
+            sizeof(TimeIrBuilderV1), TIME_IR_ABI_VERSION_V1, &context,
+            &irBeginBlock, &irAddGuard, &irBeginInstruction, &irEmitOperation,
+            &irEndInstruction, &irFinishBlock};
+
+        int32_t result = TIME_IR_ERROR_V1;
+        try { result = api_->lower(instance_, &cRequest, &builder); }
+        catch (...) {
+            if (error != nullptr) *error = "C IR adapter lower threw across the ABI";
+            return {};
+        }
+        if (result != TIME_IR_OK_V1 || context.failed || !context.finished) {
+            if (error != nullptr) {
+                *error = context.error.empty()
+                             ? cLastError(api_->last_error, instance_, "C IR adapter declined block")
+                             : context.error;
+            }
+            return {};
+        }
+        const auto validation = BMMQ::IR::validate(context.block);
+        if (!validation) {
+            if (error != nullptr) *error = validation.message;
+            return {};
+        }
+        return std::make_shared<const BMMQ::IR::Block>(std::move(context.block));
+    }
+
+    BMMQ::IR::ValidationResult validateBlock(const BMMQ::IR::Block& block) const override
+    {
+        IrBlockViewStorage storage(block);
+        int32_t result = TIME_IR_ERROR_V1;
+        try { result = api_->validate_block(instance_, storage.get()); }
+        catch (...) {
+            return {.valid = false, .message = "C IR adapter validation threw across the ABI"};
+        }
+        if (result == TIME_IR_OK_V1) return {};
+        return {.valid = false,
+                .message = cLastError(api_->last_error, instance_,
+                                      "C IR adapter rejected block")};
+    }
+
+    std::optional<std::string> validateExecutionState(
+        const BMMQ::IR::Block& block) const override
+    {
+        IrBlockViewStorage storage(block);
+        int32_t result = TIME_IR_ERROR_V1;
+        try { result = api_->validate_execution_state(instance_, storage.get()); }
+        catch (...) { return "C IR adapter state validation threw across the ABI"; }
+        if (result == TIME_IR_OK_V1) return {};
+        return cLastError(api_->last_error, instance_, "C IR adapter state guard rejected");
+    }
+
+private:
+    std::shared_ptr<DynamicPluginModule::State> state_;
+    const TimeIrCoreAdapterApiV1* api_ = nullptr;
+    void* instance_ = nullptr;
+};
+
+struct IrBackendLifetime {
+    IrBackendLifetime(std::shared_ptr<DynamicPluginModule::State> owningState,
+                      const TimeIrExecutionBackendApiV1* owningApi)
+        : state(std::move(owningState)), api(owningApi)
+    {
+        try { instance = api->create(&irHostApi()); }
+        catch (...) { throw std::runtime_error("C IR backend factory threw across the ABI"); }
+        if (instance == nullptr) throw std::runtime_error("C IR backend factory returned null");
+    }
+    ~IrBackendLifetime()
+    {
+        if (instance != nullptr) {
+            try { api->destroy(instance); } catch (...) {}
+        }
+    }
+    std::shared_ptr<DynamicPluginModule::State> state;
+    const TimeIrExecutionBackendApiV1* api = nullptr;
+    void* instance = nullptr;
+};
+
+class CIrBackendArtifact final : public BMMQ::BlockBackendArtifact {
+public:
+    CIrBackendArtifact(std::shared_ptr<IrBackendLifetime> owningLifetime, void* artifact)
+        : lifetime(std::move(owningLifetime)), raw(artifact) {}
+    ~CIrBackendArtifact() override
+    {
+        if (raw != nullptr) {
+            try { lifetime->api->destroy_artifact(lifetime->instance, raw); } catch (...) {}
+        }
+    }
+    std::shared_ptr<IrBackendLifetime> lifetime;
+    void* raw = nullptr;
+};
+
+class CIrExecutionBackend final : public BMMQ::IR::IIrExecutionBackend {
+public:
+    CIrExecutionBackend(std::shared_ptr<DynamicPluginModule::State> state,
+                        const DynamicPluginModule::State::IrExecutionBackendEntry& entry)
+        : lifetime_(std::make_shared<IrBackendLifetime>(std::move(state), entry.api)) {}
+
+    bool supports(std::uint32_t architectureId,
+                  std::uint32_t irAbiVersion) const noexcept override
+    {
+        return irAbiVersion == lifetime_->api->ir_abi_version &&
+               (lifetime_->api->architecture_id == BMMQ::IR::kAnyArchitecture ||
+                lifetime_->api->architecture_id == architectureId);
+    }
+
+    BMMQ::BlockBackendArtifactPtr compile(const BMMQ::IR::BlockPtr& block,
+                                          std::string* error) override
+    {
+        if (!block) {
+            if (error != nullptr) *error = "C IR backend received no block";
+            return {};
+        }
+        IrBlockViewStorage storage(*block);
+        void* raw = nullptr;
+        try { raw = lifetime_->api->compile(lifetime_->instance, storage.get()); }
+        catch (...) {
+            if (error != nullptr) *error = "C IR backend compile threw across the ABI";
+            return {};
+        }
+        if (raw == nullptr) {
+            if (error != nullptr) {
+                *error = cLastError(lifetime_->api->last_error, lifetime_->instance,
+                                    "C IR backend declined block");
+            }
+            return {};
+        }
+        return std::make_shared<const CIrBackendArtifact>(lifetime_, raw);
+    }
+
+    bool execute(const BMMQ::BlockBackendArtifact& artifact,
+                 std::size_t instructionIndex,
+                 BMMQ::IR::InterpreterHost& host,
+                 BMMQ::IR::InterpreterResult* result) override
+    {
+        const auto* cArtifact = dynamic_cast<const CIrBackendArtifact*>(&artifact);
+        if (cArtifact == nullptr || cArtifact->lifetime.get() != lifetime_.get() ||
+            instructionIndex > UINT32_MAX) return false;
+
+        struct HostBridge {
+            BMMQ::IR::InterpreterHost* host = nullptr;
+            bool failed = false;
+        } bridge{&host, false};
+        const auto readRegister = +[](void* opaque, std::uint32_t id,
+                                      std::uint32_t type) noexcept -> std::uint64_t {
+            auto& bridge = *static_cast<HostBridge*>(opaque);
+            try {
+                if (type > static_cast<std::uint32_t>(BMMQ::IR::ValueType::I64)) throw 0;
+                return bridge.host->readRegister(id, static_cast<BMMQ::IR::ValueType>(type));
+            } catch (...) { bridge.failed = true; return 0u; }
+        };
+        const auto writeRegister = +[](void* opaque, std::uint32_t id, std::uint32_t type,
+                                       std::uint64_t value) noexcept -> int32_t {
+            auto& bridge = *static_cast<HostBridge*>(opaque);
+            try {
+                if (type > static_cast<std::uint32_t>(BMMQ::IR::ValueType::I64)) throw 0;
+                bridge.host->writeRegister(id, static_cast<BMMQ::IR::ValueType>(type), value);
+                return TIME_IR_OK_V1;
+            } catch (...) { bridge.failed = true; return TIME_IR_ERROR_V1; }
+        };
+        const auto loadMemory = +[](void* opaque, std::uint64_t address, std::uint32_t type,
+                                    std::uint32_t memoryClass) noexcept -> std::uint64_t {
+            auto& bridge = *static_cast<HostBridge*>(opaque);
+            try {
+                if (type > static_cast<std::uint32_t>(BMMQ::IR::ValueType::I64) ||
+                    memoryClass > static_cast<std::uint32_t>(BMMQ::IR::MemoryClass::Cartridge)) throw 0;
+                return bridge.host->loadMemory(address, static_cast<BMMQ::IR::ValueType>(type),
+                                               static_cast<BMMQ::IR::MemoryClass>(memoryClass));
+            } catch (...) { bridge.failed = true; return 0u; }
+        };
+        const auto storeMemory = +[](void* opaque, std::uint64_t address, std::uint32_t type,
+                                     std::uint32_t memoryClass,
+                                     std::uint64_t value) noexcept -> int32_t {
+            auto& bridge = *static_cast<HostBridge*>(opaque);
+            try {
+                if (type > static_cast<std::uint32_t>(BMMQ::IR::ValueType::I64) ||
+                    memoryClass > static_cast<std::uint32_t>(BMMQ::IR::MemoryClass::Cartridge)) throw 0;
+                bridge.host->storeMemory(address, static_cast<BMMQ::IR::ValueType>(type),
+                                         static_cast<BMMQ::IR::MemoryClass>(memoryClass), value);
+                return TIME_IR_OK_V1;
+            } catch (...) { bridge.failed = true; return TIME_IR_ERROR_V1; }
+        };
+        const auto callHelper = +[](void* opaque, std::uint32_t id, std::uint32_t resultType,
+                                    const std::uint64_t* arguments,
+                                    std::uint32_t argumentCount) noexcept -> std::uint64_t {
+            auto& bridge = *static_cast<HostBridge*>(opaque);
+            try {
+                if (resultType > static_cast<std::uint32_t>(BMMQ::IR::ValueType::I64) ||
+                    argumentCount > BMMQ::IR::IrExecutionService::Limits::kMaxOperandsPerOp ||
+                    (argumentCount != 0u && arguments == nullptr)) throw 0;
+                return bridge.host->callHelper(
+                    id, static_cast<BMMQ::IR::ValueType>(resultType),
+                    std::span<const std::uint64_t>(arguments, argumentCount));
+            } catch (...) { bridge.failed = true; return 0u; }
+        };
+        const auto setPc = +[](void* opaque, std::uint64_t address) noexcept -> int32_t {
+            auto& bridge = *static_cast<HostBridge*>(opaque);
+            try { bridge.host->setProgramCounter(address); return TIME_IR_OK_V1; }
+            catch (...) { bridge.failed = true; return TIME_IR_ERROR_V1; }
+        };
+        const TimeIrExecutionHostV1 cHost{
+            sizeof(TimeIrExecutionHostV1), TIME_IR_ABI_VERSION_V1, &bridge,
+            readRegister, writeRegister, loadMemory, storeMemory, callHelper, setPc};
+        TimeIrExecutionResultV1 cResult{sizeof(TimeIrExecutionResultV1), 0u, 0u, 0u, 0u};
+        int32_t executed = TIME_IR_ERROR_V1;
+        try {
+            executed = lifetime_->api->execute(
+                lifetime_->instance, cArtifact->raw, static_cast<std::uint32_t>(instructionIndex),
+                &cHost, &cResult);
+        } catch (...) { return false; }
+        if (executed != TIME_IR_OK_V1 || bridge.failed ||
+            cResult.struct_size < sizeof(TimeIrExecutionResultV1) ||
+            cResult.branch_taken > 1u || cResult.exit_requested > 1u ||
+            cResult.cycle_condition > 1u || cResult.retirement_reached > 1u) return false;
+        if (result != nullptr) {
+            *result = {.branchTaken = cResult.branch_taken != 0u,
+                       .exitRequested = cResult.exit_requested != 0u,
+                       .cycleCondition = cResult.cycle_condition != 0u,
+                       .retirementReached = cResult.retirement_reached != 0u};
+        }
+        return true;
+    }
+
+private:
+    std::shared_ptr<IrBackendLifetime> lifetime_;
 };
 
 class CExecutorPolicyAdapter final : public IExecutorPolicyPlugin {
@@ -1199,6 +1849,35 @@ DynamicPluginModule DynamicPluginModule::load(const std::filesystem::path& path)
             }
             state->audioProcessors.push_back(State::AudioProcessorEntry{
                 descriptor->plugin_id, descriptor->display_name, api});
+        } else if (descriptor->kind == TIME_PLUGIN_KIND_IR_CORE_ADAPTER_V1) {
+            if (descriptor->api_size < sizeof(TimeIrCoreAdapterApiV1)) {
+                throw loadError(path, "ir-core-adapter API size mismatch");
+            }
+            const auto* api = static_cast<const TimeIrCoreAdapterApiV1*>(descriptor->api);
+            if (api->struct_size < sizeof(TimeIrCoreAdapterApiV1) ||
+                api->abi_version != TIME_PLUGIN_ABI_VERSION_V1 || api->create == nullptr ||
+                api->destroy == nullptr || api->lower == nullptr || api->validate_block == nullptr ||
+                api->validate_execution_state == nullptr || api->last_error == nullptr ||
+                api->ir_abi_version != TIME_IR_ABI_VERSION_V1 ||
+                api->architecture_id == 0u) {
+                throw loadError(path, "incomplete ir-core-adapter API");
+            }
+            state->irAdapters.push_back(State::IrCoreAdapterEntry{
+                descriptor->plugin_id, descriptor->display_name, api});
+        } else if (descriptor->kind == TIME_PLUGIN_KIND_IR_EXECUTION_BACKEND_V1) {
+            if (descriptor->api_size < sizeof(TimeIrExecutionBackendApiV1)) {
+                throw loadError(path, "ir-execution-backend API size mismatch");
+            }
+            const auto* api = static_cast<const TimeIrExecutionBackendApiV1*>(descriptor->api);
+            if (api->struct_size < sizeof(TimeIrExecutionBackendApiV1) ||
+                api->abi_version != TIME_PLUGIN_ABI_VERSION_V1 || api->create == nullptr ||
+                api->destroy == nullptr || api->compile == nullptr || api->execute == nullptr ||
+                api->destroy_artifact == nullptr || api->last_error == nullptr ||
+                api->ir_abi_version != TIME_IR_ABI_VERSION_V1) {
+                throw loadError(path, "incomplete ir-execution-backend API");
+            }
+            state->irBackends.push_back(State::IrExecutionBackendEntry{
+                descriptor->plugin_id, descriptor->display_name, api});
         } else {
             throw loadError(path, "unsupported plugin kind");
         }
@@ -1318,6 +1997,66 @@ std::unique_ptr<IAudioProcessor> DynamicPluginModule::createAudioProcessor(
     }
     return std::make_unique<CAudioProcessorAdapter>(state_, *found, sampleRate, channels,
                                                      maxBlockSamples, std::move(configJson));
+}
+
+std::vector<std::string> DynamicPluginModule::irCoreAdapterIds() const
+{
+    std::vector<std::string> result;
+    if (state_ == nullptr) return result;
+    result.reserve(state_->irAdapters.size());
+    for (const auto& adapter : state_->irAdapters) result.push_back(adapter.id);
+    return result;
+}
+
+std::unique_ptr<BMMQ::IR::IIrCoreAdapter> DynamicPluginModule::createIrCoreAdapter(
+    std::string_view id, std::string* error) const
+{
+    if (state_ == nullptr) {
+        if (error != nullptr) *error = "plugin module is empty";
+        return {};
+    }
+    const auto found = std::find_if(state_->irAdapters.begin(), state_->irAdapters.end(),
+        [id](const auto& entry) { return entry.id == id; });
+    if (found == state_->irAdapters.end()) {
+        if (error != nullptr) *error = "IR core adapter not found in module: " + std::string(id);
+        return {};
+    }
+    try {
+        return std::make_unique<CIrCoreAdapter>(state_, *found);
+    } catch (const std::exception& e) {
+        if (error != nullptr) *error = e.what();
+        return {};
+    }
+}
+
+std::vector<std::string> DynamicPluginModule::irExecutionBackendIds() const
+{
+    std::vector<std::string> result;
+    if (state_ == nullptr) return result;
+    result.reserve(state_->irBackends.size());
+    for (const auto& backend : state_->irBackends) result.push_back(backend.id);
+    return result;
+}
+
+std::unique_ptr<BMMQ::IR::IIrExecutionBackend> DynamicPluginModule::createIrExecutionBackend(
+    std::string_view id, std::string* error) const
+{
+    if (state_ == nullptr) {
+        if (error != nullptr) *error = "plugin module is empty";
+        return {};
+    }
+    const auto found = std::find_if(state_->irBackends.begin(), state_->irBackends.end(),
+        [id](const auto& entry) { return entry.id == id; });
+    if (found == state_->irBackends.end()) {
+        if (error != nullptr) *error = "IR execution backend not found in module: " + std::string(id);
+        return {};
+    }
+    try {
+        return std::make_unique<CIrExecutionBackend>(state_, *found);
+    } catch (const std::exception& e) {
+        if (error != nullptr) *error = e.what();
+        return {};
+    }
 }
 
 } // namespace BMMQ::Plugin

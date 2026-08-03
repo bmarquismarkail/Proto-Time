@@ -15,9 +15,18 @@ namespace BMMQ {
 
 class BackgroundTaskService;
 
+struct GameGearIrStats {
+    std::uint64_t translations = 0u;
+    std::uint64_t executions = 0u;
+    std::uint64_t guardFailures = 0u;
+    std::uint64_t fallbacks = 0u;
+    std::uint64_t executionNanos = 0u;
+};
+
 class GameGearMachine final : public Machine,
                               public IRomPathAwareMachine,
-                              public IExternalBootRomMachine {
+                              public IExternalBootRomMachine,
+                              public IIrComponentAwareMachine {
 public:
     GameGearMachine();
     ~GameGearMachine() override;
@@ -58,6 +67,10 @@ public:
     void loadExternalBootRom(const std::vector<uint8_t>& bytes) override;
     // Test helper: inspect whether CPU IME is currently set.
     bool cpuInterruptsEnabled() const;
+    [[nodiscard]] GameGearIrStats irStats() const noexcept;
+    [[nodiscard]] std::uint32_t irArchitectureId() const noexcept override;
+    void setIrComponents(std::unique_ptr<IR::IIrCoreAdapter> adapter,
+                         std::unique_ptr<IR::IIrExecutionBackend> backend) override;
 
 protected:
     InstructionRetirementDecision onInstructionRetired(

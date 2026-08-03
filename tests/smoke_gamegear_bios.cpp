@@ -49,5 +49,12 @@ int main() {
         return EXIT_FAILURE;
     }
 
+    const auto generationBeforeClearMap = mem.codeMappingGeneration();
+    mem.mapBios(nullptr, 0u);
+    if (mem.codeMappingGeneration() != generationBeforeClearMap + 1u || mem.hasBios()) {
+        std::cerr << "empty BIOS mapping did not clear and invalidate code mapping\n";
+        return EXIT_FAILURE;
+    }
+
     return EXIT_SUCCESS;
 }

@@ -532,6 +532,8 @@ auto emitStep(DataType length, BMMQ::OpcodeCycles cycles, Step&& step)
 
 LR3592_DMG::LR3592_DMG()
 {
+    irService_ = std::make_unique<BMMQ::IR::IrExecutionService>(
+        *activeIrAdapter_, *activeIrBackend_);
     mem.file = buildRegisterfile();
 
     AF.registration(mem.file, "AF");
@@ -2630,7 +2632,16 @@ bool LR3592_DMG::executePortableIrInstruction(
         }
         result = native->execute(instructionIndex, abi);
     } else {
-        result = portableIrExecutor_.execute(instruction, abi);
+        if (!block.backendArtifact || !irService_) {
+            blockCache_.noteIrFallback();
+            return false;
+        }
+        if (!GB::IRExecution::executePreparedInstruction(
+                *irService_, irBlock, *block.backendArtifact,
+                instructionIndex, abi, &result)) {
+            blockCache_.noteIrGuardFailure();
+            return false;
+        }
     }
     if (!result.retirementReached) {
         throw std::logic_error("IR backend instruction did not reach its retirement boundary");
@@ -2839,27 +2850,74 @@ void LR3592_DMG::populateBlockCache(BMMQ::fetchBlock<AddressType, DataType>& fet
     if (portableIrEnabled_ || nativeIrEnabled_) {
         if (irBlockEligible(translated.instructions)) {
             auto loweringNanos = std::uint64_t{0};
+            std::vector<BMMQ::IR::SourceInstruction> copiedInstructions;
+            copiedInstructions.reserve(translated.instructions.size());
+            for (const auto& instruction : translated.instructions) {
+                copiedInstructions.push_back({
+                    .address = instruction.address,
+                    .bytes = {},
+                    .length = instruction.length,
+                });
+                std::copy(instruction.bytes.begin(),
+                          instruction.bytes.begin() + instruction.length,
+                          copiedInstructions.back().bytes.begin());
+            }
+            BMMQ::IR::LoweringRequest request{};
+            request.instructions = {copiedInstructions.data(), copiedInstructions.size()};
+            request.mappingGeneration = blockCache_.mappingGeneration();
+            request.executionState = irExecutionState();
+            const auto loweringStarted = detailedIrTimingEnabled_
+                ? std::chrono::steady_clock::now()
+                : std::chrono::steady_clock::time_point{};
+            std::string loweringError;
+            try {
+                auto& adapter = nativeIrEnabled_
+                    ? static_cast<BMMQ::IR::IIrCoreAdapter&>(irAdapter_)
+                    : *activeIrAdapter_;
+                translated.intermediateRepresentation = adapter.lower(request, &loweringError);
+            } catch (const std::exception& exception) {
+                loweringError = std::string("Game Boy IR lowering threw: ") + exception.what();
+                translated.intermediateRepresentation.reset();
+            } catch (...) {
+                loweringError = "Game Boy IR lowering threw a non-standard exception";
+                translated.intermediateRepresentation.reset();
+            }
             if (detailedIrTimingEnabled_) {
-                const auto loweringStarted = std::chrono::steady_clock::now();
-                translated.intermediateRepresentation = GB::IRExecution::lowerBlock(
-                    translated.instructions, blockCache_.mappingGeneration(), irExecutionState());
                 loweringNanos = static_cast<std::uint64_t>(
                     std::chrono::duration_cast<std::chrono::nanoseconds>(
                         std::chrono::steady_clock::now() - loweringStarted).count());
-            } else {
-                translated.intermediateRepresentation = GB::IRExecution::lowerBlock(
-                    translated.instructions, blockCache_.mappingGeneration(), irExecutionState());
             }
             const auto loweredInstructions = translated.intermediateRepresentation
                 ? translated.intermediateRepresentation->instructions.size()
                 : 0u;
             blockCache_.noteIrLowering(
                 loweredInstructions, loweringNanos);
+            if (!translated.intermediateRepresentation) {
+                translated.irFallbackReason = loweringError.empty()
+                    ? "Game Boy IR lowering failed without a diagnostic"
+                    : "Game Boy IR lowering failed: " + loweringError;
+                blockCache_.noteIrFallback();
+            }
             if (nativeIrEnabled_ && translated.intermediateRepresentation) {
+                std::string compilationError;
                 const auto native = GB::NativeExecution::compile(
-                    *translated.intermediateRepresentation);
+                    *translated.intermediateRepresentation, &compilationError);
                 translated.backendArtifact = native;
                 if (!native) {
+                    translated.irFallbackReason = compilationError.empty()
+                        ? "Game Boy native IR compilation failed without a diagnostic"
+                        : "Game Boy native IR compilation failed: " + compilationError;
+                    blockCache_.noteIrFallback();
+                }
+            } else if (portableIrEnabled_ && translated.intermediateRepresentation && irService_) {
+                std::string preparationError;
+                const auto prepared = irService_->prepare(
+                    translated.intermediateRepresentation, &preparationError);
+                translated.backendArtifact = prepared.artifact;
+                if (!prepared.prepared || !prepared.artifact) {
+                    translated.irFallbackReason = preparationError.empty()
+                        ? "Game Boy IR preparation failed without a diagnostic"
+                        : "Game Boy IR preparation failed: " + preparationError;
                     blockCache_.noteIrFallback();
                 }
             }
@@ -2944,6 +3002,44 @@ void LR3592_DMG::setNativeIrEnabled(bool enabled) noexcept
     nativeIrEnabled_ = enabled;
     if (enabled) portableIrEnabled_ = false;
     invalidateAllBlockCache();
+}
+
+void LR3592_DMG::setIrComponents(
+    std::unique_ptr<BMMQ::IR::IIrCoreAdapter> adapter,
+    std::unique_ptr<BMMQ::IR::IIrExecutionBackend> backend)
+{
+    auto* selectedAdapter = adapter
+        ? adapter.get()
+        : static_cast<BMMQ::IR::IIrCoreAdapter*>(&irAdapter_);
+    auto* selectedBackend = backend
+        ? backend.get()
+        : static_cast<BMMQ::IR::IIrExecutionBackend*>(&irBackend_);
+    if (nativeIrEnabled_) {
+        throw std::invalid_argument(
+            "Game Boy IR adapter/backend selection is unavailable while native IR is enabled");
+    }
+    if (selectedAdapter->architectureId() !=
+        GB::IRExecution::GameBoyCoreAdapter::kArchitectureId) {
+        throw std::invalid_argument("Game Boy IR adapter architecture ID mismatch");
+    }
+    if (selectedAdapter->irAbiVersion() != BMMQ::IR::kIrAbiVersion) {
+        throw std::invalid_argument("Game Boy IR adapter ABI version mismatch");
+    }
+    if (!selectedBackend->supports(selectedAdapter->architectureId(),
+                                   selectedAdapter->irAbiVersion())) {
+        throw std::invalid_argument(
+            "Game Boy IR backend does not support the selected adapter architecture and ABI");
+    }
+
+    auto replacementService = std::make_unique<BMMQ::IR::IrExecutionService>(
+        *selectedAdapter, *selectedBackend);
+    resetPortableIrBlockSession();
+    invalidateAllBlockCache();
+    irService_ = std::move(replacementService);
+    dynamicIrAdapter_ = std::move(adapter);
+    dynamicIrBackend_ = std::move(backend);
+    activeIrAdapter_ = dynamicIrAdapter_ ? dynamicIrAdapter_.get() : &irAdapter_;
+    activeIrBackend_ = dynamicIrBackend_ ? dynamicIrBackend_.get() : &irBackend_;
 }
 
 void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, AddressType>& block, BMMQ::fetchBlock<AddressType, DataType>& fb)

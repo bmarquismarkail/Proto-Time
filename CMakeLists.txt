@@ -57,6 +57,7 @@ if (BMMQ_ENABLE_TSAN)
     endif()
 endif()
 add_library(time-machine-runtime-common STATIC
+    inst_cycle/IrExecutionService.cpp
     inst_cycle/executor/ExecutorPolicyRegistry.cpp
     machine/MachineLifecycleCoordinator.cpp
     machine/TimingService.cpp
@@ -90,6 +91,7 @@ add_library(time-gameboy-interpreter-core
 # Sega Game Gear core (WIP)
 add_library(time-gamegear-core STATIC
     cores/gamegear/GameGearMachine.cpp
+    cores/gamegear/GameGearIrExecution.cpp
     cores/gamegear/Z80Interpreter.cpp
     cores/gamegear/GameGearVDP.cpp
     cores/gamegear/GameGearPSG.cpp
@@ -237,6 +239,12 @@ add_test(NAME smoke-gameboy-corpus-tool
 add_executable(time-smoke-gamegear-core tests/smoke_gamegear_core.cpp)
 target_link_libraries(time-smoke-gamegear-core time-gamegear-core)
 add_test(NAME smoke-gamegear-core COMMAND time-smoke-gamegear-core)
+add_executable(time-smoke-gamegear-ir-adapter tests/smoke_gamegear_ir_adapter.cpp)
+target_link_libraries(time-smoke-gamegear-ir-adapter time-gamegear-core)
+add_test(NAME smoke-gamegear-ir-adapter COMMAND time-smoke-gamegear-ir-adapter)
+add_executable(time-smoke-gamegear-portable-ir tests/smoke_gamegear_portable_ir.cpp)
+target_link_libraries(time-smoke-gamegear-portable-ir time-gamegear-core)
+add_test(NAME smoke-gamegear-portable-ir COMMAND time-smoke-gamegear-portable-ir)
 add_executable(time-smoke-gamegear-cartridge
     tests/smoke_gamegear_cartridge.cpp
     cores/gamegear/GameGearCartridge.cpp
@@ -427,6 +435,39 @@ add_test(NAME smoke-dynamic-plugin-module
         $<TARGET_FILE:time-test-c-executor-plugin>
         $<TARGET_FILE:time-test-missing-plugin-entrypoint>
         $<TARGET_FILE:time-test-malformed-executor-plugin>)
+add_library(time-test-c-ir-plugin MODULE tests/fixtures/test_ir_plugin.c)
+target_include_directories(time-test-c-ir-plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+set_target_properties(time-test-c-ir-plugin PROPERTIES PREFIX "")
+add_library(time-test-malformed-ir-plugin MODULE
+    tests/fixtures/test_malformed_ir_plugin.c)
+target_include_directories(time-test-malformed-ir-plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+set_target_properties(time-test-malformed-ir-plugin PROPERTIES PREFIX "")
+add_library(time-test-incompatible-ir-plugin MODULE tests/fixtures/test_ir_plugin.c)
+target_include_directories(time-test-incompatible-ir-plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(time-test-incompatible-ir-plugin PRIVATE TEST_IR_ABI_VERSION=2u)
+set_target_properties(time-test-incompatible-ir-plugin PROPERTIES PREFIX "")
+add_library(time-test-ir-adapter-only-plugin MODULE tests/fixtures/test_ir_plugin.c)
+target_include_directories(time-test-ir-adapter-only-plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(time-test-ir-adapter-only-plugin PRIVATE TEST_IR_ADAPTER_ONLY=1)
+set_target_properties(time-test-ir-adapter-only-plugin PROPERTIES PREFIX "")
+add_library(time-test-ir-backend-only-plugin MODULE tests/fixtures/test_ir_plugin.c)
+target_include_directories(time-test-ir-backend-only-plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(time-test-ir-backend-only-plugin PRIVATE TEST_IR_BACKEND_ONLY=1)
+set_target_properties(time-test-ir-backend-only-plugin PROPERTIES PREFIX "")
+add_executable(time-smoke-dynamic-ir-module tests/smoke_dynamic_ir_module.cpp)
+target_link_libraries(time-smoke-dynamic-ir-module
+    time-dynamic-plugin-loader time-machine-runtime-common time-gamegear-core)
+add_dependencies(time-smoke-dynamic-ir-module
+    time-test-c-ir-plugin time-test-malformed-ir-plugin
+    time-test-incompatible-ir-plugin time-test-ir-adapter-only-plugin
+    time-test-ir-backend-only-plugin)
+add_test(NAME smoke-dynamic-ir-module
+    COMMAND time-smoke-dynamic-ir-module
+        $<TARGET_FILE:time-test-c-ir-plugin>
+        $<TARGET_FILE:time-test-malformed-ir-plugin>
+        $<TARGET_FILE:time-test-incompatible-ir-plugin>
+        $<TARGET_FILE:time-test-ir-adapter-only-plugin>
+        $<TARGET_FILE:time-test-ir-backend-only-plugin>)
 add_library(time-test-c-frontend-plugin MODULE tests/fixtures/test_frontend_plugin.c)
 target_include_directories(time-test-c-frontend-plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 set_target_properties(time-test-c-frontend-plugin PROPERTIES PREFIX "")
@@ -710,6 +751,14 @@ target_link_libraries(time-smoke-gameboy-ir-block-backend
     time-gameboy-interpreter-core)
 add_test(NAME smoke-gameboy-ir-block-backend
     COMMAND time-smoke-gameboy-ir-block-backend)
+
+add_executable(time-smoke-ir-execution-service tests/smoke_ir_execution_service.cpp)
+target_link_libraries(time-smoke-ir-execution-service time-machine-runtime-common)
+add_test(NAME smoke-ir-execution-service COMMAND time-smoke-ir-execution-service)
+
+add_executable(time-smoke-gameboy-ir-adapter tests/smoke_gameboy_ir_adapter.cpp)
+target_link_libraries(time-smoke-gameboy-ir-adapter time-gameboy-interpreter-core)
+add_test(NAME smoke-gameboy-ir-adapter COMMAND time-smoke-gameboy-ir-adapter)
 
 add_executable(time-smoke-gameboy-native-ir
     tests/smoke_gameboy_native_ir.cpp)

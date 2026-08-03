@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "IntermediateRepresentation.hpp"
@@ -47,6 +48,9 @@ struct TranslatedBlockEntry {
     // Its lifetime is tied to the cache entry and it is discarded by the same
     // invalidation/retirement rules as the portable representation.
     BlockBackendArtifactPtr backendArtifact{};
+    // Diagnostic context retained when lowering or backend preparation falls
+    // back to the Phase 10 byte sequence.
+    std::string irFallbackReason{};
     TranslatedBlockExitReason exitReason = TranslatedBlockExitReason::SequentialLimit;
     bool valid = true;
 };

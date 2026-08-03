@@ -56,6 +56,22 @@ public:
     bool IFF2 = false;
     bool IME = false;
 
+    [[nodiscard]] bool halted() const noexcept { return halted_; }
+    [[nodiscard]] bool deferredInterruptEnable() const noexcept { return imeEnableDelay_ != 0; }
+    void incrementRefreshForIr() noexcept { incRefresh(); }
+    void updateIncrementFlagsForIr(uint8_t before, uint8_t result) noexcept
+    {
+        setRegF(computeIncFlags(before, result));
+    }
+    void updateDecrementFlagsForIr(uint8_t before, uint8_t result) noexcept
+    {
+        setRegF(computeDecFlags(before, result));
+    }
+    [[nodiscard]] uint8_t executeAluForIr(uint8_t operation, uint8_t value)
+    {
+        return alu(operation, value);
+    }
+
 private:
     // Set by EI; becomes effective only after the instruction following
     // the `EI` instruction completes (deferred IME enable semantics).

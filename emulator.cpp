@@ -34,6 +34,7 @@
 #include "emulator/EmulatorConfig.hpp"
 #include "emulator/DiagnosticsJson.hpp"
 #include "emulator/EmulatorHost.hpp"
+#include "inst_cycle/IrExecutionService.hpp"
 #include "inst_cycle/executor/ExecutorPolicyRegistry.hpp"
 #include "machine/BackgroundTaskService.hpp"
 #include "machine/DebugSnapshotService.hpp"
@@ -78,6 +79,10 @@ void printUsage(std::string_view program)
               << "                     Load executor policies from a pure-C ABI module\n"
               << "  --executor-policy <id>\n"
               << "                     Select a built-in or module executor policy ID\n"
+              << "  --ir-adapter-plugin <path> --ir-adapter-id <id>\n"
+              << "                     Select a dynamic IR core adapter explicitly\n"
+              << "  --ir-backend-plugin <path> --ir-backend-id <id>\n"
+              << "                     Select a dynamic IR execution backend explicitly\n"
               << "  --steps <count>    Stop after a fixed number of instruction steps\n"
               << "  --scale <n>        Frontend window scale factor (default: 3)\n"
               << "  --hd-scale <n>     HD texture replacement scale (1-8, default: 1)\n"
@@ -769,6 +774,8 @@ int main(int argc, char** argv)
         const auto& descriptor = bootstrapped.descriptor;
         const auto romSize = bootstrapped.romSize;
         std::optional<BMMQ::Plugin::DynamicPluginModule> executorModule;
+        std::optional<BMMQ::Plugin::DynamicPluginModule> irAdapterModule;
+        std::optional<BMMQ::Plugin::DynamicPluginModule> irBackendModule;
         std::unique_ptr<BMMQ::Plugin::IExecutorPolicyPlugin> executorPolicy;
         if (options.executorPluginPath.has_value()) {
             executorModule = BMMQ::Plugin::DynamicPluginModule::load(*options.executorPluginPath);
@@ -788,6 +795,46 @@ int main(int argc, char** argv)
             executorPolicy = BMMQ::Plugin::ExecutorPolicyRegistry::builtins().create(executorPolicyId);
         }
         machine.attachExecutorPolicy(*executorPolicy);
+        if (options.irAdapterPluginPath.has_value() ||
+            options.irBackendPluginPath.has_value()) {
+            auto* irMachine = dynamic_cast<BMMQ::IIrComponentAwareMachine*>(&machine);
+            if (irMachine == nullptr) {
+                throw std::invalid_argument(
+                    "selected machine does not support configurable IR components");
+            }
+
+            std::unique_ptr<BMMQ::IR::IIrCoreAdapter> adapter;
+            std::unique_ptr<BMMQ::IR::IIrExecutionBackend> backend;
+            std::string componentError;
+            if (options.irAdapterPluginPath.has_value()) {
+                irAdapterModule = BMMQ::Plugin::DynamicPluginModule::load(
+                    *options.irAdapterPluginPath);
+                adapter = irAdapterModule->createIrCoreAdapter(
+                    *options.irAdapterId, &componentError);
+                if (!adapter) {
+                    throw std::invalid_argument(componentError.empty()
+                        ? "unable to create selected IR core adapter"
+                        : componentError);
+                }
+                if (adapter->architectureId() != irMachine->irArchitectureId()) {
+                    throw std::invalid_argument(
+                        "selected IR core adapter does not match the active machine");
+                }
+            }
+            if (options.irBackendPluginPath.has_value()) {
+                componentError.clear();
+                irBackendModule = BMMQ::Plugin::DynamicPluginModule::load(
+                    *options.irBackendPluginPath);
+                backend = irBackendModule->createIrExecutionBackend(
+                    *options.irBackendId, &componentError);
+                if (!backend) {
+                    throw std::invalid_argument(componentError.empty()
+                        ? "unable to create selected IR execution backend"
+                        : componentError);
+                }
+            }
+            irMachine->setIrComponents(std::move(adapter), std::move(backend));
+        }
         const auto& activeExecutorPolicy = machine.attachedExecutorPolicy();
         if (options.cpuDetailedTiming) {
             auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get());

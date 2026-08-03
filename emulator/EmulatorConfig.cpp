@@ -126,6 +126,14 @@ void applyConfigValue(EmulatorConfig& config,
             config.executorPluginPath = resolveConfigPath(configDirectory, text);
         } else if (key == "executor_policy") {
             config.executorPolicyId = text;
+        } else if (key == "ir_adapter_plugin") {
+            config.irAdapterPluginPath = resolveConfigPath(configDirectory, text);
+        } else if (key == "ir_adapter_id") {
+            config.irAdapterId = text;
+        } else if (key == "ir_backend_plugin") {
+            config.irBackendPluginPath = resolveConfigPath(configDirectory, text);
+        } else if (key == "ir_backend_id") {
+            config.irBackendId = text;
         } else if (key == "steps") {
             config.stepLimit = parseUnsigned(text, label);
         } else if (key == "headless") {
@@ -322,6 +330,14 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     if (overrides.executorPolicyId.has_value()) {
         config.executorPolicyId = *overrides.executorPolicyId;
     }
+    if (overrides.irAdapterPluginPath.has_value()) {
+        config.irAdapterPluginPath = *overrides.irAdapterPluginPath;
+    }
+    if (overrides.irAdapterId.has_value()) config.irAdapterId = *overrides.irAdapterId;
+    if (overrides.irBackendPluginPath.has_value()) {
+        config.irBackendPluginPath = *overrides.irBackendPluginPath;
+    }
+    if (overrides.irBackendId.has_value()) config.irBackendId = *overrides.irBackendId;
     if (overrides.stepLimit.has_value()) {
         config.stepLimit = *overrides.stepLimit;
     }
@@ -419,6 +435,24 @@ void validateEmulatorConfig(const EmulatorConfig& config)
     const auto kind = parseMachineKind(*config.machineKind);
     auto instance = createMachine(kind);
     const auto& descriptor = instance.descriptor;
+
+    if (config.irAdapterPluginPath.has_value() != config.irAdapterId.has_value()) {
+        throw std::invalid_argument(
+            "--ir-adapter-plugin (ir_adapter_plugin) and --ir-adapter-id (ir_adapter_id) "
+            "must be specified together");
+    }
+    if (config.irBackendPluginPath.has_value() != config.irBackendId.has_value()) {
+        throw std::invalid_argument(
+            "--ir-backend-plugin (ir_backend_plugin) and --ir-backend-id (ir_backend_id) "
+            "must be specified together");
+    }
+    if ((config.irAdapterPluginPath.has_value() || config.irBackendPluginPath.has_value()) &&
+        config.cpuMode != "ir") {
+        throw std::invalid_argument(
+            "dynamic IR components selected by --ir-adapter-plugin/--ir-adapter-id "
+            "(ir_adapter_plugin/ir_adapter_id) or --ir-backend-plugin/--ir-backend-id "
+            "(ir_backend_plugin/ir_backend_id) require --cpu-mode ir");
+    }
 
     if (config.cpuMode != "baseline" && config.cpuMode != "block" &&
         config.cpuMode != "ir" && config.cpuMode != "native") {
@@ -527,6 +561,22 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
                 throw std::invalid_argument("--executor-policy requires an id");
             }
             arguments.overrides.executorPolicyId = std::string(argv[++i]);
+        } else if (arg == "--ir-adapter-plugin") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--ir-adapter-plugin requires a path");
+            }
+            arguments.overrides.irAdapterPluginPath = std::filesystem::path(argv[++i]);
+        } else if (arg == "--ir-adapter-id") {
+            if (i + 1 >= argc) throw std::invalid_argument("--ir-adapter-id requires an id");
+            arguments.overrides.irAdapterId = std::string(argv[++i]);
+        } else if (arg == "--ir-backend-plugin") {
+            if (i + 1 >= argc) {
+                throw std::invalid_argument("--ir-backend-plugin requires a path");
+            }
+            arguments.overrides.irBackendPluginPath = std::filesystem::path(argv[++i]);
+        } else if (arg == "--ir-backend-id") {
+            if (i + 1 >= argc) throw std::invalid_argument("--ir-backend-id requires an id");
+            arguments.overrides.irBackendId = std::string(argv[++i]);
         } else if (arg == "--steps") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--steps requires a count");

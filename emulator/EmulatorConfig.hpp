@@ -22,6 +22,10 @@ struct EmulatorConfig {
     std::optional<std::string> frontendId;
     std::optional<std::filesystem::path> executorPluginPath;
     std::optional<std::string> executorPolicyId;
+    std::optional<std::filesystem::path> irAdapterPluginPath;
+    std::optional<std::string> irAdapterId;
+    std::optional<std::filesystem::path> irBackendPluginPath;
+    std::optional<std::string> irBackendId;
     std::optional<std::uint64_t> stepLimit;
     std::uint32_t windowScale = 3;
     // HD texture replacement scale factor. When > 1, output frames are scaled
@@ -63,6 +67,10 @@ struct CommandLineConfigOverrides {
     std::optional<std::string> frontendId;
     std::optional<std::filesystem::path> executorPluginPath;
     std::optional<std::string> executorPolicyId;
+    std::optional<std::filesystem::path> irAdapterPluginPath;
+    std::optional<std::string> irAdapterId;
+    std::optional<std::filesystem::path> irBackendPluginPath;
+    std::optional<std::string> irBackendId;
     std::optional<std::uint64_t> stepLimit;
     std::optional<std::uint32_t> windowScale;
     // HD texture replacement scale factor. Clamped to [1, 8] on application.
