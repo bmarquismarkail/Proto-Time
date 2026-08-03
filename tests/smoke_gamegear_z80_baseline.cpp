@@ -290,7 +290,7 @@ int main() {
         CHECK_OR_FAIL(cpu.step() == 20u, "LD (nn),IY missing");
         CHECK_OR_FAIL(memory[0x4022u] == 0x78u && memory[0x4023u] == 0x56u, "LD (nn),IY wrote wrong bytes");
         CHECK_OR_FAIL(cpu.step() == 7u, "IX/IY prefix regression setup failed at LD A");
-        CHECK_OR_FAIL(cpu.step() == 13u, "DD passthrough should preserve LD (nn),A");
+        CHECK_OR_FAIL(cpu.step() == 17u, "ignored DD prefix should add four cycles before LD (nn),A");
         CHECK_OR_FAIL(memory[0x4024u] == 0x9Au, "DD passthrough desynchronized the stream");
     }
 

@@ -104,14 +104,14 @@ diagnostics.
 Run tests:
 
 ```bash
-ctest --test-dir build-working --output-on-failure
+(cd build-working && ctest --output-on-failure)
 ```
 
 Discover the tests registered by the configured build rather than relying on a
 hardcoded list:
 
 ```bash
-ctest --test-dir build-working -N
+(cd build-working && ctest -N)
 ```
 
 ## Runtime Examples

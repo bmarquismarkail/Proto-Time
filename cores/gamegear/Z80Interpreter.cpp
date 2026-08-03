@@ -10,6 +10,7 @@ constexpr uint8_t fS = 0x80u;
 constexpr uint8_t fZ = 0x40u;
 constexpr uint8_t f5 = 0x20u;
 constexpr uint8_t f3 = 0x08u;
+constexpr uint32_t kMaxIndexPrefixesPerStep = 0x10000u;
 
 uint8_t hi(uint16_t value) noexcept { return static_cast<uint8_t>(value >> 8u); }
 uint8_t lo(uint16_t value) noexcept { return static_cast<uint8_t>(value & 0x00FFu); }
@@ -640,12 +641,7 @@ uint32_t Z80Interpreter::executeIndexedOpcode(uint8_t prefix, uint8_t opcode) {
         halted_ = true;
         return 8u;
     }
-    if (opcode == 0xDDu || opcode == 0xFDu) {
-        // Stray outer DD/FD prefixes each consume four cycles before the
-        // final prefix selects IX or IY for the following instruction.
-        return 4u + executeOpcode(opcode);
-    }
-    return executeOpcode(opcode);
+    return 4u + executeOpcode(opcode);
 }
 
 uint32_t Z80Interpreter::executeOpcode(uint8_t opcode) {
@@ -834,7 +830,21 @@ uint32_t Z80Interpreter::executeOpcode(uint8_t opcode) {
     case 0xD3: { const uint8_t p = fetch8(); writeIo(p, regA()); return 11u; }
     case 0xD9: std::swap(BC, BC_); std::swap(DE, DE_); std::swap(HL, HL_); return 4u;
     case 0xDB: setRegA(readIo(fetch8())); return 11u;
-    case 0xDD: case 0xFD: return executeIndexedOpcode(opcode, fetchOpcode());
+    case 0xDD: case 0xFD: {
+        uint8_t lastPrefix = opcode;
+        uint32_t strayPrefixCycles = 0u;
+        for (uint32_t prefixCount = 1u; prefixCount < kMaxIndexPrefixesPerStep; ++prefixCount) {
+            const uint8_t nextOpcode = fetchOpcode();
+            if (nextOpcode != 0xDDu && nextOpcode != 0xFDu) {
+                return strayPrefixCycles + executeIndexedOpcode(lastPrefix, nextOpcode);
+            }
+            lastPrefix = nextOpcode;
+            strayPrefixCycles += 4u;
+        }
+        // A 16-bit address space containing only index prefixes has no final
+        // opcode. Return after one full wrap rather than looping forever.
+        return strayPrefixCycles + 4u;
+    }
     case 0xE3: { const uint16_t temp = read16(SP); write16(SP, HL); HL = temp; return 19u; }
     case 0xE9: PC = HL; return 4u;
     case 0xEB: std::swap(DE, HL); return 4u;

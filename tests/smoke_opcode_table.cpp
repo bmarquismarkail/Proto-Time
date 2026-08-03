@@ -726,7 +726,7 @@ int main()
 
     {
         LR3592_DMG cpu;
-        pair(cpu, GB::RegisterId::AF)->lo = 0x00;
+        pair(cpu, GB::RegisterId::AF)->lo = 0x60; // N and H set
         loadAndSetPc(cpu, 0x0000, {0x37, 0x00, 0x00});
         const auto scfZeroFeedback = fastStep(cpu);
         assert(scfZeroFeedback.executionPath == BMMQ::ExecutionPathHint::CpuOptimizedFastPath);
@@ -736,7 +736,7 @@ int main()
 
     {
         LR3592_DMG cpu;
-        pair(cpu, GB::RegisterId::AF)->lo = 0x90;
+        pair(cpu, GB::RegisterId::AF)->lo = 0xE0; // Z, N, and H set
         loadAndSetPc(cpu, 0x0000, {0x37, 0x00, 0x00});
         const auto scfZcFeedback = fastStep(cpu);
         assert(scfZcFeedback.executionPath == BMMQ::ExecutionPathHint::CpuOptimizedFastPath);
@@ -746,22 +746,22 @@ int main()
 
     {
         LR3592_DMG cpu;
-        pair(cpu, GB::RegisterId::AF)->lo = 0x50;
+        pair(cpu, GB::RegisterId::AF)->lo = 0xE0; // Z, N, and H set; C clear
         loadAndSetPc(cpu, 0x0000, {0x3F, 0x00, 0x00});
         const auto ccfZeroFeedback = fastStep(cpu);
         assert(ccfZeroFeedback.executionPath == BMMQ::ExecutionPathHint::CpuOptimizedFastPath);
         assert(ccfZeroFeedback.retiredCycles == 4u);
-        assert(pair(cpu, GB::RegisterId::AF)->lo == 0x00);
+        assert(pair(cpu, GB::RegisterId::AF)->lo == 0x90);
     }
 
     {
         LR3592_DMG cpu;
-        pair(cpu, GB::RegisterId::AF)->lo = 0x10;
+        pair(cpu, GB::RegisterId::AF)->lo = 0xF0; // Z, N, H, and C set
         loadAndSetPc(cpu, 0x0000, {0x3F, 0x00, 0x00});
         const auto ccfCarryFeedback = fastStep(cpu);
         assert(ccfCarryFeedback.executionPath == BMMQ::ExecutionPathHint::CpuOptimizedFastPath);
         assert(ccfCarryFeedback.retiredCycles == 4u);
-        assert(pair(cpu, GB::RegisterId::AF)->lo == 0x00);
+        assert(pair(cpu, GB::RegisterId::AF)->lo == 0x80);
     }
 
     return 0;

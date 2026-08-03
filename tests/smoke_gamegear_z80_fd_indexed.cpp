@@ -142,5 +142,26 @@ int main() {
         CHECK_OR_FAIL(cpu.PC == 0x0005u, "PC must advance past all five bytes");
     }
 
+    // DD FD 00: both ignored prefixes contribute four cycles before NOP
+    {
+        std::vector<uint8_t> memory(0x10000u, 0x00u);
+        auto cpu = makeCpu(memory);
+
+        memory[0x0000u] = 0xDDu; memory[0x0001u] = 0xFDu; memory[0x0002u] = 0x00u;
+
+        CHECK_OR_FAIL(cpu.step() == 12u, "DD FD 00 should take 12 cycles");
+        CHECK_OR_FAIL(cpu.PC == 0x0003u, "DD FD 00 must advance PC past all three bytes");
+    }
+
+    // A prefix-only address space must return after one complete 16-bit wrap
+    {
+        std::vector<uint8_t> memory(0x10000u, 0xDDu);
+        auto cpu = makeCpu(memory);
+
+        CHECK_OR_FAIL(cpu.step() == 0x40000u, "prefix-only input should charge one address-space worth of prefixes");
+        CHECK_OR_FAIL(cpu.PC == 0x0000u, "prefix-only input should stop after PC wraps once");
+        CHECK_OR_FAIL(cpu.IX == 0u && cpu.IY == 0u, "prefix-only input must not mutate index registers");
+    }
+
     return 0;
 }
