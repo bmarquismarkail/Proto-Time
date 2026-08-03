@@ -7,21 +7,25 @@ T.I.M.E (The Infinite Modder's Emulator) is an emulator framework prototype focu
 - Memory/register snapshotting for traceability
 - Executor-driven orchestration
 - Registry-backed machine providers and executor policies
-- A versioned pure-C function-table ABI for executor, frontend, audio-output,
-  and audio-processor plugins
+- A versioned pure-C function-table ABI for executor, IR core-adapter,
+  IR execution-backend, frontend, audio-output, and audio-processor plugins
 
 ## Current Status
 
-This repository is still pre-alpha and intentionally incomplete. Since
-`c2f961d` (`Add interchangeable GLFW frontend plugin`), the working framework
-has expanded substantially:
+This repository is still pre-alpha and intentionally incomplete. The summary
+below describes the current working framework. The latest execution work adds
+a versioned multi-core IR boundary and a Game Gear portable-IR path:
 
 - Game Boy and work-in-progress Game Gear machines selected through the machine
   registry
 - Machine-owned CPU, PPU/VDP, APU/PSG, input, mapper, save-state, and timing
   paths with hardened state and memory validation
-- Built-in baseline, block-cache, portable-IR, and experimental native Game Boy
-  execution policies, plus dynamically loaded pure-C executor policies
+- Baseline and portable-IR execution for Game Boy and Game Gear, plus Game Boy
+  block-cache and frozen experimental native x86-64 paths
+- A shared guarded IR service with built-in core adapters and a portable
+  backend, plus independently loaded pure-C IR adapter and backend modules
+- Dynamically loaded pure-C executor policies with explicit capability and
+  execution-guarantee checks
 - Interchangeable SDL and GLFW frontends, a headless path, and audio output that
   is selected independently from the window/input/video frontend
 - A prepared audio transport, rich PSG voice stems and events, fixed-capacity
@@ -86,6 +90,47 @@ If a module exposes exactly one executor policy, `--executor-policy` may be
 omitted. The legacy `--cpu-mode baseline|block|ir|native` options remain aliases
 for the built-in policy IDs. Frontends use the same module ABI with a distinct
 frontend descriptor and function table.
+
+The built-in policy IDs are:
+
+- `bmmq.executor.policy.default-step`
+- `bmmq.executor.policy.visible-state-preserving-step`
+- `bmmq.executor.policy.portable-ir`
+- `bmmq.executor.policy.native-experimental`
+
+Portable IR uses the built-in adapter and backend for the selected machine by
+default. Either component can be replaced independently through the same
+pure-C module ABI:
+
+```bash
+# Built-in Game Gear adapter and portable backend
+./build-working/timeEmulator --core gamegear --rom path/to/rom.gg --cpu-mode ir
+
+# Dynamic adapter and backend
+./build-working/timeEmulator --core gamegear --rom path/to/rom.gg \
+  --cpu-mode ir \
+  --ir-adapter-plugin path/to/adapter-module.so \
+  --ir-adapter-id vendor.gamegear.adapter \
+  --ir-backend-plugin path/to/backend-module.so \
+  --ir-backend-id vendor.portable.backend
+```
+
+Each plugin path and its corresponding ID must be supplied together, and
+selecting any dynamic IR component requires `--cpu-mode ir`. An omitted adapter
+or backend remains built in. Unknown IDs, malformed tables, architecture or IR
+ABI mismatches, and incompatible adapter/backend pairs fail as configuration
+errors instead of silently substituting another component.
+
+The attached executor policy ultimately chooses the execution backend.
+`--cpu-mode ir` selects the built-in portable-IR policy when neither
+`--executor-plugin` nor `--executor-policy` supplies another policy. A
+separately selected policy takes precedence and must itself select the
+portable-IR backend for the configured IR components to run. A pure-C executor
+policy reports this as `TIME_EXECUTION_BACKEND_PORTABLE_IR_V1` from its
+`TimeExecutorPolicyApiV1::backend` callback; the machine runtime then performs
+IR dispatch. The current validator accepts a non-portable policy alongside
+dynamic IR components when `--cpu-mode ir` is also present, but the installed
+IR components remain unused.
 
 Audio processors use another descriptor in the same ABI and run in the
 fixed-capacity source pipeline before device output:
@@ -242,7 +287,9 @@ Relevant files:
 - `isControlFlow`
 - `pcBefore`
 - `pcAfter`
-- `executionPath` (`CanonicalFetchDecodeExecute` vs `CpuOptimizedFastPath`)
+- `retiredCycles`
+- `executionPath` (`Unknown`, `CanonicalFetchDecodeExecute`,
+  `CpuOptimizedFastPath`, `PortableIr`, or `NativeIr`)
 
 Relevant file:
 
@@ -293,9 +340,10 @@ Defines:
 - `PluginMetadata`
 - `AbiVersion` + host ABI constants
 - compatibility helpers (`isAbiCompatible`, `validateMetadata`)
-- `PluginDescriptorV1` C-entrypoint descriptor for dynamic modules
 - `DefaultStepPolicy`
 - `VisibleStatePreservingStepPolicy`
+- `PortableIrStepPolicy`
+- `NativeExperimentalStepPolicy`
 
 Execution guarantees are now explicit:
 
@@ -313,7 +361,40 @@ Runs a machine-owned runtime context through the same cycle and delegates record
 - `recordedSegments()`
 - save/load block-script playback
 
-### 5. Core Adapters
+These are host-side C++ contracts. `DynamicPluginModule` validates external
+pure-C tables and adapts them to the internal executor and IR interfaces; no
+C++ object crosses the shared-library boundary.
+
+### 5. Multi-Core IR Boundary
+
+Portable IR is split into three host-side contracts:
+
+- `IIrCoreAdapter` identifies the guest architecture and IR ABI, lowers copied
+  guest instruction bytes, and validates core-specific block and execution
+  state
+- `IIrExecutionBackend` declares architecture/ABI support, compiles a validated
+  block into an immutable artifact, and executes one indexed guest instruction
+- `IrExecutionService` enforces compatibility, bounded input limits,
+  architecture-neutral and core-specific validation, fresh state guards, and
+  an observed instruction-retirement marker
+
+The service owns no guest state. A rejection before
+`IIrExecutionBackend::execute` begins, including compilation rejection, is a
+safe canonical-interpreter fallback. Once `execute` starts, an error,
+exception, or missing retirement marker terminates the emulator run and is not
+retried through a second execution path. Guest CPU, memory, interrupt, DMA,
+video, audio, and timing state therefore remain machine-owned and single-writer
+on the emulation lane.
+
+Relevant files:
+
+- `inst_cycle/IrExecutionService.hpp` — service and C++ adapter/backend contracts
+- `inst_cycle/IntermediateRepresentation.hpp` — IR data model and shared validation
+- `cores/gameboy/GameBoyIrExecution.hpp`
+- `cores/gamegear/GameGearIrExecution.hpp`
+- `machine/plugins/abi/TimePluginAbi.h`
+
+### 6. Core Adapters
 
 `LR3592_DMG` implements the CPU contract and produces `CpuFeedback`.
 
@@ -321,13 +402,20 @@ Plugin runtime adapter:
 
 - `cores/gameboy/gameboy_plugin_runtime.hpp`
 
-This wraps `LR3592_DMG` into `ICpuCoreRuntime`, while `GameBoyMachine` hosts the runtime and ROM-backed memory path.
+This wraps `LR3592_DMG` into `ICpuCoreRuntime`, while `GameBoyMachine` hosts the
+runtime and ROM-backed memory path. Its existing guarded block IR now uses the
+shared core-adapter/backend service in portable mode.
 
 `GameGearMachine` hosts its Z80 interpreter, cartridge/mapper, VDP, PSG, input,
 BIOS, and memory-map paths behind the same machine and runtime contracts. It
-remains a work in progress.
+remains a work in progress. Its built-in IR adapter conservatively lowers NOP,
+8-bit register and immediate loads, INC/DEC, 8-bit ALU operations, and
+unconditional relative jumps. Unsupported or pre-dispatch guard-rejected
+instructions fall back to the canonical Z80 interpreter. See
+`cores/gamegear/GameGearIrExecution.cpp` for the exact opcode and addressing
+matrix.
 
-### 6. Host I/O Plugins
+### 7. Host I/O Plugins
 
 The SDL frontend and SDL audio output are no longer compiled directly into the
 emulator executable. The host uses:
@@ -377,8 +465,12 @@ includes:
 - Plugin executor orchestration and feedback-driven policy behavior
 - Plugin ABI compatibility, metadata validation, and guarantee labeling
 - Host-side I/O plugin lifecycle and failure handling
-- Runtime loading and validation of executor, frontend, audio-output, and
-  audio-processor pure-C modules
+- Runtime loading and validation of executor, IR core-adapter, IR
+  execution-backend, frontend, audio-output, and audio-processor pure-C modules
+- Shared IR service ordering and failure semantics, host limits, malformed and
+  incompatible module rejection, and module/artifact lifetime
+- Game Boy canonical/portable parity plus Game Gear lowering, differential,
+  guard, invalidation, fallback, and portable-dispatch behavior
 - Independent SDL/GLFW frontend and SDL/dummy/file audio-output behavior
 - Game Boy and Game Gear CPU, video, audio, mapper, BIOS/boot, interrupt, input,
   persistence, and save-state paths
@@ -415,5 +507,6 @@ The next practical expansion points are:
   jitter, render age, and snapshot-copy interference
 - Keep slimming immutable realtime packets and strengthening lifecycle/epoch
   barriers before introducing more cross-thread execution
-- Mature block-cache and IR coverage through differential testing; keep native
-  execution, JIT, and DBT experimental until host deadline domains are stable
+- Mature multi-core IR opcode and backend coverage through differential tests
+  and measured guard/fallback data; keep native execution, JIT, and DBT
+  experimental until host deadline domains are stable
