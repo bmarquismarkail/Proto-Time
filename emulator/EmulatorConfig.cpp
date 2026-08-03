@@ -438,15 +438,20 @@ void validateEmulatorConfig(const EmulatorConfig& config)
 
     if (config.irAdapterPluginPath.has_value() != config.irAdapterId.has_value()) {
         throw std::invalid_argument(
-            "--ir-adapter-plugin and --ir-adapter-id must be specified together");
+            "--ir-adapter-plugin (ir_adapter_plugin) and --ir-adapter-id (ir_adapter_id) "
+            "must be specified together");
     }
     if (config.irBackendPluginPath.has_value() != config.irBackendId.has_value()) {
         throw std::invalid_argument(
-            "--ir-backend-plugin and --ir-backend-id must be specified together");
+            "--ir-backend-plugin (ir_backend_plugin) and --ir-backend-id (ir_backend_id) "
+            "must be specified together");
     }
     if ((config.irAdapterPluginPath.has_value() || config.irBackendPluginPath.has_value()) &&
         config.cpuMode != "ir") {
-        throw std::invalid_argument("dynamic IR components require --cpu-mode ir");
+        throw std::invalid_argument(
+            "dynamic IR components selected by --ir-adapter-plugin/--ir-adapter-id "
+            "(ir_adapter_plugin/ir_adapter_id) or --ir-backend-plugin/--ir-backend-id "
+            "(ir_backend_plugin/ir_backend_id) require --cpu-mode ir");
     }
 
     if (config.cpuMode != "baseline" && config.cpuMode != "block" &&

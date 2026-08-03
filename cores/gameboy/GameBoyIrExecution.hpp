@@ -61,6 +61,10 @@ enum ExecutionState : std::uint64_t {
     PendingCycleCharge = 1u << 5u,
 };
 
+inline constexpr std::uint64_t kAllExecutionStateBits =
+    Stop | Halt | DmaRestricted | InterruptPending | HaltBugPending |
+    PendingCycleCharge;
+
 enum class GuardFailure : std::uint8_t {
     None,
     MappingGeneration,
@@ -107,15 +111,6 @@ struct InstructionResult {
     bool exitRequested = false;
     bool cycleCondition = false;
     bool retirementReached = false;
-};
-
-class PortableExecutor {
-public:
-    InstructionResult execute(const BMMQ::IR::GuestInstruction& instruction,
-                              const ExecutionAbiV1& abi);
-
-private:
-    BMMQ::IR::Interpreter interpreter_{};
 };
 
 // Adapts the stable Game Boy execution ABI to the shared backend host without

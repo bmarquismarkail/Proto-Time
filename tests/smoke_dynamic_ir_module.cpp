@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "cores/gamegear/GameGearMachine.hpp"
+#include "inst_cycle/IrExecutionService.hpp"
 #include "inst_cycle/executor/ExecutorPolicyRegistry.hpp"
 #include "machine/plugins/DynamicPluginModule.hpp"
 
@@ -110,17 +111,18 @@ int main(int argc, char** argv)
                                        .mappingGeneration = 7u,
                                        .executionState = 0u}, &error);
     assert(block && error.empty());
-    BMMQ::IR::IrExecutionService service(*adapter, *backend);
-    auto prepared = service.prepare(block, &error);
-    assert(prepared.prepared && prepared.artifact && error.empty());
-    Host host;
-    BMMQ::IR::InterpreterResult result;
-    assert(service.tryExecute(*block, *prepared.artifact, 0u, host, &result));
-    assert(host.pc == 0x101u && result.retirementReached);
+    {
+        BMMQ::IR::IrExecutionService service(*adapter, *backend);
+        const auto prepared = service.prepare(block, &error);
+        assert(prepared.prepared && prepared.artifact && error.empty());
+        Host host;
+        BMMQ::IR::InterpreterResult result;
+        assert(service.tryExecute(*block, *prepared.artifact, 0u, host, &result));
+        assert(host.pc == 0x101u && result.retirementReached);
+    }
 
     adapter.reset();
     backend.reset();
-    prepared.artifact.reset();
 
     exerciseMachineAttachment(std::filesystem::path(argv[4]),
                               std::filesystem::path(argv[5]));

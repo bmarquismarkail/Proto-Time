@@ -9,11 +9,15 @@
 #include <string_view>
 #include <vector>
 
-#include "inst_cycle/IrExecutionService.hpp"
 #include "inst_cycle/executor/PluginContract.hpp"
 #include "machine/plugins/AudioOutput.hpp"
 #include "machine/plugins/FrontendPlugin.hpp"
 #include "machine/AudioPipeline.hpp"
+
+namespace BMMQ::IR {
+class IIrCoreAdapter;
+class IIrExecutionBackend;
+} // namespace BMMQ::IR
 
 namespace BMMQ::Plugin {
 

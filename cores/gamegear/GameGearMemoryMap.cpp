@@ -157,11 +157,11 @@ void GameGearMemoryMap::clearRom() {
 
 void GameGearMemoryMap::mapBios(const uint8_t* data, size_t size) {
     bios_.clear();
+    ++codeMappingGeneration_;
     if (data == nullptr || size == 0u) {
         return;
     }
     bios_.assign(data, data + size);
-    ++codeMappingGeneration_;
 }
 
 void GameGearMemoryMap::clearBios() {

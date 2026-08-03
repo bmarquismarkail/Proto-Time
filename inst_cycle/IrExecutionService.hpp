@@ -57,7 +57,7 @@ public:
     virtual ~IIrExecutionBackend() = default;
     [[nodiscard]] virtual bool supports(std::uint32_t architectureId,
                                         std::uint32_t irAbiVersion) const noexcept = 0;
-    [[nodiscard]] virtual BlockBackendArtifactPtr compile(const Block& block,
+    [[nodiscard]] virtual BlockBackendArtifactPtr compile(const BlockPtr& block,
                                                           std::string* error) = 0;
     virtual bool execute(const BlockBackendArtifact& artifact,
                          std::size_t instructionIndex,
@@ -69,7 +69,7 @@ class PortableIrExecutionBackend final : public IIrExecutionBackend {
 public:
     [[nodiscard]] bool supports(std::uint32_t architectureId,
                                 std::uint32_t irAbiVersion) const noexcept override;
-    [[nodiscard]] BlockBackendArtifactPtr compile(const Block& block,
+    [[nodiscard]] BlockBackendArtifactPtr compile(const BlockPtr& block,
                                                   std::string* error) override;
     bool execute(const BlockBackendArtifact& artifact,
                  std::size_t instructionIndex,
@@ -102,6 +102,9 @@ public:
     explicit IrExecutionService(IIrCoreAdapter& adapter,
                                 IIrExecutionBackend& backend) noexcept;
 
+    // Caller precondition: block must have been lowered by the same adapter
+    // instance represented by adapter_. prepare neither lowers the block nor
+    // verifies its origin, so callers must preserve that adapter coupling.
     [[nodiscard]] PrepareResult prepare(const BlockPtr& block,
                                         std::string* error = nullptr) const;
     // Returns false only when a pre-execution state guard rejects the prepared

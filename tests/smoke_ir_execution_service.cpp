@@ -47,7 +47,7 @@ public:
         return supports_ && architectureId == expectedArchitecture_ &&
                abiVersion == kIrAbiVersion;
     }
-    BMMQ::BlockBackendArtifactPtr compile(const Block&, std::string* error) override
+    BMMQ::BlockBackendArtifactPtr compile(const BlockPtr&, std::string* error) override
     {
         ++compileCalls_;
         if (throwCompile_) throw std::runtime_error("backend compile failed");
@@ -63,6 +63,7 @@ public:
                  InterpreterResult* result) override
     {
         ++executeCalls_;
+        if (throwExecute_) throw std::runtime_error("backend execute failed");
         if (!executeSucceeds_) return false;
         host.setProgramCounter(0x1234u);
         if (result != nullptr) {
@@ -76,6 +77,7 @@ public:
     bool supports_ = true;
     bool declineCompile_ = false;
     bool throwCompile_ = false;
+    bool throwExecute_ = false;
     bool executeSucceeds_ = true;
     bool retire_ = true;
     std::size_t compileCalls_ = 0u;
@@ -236,6 +238,19 @@ void testPostDispatchFailureIsFatal()
     assert(threw);
 
     backend.executeSucceeds_ = true;
+    backend.throwExecute_ = true;
+    prepared = service.prepare(block);
+    assert(prepared.prepared && prepared.artifact);
+    threw = false;
+    try {
+        (void)service.tryExecute(*block, *prepared.artifact, 0u, host);
+    } catch (const std::runtime_error& exception) {
+        threw = std::string_view(exception.what()).find("backend execute failed") !=
+            std::string_view::npos;
+    }
+    assert(threw);
+
+    backend.throwExecute_ = false;
     backend.retire_ = false;
     prepared = service.prepare(block);
     assert(prepared.prepared && prepared.artifact);
@@ -262,6 +277,15 @@ void testBuiltInPortableBackendExecutesValidatedIr()
     assert(service.tryExecute(*block, *prepared.artifact, 0u, host, &result));
     assert(host.pc == 0x1234u);
     assert(result.branchTaken && result.retirementReached);
+
+    const auto differentBlock = makeBlock();
+    bool mismatchedBlockRejected = false;
+    try {
+        (void)service.tryExecute(*differentBlock, *prepared.artifact, 0u, host);
+    } catch (const std::logic_error&) {
+        mismatchedBlockRejected = true;
+    }
+    assert(mismatchedBlockRejected);
 }
 
 } // namespace

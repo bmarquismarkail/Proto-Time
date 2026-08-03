@@ -76,6 +76,10 @@ int main()
         CHECK_TRUE(!defaults.pluginPath.has_value());
         CHECK_TRUE(!defaults.executorPluginPath.has_value());
         CHECK_TRUE(!defaults.executorPolicyId.has_value());
+        CHECK_TRUE(!defaults.irAdapterPluginPath.has_value());
+        CHECK_TRUE(!defaults.irAdapterId.has_value());
+        CHECK_TRUE(!defaults.irBackendPluginPath.has_value());
+        CHECK_TRUE(!defaults.irBackendId.has_value());
         CHECK_TRUE(!defaults.stepLimit.has_value());
         CHECK_TRUE(defaults.windowScale == 3u);
         CHECK_TRUE(!defaults.headless);
@@ -396,12 +400,49 @@ int main()
         CHECK_TRUE(arguments.overrides.irBackendId == "test.backend");
     }
 
+    {
+        const auto irConfigPath = tempDir / "ir-components.ini";
+        writeTextFile(irConfigPath,
+            "[emulator]\n"
+            "core=gamegear\n"
+            "rom=roms/game.gg\n"
+            "cpu_mode=ir\n"
+            "ir_adapter_plugin=plugins/adapter.so\n"
+            "ir_adapter_id=test.adapter\n"
+            "ir_backend_plugin=plugins/backend.so\n"
+            "ir_backend_id=test.backend\n");
+        const auto config = BMMQ::loadEmulatorConfig(irConfigPath);
+        CHECK_TRUE(config.irAdapterPluginPath == tempDir / "plugins/adapter.so");
+        CHECK_TRUE(config.irAdapterId == "test.adapter");
+        CHECK_TRUE(config.irBackendPluginPath == tempDir / "plugins/backend.so");
+        CHECK_TRUE(config.irBackendId == "test.backend");
+    }
+
     CHECK_TRUE(throwsInvalidArgumentContaining("must be specified together", [] {
         BMMQ::EmulatorConfig config;
         config.machineKind = std::string("gamegear");
         config.romPath = "game.gg";
         config.cpuMode = "ir";
         config.irAdapterPluginPath = "adapter.so";
+        BMMQ::validateEmulatorConfig(config);
+    }));
+
+    CHECK_TRUE(throwsInvalidArgumentContaining("ir_backend_plugin", [] {
+        BMMQ::EmulatorConfig config;
+        config.machineKind = std::string("gamegear");
+        config.romPath = "game.gg";
+        config.cpuMode = "ir";
+        config.irBackendPluginPath = "backend.so";
+        BMMQ::validateEmulatorConfig(config);
+    }));
+
+    CHECK_TRUE(throwsInvalidArgumentContaining("require --cpu-mode ir", [] {
+        BMMQ::EmulatorConfig config;
+        config.machineKind = std::string("gameboy");
+        config.romPath = "game.gb";
+        config.cpuMode = "baseline";
+        config.irAdapterPluginPath = "adapter.so";
+        config.irAdapterId = "test.adapter";
         BMMQ::validateEmulatorConfig(config);
     }));
 

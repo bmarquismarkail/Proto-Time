@@ -34,6 +34,7 @@
 #include "emulator/EmulatorConfig.hpp"
 #include "emulator/DiagnosticsJson.hpp"
 #include "emulator/EmulatorHost.hpp"
+#include "inst_cycle/IrExecutionService.hpp"
 #include "inst_cycle/executor/ExecutorPolicyRegistry.hpp"
 #include "machine/BackgroundTaskService.hpp"
 #include "machine/DebugSnapshotService.hpp"

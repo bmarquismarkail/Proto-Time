@@ -217,6 +217,11 @@ public:
             return 0u;
         case Helper::ExecuteAlu8:
             if (arguments.size() != 3u) break;
+            if (static_cast<std::uint8_t>(arguments[1]) !=
+                static_cast<std::uint8_t>(cpu_.AF >> 8u)) {
+                throw std::invalid_argument(
+                    "Game Gear IR accumulator operand does not match CPU AF state");
+            }
             return cpu_.executeAluForIr(static_cast<std::uint8_t>(arguments[0]),
                                         static_cast<std::uint8_t>(arguments[2]));
         }

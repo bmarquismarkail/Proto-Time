@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cassert>
 #include <chrono>
 #include <cstdint>
 #include <dlfcn.h>
@@ -379,25 +380,44 @@ public:
                                guard.bytes.empty() ? nullptr : guard.bytes.data()});
         }
 
+        // Exposed TimeIrOperationV1.operands and TimeIrInstructionV1.operations
+        // pointers remain valid only because every owning vector is fully
+        // reserved before emplace_back stores them.
         operands_.reserve(block.instructions.size());
         operations_.reserve(block.instructions.size());
         instructions_.reserve(block.instructions.size());
+#ifndef NDEBUG
+        const auto operandsCapacity = operands_.capacity();
+        const auto operationsCapacity = operations_.capacity();
+        const auto instructionsCapacity = instructions_.capacity();
+#endif
         for (const auto& instruction : block.instructions) {
             operands_.emplace_back();
             operations_.emplace_back();
+            assert(operands_.capacity() == operandsCapacity);
+            assert(operations_.capacity() == operationsCapacity);
             auto& instructionOperands = operands_.back();
             auto& instructionOperations = operations_.back();
             instructionOperands.reserve(instruction.operations.size());
             instructionOperations.reserve(instruction.operations.size());
+#ifndef NDEBUG
+            const auto instructionOperandsCapacity = instructionOperands.capacity();
+            const auto instructionOperationsCapacity = instructionOperations.capacity();
+#endif
             for (const auto& operation : instruction.operations) {
                 instructionOperands.emplace_back();
+                assert(instructionOperands.capacity() == instructionOperandsCapacity);
                 auto& operationOperands = instructionOperands.back();
                 operationOperands.reserve(operation.operands.size());
+#ifndef NDEBUG
+                const auto operationOperandsCapacity = operationOperands.capacity();
+#endif
                 for (const auto& operand : operation.operands) {
                     operationOperands.push_back({sizeof(TimeIrOperandV1),
                                                  static_cast<std::uint32_t>(operand.kind),
                                                  static_cast<std::uint32_t>(operand.type),
                                                  operand.payload});
+                    assert(operationOperands.capacity() == operationOperandsCapacity);
                 }
                 instructionOperations.push_back({
                     sizeof(TimeIrOperationV1), static_cast<std::uint32_t>(operation.opcode),
@@ -406,6 +426,7 @@ public:
                     static_cast<std::uint32_t>(operation.memoryClass),
                     static_cast<std::uint32_t>(operationOperands.size()),
                     operationOperands.empty() ? nullptr : operationOperands.data()});
+                assert(instructionOperations.capacity() == instructionOperationsCapacity);
             }
             std::uint32_t flags = 0u;
             if (instruction.controlFlow) flags |= TIME_IR_INSTRUCTION_CONTROL_FLOW_V1;
@@ -418,6 +439,9 @@ public:
                 instruction.takenCondition.value_or(0u), flags,
                 static_cast<std::uint32_t>(instructionOperations.size()),
                 instructionOperations.empty() ? nullptr : instructionOperations.data()});
+            assert(instructions_.capacity() == instructionsCapacity);
+            assert(operands_.capacity() == operandsCapacity);
+            assert(operations_.capacity() == operationsCapacity);
         }
 
         view_ = {sizeof(TimeIrBlockViewV1), TIME_IR_ABI_VERSION_V1,
@@ -773,10 +797,14 @@ public:
                 lifetime_->api->architecture_id == architectureId);
     }
 
-    BMMQ::BlockBackendArtifactPtr compile(const BMMQ::IR::Block& block,
+    BMMQ::BlockBackendArtifactPtr compile(const BMMQ::IR::BlockPtr& block,
                                           std::string* error) override
     {
-        IrBlockViewStorage storage(block);
+        if (!block) {
+            if (error != nullptr) *error = "C IR backend received no block";
+            return {};
+        }
+        IrBlockViewStorage storage(*block);
         void* raw = nullptr;
         try { raw = lifetime_->api->compile(lifetime_->instance, storage.get()); }
         catch (...) {
@@ -851,7 +879,7 @@ public:
             auto& bridge = *static_cast<HostBridge*>(opaque);
             try {
                 if (resultType > static_cast<std::uint32_t>(BMMQ::IR::ValueType::I64) ||
-                    argumentCount >= BMMQ::IR::IrExecutionService::Limits::kMaxOperandsPerOp ||
+                    argumentCount > BMMQ::IR::IrExecutionService::Limits::kMaxOperandsPerOp ||
                     (argumentCount != 0u && arguments == nullptr)) throw 0;
                 return bridge.host->callHelper(
                     id, static_cast<BMMQ::IR::ValueType>(resultType),

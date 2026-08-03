@@ -2875,7 +2875,11 @@ void LR3592_DMG::populateBlockCache(BMMQ::fetchBlock<AddressType, DataType>& fet
                     ? static_cast<BMMQ::IR::IIrCoreAdapter&>(irAdapter_)
                     : *activeIrAdapter_;
                 translated.intermediateRepresentation = adapter.lower(request, &loweringError);
+            } catch (const std::exception& exception) {
+                loweringError = std::string("Game Boy IR lowering threw: ") + exception.what();
+                translated.intermediateRepresentation.reset();
             } catch (...) {
+                loweringError = "Game Boy IR lowering threw a non-standard exception";
                 translated.intermediateRepresentation.reset();
             }
             if (detailedIrTimingEnabled_) {
@@ -2888,18 +2892,32 @@ void LR3592_DMG::populateBlockCache(BMMQ::fetchBlock<AddressType, DataType>& fet
                 : 0u;
             blockCache_.noteIrLowering(
                 loweredInstructions, loweringNanos);
+            if (!translated.intermediateRepresentation) {
+                translated.irFallbackReason = loweringError.empty()
+                    ? "Game Boy IR lowering failed without a diagnostic"
+                    : "Game Boy IR lowering failed: " + loweringError;
+                blockCache_.noteIrFallback();
+            }
             if (nativeIrEnabled_ && translated.intermediateRepresentation) {
+                std::string compilationError;
                 const auto native = GB::NativeExecution::compile(
-                    *translated.intermediateRepresentation);
+                    *translated.intermediateRepresentation, &compilationError);
                 translated.backendArtifact = native;
                 if (!native) {
+                    translated.irFallbackReason = compilationError.empty()
+                        ? "Game Boy native IR compilation failed without a diagnostic"
+                        : "Game Boy native IR compilation failed: " + compilationError;
                     blockCache_.noteIrFallback();
                 }
             } else if (portableIrEnabled_ && translated.intermediateRepresentation && irService_) {
+                std::string preparationError;
                 const auto prepared = irService_->prepare(
-                    translated.intermediateRepresentation, &loweringError);
+                    translated.intermediateRepresentation, &preparationError);
                 translated.backendArtifact = prepared.artifact;
                 if (!prepared.prepared || !prepared.artifact) {
+                    translated.irFallbackReason = preparationError.empty()
+                        ? "Game Boy IR preparation failed without a diagnostic"
+                        : "Game Boy IR preparation failed: " + preparationError;
                     blockCache_.noteIrFallback();
                 }
             }
@@ -2996,12 +3014,21 @@ void LR3592_DMG::setIrComponents(
     auto* selectedBackend = backend
         ? backend.get()
         : static_cast<BMMQ::IR::IIrExecutionBackend*>(&irBackend_);
-    if (nativeIrEnabled_ || selectedAdapter->architectureId() !=
-            GB::IRExecution::GameBoyCoreAdapter::kArchitectureId ||
-        selectedAdapter->irAbiVersion() != BMMQ::IR::kIrAbiVersion ||
-        !selectedBackend->supports(selectedAdapter->architectureId(),
+    if (nativeIrEnabled_) {
+        throw std::invalid_argument(
+            "Game Boy IR adapter/backend selection is unavailable while native IR is enabled");
+    }
+    if (selectedAdapter->architectureId() !=
+        GB::IRExecution::GameBoyCoreAdapter::kArchitectureId) {
+        throw std::invalid_argument("Game Boy IR adapter architecture ID mismatch");
+    }
+    if (selectedAdapter->irAbiVersion() != BMMQ::IR::kIrAbiVersion) {
+        throw std::invalid_argument("Game Boy IR adapter ABI version mismatch");
+    }
+    if (!selectedBackend->supports(selectedAdapter->architectureId(),
                                    selectedAdapter->irAbiVersion())) {
-        throw std::invalid_argument("incompatible Game Boy IR adapter/backend selection");
+        throw std::invalid_argument(
+            "Game Boy IR backend does not support the selected adapter architecture and ABI");
     }
 
     auto replacementService = std::make_unique<BMMQ::IR::IrExecutionService>(

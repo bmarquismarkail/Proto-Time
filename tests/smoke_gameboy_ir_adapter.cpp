@@ -72,9 +72,15 @@ void testAdapterLoweringParity()
     assert(modern->instructions.size() == legacy->instructions.size());
     assert(modern->exit == legacy->exit);
     assert(modern->guards.size() == legacy->guards.size());
+    for (std::size_t index = 0u; index < modern->guards.size(); ++index) {
+        assert(modern->guards[index].kind == legacy->guards[index].kind);
+        if (modern->guards[index].kind == BMMQ::IR::GuardKind::MappingGeneration) {
+            assert(modern->guards[index].expected == legacy->guards[index].expected);
+        }
+    }
 }
 
-void testNoBoundAbiDoesNotWeakenRuntimeGuardPath()
+void testExecutionStateRuntimeGuardPath()
 {
     GameBoyCoreAdapter adapter;
     std::vector<BMMQ::IR::SourceInstruction> copied;
@@ -87,6 +93,8 @@ void testNoBoundAbiDoesNotWeakenRuntimeGuardPath()
     const auto block = adapter.lower(request, &error);
     assert(block);
     assert(adapter.validateExecutionState(*block) == std::nullopt);
+    assert(GB::IRExecution::validateContinuationGuards(*block, 7u, 1u) ==
+           GB::IRExecution::GuardFailure::ExecutionState);
 }
 
 void testMalformedBlockRejection()
@@ -171,6 +179,21 @@ void testI16MemoryOperationRejection()
         for (auto& operation : instruction.operations) {
             if (operation.opcode == BMMQ::IR::Opcode::LoadMemory) {
                 operation.resultType = BMMQ::IR::ValueType::I16;
+                const auto result = *operation.result;
+                for (auto& consumer : instruction.operations) {
+                    bool consumesResult = false;
+                    for (auto& operand : consumer.operands) {
+                        if (operand.kind == BMMQ::IR::OperandKind::Value &&
+                            operand.payload == result) {
+                            operand.type = BMMQ::IR::ValueType::I16;
+                            consumesResult = true;
+                        }
+                    }
+                    if (consumesResult &&
+                        consumer.opcode == BMMQ::IR::Opcode::WriteRegister) {
+                        consumer.operands[0].type = BMMQ::IR::ValueType::I16;
+                    }
+                }
                 mutated = true;
             }
         }
@@ -179,13 +202,40 @@ void testI16MemoryOperationRejection()
 
     const auto validation = adapter.validateBlock(malformed);
     assert(!validation);
+    assert(validation.message == "Game Boy IR block only supports I8 memory operations");
 }
 
-void testLowerBlockRejectsInvalidSourceInstruction()
+void testLoweringRejectsEmptyAndInvalidLengthInputs()
 {
-    const auto result = GB::IRExecution::lowerBlock(
+    const auto emptyResult = GB::IRExecution::lowerBlock(
         std::span<const BMMQ::TranslatedInstruction<std::uint16_t, std::uint8_t>>{}, 7u, 0u);
-    assert(!result);
+    assert(!emptyResult);
+
+    GameBoyCoreAdapter adapter;
+    std::string error;
+    BMMQ::IR::LoweringRequest emptyRequest{};
+    assert(!adapter.lower(emptyRequest, &error));
+    assert(error == "Game Boy adapter received no source instructions");
+
+    for (const auto length : {std::uint8_t{0u}, std::uint8_t{4u}}) {
+        const std::vector<BMMQ::IR::SourceInstruction> source{
+            {.address = 0xC000u, .bytes = {0x00u, 0u, 0u, 0u}, .length = length}};
+        BMMQ::IR::LoweringRequest request{};
+        request.instructions = source;
+        error.clear();
+        assert(!adapter.lower(request, &error));
+        assert(error == "Game Boy adapter received an invalid source instruction");
+
+        const BMMQ::TranslatedInstruction<std::uint16_t, std::uint8_t> instruction{
+            .address = 0xC000u,
+            .bytes = {0x00u, 0u, 0u},
+            .length = length,
+        };
+        assert(!GB::IRExecution::lowerBlock(
+            std::span<const BMMQ::TranslatedInstruction<std::uint16_t, std::uint8_t>>{
+                &instruction, 1u},
+            7u, 0u));
+    }
 }
 
 } // namespace
@@ -194,10 +244,10 @@ int main()
 {
     testAdapterIdentity();
     testAdapterLoweringParity();
-    testNoBoundAbiDoesNotWeakenRuntimeGuardPath();
+    testExecutionStateRuntimeGuardPath();
     testMalformedBlockRejection();
     testInvalidRegisterIdRejection();
     testI16MemoryOperationRejection();
-    testLowerBlockRejectsInvalidSourceInstruction();
+    testLoweringRejectsEmptyAndInvalidLengthInputs();
     return 0;
 }

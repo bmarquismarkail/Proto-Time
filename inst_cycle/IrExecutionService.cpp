@@ -9,8 +9,16 @@ namespace {
 
 class PortableBlockArtifact final : public BlockBackendArtifact {
 public:
-    explicit PortableBlockArtifact(const Block& source) : block(source) {}
-    Block block;
+    explicit PortableBlockArtifact(BlockPtr source) : block(std::move(source)) {}
+    BlockPtr block;
+};
+
+class PreparedBlockArtifact final : public BlockBackendArtifact {
+public:
+    PreparedBlockArtifact(BlockPtr source, BlockBackendArtifactPtr compiled)
+        : block(std::move(source)), backendArtifact(std::move(compiled)) {}
+    BlockPtr block;
+    BlockBackendArtifactPtr backendArtifact;
 };
 
 } // namespace
@@ -21,10 +29,14 @@ bool PortableIrExecutionBackend::supports(std::uint32_t architectureId,
     return architectureId != kAnyArchitecture && irAbiVersion == kIrAbiVersion;
 }
 
-BlockBackendArtifactPtr PortableIrExecutionBackend::compile(const Block& block,
+BlockBackendArtifactPtr PortableIrExecutionBackend::compile(const BlockPtr& block,
                                                             std::string* error)
 {
-    const auto validation = validate(block);
+    if (!block) {
+        if (error != nullptr) *error = "portable IR backend received no block";
+        return {};
+    }
+    const auto validation = validate(*block);
     if (!validation) {
         if (error != nullptr) *error = validation.message;
         return {};
@@ -38,10 +50,11 @@ bool PortableIrExecutionBackend::execute(const BlockBackendArtifact& artifact,
                                          InterpreterResult* result)
 {
     const auto* portable = dynamic_cast<const PortableBlockArtifact*>(&artifact);
-    if (portable == nullptr || instructionIndex >= portable->block.instructions.size()) {
+    if (portable == nullptr || !portable->block ||
+        instructionIndex >= portable->block->instructions.size()) {
         return false;
     }
-    const auto executed = interpreter_.execute(portable->block.instructions[instructionIndex],
+    const auto executed = interpreter_.execute(portable->block->instructions[instructionIndex],
                                                host);
     if (result != nullptr) *result = executed;
     return true;
@@ -125,7 +138,7 @@ IrExecutionService::PrepareResult IrExecutionService::prepare(const BlockPtr& bl
         }
 
         std::string compileError;
-        artifact = backend_.compile(*block, &compileError);
+        artifact = backend_.compile(block, &compileError);
         if (!artifact) {
             return fallback(compileError.empty() ? "IR backend declined the block" : compileError,
                             error);
@@ -139,7 +152,8 @@ IrExecutionService::PrepareResult IrExecutionService::prepare(const BlockPtr& bl
     return {.prepared = true,
             .fallback = false,
             .message = {},
-            .artifact = std::move(artifact)};
+            .artifact = std::make_shared<const PreparedBlockArtifact>(
+                block, std::move(artifact))};
 }
 
 bool IrExecutionService::tryExecute(const Block& block,
@@ -148,12 +162,19 @@ bool IrExecutionService::tryExecute(const Block& block,
                                     InterpreterHost& host,
                                     InterpreterResult* out) const
 {
-    if (instructionIndex >= block.instructions.size()) {
+    const auto* prepared = dynamic_cast<const PreparedBlockArtifact*>(&artifact);
+    if (prepared == nullptr || !prepared->block || !prepared->backendArtifact) {
+        throw std::logic_error("IR execution service received an unprepared artifact");
+    }
+    if (prepared->block.get() != &block) {
+        throw std::logic_error("IR execution block does not match its prepared artifact");
+    }
+    if (instructionIndex >= prepared->block->instructions.size()) {
         throw std::logic_error("IR execution service instruction index out of range");
     }
 
     try {
-        if (adapter_.validateExecutionState(block).has_value()) return false;
+        if (adapter_.validateExecutionState(*prepared->block).has_value()) return false;
     } catch (...) {
         return false;
     }
@@ -161,9 +182,14 @@ bool IrExecutionService::tryExecute(const Block& block,
     InterpreterResult result{};
     bool executed = false;
     try {
-        executed = backend_.execute(artifact, instructionIndex, host, &result);
+        executed = backend_.execute(
+            *prepared->backendArtifact, instructionIndex, host, &result);
+    } catch (const std::exception& exception) {
+        throw std::runtime_error(
+            std::string("IR backend threw after execution began: ") + exception.what());
     } catch (...) {
-        throw std::runtime_error("IR backend threw after execution began");
+        throw std::runtime_error(
+            "IR backend threw a non-standard exception after execution began");
     }
     if (!executed) {
         throw std::runtime_error("IR backend failed after execution began");

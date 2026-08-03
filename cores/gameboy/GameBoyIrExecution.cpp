@@ -290,20 +290,6 @@ GuardFailure validateContinuationGuards(
     return GuardFailure::None;
 }
 
-InstructionResult PortableExecutor::execute(const BMMQ::IR::GuestInstruction& instruction,
-                                            const ExecutionAbiV1& abi)
-{
-    if (!valid(abi)) throw std::invalid_argument("invalid Game Boy portable IR ABI");
-    AbiHost host(abi);
-    const auto result = interpreter_.execute(instruction, host);
-    return {
-        .branchTaken = result.branchTaken,
-        .exitRequested = result.exitRequested,
-        .cycleCondition = result.cycleCondition,
-        .retirementReached = result.retirementReached,
-    };
-}
-
 bool executePreparedInstruction(const BMMQ::IR::IrExecutionService& service,
                                 const BMMQ::IR::Block& block,
                                 const BMMQ::BlockBackendArtifact& artifact,
@@ -336,17 +322,13 @@ BMMQ::IR::BlockPtr lowerBlock(
     std::vector<BMMQ::IR::SourceInstruction> copied;
     copied.reserve(instructions.size());
     for (const auto& instruction : instructions) {
-        if (instruction.length < 1u || instruction.length > 3u ||
-            instruction.length > instruction.bytes.size()) {
-            return {};
-        }
         copied.push_back({
             .address = instruction.address,
             .bytes = {},
             .length = instruction.length,
         });
         std::copy(instruction.bytes.begin(),
-                  instruction.bytes.begin() + instruction.length,
+                  instruction.bytes.end(),
                   copied.back().bytes.begin());
     }
     GameBoyCoreAdapter adapter;
@@ -355,6 +337,8 @@ BMMQ::IR::BlockPtr lowerBlock(
     request.instructions = {copied.data(), copied.size()};
     request.mappingGeneration = mappingGeneration;
     request.executionState = executionState;
+    // lowerBlock returns only a BlockPtr, so it intentionally discards the
+    // adapter diagnostic while sharing lower's authoritative validation.
     return adapter.lower(request, &error);
 }
 
@@ -401,8 +385,7 @@ BMMQ::IR::BlockPtr GameBoyCoreAdapter::lower(
     builder.addGuard({
         .kind = BMMQ::IR::GuardKind::ExecutionState,
         .expected = request.executionState,
-        .mask = Stop | Halt | DmaRestricted | InterruptPending |
-                HaltBugPending | PendingCycleCharge,
+        .mask = kAllExecutionStateBits,
     });
 
     std::vector<std::uint8_t> codeBytes;
@@ -432,7 +415,12 @@ BMMQ::IR::BlockPtr GameBoyCoreAdapter::lower(
         .subject = copied.front().address,
         .bytes = std::move(codeBytes),
     });
-    return builder.finish(exit);
+    try {
+        return builder.finish(exit);
+    } catch (const std::exception& exception) {
+        if (error != nullptr) *error = exception.what();
+        return {};
+    }
 }
 
 BMMQ::IR::ValidationResult GameBoyCoreAdapter::validateBlock(const BMMQ::IR::Block& block) const
