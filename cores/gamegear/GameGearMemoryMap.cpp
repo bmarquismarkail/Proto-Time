@@ -19,6 +19,7 @@ constexpr uint8_t kMemoryControlBiosDisabled = 0x08u;
 
 void GameGearMemoryMap::setCartridge(GameGearMapper* cartridgePtr) {
     cartridge = cartridgePtr;
+    ++codeMappingGeneration_;
 }
 
 void GameGearMemoryMap::setInput(GameGearInput* inputPtr) {
@@ -67,6 +68,7 @@ void GameGearMemoryMap::writeIoPort(uint8_t port, uint8_t value) {
     }
     if (port >= 0x07u && port <= 0x3Fu) {
         if ((port & 0x01u) == 0u) {
+            if (memoryControl_ != value) ++codeMappingGeneration_;
             memoryControl_ = value;
         } else {
             constexpr uint8_t kThOutputLevels = 0xA0u;
@@ -132,6 +134,7 @@ void GameGearMemoryMap::reset() {
     if (cartridge != nullptr) {
         cartridge->reset();
     }
+    ++codeMappingGeneration_;
 }
 
 void GameGearMemoryMap::mapRom(const uint8_t* data, size_t size) {
@@ -140,6 +143,7 @@ void GameGearMemoryMap::mapRom(const uint8_t* data, size_t size) {
     if (cartridge == nullptr || cartridge == &fallback) {
         cartridge = &fallback;
     }
+    ++codeMappingGeneration_;
 }
 
 void GameGearMemoryMap::clearRom() {
@@ -148,6 +152,7 @@ void GameGearMemoryMap::clearRom() {
     if (cartridge == &fallback) {
         cartridge = &fallback;
     }
+    ++codeMappingGeneration_;
 }
 
 void GameGearMemoryMap::mapBios(const uint8_t* data, size_t size) {
@@ -156,10 +161,12 @@ void GameGearMemoryMap::mapBios(const uint8_t* data, size_t size) {
         return;
     }
     bios_.assign(data, data + size);
+    ++codeMappingGeneration_;
 }
 
 void GameGearMemoryMap::clearBios() {
     bios_.clear();
+    ++codeMappingGeneration_;
 }
 
 bool GameGearMemoryMap::hasBios() const noexcept {
@@ -172,6 +179,10 @@ uint8_t GameGearMemoryMap::ioControlValue() const noexcept {
 
 uint8_t GameGearMemoryMap::memoryControlValue() const noexcept {
     return memoryControl_;
+}
+
+uint64_t GameGearMemoryMap::codeMappingGeneration() const noexcept {
+    return codeMappingGeneration_;
 }
 
 uint8_t GameGearMemoryMap::read(uint16_t addr) const {
@@ -219,10 +230,35 @@ uint8_t GameGearMemoryMap::read(uint16_t addr) const {
     return 0xFF;
 }
 
+bool GameGearMemoryMap::peekCodeByte(uint16_t addr, uint8_t& value) const noexcept {
+    // Reject compatibility MMIO and mirrored high-memory device windows. Code
+    // peeks must not acknowledge input, video, or audio state.
+    if (addr == 0x00DCu || addr == 0x00DDu || addr >= 0xFE00u ||
+        (addr >= 0x8000u && addr < 0xA000u && cartridge == nullptr)) {
+        return false;
+    }
+    if (addr < 0x0400u && !bios_.empty() &&
+        ((memoryControl_ & kMemoryControlBiosDisabled) == 0u)) {
+        value = bios_[static_cast<std::size_t>(addr) % bios_.size()];
+        return true;
+    }
+    if (addr < 0xC000u) {
+        if (cartridge == nullptr || !cartridge->loaded()) return false;
+        value = cartridge->read(addr);
+        return true;
+    }
+    if (addr < 0xFE00u) {
+        value = addr < 0xE000u ? ram[addr - 0xC000u] : ram[addr - 0xE000u];
+        return true;
+    }
+    return false;
+}
+
 void GameGearMemoryMap::write(uint16_t addr, uint8_t value) {
     // Mapper register region: $FFFC-$FFFF
     if (cartridge != nullptr && cartridge->handlesControlWrite(addr)) {
         cartridge->write(addr, value);
+        ++codeMappingGeneration_;
         // Writes to $FFFC-$FFFF also update RAM mirror at $1FFC-$1FFF
         if (addr >= 0xFFFCu) {
             ram[0x1FFCu + (addr & 0x3)] = value;
@@ -306,4 +342,5 @@ void GameGearMemoryMap::importState(const std::vector<uint8_t>& state) {
     ioControl_ = nextIoControl;
     ram = nextRam;
     bios_ = std::move(nextBios);
+    ++codeMappingGeneration_;
 }

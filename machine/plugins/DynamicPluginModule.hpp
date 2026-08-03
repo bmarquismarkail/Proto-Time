@@ -1,12 +1,15 @@
 #ifndef BMMQ_DYNAMIC_PLUGIN_MODULE_HPP
 #define BMMQ_DYNAMIC_PLUGIN_MODULE_HPP
 
+#include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "inst_cycle/IrExecutionService.hpp"
 #include "inst_cycle/executor/PluginContract.hpp"
 #include "machine/plugins/AudioOutput.hpp"
 #include "machine/plugins/FrontendPlugin.hpp"
@@ -35,6 +38,12 @@ public:
     [[nodiscard]] std::unique_ptr<IAudioProcessor> createAudioProcessor(
         std::string_view id, std::uint32_t sampleRate, std::uint8_t channels,
         std::size_t maxBlockSamples, std::string configJson = {}) const;
+    [[nodiscard]] std::vector<std::string> irCoreAdapterIds() const;
+    [[nodiscard]] std::unique_ptr<BMMQ::IR::IIrCoreAdapter> createIrCoreAdapter(
+        std::string_view id, std::string* error = nullptr) const;
+    [[nodiscard]] std::vector<std::string> irExecutionBackendIds() const;
+    [[nodiscard]] std::unique_ptr<BMMQ::IR::IIrExecutionBackend> createIrExecutionBackend(
+        std::string_view id, std::string* error = nullptr) const;
 
 private:
     explicit DynamicPluginModule(std::shared_ptr<State> state) : state_(std::move(state)) {}

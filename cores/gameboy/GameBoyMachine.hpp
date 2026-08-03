@@ -46,7 +46,8 @@ class GameBoyRuntimeContext;
 
 class GameBoyMachine final : public BMMQ::Machine,
                              public BMMQ::IExternalBootRomMachine,
-                             public BMMQ::IRomPathAwareMachine {
+                             public BMMQ::IRomPathAwareMachine,
+                             public BMMQ::IIrComponentAwareMachine {
 public:
     GameBoyMachine();
     ~GameBoyMachine() override;
@@ -69,6 +70,11 @@ public:
 
     // IRomPathAwareMachine
     void setRomSourcePath(const std::optional<std::filesystem::path>& path) override;
+
+    // IIrComponentAwareMachine
+    [[nodiscard]] std::uint32_t irArchitectureId() const noexcept override;
+    void setIrComponents(std::unique_ptr<BMMQ::IR::IIrCoreAdapter> adapter,
+                         std::unique_ptr<BMMQ::IR::IIrExecutionBackend> backend) override;
 
     // IoPlugin interface
     std::span<const BMMQ::IoRegionDescriptor> describeIoRegions() const override;

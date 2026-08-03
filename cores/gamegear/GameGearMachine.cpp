@@ -2,12 +2,14 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <filesystem>
 #include <optional>
 #include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
+#include <unordered_map>
 #include "inst_cycle/executor/PluginContract.hpp"
 #include "machine/plugins/IoPlugin.hpp"
 #include "machine/plugins/PluginManager.hpp"
@@ -23,6 +25,7 @@
 #include <memory>
 #include "GameGearMemoryMap.hpp"
 #include "GameGearSaveManager.hpp"
+#include "GameGearIrExecution.hpp"
 
 namespace BMMQ {
 
@@ -116,16 +119,142 @@ std::vector<uint8_t> serializeMachineMeta(uint64_t stepCounter,
     return extension != ".sms";
 }
 
-class GameGearRuntimeContext final : public RuntimeContext {
+class GameGearIrHost final : public IR::InterpreterHost {
+public:
+    GameGearIrHost(Z80Interpreter& cpu, GameGearMemoryMap& memoryMap)
+        : cpu_(cpu), memoryMap_(memoryMap)
+    {
+    }
+
+    std::uint64_t readRegister(std::uint32_t id, IR::ValueType) override
+    {
+        using GameGearIR::Register;
+        switch (static_cast<Register>(id)) {
+        case Register::A: return static_cast<std::uint8_t>(cpu_.AF >> 8u);
+        case Register::F: return static_cast<std::uint8_t>(cpu_.AF);
+        case Register::B: return static_cast<std::uint8_t>(cpu_.BC >> 8u);
+        case Register::C: return static_cast<std::uint8_t>(cpu_.BC);
+        case Register::D: return static_cast<std::uint8_t>(cpu_.DE >> 8u);
+        case Register::E: return static_cast<std::uint8_t>(cpu_.DE);
+        case Register::H: return static_cast<std::uint8_t>(cpu_.HL >> 8u);
+        case Register::L: return static_cast<std::uint8_t>(cpu_.HL);
+        case Register::AF: return cpu_.AF;
+        case Register::BC: return cpu_.BC;
+        case Register::DE: return cpu_.DE;
+        case Register::HL: return cpu_.HL;
+        case Register::SP: return cpu_.SP;
+        case Register::PC: return cpu_.PC;
+        }
+        throw std::invalid_argument("unknown Game Gear IR register");
+    }
+
+    void writeRegister(std::uint32_t id, IR::ValueType type, std::uint64_t value) override
+    {
+        using GameGearIR::Register;
+        const auto byte = static_cast<std::uint8_t>(value);
+        const auto word = static_cast<std::uint16_t>(value);
+        switch (static_cast<Register>(id)) {
+        case Register::A:
+            cpu_.AF = static_cast<std::uint16_t>((cpu_.AF & 0x00FFu) |
+                                                (static_cast<std::uint16_t>(byte) << 8u));
+            return;
+        case Register::F: cpu_.AF = static_cast<std::uint16_t>((cpu_.AF & 0xFF00u) | byte); return;
+        case Register::B: cpu_.BC = static_cast<std::uint16_t>((cpu_.BC & 0x00FFu) |
+                                                               (static_cast<std::uint16_t>(byte) << 8u)); return;
+        case Register::C: cpu_.BC = static_cast<std::uint16_t>((cpu_.BC & 0xFF00u) | byte); return;
+        case Register::D: cpu_.DE = static_cast<std::uint16_t>((cpu_.DE & 0x00FFu) |
+                                                               (static_cast<std::uint16_t>(byte) << 8u)); return;
+        case Register::E: cpu_.DE = static_cast<std::uint16_t>((cpu_.DE & 0xFF00u) | byte); return;
+        case Register::H: cpu_.HL = static_cast<std::uint16_t>((cpu_.HL & 0x00FFu) |
+                                                               (static_cast<std::uint16_t>(byte) << 8u)); return;
+        case Register::L: cpu_.HL = static_cast<std::uint16_t>((cpu_.HL & 0xFF00u) | byte); return;
+        case Register::AF: cpu_.AF = word; return;
+        case Register::BC: cpu_.BC = word; return;
+        case Register::DE: cpu_.DE = word; return;
+        case Register::HL: cpu_.HL = word; return;
+        case Register::SP: cpu_.SP = word; return;
+        case Register::PC: cpu_.PC = word; return;
+        }
+        (void)type;
+        throw std::invalid_argument("unknown Game Gear IR register");
+    }
+
+    std::uint64_t loadMemory(std::uint64_t address, IR::ValueType type,
+                             IR::MemoryClass) override
+    {
+        if (type != IR::ValueType::I8) {
+            throw std::invalid_argument("Game Gear IR memory load is not I8");
+        }
+        return memoryMap_.read(static_cast<std::uint16_t>(address));
+    }
+
+    void storeMemory(std::uint64_t address, IR::ValueType type, IR::MemoryClass,
+                     std::uint64_t value) override
+    {
+        if (type != IR::ValueType::I8) {
+            throw std::invalid_argument("Game Gear IR memory store is not I8");
+        }
+        memoryMap_.write(static_cast<std::uint16_t>(address), static_cast<std::uint8_t>(value));
+    }
+
+    std::uint64_t callHelper(std::uint32_t id, IR::ValueType,
+                             std::span<const std::uint64_t> arguments) override
+    {
+        using GameGearIR::Helper;
+        switch (static_cast<Helper>(id)) {
+        case Helper::IncrementRefresh:
+            cpu_.incrementRefreshForIr();
+            return 0u;
+        case Helper::UpdateIncrementFlags:
+            if (arguments.size() != 2u) break;
+            cpu_.updateIncrementFlagsForIr(static_cast<std::uint8_t>(arguments[0]),
+                                           static_cast<std::uint8_t>(arguments[1]));
+            return 0u;
+        case Helper::UpdateDecrementFlags:
+            if (arguments.size() != 2u) break;
+            cpu_.updateDecrementFlagsForIr(static_cast<std::uint8_t>(arguments[0]),
+                                           static_cast<std::uint8_t>(arguments[1]));
+            return 0u;
+        case Helper::ExecuteAlu8:
+            if (arguments.size() != 3u) break;
+            return cpu_.executeAluForIr(static_cast<std::uint8_t>(arguments[0]),
+                                        static_cast<std::uint8_t>(arguments[2]));
+        }
+        throw std::invalid_argument("invalid Game Gear IR helper call");
+    }
+
+    void setProgramCounter(std::uint64_t address) override
+    {
+        cpu_.PC = static_cast<std::uint16_t>(address);
+    }
+
+private:
+    Z80Interpreter& cpu_;
+    GameGearMemoryMap& memoryMap_;
+};
+
+class GameGearRuntimeContext final : public RuntimeContext,
+                                     public ITranslationCapability,
+                                     public IInvalidationCapability {
 public:
     GameGearRuntimeContext(Z80Interpreter& cpu,
                            GameGearMemoryMap& memoryMap,
                            bool& romLoaded,
-                           Plugin::IExecutorPolicyPlugin*& activePolicy)
+                           Plugin::IExecutorPolicyPlugin*& activePolicy,
+                           bool& interruptRequested,
+                           GameGearVDP& vdp)
         : cpu_(cpu),
           memoryMap_(memoryMap),
           romLoaded_(romLoaded),
-          activePolicy_(activePolicy)
+          activePolicy_(activePolicy),
+          interruptRequested_(interruptRequested),
+          vdp_(vdp),
+          irAdapter_(this, &GameGearRuntimeContext::executionStateCallback),
+          activeIrAdapter_(&irAdapter_),
+          activeIrBackend_(&irBackend_),
+          irService_(std::make_unique<IR::IrExecutionService>(*activeIrAdapter_,
+                                                             *activeIrBackend_)),
+          irHost_(cpu_, memoryMap_)
     {
     }
 
@@ -155,6 +284,10 @@ public:
             return lastFeedback_;
         }
         lastFeedback_.pcBefore = cpu_.PC;
+        if (activePolicy_->backend() == ExecutionBackend::PortableIr &&
+            tryStepIr(lastFeedback_)) {
+            return lastFeedback_;
+        }
         const auto retiredCycles = cpu_.step();
         lastFeedback_.pcAfter = cpu_.PC;
         lastFeedback_.retiredCycles = retiredCycles;
@@ -222,7 +355,177 @@ public:
         return *activePolicy_;
     }
 
+    ITranslationCapability* translationCapability() override { return this; }
+    IInvalidationCapability* invalidationCapability() override { return this; }
+    const ITranslationCapability* translationCapability() const override { return this; }
+    const IInvalidationCapability* invalidationCapability() const override { return this; }
+
+    void clearIrCache() noexcept { irCache_.clear(); }
+    [[nodiscard]] GameGearIrStats irStats() const noexcept { return irStats_; }
+    void setIrComponents(std::unique_ptr<IR::IIrCoreAdapter> adapter,
+                         std::unique_ptr<IR::IIrExecutionBackend> backend)
+    {
+        auto* selectedAdapter = adapter
+            ? adapter.get()
+            : static_cast<IR::IIrCoreAdapter*>(&irAdapter_);
+        auto* selectedBackend = backend
+            ? backend.get()
+            : static_cast<IR::IIrExecutionBackend*>(&irBackend_);
+        if (selectedAdapter->architectureId() != GameGearIR::kArchitectureId ||
+            selectedAdapter->irAbiVersion() != IR::kIrAbiVersion ||
+            !selectedBackend->supports(selectedAdapter->architectureId(),
+                                       selectedAdapter->irAbiVersion())) {
+            throw std::invalid_argument("incompatible Game Gear IR adapter/backend selection");
+        }
+        auto replacementService = std::make_unique<IR::IrExecutionService>(
+            *selectedAdapter, *selectedBackend);
+        clearIrCache();
+        irService_ = std::move(replacementService);
+        dynamicIrAdapter_ = std::move(adapter);
+        dynamicIrBackend_ = std::move(backend);
+        activeIrAdapter_ = dynamicIrAdapter_ ? dynamicIrAdapter_.get() : &irAdapter_;
+        activeIrBackend_ = dynamicIrBackend_ ? dynamicIrBackend_.get() : &irBackend_;
+    }
+
 private:
+    struct IrCacheEntry {
+        std::uint64_t mappingGeneration = 0u;
+        std::vector<std::uint8_t> codeBytes{};
+        IR::BlockPtr block{};
+        BlockBackendArtifactPtr artifact{};
+    };
+
+    static std::uint64_t executionStateCallback(const void* opaque) noexcept
+    {
+        return static_cast<const GameGearRuntimeContext*>(opaque)->executionState();
+    }
+
+    [[nodiscard]] std::uint64_t executionState() const noexcept
+    {
+        std::uint64_t state = 0u;
+        if (cpu_.halted()) state |= GameGearIR::Halted;
+        if (interruptRequested_ || vdp_.isIrqAsserted()) state |= GameGearIR::InterruptPending;
+        if (cpu_.deferredInterruptEnable()) state |= GameGearIR::DeferredInterruptEnable;
+        return state;
+    }
+
+    static std::optional<std::uint8_t> irLength(std::uint8_t opcode) noexcept
+    {
+        if (opcode == 0x00u || (opcode >= 0x40u && opcode <= 0xBFu && opcode != 0x76u) ||
+            (opcode & 0xC7u) == 0x04u || (opcode & 0xC7u) == 0x05u) {
+            return 1u;
+        }
+        if ((opcode & 0xC7u) == 0x06u || opcode == 0x18u) return 2u;
+        return {};
+    }
+
+    bool guardsMatch(const IrCacheEntry& entry) const noexcept
+    {
+        if (entry.mappingGeneration != memoryMap_.codeMappingGeneration()) return false;
+        for (std::size_t index = 0u; index < entry.codeBytes.size(); ++index) {
+            std::uint8_t byte = 0u;
+            if (!memoryMap_.peekCodeByte(static_cast<std::uint16_t>(cpu_.PC + index), byte) ||
+                byte != entry.codeBytes[index]) {
+                return false;
+            }
+        }
+        return executionState() == 0u;
+    }
+
+    bool tryStepIr(CpuFeedback& feedback)
+    {
+        if (executionState() != 0u) {
+            ++irStats_.fallbacks;
+            return false;
+        }
+
+        std::uint8_t opcode = 0u;
+        if (!memoryMap_.peekCodeByte(cpu_.PC, opcode)) {
+            ++irStats_.fallbacks;
+            return false;
+        }
+        const auto length = irLength(opcode);
+        if (!length.has_value()) {
+            ++irStats_.fallbacks;
+            return false;
+        }
+
+        std::vector<std::uint8_t> bytes(*length);
+        for (std::size_t index = 0u; index < bytes.size(); ++index) {
+            if (!memoryMap_.peekCodeByte(static_cast<std::uint16_t>(cpu_.PC + index), bytes[index])) {
+                ++irStats_.fallbacks;
+                return false;
+            }
+        }
+
+        auto found = irCache_.find(cpu_.PC);
+        if (found == irCache_.end() || found->second.mappingGeneration !=
+                                           memoryMap_.codeMappingGeneration() ||
+            found->second.codeBytes != bytes) {
+            IR::SourceInstruction source{.address = cpu_.PC, .length = *length};
+            std::copy(bytes.begin(), bytes.end(), source.bytes.begin());
+            const std::array sourceBlock{source};
+            std::string error;
+            IR::BlockPtr block;
+            try {
+                block = activeIrAdapter_->lower({.instructions = sourceBlock,
+                                                 .mappingGeneration =
+                                                     memoryMap_.codeMappingGeneration(),
+                                                 .executionState = executionState()},
+                                                &error);
+            } catch (...) {
+                ++irStats_.fallbacks;
+                return false;
+            }
+            if (!block || block->instructions.size() != 1u ||
+                block->instructions.front().address != cpu_.PC ||
+                block->instructions.front().length != *length) {
+                ++irStats_.fallbacks;
+                return false;
+            }
+            const auto prepared = irService_->prepare(block, &error);
+            if (!prepared.prepared || !prepared.artifact) {
+                ++irStats_.fallbacks;
+                return false;
+            }
+            IrCacheEntry replacement{
+                .mappingGeneration = memoryMap_.codeMappingGeneration(),
+                .codeBytes = bytes,
+                .block = std::move(block),
+                .artifact = prepared.artifact,
+            };
+            found = irCache_.insert_or_assign(cpu_.PC, std::move(replacement)).first;
+            ++irStats_.translations;
+        }
+
+        if (!guardsMatch(found->second)) {
+            ++irStats_.guardFailures;
+            irCache_.erase(found);
+            return false;
+        }
+
+        IR::InterpreterResult result;
+        const auto started = std::chrono::steady_clock::now();
+        if (!irService_->tryExecute(*found->second.block, *found->second.artifact,
+                                    0u, irHost_, &result)) {
+            ++irStats_.guardFailures;
+            return false;
+        }
+        irStats_.executionNanos += static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - started).count());
+        ++irStats_.executions;
+
+        const auto& instruction = found->second.block->instructions.front();
+        feedback.pcAfter = cpu_.PC;
+        feedback.retiredCycles = result.cycleCondition ? instruction.cyclesTaken
+                                                       : instruction.cyclesNotTaken;
+        feedback.segmentBoundaryHint = false;
+        feedback.isControlFlow = instruction.controlFlow;
+        feedback.executionPath = ExecutionPathHint::PortableIr;
+        return true;
+    }
+
     uint16_t& registerRef(std::string_view id) {
         if (id == "AF") return cpu_.AF;
         if (id == "BC") return cpu_.BC;
@@ -251,7 +554,19 @@ private:
     GameGearMemoryMap& memoryMap_;
     bool& romLoaded_;
     Plugin::IExecutorPolicyPlugin*& activePolicy_;
+    bool& interruptRequested_;
+    GameGearVDP& vdp_;
     CpuFeedback lastFeedback_{};
+    GameGearIR::CoreAdapter irAdapter_;
+    IR::PortableIrExecutionBackend irBackend_;
+    std::unique_ptr<IR::IIrCoreAdapter> dynamicIrAdapter_{};
+    std::unique_ptr<IR::IIrExecutionBackend> dynamicIrBackend_{};
+    IR::IIrCoreAdapter* activeIrAdapter_;
+    IR::IIrExecutionBackend* activeIrBackend_;
+    std::unique_ptr<IR::IrExecutionService> irService_;
+    GameGearIrHost irHost_;
+    std::unordered_map<std::uint16_t, IrCacheEntry> irCache_{};
+    GameGearIrStats irStats_{};
 };
 }
 
@@ -316,7 +631,8 @@ struct GameGearMachine::Impl {
     // Interrupt request raised by VDP (VBlank) or other devices. Consumed
     // atomically by the Z80 interrupt provider.
     bool interruptRequested = false;
-    GameGearRuntimeContext context{cpu, mem, romLoaded, activePolicy};
+    GameGearRuntimeContext context{cpu, mem, romLoaded, activePolicy,
+                                   interruptRequested, vdp};
 };
 
 std::span<const IoRegionDescriptor> GameGearMachine::describeIoRegions() const {
@@ -324,6 +640,10 @@ std::span<const IoRegionDescriptor> GameGearMachine::describeIoRegions() const {
 }
 
 void GameGearMachine::attachExecutorPolicy(const Plugin::IExecutorPolicyPlugin& policy) {
+    if (policy.backend() == ExecutionBackend::CachedBlock ||
+        policy.backend() == ExecutionBackend::NativeExperimental) {
+        throw std::runtime_error("Game Gear does not support the selected execution backend");
+    }
     Plugin::validateExecutorPolicyForRuntime(policy, impl->context);
     auto owned = policy.clone();
     if (!owned) {
@@ -332,6 +652,7 @@ void GameGearMachine::attachExecutorPolicy(const Plugin::IExecutorPolicyPlugin& 
     Plugin::validateExecutorPolicyForRuntime(*owned, impl->context);
     impl->ownedPolicy = std::move(owned);
     impl->activePolicy = impl->ownedPolicy.get();
+    impl->context.clearIrCache();
 }
 
 const Plugin::IExecutorPolicyPlugin& GameGearMachine::attachedExecutorPolicy() const {
@@ -379,6 +700,7 @@ GameGearMachine::GameGearMachine() : impl(std::make_unique<Impl>()) {
     impl->vdp.reset();
     impl->input.reset();
     impl->cpu.reset();
+    impl->context.clearIrCache();
 }
 GameGearMachine::~GameGearMachine() {
     (void)flushCartridgeSave();
@@ -423,6 +745,7 @@ void GameGearMachine::loadRom(const std::vector<uint8_t>& bytes) {
     impl->lastAudioFrameCounter = 0u;
     impl->realtimeAudioPacketCache.reset();
     impl->cpu.reset();
+    impl->context.clearIrCache();
     if (impl->pluginManager.size() != 0u) {
         impl->pluginManager.emit(view(), MachineEvent{
             MachineEventType::RomLoaded,
@@ -553,6 +876,7 @@ void GameGearMachine::load_state(const std::filesystem::path& path) {
     impl->psg = std::move(nextPsg);
     impl->input = std::move(nextInput);
     impl->cpu = std::move(nextCpu);
+    impl->context.clearIrCache();
     impl->stepCounter = nextStepCounter;
     impl->lastAudioFrameCounter = nextLastAudioFrameCounter;
     impl->realtimeAudioPacketCache.reset();
@@ -773,6 +1097,20 @@ void GameGearMachine::setBackgroundTaskService(BMMQ::BackgroundTaskService* serv
 
 bool GameGearMachine::cpuInterruptsEnabled() const {
     return impl->cpu.IME;
+}
+
+GameGearIrStats GameGearMachine::irStats() const noexcept {
+    return impl->context.irStats();
+}
+
+std::uint32_t GameGearMachine::irArchitectureId() const noexcept {
+    return GameGearIR::kArchitectureId;
+}
+
+void GameGearMachine::setIrComponents(
+    std::unique_ptr<IR::IIrCoreAdapter> adapter,
+    std::unique_ptr<IR::IIrExecutionBackend> backend) {
+    impl->context.setIrComponents(std::move(adapter), std::move(backend));
 }
 
 } // namespace BMMQ

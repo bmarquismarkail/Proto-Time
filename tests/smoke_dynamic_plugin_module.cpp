@@ -44,14 +44,13 @@ int main(int argc, char** argv)
 
     BMMQ::GameGearMachine gameGear;
     auto secondModule = BMMQ::Plugin::DynamicPluginModule::load(std::filesystem::path(argv[1]));
-    auto unsupported = secondModule.createExecutorPolicy("test.executor.c-portable-ir");
-    bool rejected = false;
-    try {
-        gameGear.attachExecutorPolicy(*unsupported);
-    } catch (const std::runtime_error&) {
-        rejected = true;
-    }
-    assert(rejected);
+    auto gameGearPolicy = secondModule.createExecutorPolicy("test.executor.c-portable-ir");
+    gameGear.attachExecutorPolicy(*gameGearPolicy);
+    gameGear.loadRom(rom);
+    gameGear.step();
+    assert(gameGear.runtimeContext().getLastFeedback().executionPath ==
+           BMMQ::ExecutionPathHint::PortableIr);
+    assert(gameGear.irStats().executions == 1u);
 
     bool unknownRejected = false;
     try {

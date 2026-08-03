@@ -23,7 +23,230 @@ enum TimePluginKindV1 {
     TIME_PLUGIN_KIND_EXECUTOR_POLICY_V1 = 1u,
     TIME_PLUGIN_KIND_FRONTEND_V1 = 2u,
     TIME_PLUGIN_KIND_AUDIO_OUTPUT_V1 = 3u,
-    TIME_PLUGIN_KIND_AUDIO_PROCESSOR_V1 = 4u
+    TIME_PLUGIN_KIND_AUDIO_PROCESSOR_V1 = 4u,
+    TIME_PLUGIN_KIND_IR_CORE_ADAPTER_V1 = 5u,
+    TIME_PLUGIN_KIND_IR_EXECUTION_BACKEND_V1 = 6u
+};
+
+#define TIME_IR_ABI_VERSION_V1 1u
+
+enum TimeIrResultV1 {
+    TIME_IR_ERROR_V1 = -1,
+    TIME_IR_DECLINED_V1 = 0,
+    TIME_IR_OK_V1 = 1
+};
+
+enum TimeIrValueTypeV1 {
+    TIME_IR_VALUE_VOID_V1 = 0u,
+    TIME_IR_VALUE_BOOL_V1 = 1u,
+    TIME_IR_VALUE_I8_V1 = 2u,
+    TIME_IR_VALUE_I16_V1 = 3u,
+    TIME_IR_VALUE_I32_V1 = 4u,
+    TIME_IR_VALUE_I64_V1 = 5u
+};
+
+enum TimeIrOperandKindV1 {
+    TIME_IR_OPERAND_VALUE_V1 = 0u,
+    TIME_IR_OPERAND_IMMEDIATE_V1 = 1u,
+    TIME_IR_OPERAND_GUEST_REGISTER_V1 = 2u,
+    TIME_IR_OPERAND_GUEST_ADDRESS_V1 = 3u,
+    TIME_IR_OPERAND_BLOCK_TARGET_V1 = 4u,
+    TIME_IR_OPERAND_HELPER_V1 = 5u
+};
+
+enum TimeIrOpcodeV1 {
+    TIME_IR_OPCODE_CONSTANT_V1 = 0u,
+    TIME_IR_OPCODE_READ_REGISTER_V1 = 1u,
+    TIME_IR_OPCODE_WRITE_REGISTER_V1 = 2u,
+    TIME_IR_OPCODE_LOAD_MEMORY_V1 = 3u,
+    TIME_IR_OPCODE_STORE_MEMORY_V1 = 4u,
+    TIME_IR_OPCODE_ADD_V1 = 5u,
+    TIME_IR_OPCODE_SUBTRACT_V1 = 6u,
+    TIME_IR_OPCODE_MULTIPLY_V1 = 7u,
+    TIME_IR_OPCODE_BIT_AND_V1 = 8u,
+    TIME_IR_OPCODE_BIT_OR_V1 = 9u,
+    TIME_IR_OPCODE_BIT_XOR_V1 = 10u,
+    TIME_IR_OPCODE_SHIFT_LEFT_V1 = 11u,
+    TIME_IR_OPCODE_SHIFT_RIGHT_LOGICAL_V1 = 12u,
+    TIME_IR_OPCODE_SHIFT_RIGHT_ARITHMETIC_V1 = 13u,
+    TIME_IR_OPCODE_BIT_NOT_V1 = 14u,
+    TIME_IR_OPCODE_COMPARE_EQUAL_V1 = 15u,
+    TIME_IR_OPCODE_COMPARE_NOT_EQUAL_V1 = 16u,
+    TIME_IR_OPCODE_COMPARE_UNSIGNED_LESS_V1 = 17u,
+    TIME_IR_OPCODE_COMPARE_SIGNED_LESS_V1 = 18u,
+    TIME_IR_OPCODE_SELECT_V1 = 19u,
+    TIME_IR_OPCODE_SET_PROGRAM_COUNTER_V1 = 20u,
+    TIME_IR_OPCODE_BRANCH_V1 = 21u,
+    TIME_IR_OPCODE_BRANCH_IF_V1 = 22u,
+    TIME_IR_OPCODE_CALL_HELPER_V1 = 23u,
+    TIME_IR_OPCODE_EXIT_V1 = 24u,
+    TIME_IR_OPCODE_RETIRE_INSTRUCTION_V1 = 25u
+};
+
+enum TimeIrMemoryClassV1 {
+    TIME_IR_MEMORY_GENERIC_V1 = 0u,
+    TIME_IR_MEMORY_DIRECT_RAM_V1 = 1u,
+    TIME_IR_MEMORY_READ_ONLY_V1 = 2u,
+    TIME_IR_MEMORY_MMIO_V1 = 3u,
+    TIME_IR_MEMORY_CARTRIDGE_V1 = 4u
+};
+
+enum TimeIrGuardKindV1 {
+    TIME_IR_GUARD_MAPPING_GENERATION_V1 = 0u,
+    TIME_IR_GUARD_CODE_BYTES_V1 = 1u,
+    TIME_IR_GUARD_EXECUTION_STATE_V1 = 2u,
+    TIME_IR_GUARD_HELPER_ABI_V1 = 3u
+};
+
+enum TimeIrBlockExitV1 {
+    TIME_IR_BLOCK_EXIT_SEQUENTIAL_V1 = 0u,
+    TIME_IR_BLOCK_EXIT_CONTROL_FLOW_V1 = 1u,
+    TIME_IR_BLOCK_EXIT_INTERRUPT_BOUNDARY_V1 = 2u,
+    TIME_IR_BLOCK_EXIT_UNSUPPORTED_V1 = 3u
+};
+
+struct TimeIrSourceInstructionV1 {
+    uint32_t struct_size;
+    uint64_t address;
+    uint8_t bytes[4];
+    uint8_t length;
+};
+
+struct TimeIrLoweringRequestV1 {
+    uint32_t struct_size;
+    uint32_t ir_abi_version;
+    uint64_t mapping_generation;
+    uint64_t execution_state;
+    uint32_t instruction_count;
+    const struct TimeIrSourceInstructionV1* instructions;
+};
+
+struct TimeIrOperandV1 {
+    uint32_t struct_size;
+    uint32_t kind;
+    uint32_t type;
+    uint64_t payload;
+};
+
+struct TimeIrOperationV1 {
+    uint32_t struct_size;
+    uint32_t opcode;
+    uint32_t result_id;
+    uint32_t result_type;
+    uint32_t memory_class;
+    uint32_t operand_count;
+    const struct TimeIrOperandV1* operands;
+};
+
+struct TimeIrGuardV1 {
+    uint32_t struct_size;
+    uint32_t kind;
+    uint64_t subject;
+    uint64_t expected;
+    uint64_t mask;
+    uint32_t byte_count;
+    const uint8_t* bytes;
+};
+
+struct TimeIrInstructionV1 {
+    uint32_t struct_size;
+    uint64_t address;
+    uint32_t length;
+    uint32_t cycles_not_taken;
+    uint32_t cycles_taken;
+    uint32_t taken_condition;
+    uint32_t flags;
+    uint32_t operation_count;
+    const struct TimeIrOperationV1* operations;
+};
+
+enum TimeIrInstructionFlagV1 {
+    TIME_IR_INSTRUCTION_CONTROL_FLOW_V1 = 1u << 0,
+    TIME_IR_INSTRUCTION_INTERRUPT_SENSITIVE_V1 = 1u << 1
+};
+
+struct TimeIrBlockViewV1 {
+    uint32_t struct_size;
+    uint32_t ir_abi_version;
+    uint64_t guest_start;
+    uint64_t guest_end;
+    uint64_t mapping_generation;
+    uint32_t exit_kind;
+    uint32_t guard_count;
+    const struct TimeIrGuardV1* guards;
+    uint32_t instruction_count;
+    const struct TimeIrInstructionV1* instructions;
+};
+
+struct TimeIrBuilderV1 {
+    uint32_t struct_size;
+    uint32_t ir_abi_version;
+    void* host_context;
+    int32_t (*begin_block)(void* host_context, uint64_t guest_start,
+                           uint64_t mapping_generation);
+    int32_t (*add_guard)(void* host_context, const struct TimeIrGuardV1* guard);
+    int32_t (*begin_instruction)(void* host_context,
+                                 const struct TimeIrInstructionV1* instruction);
+    int32_t (*emit_operation)(void* host_context,
+                              const struct TimeIrOperationV1* operation);
+    int32_t (*end_instruction)(void* host_context);
+    int32_t (*finish_block)(void* host_context, uint32_t exit_kind);
+};
+
+struct TimeIrExecutionHostV1 {
+    uint32_t struct_size;
+    uint32_t ir_abi_version;
+    void* host_context;
+    uint64_t (*read_register)(void* host_context, uint32_t id, uint32_t type);
+    int32_t (*write_register)(void* host_context, uint32_t id, uint32_t type,
+                              uint64_t value);
+    uint64_t (*load_memory)(void* host_context, uint64_t address, uint32_t type,
+                            uint32_t memory_class);
+    int32_t (*store_memory)(void* host_context, uint64_t address, uint32_t type,
+                            uint32_t memory_class, uint64_t value);
+    uint64_t (*call_helper)(void* host_context, uint32_t id, uint32_t result_type,
+                            const uint64_t* arguments, uint32_t argument_count);
+    int32_t (*set_program_counter)(void* host_context, uint64_t address);
+};
+
+struct TimeIrExecutionResultV1 {
+    uint32_t struct_size;
+    uint32_t branch_taken;
+    uint32_t exit_requested;
+    uint32_t cycle_condition;
+    uint32_t retirement_reached;
+};
+
+struct TimeIrCoreAdapterApiV1 {
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t architecture_id;
+    uint32_t ir_abi_version;
+    void* (*create)(const struct TimeHostApiV1* host_api);
+    void (*destroy)(void* instance);
+    int32_t (*lower)(void* instance,
+                     const struct TimeIrLoweringRequestV1* request,
+                     const struct TimeIrBuilderV1* builder);
+    int32_t (*validate_block)(const void* instance,
+                              const struct TimeIrBlockViewV1* block);
+    int32_t (*validate_execution_state)(const void* instance,
+                                         const struct TimeIrBlockViewV1* block);
+    const char* (*last_error)(const void* instance);
+};
+
+struct TimeIrExecutionBackendApiV1 {
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t architecture_id;
+    uint32_t ir_abi_version;
+    void* (*create)(const struct TimeHostApiV1* host_api);
+    void (*destroy)(void* instance);
+    void* (*compile)(void* instance, const struct TimeIrBlockViewV1* block);
+    void (*destroy_artifact)(void* instance, void* artifact);
+    int32_t (*execute)(void* instance, void* artifact, uint32_t instruction_index,
+                       const struct TimeIrExecutionHostV1* host,
+                       struct TimeIrExecutionResultV1* result);
+    const char* (*last_error)(const void* instance);
 };
 
 enum TimeAudioProcessorResultV1 {

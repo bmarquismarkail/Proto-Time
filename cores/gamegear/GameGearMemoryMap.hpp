@@ -18,6 +18,7 @@ public:
 
     void reset();
     uint8_t read(uint16_t addr) const;
+    [[nodiscard]] bool peekCodeByte(uint16_t addr, uint8_t& value) const noexcept;
     void write(uint16_t addr, uint8_t value);
 
     // ROM and RAM mapping
@@ -38,6 +39,7 @@ public:
     // Debug / introspection
     [[nodiscard]] uint8_t ioControlValue() const noexcept;
     [[nodiscard]] uint8_t memoryControlValue() const noexcept;
+    [[nodiscard]] uint64_t codeMappingGeneration() const noexcept;
     [[nodiscard]] std::vector<uint8_t> exportState() const;
     void importState(const std::vector<uint8_t>& state);
 
@@ -50,4 +52,5 @@ private:
     uint8_t ioControl_ = 0xFFu;
     std::array<uint8_t, 0x2000> ram{}; // 8KB RAM
     std::vector<uint8_t> bios_{};
+    uint64_t codeMappingGeneration_ = 1u;
 };

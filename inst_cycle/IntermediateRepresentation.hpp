@@ -312,6 +312,13 @@ namespace detail {
             }
 
             for (const auto& operand : operation.operands) {
+                if ((operand.kind == OperandKind::Value ||
+                     operand.kind == OperandKind::GuestRegister ||
+                     operand.kind == OperandKind::Helper) &&
+                    operand.payload > UINT32_MAX) {
+                    return detail::invalid("IR operand ID exceeds the host ABI width",
+                                           instructionIndex, operationIndex);
+                }
                 if (operand.kind != OperandKind::Value) continue;
                 const auto found = values.find(static_cast<ValueId>(operand.payload));
                 if (found == values.end() || found->second != operand.type) {
@@ -451,6 +458,10 @@ namespace detail {
             return detail::invalid("variable-cycle instruction requires a cycle selector", instructionIndex);
         }
 
+        if (instruction.length > UINT64_MAX - expectedAddress) {
+            return detail::invalid("IR guest instruction address overflows",
+                                   instructionIndex);
+        }
         expectedAddress += instruction.length;
     }
 

@@ -532,6 +532,8 @@ auto emitStep(DataType length, BMMQ::OpcodeCycles cycles, Step&& step)
 
 LR3592_DMG::LR3592_DMG()
 {
+    irService_ = std::make_unique<BMMQ::IR::IrExecutionService>(
+        *activeIrAdapter_, *activeIrBackend_);
     mem.file = buildRegisterfile();
 
     AF.registration(mem.file, "AF");
@@ -2630,7 +2632,16 @@ bool LR3592_DMG::executePortableIrInstruction(
         }
         result = native->execute(instructionIndex, abi);
     } else {
-        result = portableIrExecutor_.execute(instruction, abi);
+        if (!block.backendArtifact || !irService_) {
+            blockCache_.noteIrFallback();
+            return false;
+        }
+        if (!GB::IRExecution::executePreparedInstruction(
+                *irService_, irBlock, *block.backendArtifact,
+                instructionIndex, abi, &result)) {
+            blockCache_.noteIrGuardFailure();
+            return false;
+        }
     }
     if (!result.retirementReached) {
         throw std::logic_error("IR backend instruction did not reach its retirement boundary");
@@ -2839,16 +2850,38 @@ void LR3592_DMG::populateBlockCache(BMMQ::fetchBlock<AddressType, DataType>& fet
     if (portableIrEnabled_ || nativeIrEnabled_) {
         if (irBlockEligible(translated.instructions)) {
             auto loweringNanos = std::uint64_t{0};
+            std::vector<BMMQ::IR::SourceInstruction> copiedInstructions;
+            copiedInstructions.reserve(translated.instructions.size());
+            for (const auto& instruction : translated.instructions) {
+                copiedInstructions.push_back({
+                    .address = instruction.address,
+                    .bytes = {},
+                    .length = instruction.length,
+                });
+                std::copy(instruction.bytes.begin(),
+                          instruction.bytes.begin() + instruction.length,
+                          copiedInstructions.back().bytes.begin());
+            }
+            BMMQ::IR::LoweringRequest request{};
+            request.instructions = {copiedInstructions.data(), copiedInstructions.size()};
+            request.mappingGeneration = blockCache_.mappingGeneration();
+            request.executionState = irExecutionState();
+            const auto loweringStarted = detailedIrTimingEnabled_
+                ? std::chrono::steady_clock::now()
+                : std::chrono::steady_clock::time_point{};
+            std::string loweringError;
+            try {
+                auto& adapter = nativeIrEnabled_
+                    ? static_cast<BMMQ::IR::IIrCoreAdapter&>(irAdapter_)
+                    : *activeIrAdapter_;
+                translated.intermediateRepresentation = adapter.lower(request, &loweringError);
+            } catch (...) {
+                translated.intermediateRepresentation.reset();
+            }
             if (detailedIrTimingEnabled_) {
-                const auto loweringStarted = std::chrono::steady_clock::now();
-                translated.intermediateRepresentation = GB::IRExecution::lowerBlock(
-                    translated.instructions, blockCache_.mappingGeneration(), irExecutionState());
                 loweringNanos = static_cast<std::uint64_t>(
                     std::chrono::duration_cast<std::chrono::nanoseconds>(
                         std::chrono::steady_clock::now() - loweringStarted).count());
-            } else {
-                translated.intermediateRepresentation = GB::IRExecution::lowerBlock(
-                    translated.instructions, blockCache_.mappingGeneration(), irExecutionState());
             }
             const auto loweredInstructions = translated.intermediateRepresentation
                 ? translated.intermediateRepresentation->instructions.size()
@@ -2860,6 +2893,13 @@ void LR3592_DMG::populateBlockCache(BMMQ::fetchBlock<AddressType, DataType>& fet
                     *translated.intermediateRepresentation);
                 translated.backendArtifact = native;
                 if (!native) {
+                    blockCache_.noteIrFallback();
+                }
+            } else if (portableIrEnabled_ && translated.intermediateRepresentation && irService_) {
+                const auto prepared = irService_->prepare(
+                    translated.intermediateRepresentation, &loweringError);
+                translated.backendArtifact = prepared.artifact;
+                if (!prepared.prepared || !prepared.artifact) {
                     blockCache_.noteIrFallback();
                 }
             }
@@ -2944,6 +2984,35 @@ void LR3592_DMG::setNativeIrEnabled(bool enabled) noexcept
     nativeIrEnabled_ = enabled;
     if (enabled) portableIrEnabled_ = false;
     invalidateAllBlockCache();
+}
+
+void LR3592_DMG::setIrComponents(
+    std::unique_ptr<BMMQ::IR::IIrCoreAdapter> adapter,
+    std::unique_ptr<BMMQ::IR::IIrExecutionBackend> backend)
+{
+    auto* selectedAdapter = adapter
+        ? adapter.get()
+        : static_cast<BMMQ::IR::IIrCoreAdapter*>(&irAdapter_);
+    auto* selectedBackend = backend
+        ? backend.get()
+        : static_cast<BMMQ::IR::IIrExecutionBackend*>(&irBackend_);
+    if (nativeIrEnabled_ || selectedAdapter->architectureId() !=
+            GB::IRExecution::GameBoyCoreAdapter::kArchitectureId ||
+        selectedAdapter->irAbiVersion() != BMMQ::IR::kIrAbiVersion ||
+        !selectedBackend->supports(selectedAdapter->architectureId(),
+                                   selectedAdapter->irAbiVersion())) {
+        throw std::invalid_argument("incompatible Game Boy IR adapter/backend selection");
+    }
+
+    auto replacementService = std::make_unique<BMMQ::IR::IrExecutionService>(
+        *selectedAdapter, *selectedBackend);
+    resetPortableIrBlockSession();
+    invalidateAllBlockCache();
+    irService_ = std::move(replacementService);
+    dynamicIrAdapter_ = std::move(adapter);
+    dynamicIrBackend_ = std::move(backend);
+    activeIrAdapter_ = dynamicIrAdapter_ ? dynamicIrAdapter_.get() : &irAdapter_;
+    activeIrBackend_ = dynamicIrBackend_ ? dynamicIrBackend_.get() : &irBackend_;
 }
 
 void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, AddressType>& block, BMMQ::fetchBlock<AddressType, DataType>& fb)

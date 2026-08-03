@@ -3,10 +3,14 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
+#include <string>
 
 #include "../../inst_cycle/BlockTranslator.hpp"
+#include "../../inst_cycle/IntermediateRepresentation.hpp"
 #include "../../inst_cycle/IntermediateRepresentationInterpreter.hpp"
+#include "../../inst_cycle/IrExecutionService.hpp"
 
 namespace GB::IRExecution {
 
@@ -114,6 +118,37 @@ private:
     BMMQ::IR::Interpreter interpreter_{};
 };
 
+// Adapts the stable Game Boy execution ABI to the shared backend host without
+// exposing the CPU implementation or C++ object layout to a backend.
+[[nodiscard]] bool executePreparedInstruction(
+    const BMMQ::IR::IrExecutionService& service,
+    const BMMQ::IR::Block& block,
+    const BMMQ::BlockBackendArtifact& artifact,
+    std::size_t instructionIndex,
+    const ExecutionAbiV1& abi,
+    InstructionResult* result);
+
+class GameBoyCoreAdapter final : public BMMQ::IR::IIrCoreAdapter {
+public:
+    static constexpr std::uint32_t kArchitectureId = 0x47420001u;
+
+    [[nodiscard]] std::uint32_t architectureId() const noexcept override { return kArchitectureId; }
+    [[nodiscard]] std::uint32_t irAbiVersion() const noexcept override { return BMMQ::IR::kIrAbiVersion; }
+
+    [[nodiscard]] BMMQ::IR::BlockPtr lower(const BMMQ::IR::LoweringRequest& request,
+                                           std::string* error) override;
+    [[nodiscard]] BMMQ::IR::ValidationResult validateBlock(const BMMQ::IR::Block& block) const override;
+    [[nodiscard]] std::optional<std::string>
+    validateExecutionState(const BMMQ::IR::Block& block) const override;
+
+private:
+    [[nodiscard]] static bool registerIdIsValid(std::uint32_t id) noexcept;
+    [[nodiscard]] static bool helperIdIsValid(std::uint32_t id) noexcept;
+    [[nodiscard]] static bool memoryOpIsI8(const BMMQ::IR::Operation& operation) noexcept;
+};
+
+// Compatibility wrapper kept for existing production and test call sites. It
+// shares the adapter's lowering implementation so semantics cannot diverge.
 [[nodiscard]] BMMQ::IR::BlockPtr lowerBlock(
     std::span<const BMMQ::TranslatedInstruction<std::uint16_t, std::uint8_t>> instructions,
     std::uint64_t mappingGeneration,

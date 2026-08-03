@@ -369,11 +369,39 @@ int main()
         BMMQ::validateEmulatorConfig(config);
     }));
 
-    CHECK_TRUE(throwsInvalidArgumentContaining("unsupported by core 'gamegear'", [] {
+    {
         BMMQ::EmulatorConfig config;
         config.machineKind = std::string("gamegear");
         config.romPath = "game.gg";
         config.cpuMode = "ir";
+        BMMQ::validateEmulatorConfig(config);
+    }
+
+    CHECK_TRUE(throwsInvalidArgumentContaining("unsupported by core 'gamegear'", [] {
+        BMMQ::EmulatorConfig config;
+        config.machineKind = std::string("gamegear");
+        config.romPath = "game.gg";
+        config.cpuMode = "native";
+        BMMQ::validateEmulatorConfig(config);
+    }));
+
+    {
+        const auto arguments = parseArgs({
+            "timeEmulator", "--core", "gamegear", "--rom", "game.gg", "--cpu-mode", "ir",
+            "--ir-adapter-plugin", "adapter.so", "--ir-adapter-id", "test.adapter",
+            "--ir-backend-plugin", "backend.so", "--ir-backend-id", "test.backend"});
+        CHECK_TRUE(arguments.overrides.irAdapterPluginPath == "adapter.so");
+        CHECK_TRUE(arguments.overrides.irAdapterId == "test.adapter");
+        CHECK_TRUE(arguments.overrides.irBackendPluginPath == "backend.so");
+        CHECK_TRUE(arguments.overrides.irBackendId == "test.backend");
+    }
+
+    CHECK_TRUE(throwsInvalidArgumentContaining("must be specified together", [] {
+        BMMQ::EmulatorConfig config;
+        config.machineKind = std::string("gamegear");
+        config.romPath = "game.gg";
+        config.cpuMode = "ir";
+        config.irAdapterPluginPath = "adapter.so";
         BMMQ::validateEmulatorConfig(config);
     }));
 

@@ -5,6 +5,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdio>
+#include <memory>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -344,6 +345,8 @@ public:
   void setBlockCacheEnabled(bool enabled);
   void setPortableIrEnabled(bool enabled) noexcept;
   void setNativeIrEnabled(bool enabled) noexcept;
+  void setIrComponents(std::unique_ptr<BMMQ::IR::IIrCoreAdapter> adapter,
+                       std::unique_ptr<BMMQ::IR::IIrExecutionBackend> backend);
   void setDetailedIrTimingEnabled(bool enabled) noexcept { detailedIrTimingEnabled_ = enabled; }
   void beginPortableIrExecutionSlice() noexcept;
   [[nodiscard]] bool tryExecutePortableIrBlockInstruction();
@@ -364,7 +367,13 @@ private:
   bool portableIrEnabled_ = false;
   bool nativeIrEnabled_ = false;
   bool detailedIrTimingEnabled_ = false;
-  GB::IRExecution::PortableExecutor portableIrExecutor_{};
+  GB::IRExecution::GameBoyCoreAdapter irAdapter_{};
+  BMMQ::IR::PortableIrExecutionBackend irBackend_{};
+  std::unique_ptr<BMMQ::IR::IIrCoreAdapter> dynamicIrAdapter_{};
+  std::unique_ptr<BMMQ::IR::IIrExecutionBackend> dynamicIrBackend_{};
+  BMMQ::IR::IIrCoreAdapter* activeIrAdapter_ = &irAdapter_;
+  BMMQ::IR::IIrExecutionBackend* activeIrBackend_ = &irBackend_;
+  std::unique_ptr<BMMQ::IR::IrExecutionService> irService_{};
   std::optional<PortableIrBlockSession> portableIrBlockSession_{};
   bool portableIrExecutionSliceActive_ = false;
 

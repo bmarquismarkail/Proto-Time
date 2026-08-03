@@ -1103,6 +1103,16 @@ void GameBoyMachine::setRomSourcePath(const std::optional<std::filesystem::path>
     impl_->pendingRomSourcePath = path;
 }
 
+std::uint32_t GameBoyMachine::irArchitectureId() const noexcept {
+    return GB::IRExecution::GameBoyCoreAdapter::kArchitectureId;
+}
+
+void GameBoyMachine::setIrComponents(
+    std::unique_ptr<BMMQ::IR::IIrCoreAdapter> adapter,
+    std::unique_ptr<BMMQ::IR::IIrExecutionBackend> backend) {
+    impl_->cpu.cpu().setIrComponents(std::move(adapter), std::move(backend));
+}
+
 BMMQ::RuntimeContext& GameBoyMachine::runtimeContext() {
     return *impl_->context;
 }

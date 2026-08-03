@@ -1,9 +1,9 @@
 #include "GameBoyIrExecution.hpp"
 
 #include <algorithm>
-#include <array>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace GB::IRExecution {
@@ -304,16 +304,95 @@ InstructionResult PortableExecutor::execute(const BMMQ::IR::GuestInstruction& in
     };
 }
 
+bool executePreparedInstruction(const BMMQ::IR::IrExecutionService& service,
+                                const BMMQ::IR::Block& block,
+                                const BMMQ::BlockBackendArtifact& artifact,
+                                std::size_t instructionIndex,
+                                const ExecutionAbiV1& abi,
+                                InstructionResult* result)
+{
+    if (!valid(abi)) throw std::invalid_argument("invalid Game Boy portable IR ABI");
+    AbiHost host(abi);
+    BMMQ::IR::InterpreterResult executed{};
+    if (!service.tryExecute(block, artifact, instructionIndex, host, &executed)) {
+        return false;
+    }
+    if (result != nullptr) {
+        *result = {
+            .branchTaken = executed.branchTaken,
+            .exitRequested = executed.exitRequested,
+            .cycleCondition = executed.cycleCondition,
+            .retirementReached = executed.retirementReached,
+        };
+    }
+    return true;
+}
+
 BMMQ::IR::BlockPtr lowerBlock(
     std::span<const BMMQ::TranslatedInstruction<std::uint16_t, std::uint8_t>> instructions,
     std::uint64_t mappingGeneration,
     std::uint64_t executionState)
 {
-    if (instructions.empty()) return {};
-    BlockBuilder builder(instructions.front().address, mappingGeneration);
+    std::vector<BMMQ::IR::SourceInstruction> copied;
+    copied.reserve(instructions.size());
+    for (const auto& instruction : instructions) {
+        if (instruction.length < 1u || instruction.length > 3u ||
+            instruction.length > instruction.bytes.size()) {
+            return {};
+        }
+        copied.push_back({
+            .address = instruction.address,
+            .bytes = {},
+            .length = instruction.length,
+        });
+        std::copy(instruction.bytes.begin(),
+                  instruction.bytes.begin() + instruction.length,
+                  copied.back().bytes.begin());
+    }
+    GameBoyCoreAdapter adapter;
+    std::string error;
+    BMMQ::IR::LoweringRequest request{};
+    request.instructions = {copied.data(), copied.size()};
+    request.mappingGeneration = mappingGeneration;
+    request.executionState = executionState;
+    return adapter.lower(request, &error);
+}
+
+BMMQ::IR::BlockPtr GameBoyCoreAdapter::lower(
+    const BMMQ::IR::LoweringRequest& request,
+    std::string* error)
+{
+    if (error != nullptr) error->clear();
+    std::vector<BMMQ::TranslatedInstruction<std::uint16_t, std::uint8_t>> copied;
+    copied.reserve(request.instructions.size());
+    for (const auto& source : request.instructions) {
+        if (source.address > 0xFFFFu || source.length < 1u || source.length > 3u ||
+            source.length > source.bytes.size()) {
+            if (error != nullptr) {
+                *error = "Game Boy adapter received an invalid source instruction";
+            }
+            return {};
+        }
+        BMMQ::TranslatedInstruction<std::uint16_t, std::uint8_t> instruction{};
+        instruction.address = static_cast<std::uint16_t>(source.address);
+        instruction.length = source.length;
+        instruction.bytes.fill(0u);
+        std::copy(source.bytes.begin(),
+                  source.bytes.begin() + source.length,
+                  instruction.bytes.begin());
+        copied.push_back(instruction);
+    }
+
+    if (copied.empty()) {
+        if (error != nullptr) {
+            *error = "Game Boy adapter received no source instructions";
+        }
+        return {};
+    }
+    BlockBuilder builder(copied.front().address, request.mappingGeneration);
     builder.addGuard({
         .kind = BMMQ::IR::GuardKind::MappingGeneration,
-        .expected = mappingGeneration,
+        .expected = request.mappingGeneration,
     });
     builder.addGuard({
         .kind = BMMQ::IR::GuardKind::HelperAbi,
@@ -321,7 +400,7 @@ BMMQ::IR::BlockPtr lowerBlock(
     });
     builder.addGuard({
         .kind = BMMQ::IR::GuardKind::ExecutionState,
-        .expected = executionState,
+        .expected = request.executionState,
         .mask = Stop | Halt | DmaRestricted | InterruptPending |
                 HaltBugPending | PendingCycleCharge,
     });
@@ -329,7 +408,7 @@ BMMQ::IR::BlockPtr lowerBlock(
     std::vector<std::uint8_t> codeBytes;
     BMMQ::IR::BlockExit exit = BlockExit::Sequential;
     std::size_t lowered = 0u;
-    for (const auto& instruction : instructions) {
+    for (const auto& instruction : copied) {
         if (!lowerInstruction(builder, instruction)) {
             exit = BlockExit::Unsupported;
             break;
@@ -342,13 +421,90 @@ BMMQ::IR::BlockPtr lowerBlock(
             break;
         }
     }
-    if (lowered == 0u) return {};
+    if (lowered == 0u) {
+        if (error != nullptr) {
+            *error = "Game Boy adapter could not lower any instructions";
+        }
+        return {};
+    }
     builder.addGuard({
         .kind = BMMQ::IR::GuardKind::CodeBytes,
-        .subject = instructions.front().address,
+        .subject = copied.front().address,
         .bytes = std::move(codeBytes),
     });
     return builder.finish(exit);
+}
+
+BMMQ::IR::ValidationResult GameBoyCoreAdapter::validateBlock(const BMMQ::IR::Block& block) const
+{
+    const auto hostValidation = BMMQ::IR::validate(block);
+    if (!hostValidation) return hostValidation;
+
+    for (std::size_t instructionIndex = 0u;
+         instructionIndex < block.instructions.size(); ++instructionIndex) {
+        const auto& instruction = block.instructions[instructionIndex];
+        for (std::size_t operationIndex = 0u;
+             operationIndex < instruction.operations.size(); ++operationIndex) {
+            const auto& operation = instruction.operations[operationIndex];
+            for (std::size_t operandIndex = 0u;
+                 operandIndex < operation.operands.size(); ++operandIndex) {
+                const auto& operand = operation.operands[operandIndex];
+                if (operand.kind == BMMQ::IR::OperandKind::GuestRegister) {
+                    if (operand.payload > UINT32_MAX ||
+                        !registerIdIsValid(static_cast<std::uint32_t>(operand.payload))) {
+                        return BMMQ::IR::detail::invalid(
+                            "Game Boy IR block uses an invalid register ID",
+                            instructionIndex, operationIndex);
+                    }
+                }
+                if (operand.kind == BMMQ::IR::OperandKind::Helper) {
+                    if (operand.payload > UINT32_MAX ||
+                        !helperIdIsValid(static_cast<std::uint32_t>(operand.payload))) {
+                        return BMMQ::IR::detail::invalid(
+                            "Game Boy IR block uses an invalid helper ID",
+                            instructionIndex, operationIndex);
+                    }
+                }
+            }
+            if (operation.opcode == BMMQ::IR::Opcode::LoadMemory ||
+                operation.opcode == BMMQ::IR::Opcode::StoreMemory) {
+                if (!memoryOpIsI8(operation)) {
+                    return BMMQ::IR::detail::invalid(
+                        "Game Boy IR block only supports I8 memory operations",
+                        instructionIndex, operationIndex);
+                }
+            }
+        }
+    }
+    return {};
+}
+
+std::optional<std::string> GameBoyCoreAdapter::validateExecutionState(
+    const BMMQ::IR::Block&) const
+{
+    return std::nullopt;
+}
+
+bool GameBoyCoreAdapter::registerIdIsValid(std::uint32_t id) noexcept
+{
+    return id <= static_cast<std::uint32_t>(Register::PC);
+}
+
+bool GameBoyCoreAdapter::helperIdIsValid(std::uint32_t id) noexcept
+{
+    return id <= static_cast<std::uint32_t>(Helper::ExecuteAlu8);
+}
+
+bool GameBoyCoreAdapter::memoryOpIsI8(const BMMQ::IR::Operation& operation) noexcept
+{
+    if (operation.opcode == BMMQ::IR::Opcode::LoadMemory) {
+        return operation.resultType == BMMQ::IR::ValueType::I8;
+    }
+    if (operation.opcode == BMMQ::IR::Opcode::StoreMemory) {
+        if (operation.operands.empty()) return false;
+        return operation.operands.back().type == BMMQ::IR::ValueType::I8;
+    }
+    return true;
 }
 
 } // namespace GB::IRExecution
