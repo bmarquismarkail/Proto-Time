@@ -1,5 +1,6 @@
 #include <cassert>
 #include <cstdint>
+#include <stdexcept>
 #include <string_view>
 #include <vector>
 
@@ -7,6 +8,11 @@
 #include "inst_cycle/executor/PluginContract.hpp"
 
 namespace {
+
+void require(bool condition, const char* message)
+{
+    if (!condition) throw std::runtime_error(message);
+}
 
 std::vector<std::uint8_t> makeRom()
 {
@@ -52,9 +58,29 @@ void testDifferentialExecutionAndMetrics()
     assert(baseline.recentAudioSamples() == ir.recentAudioSamples());
     assert(baseline.audioFrameCounter() == ir.audioFrameCounter());
     const auto stats = ir.irStats();
-    assert(stats.translations > 0u);
-    assert(stats.executions == 512u);
-    assert(stats.executionNanos > 0u);
+    require(stats.dispatchAttempts == 512u, "IR dispatch-attempt count is ambiguous");
+    require(stats.translations > 0u, "IR did not translate the workload");
+    require(stats.executions == 512u, "IR did not execute every workload instruction");
+    require(stats.fallbacks == 0u, "supported workload unexpectedly fell back");
+    require(stats.cacheReuses > 0u, "IR cache reuse was not recorded");
+    require(stats.loweringNanos == 0u && stats.guardCheckNanos == 0u &&
+                stats.executionNanos == 0u,
+            "counter-only mode recorded intrusive timing");
+}
+
+void testDetailedTimingIsExplicitAndComplete()
+{
+    BMMQ::GameGearMachine machine;
+    BMMQ::Plugin::PortableIrStepPolicy policy;
+    machine.attachExecutorPolicy(policy);
+    machine.setDetailedIrTimingEnabled(true);
+    machine.loadRom(makeRom());
+    for (std::size_t instruction = 0u; instruction < 32u; ++instruction) machine.step();
+    const auto stats = machine.irStats();
+    require(machine.detailedIrTimingEnabled(), "detailed IR timing was not enabled");
+    require(stats.loweringNanos > 0u, "detailed mode did not time lowering");
+    require(stats.guardCheckNanos > 0u, "detailed mode did not time guards");
+    require(stats.executionNanos > 0u, "detailed mode did not time execution");
 }
 
 void testCodeChangeReplacesCachedIrBeforeExecution()
@@ -83,6 +109,7 @@ void testCodeChangeReplacesCachedIrBeforeExecution()
 int main()
 {
     testDifferentialExecutionAndMetrics();
+    testDetailedTimingIsExplicitAndComplete();
     testCodeChangeReplacesCachedIrBeforeExecution();
     return 0;
 }

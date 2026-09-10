@@ -133,6 +133,9 @@ public:
     [[nodiscard]] BMMQ::IR::BlockPtr lower(const BMMQ::IR::LoweringRequest& request,
                                            std::string* error) override;
     [[nodiscard]] BMMQ::IR::ValidationResult validateBlock(const BMMQ::IR::Block& block) const override;
+    [[nodiscard]] BMMQ::IR::ValidationResult validateLoweredBlock(
+        const BMMQ::IR::LoweringRequest& request,
+        const BMMQ::IR::Block& block) const override;
     [[nodiscard]] std::optional<std::string>
     validateExecutionState(const BMMQ::IR::Block& block) const override;
 

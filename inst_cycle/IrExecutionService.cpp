@@ -23,6 +23,77 @@ public:
 
 } // namespace
 
+ValidationResult validateRequiredGuardProfile(
+    const LoweringRequest& request,
+    const Block& block,
+    std::uint64_t helperAbiVersion,
+    std::uint64_t executionStateMask,
+    std::uint64_t maximumGuestAddress)
+{
+    if (request.instructions.empty() || block.instructions.empty() ||
+        block.instructions.size() > request.instructions.size()) {
+        return detail::invalid("IR block does not match the lowering request prefix");
+    }
+    if (block.mappingGeneration != request.mappingGeneration ||
+        block.guestStart != request.instructions.front().address) {
+        return detail::invalid("IR block metadata does not match the lowering request");
+    }
+
+    std::vector<std::uint8_t> expectedCodeBytes;
+    for (std::size_t index = 0u; index < block.instructions.size(); ++index) {
+        const auto& source = request.instructions[index];
+        const auto& lowered = block.instructions[index];
+        if (source.address > maximumGuestAddress || source.length == 0u ||
+            source.length - 1u > maximumGuestAddress - source.address ||
+            source.length > source.bytes.size() || lowered.address != source.address ||
+            lowered.length != source.length) {
+            return detail::invalid("IR instruction does not match copied source", index);
+        }
+        expectedCodeBytes.insert(expectedCodeBytes.end(), source.bytes.begin(),
+                                 source.bytes.begin() + source.length);
+    }
+
+    std::array<const Guard*, 4u> guards{};
+    for (const auto& guard : block.guards) {
+        const auto index = static_cast<std::size_t>(guard.kind);
+        if (index >= guards.size() || guards[index] != nullptr) {
+            return detail::invalid("IR block has a duplicate or unknown required guard");
+        }
+        guards[index] = &guard;
+    }
+    for (const auto* guard : guards) {
+        if (guard == nullptr) {
+            return detail::invalid("IR block is missing a required guard");
+        }
+    }
+
+    const auto scalarMatches = [](const Guard& guard,
+                                  std::uint64_t expected,
+                                  std::uint64_t mask) {
+        return guard.subject == 0u && guard.expected == expected &&
+               guard.mask == mask && guard.bytes.empty();
+    };
+    if (!scalarMatches(*guards[static_cast<std::size_t>(GuardKind::MappingGeneration)],
+                       request.mappingGeneration, ~std::uint64_t{0})) {
+        return detail::invalid("IR mapping-generation guard does not match the request");
+    }
+    if (!scalarMatches(*guards[static_cast<std::size_t>(GuardKind::HelperAbi)],
+                       helperAbiVersion, ~std::uint64_t{0})) {
+        return detail::invalid("IR helper-ABI guard does not match the host");
+    }
+    if (!scalarMatches(*guards[static_cast<std::size_t>(GuardKind::ExecutionState)],
+                       request.executionState, executionStateMask)) {
+        return detail::invalid("IR execution-state guard does not match the request");
+    }
+
+    const auto& code = *guards[static_cast<std::size_t>(GuardKind::CodeBytes)];
+    if (code.subject != request.instructions.front().address || code.expected != 0u ||
+        code.mask != ~std::uint64_t{0} || code.bytes != expectedCodeBytes) {
+        return detail::invalid("IR code-byte guard does not match copied source");
+    }
+    return {};
+}
+
 bool PortableIrExecutionBackend::supports(std::uint32_t architectureId,
                                           std::uint32_t irAbiVersion) const noexcept
 {
@@ -61,8 +132,9 @@ bool PortableIrExecutionBackend::execute(const BlockBackendArtifact& artifact,
 }
 
 IrExecutionService::IrExecutionService(IIrCoreAdapter& adapter,
-                                       IIrExecutionBackend& backend) noexcept
-    : adapter_(adapter), backend_(backend)
+                                       IIrExecutionBackend& backend,
+                                       IIrCoreAdapter& hostValidator) noexcept
+    : adapter_(adapter), backend_(backend), hostValidator_(hostValidator)
 {
 }
 
@@ -111,12 +183,19 @@ IrExecutionService::PrepareResult IrExecutionService::fallback(std::string messa
             .artifact = {}};
 }
 
-IrExecutionService::PrepareResult IrExecutionService::prepare(const BlockPtr& block,
-                                                              std::string* error) const
+IrExecutionService::PrepareResult IrExecutionService::prepare(
+    const LoweringRequest& request,
+    const BlockPtr& block,
+    std::string* error) const
 {
     if (!block) return fallback("IR adapter produced no block", error);
     if (adapter_.irAbiVersion() != kIrAbiVersion) {
         return fallback("IR adapter ABI version is incompatible with the host", error);
+    }
+    if (hostValidator_.architectureId() != adapter_.architectureId() ||
+        hostValidator_.irAbiVersion() != kIrAbiVersion) {
+        return fallback("IR host validator is incompatible with the selected adapter",
+                        error);
     }
     if (!backend_.supports(adapter_.architectureId(), adapter_.irAbiVersion())) {
         return fallback("IR backend does not support the selected adapter architecture and ABI",
@@ -129,12 +208,23 @@ IrExecutionService::PrepareResult IrExecutionService::prepare(const BlockPtr& bl
         const auto hostValidation = validate(*block);
         if (!hostValidation) return fallback(hostValidation.message, error);
 
-        const auto adapterValidation = adapter_.validateBlock(*block);
-        if (!adapterValidation) return fallback(adapterValidation.message, error);
+        const auto coreValidation = hostValidator_.validateLoweredBlock(request, *block);
+        if (!coreValidation) return fallback(coreValidation.message, error);
 
-        if (const auto stateIssue = adapter_.validateExecutionState(*block);
+        if (&adapter_ != &hostValidator_) {
+            const auto adapterValidation = adapter_.validateBlock(*block);
+            if (!adapterValidation) return fallback(adapterValidation.message, error);
+        }
+
+        if (const auto stateIssue = hostValidator_.validateExecutionState(*block);
             stateIssue.has_value()) {
             return fallback(*stateIssue, error);
+        }
+        if (&adapter_ != &hostValidator_) {
+            if (const auto stateIssue = adapter_.validateExecutionState(*block);
+                stateIssue.has_value()) {
+                return fallback(*stateIssue, error);
+            }
         }
 
         std::string compileError;
@@ -174,7 +264,11 @@ bool IrExecutionService::tryExecute(const Block& block,
     }
 
     try {
-        if (adapter_.validateExecutionState(*prepared->block).has_value()) return false;
+        if (hostValidator_.validateExecutionState(*prepared->block).has_value()) return false;
+        if (&adapter_ != &hostValidator_ &&
+            adapter_.validateExecutionState(*prepared->block).has_value()) {
+            return false;
+        }
     } catch (...) {
         return false;
     }

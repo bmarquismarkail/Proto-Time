@@ -1,8 +1,153 @@
 #include <cassert>
+#include <memory>
+#include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
 #include "cores/gamegear/GameGearIrExecution.hpp"
+
+namespace {
+
+struct CountingArtifact final : BMMQ::BlockBackendArtifact {};
+
+class SupplementalAdapter final : public BMMQ::IR::IIrCoreAdapter {
+public:
+    std::uint32_t architectureId() const noexcept override
+    {
+        return BMMQ::GameGearIR::kArchitectureId;
+    }
+    std::uint32_t irAbiVersion() const noexcept override
+    {
+        return BMMQ::IR::kIrAbiVersion;
+    }
+    BMMQ::IR::BlockPtr lower(const BMMQ::IR::LoweringRequest&,
+                             std::string*) override
+    {
+        return {};
+    }
+    BMMQ::IR::ValidationResult validateBlock(const BMMQ::IR::Block&) const override
+    {
+        return {};
+    }
+    std::optional<std::string> validateExecutionState(
+        const BMMQ::IR::Block&) const override
+    {
+        return {};
+    }
+};
+
+class CountingBackend final : public BMMQ::IR::IIrExecutionBackend {
+public:
+    bool supports(std::uint32_t architectureId,
+                  std::uint32_t abiVersion) const noexcept override
+    {
+        return architectureId == BMMQ::GameGearIR::kArchitectureId &&
+               abiVersion == BMMQ::IR::kIrAbiVersion;
+    }
+    BMMQ::BlockBackendArtifactPtr compile(const BMMQ::IR::BlockPtr&,
+                                          std::string*) override
+    {
+        ++compileCalls;
+        return std::make_shared<CountingArtifact>();
+    }
+    bool execute(const BMMQ::BlockBackendArtifact&,
+                 std::size_t,
+                 BMMQ::IR::InterpreterHost&,
+                 BMMQ::IR::InterpreterResult*) override
+    {
+        ++executeCalls;
+        return true;
+    }
+
+    std::size_t compileCalls = 0u;
+    std::size_t executeCalls = 0u;
+};
+
+BMMQ::IR::Guard& findGuard(BMMQ::IR::Block& block, BMMQ::IR::GuardKind kind)
+{
+    for (auto& guard : block.guards) {
+        if (guard.kind == kind) return guard;
+    }
+    assert(false && "required guard not found");
+    return block.guards.front();
+}
+
+void testHostGuardProfileRejectsBeforeDynamicCompile()
+{
+    BMMQ::GameGearIR::CoreAdapter hostValidator;
+    SupplementalAdapter selectedAdapter;
+    const std::vector<BMMQ::IR::SourceInstruction> source{
+        {.address = 0x1000u, .bytes = {0x06u, 0x7Fu, 0u, 0u}, .length = 2u},
+    };
+    const BMMQ::IR::LoweringRequest request{.instructions = source,
+                                             .mappingGeneration = 9u,
+                                             .executionState = 0u};
+    std::string error;
+    const auto valid = hostValidator.lower(request, &error);
+    assert(valid && error.empty());
+
+    const auto reject = [&](auto mutate) {
+        auto malformed = std::make_shared<BMMQ::IR::Block>(*valid);
+        mutate(*malformed);
+        CountingBackend backend;
+        BMMQ::IR::IrExecutionService service(
+            selectedAdapter, backend, hostValidator);
+        const auto prepared = service.prepare(request, malformed, &error);
+        assert(!prepared.prepared && prepared.fallback && !prepared.artifact);
+        assert(backend.compileCalls == 0u);
+        assert(backend.executeCalls == 0u);
+    };
+
+    for (const auto kind : {BMMQ::IR::GuardKind::MappingGeneration,
+                            BMMQ::IR::GuardKind::CodeBytes,
+                            BMMQ::IR::GuardKind::ExecutionState,
+                            BMMQ::IR::GuardKind::HelperAbi}) {
+        reject([&](BMMQ::IR::Block& block) {
+            std::erase_if(block.guards,
+                          [&](const auto& guard) { return guard.kind == kind; });
+        });
+    }
+    reject([](BMMQ::IR::Block& block) { block.guards.push_back(block.guards.front()); });
+    reject([](BMMQ::IR::Block& block) {
+        block.guards.front().kind = static_cast<BMMQ::IR::GuardKind>(0xFFu);
+    });
+    reject([](BMMQ::IR::Block& block) {
+        auto& guard = findGuard(block, BMMQ::IR::GuardKind::CodeBytes);
+        guard.subject = UINT64_MAX;
+        guard.bytes = {0x00u, 0x00u};
+    });
+    reject([](BMMQ::IR::Block& block) {
+        findGuard(block, BMMQ::IR::GuardKind::MappingGeneration).bytes = {0x00u};
+    });
+    reject([](BMMQ::IR::Block& block) {
+        ++findGuard(block, BMMQ::IR::GuardKind::MappingGeneration).expected;
+    });
+    reject([](BMMQ::IR::Block& block) {
+        ++findGuard(block, BMMQ::IR::GuardKind::HelperAbi).expected;
+    });
+    reject([](BMMQ::IR::Block& block) {
+        ++findGuard(block, BMMQ::IR::GuardKind::ExecutionState).expected;
+    });
+    reject([](BMMQ::IR::Block& block) {
+        findGuard(block, BMMQ::IR::GuardKind::ExecutionState).mask = 0u;
+    });
+    reject([](BMMQ::IR::Block& block) {
+        ++findGuard(block, BMMQ::IR::GuardKind::CodeBytes).subject;
+    });
+    reject([](BMMQ::IR::Block& block) {
+        findGuard(block, BMMQ::IR::GuardKind::CodeBytes).bytes.front() ^= 0xFFu;
+    });
+
+    CountingBackend backend;
+    BMMQ::IR::IrExecutionService service(hostValidator, backend, hostValidator);
+    error.clear();
+    const auto prepared = service.prepare(request, valid, &error);
+    assert(prepared.prepared && prepared.artifact && error.empty());
+    assert(backend.compileCalls == 1u && backend.executeCalls == 0u);
+}
+
+} // namespace
 
 int main()
 {
@@ -105,5 +250,6 @@ int main()
     assert(memoryMutated);
     assert(adapter.validateBlock(invalidMemoryType).message ==
            "Game Gear IR supports only I8 memory operations");
+    testHostGuardProfileRejectsBeforeDynamicCompile();
     return 0;
 }

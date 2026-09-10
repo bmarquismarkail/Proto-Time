@@ -245,6 +245,9 @@ add_test(NAME smoke-gamegear-ir-adapter COMMAND time-smoke-gamegear-ir-adapter)
 add_executable(time-smoke-gamegear-portable-ir tests/smoke_gamegear_portable_ir.cpp)
 target_link_libraries(time-smoke-gamegear-portable-ir time-gamegear-core)
 add_test(NAME smoke-gamegear-portable-ir COMMAND time-smoke-gamegear-portable-ir)
+add_executable(time-smoke-gamegear-ir-continuation tests/smoke_gamegear_ir_continuation.cpp)
+target_link_libraries(time-smoke-gamegear-ir-continuation time-gamegear-core)
+add_test(NAME smoke-gamegear-ir-continuation COMMAND time-smoke-gamegear-ir-continuation)
 add_executable(time-smoke-gamegear-cartridge
     tests/smoke_gamegear_cartridge.cpp
     cores/gamegear/GameGearCartridge.cpp
@@ -454,20 +457,39 @@ add_library(time-test-ir-backend-only-plugin MODULE tests/fixtures/test_ir_plugi
 target_include_directories(time-test-ir-backend-only-plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(time-test-ir-backend-only-plugin PRIVATE TEST_IR_BACKEND_ONLY=1)
 set_target_properties(time-test-ir-backend-only-plugin PROPERTIES PREFIX "")
+add_library(time-test-ir-missing-guard-plugin MODULE tests/fixtures/test_ir_plugin.c)
+target_include_directories(time-test-ir-missing-guard-plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(time-test-ir-missing-guard-plugin
+    PRIVATE TEST_IR_OMIT_HELPER_GUARD=1)
+set_target_properties(time-test-ir-missing-guard-plugin PROPERTIES PREFIX "")
+add_library(time-test-ir-wrong-arch-abi-plugin MODULE tests/fixtures/test_ir_wrong_arch_abi_plugin.c)
+target_include_directories(time-test-ir-wrong-arch-abi-plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(time-test-ir-wrong-arch-abi-plugin
+    PRIVATE TEST_IR_WRONG_ARCHITECTURE=0x5A8000FFu)
+set_target_properties(time-test-ir-wrong-arch-abi-plugin PROPERTIES PREFIX "")
+add_executable(time-smoke-emulator-ir-cli tests/smoke_emulator_ir_cli.cpp)
+target_link_libraries(time-smoke-emulator-ir-cli time-machine-runtime-common)
+add_test(NAME smoke-emulator-ir-cli COMMAND time-smoke-emulator-ir-cli
+    $<TARGET_FILE:timeEmulator>
+    $<TARGET_FILE:time-test-c-ir-plugin>
+    $<TARGET_FILE:time-test-malformed-ir-plugin>
+    $<TARGET_FILE:time-test-incompatible-ir-plugin>
+    $<TARGET_FILE:time-test-ir-wrong-arch-abi-plugin>)
 add_executable(time-smoke-dynamic-ir-module tests/smoke_dynamic_ir_module.cpp)
 target_link_libraries(time-smoke-dynamic-ir-module
     time-dynamic-plugin-loader time-machine-runtime-common time-gamegear-core)
 add_dependencies(time-smoke-dynamic-ir-module
     time-test-c-ir-plugin time-test-malformed-ir-plugin
     time-test-incompatible-ir-plugin time-test-ir-adapter-only-plugin
-    time-test-ir-backend-only-plugin)
+    time-test-ir-backend-only-plugin time-test-ir-missing-guard-plugin)
 add_test(NAME smoke-dynamic-ir-module
     COMMAND time-smoke-dynamic-ir-module
         $<TARGET_FILE:time-test-c-ir-plugin>
         $<TARGET_FILE:time-test-malformed-ir-plugin>
         $<TARGET_FILE:time-test-incompatible-ir-plugin>
         $<TARGET_FILE:time-test-ir-adapter-only-plugin>
-        $<TARGET_FILE:time-test-ir-backend-only-plugin>)
+        $<TARGET_FILE:time-test-ir-backend-only-plugin>
+        $<TARGET_FILE:time-test-ir-missing-guard-plugin>)
 add_library(time-test-c-frontend-plugin MODULE tests/fixtures/test_frontend_plugin.c)
 target_include_directories(time-test-c-frontend-plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 set_target_properties(time-test-c-frontend-plugin PROPERTIES PREFIX "")
@@ -737,6 +759,12 @@ target_link_libraries(time-smoke-gameboy-ir-opcode-differential
     time-gameboy-interpreter-core)
 add_test(NAME smoke-gameboy-ir-opcode-differential
     COMMAND time-smoke-gameboy-ir-opcode-differential)
+add_executable(time-smoke-gamegear-ir-opcode-differential
+    tests/smoke_gamegear_ir_opcode_differential.cpp)
+target_link_libraries(time-smoke-gamegear-ir-opcode-differential
+    time-gamegear-core)
+add_test(NAME smoke-gamegear-ir-opcode-differential
+    COMMAND time-smoke-gamegear-ir-opcode-differential)
 
 add_executable(time-smoke-gameboy-ir-boundary-corpus
     tests/smoke_gameboy_ir_boundary_corpus.cpp)
@@ -770,6 +798,14 @@ add_executable(time-perf-gameboy-block-cache tests/perf_gameboy_block_cache.cpp)
 target_link_libraries(time-perf-gameboy-block-cache time-gameboy-interpreter-core)
 add_test(NAME perf-gameboy-block-cache COMMAND time-perf-gameboy-block-cache)
 set_tests_properties(perf-gameboy-block-cache PROPERTIES
+    LABELS "performance;concurrency"
+    TIMEOUT 120
+)
+add_executable(time-perf-gamegear-ir-dispatch
+    tests/perf_gamegear_ir_dispatch.cpp)
+target_link_libraries(time-perf-gamegear-ir-dispatch time-gamegear-core)
+add_test(NAME perf-gamegear-ir-dispatch COMMAND time-perf-gamegear-ir-dispatch)
+set_tests_properties(perf-gamegear-ir-dispatch PROPERTIES
     LABELS "performance;concurrency"
     TIMEOUT 120
 )

@@ -108,6 +108,32 @@ void testBuilderRejectsMalformedConditionalCycles()
     assert(threw);
 }
 
+void testRejectsUniversallyMalformedGuards()
+{
+    const auto valid = makeConditionalBlock();
+
+    auto unknown = *valid;
+    unknown.guards.front().kind = static_cast<GuardKind>(0xFFu);
+    assert(validate(unknown).message == "IR guard has an unknown kind");
+
+    auto duplicate = *valid;
+    duplicate.guards.push_back(duplicate.guards.front());
+    assert(validate(duplicate).message == "IR block contains a duplicate guard");
+
+    auto nonCodeBytes = *valid;
+    nonCodeBytes.guards.front().bytes = {0x00u};
+    assert(validate(nonCodeBytes).message == "non-code IR guard carries code bytes");
+
+    auto overflowingCode = *valid;
+    overflowingCode.guards.front() = {
+        .kind = GuardKind::CodeBytes,
+        .subject = UINT64_MAX,
+        .bytes = {0x00u, 0x01u},
+    };
+    assert(validate(overflowingCode).message ==
+           "code-byte guard address range overflows");
+}
+
 void testPortableInterpreterUsesHostAbiAndReportsBranch()
 {
     struct Host final : InterpreterHost {
@@ -246,6 +272,7 @@ int main()
     testRejectsMissingRetirement();
     testRejectsCrossInstructionTemporary();
     testBuilderRejectsMalformedConditionalCycles();
+    testRejectsUniversallyMalformedGuards();
     testPortableInterpreterUsesHostAbiAndReportsBranch();
     testPortableSignedAndWideShiftSemantics();
     testExitTerminatesAtRetirementBoundary();

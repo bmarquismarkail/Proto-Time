@@ -258,7 +258,8 @@ public:
           activeIrAdapter_(&irAdapter_),
           activeIrBackend_(&irBackend_),
           irService_(std::make_unique<IR::IrExecutionService>(*activeIrAdapter_,
-                                                             *activeIrBackend_)),
+                                                             *activeIrBackend_,
+                                                             irAdapter_)),
           irHost_(cpu_, memoryMap_)
     {
     }
@@ -307,6 +308,7 @@ public:
     }
 
     void write8(AddressType address, DataType value) override {
+        clearIrSession();
         memoryMap_.write(address, value);
     }
 
@@ -365,8 +367,28 @@ public:
     const ITranslationCapability* translationCapability() const override { return this; }
     const IInvalidationCapability* invalidationCapability() const override { return this; }
 
-    void clearIrCache() noexcept { irCache_.clear(); }
+    void clearIrCache() noexcept {
+        clearIrSession();
+        irCache_.clear();
+    }
+    void clearIrSession() noexcept { irSession_.reset(); }
+
+    void beginExecutionSlice(const ExecutionBudget&) override {
+        clearIrSession();
+    }
+
+    void endExecutionSlice() noexcept override {
+        clearIrSession();
+    }
     [[nodiscard]] GameGearIrStats irStats() const noexcept { return irStats_; }
+    [[nodiscard]] bool detailedIrTimingEnabled() const noexcept
+    {
+        return detailedIrTimingEnabled_;
+    }
+    void setDetailedIrTimingEnabled(bool enabled) noexcept
+    {
+        detailedIrTimingEnabled_ = enabled;
+    }
     void setIrComponents(std::unique_ptr<IR::IIrCoreAdapter> adapter,
                          std::unique_ptr<IR::IIrExecutionBackend> backend)
     {
@@ -383,7 +405,7 @@ public:
             throw std::invalid_argument("incompatible Game Gear IR adapter/backend selection");
         }
         auto replacementService = std::make_unique<IR::IrExecutionService>(
-            *selectedAdapter, *selectedBackend);
+            *selectedAdapter, *selectedBackend, irAdapter_);
         clearIrCache();
         irService_ = std::move(replacementService);
         dynamicIrAdapter_ = std::move(adapter);
@@ -396,6 +418,13 @@ private:
     struct IrCacheEntry {
         std::uint64_t mappingGeneration = 0u;
         std::vector<std::uint8_t> codeBytes{};
+        IR::BlockPtr block{};
+        BlockBackendArtifactPtr artifact{};
+    };
+
+    struct IrSession {
+        std::uint64_t mappingGeneration = 0u;
+        std::size_t nextIndex = 0u;
         IR::BlockPtr block{};
         BlockBackendArtifactPtr artifact{};
     };
@@ -426,109 +455,352 @@ private:
 
     bool guardsMatch(const IrCacheEntry& entry) const noexcept
     {
-        if (entry.mappingGeneration != memoryMap_.codeMappingGeneration()) return false;
-        for (std::size_t index = 0u; index < entry.codeBytes.size(); ++index) {
-            std::uint8_t byte = 0u;
-            if (!memoryMap_.peekCodeByte(static_cast<std::uint16_t>(cpu_.PC + index), byte) ||
-                byte != entry.codeBytes[index]) {
+        if (!entry.block) return false;
+        return guardsMatch(*entry.block);
+    }
+
+    bool guardsMatch(const IR::Block& block) const noexcept
+    {
+        for (const auto& guard : block.guards) {
+            switch (guard.kind) {
+            case IR::GuardKind::MappingGeneration:
+                if (memoryMap_.codeMappingGeneration() != guard.expected) return false;
+                break;
+            case IR::GuardKind::HelperAbi:
+                if (GameGearIR::kHelperAbiVersion != guard.expected) return false;
+                break;
+            case IR::GuardKind::ExecutionState:
+                if ((executionState() & guard.mask) !=
+                    (guard.expected & guard.mask)) {
+                    return false;
+                }
+                break;
+            case IR::GuardKind::CodeBytes:
+                for (std::size_t index = 0u; index < guard.bytes.size(); ++index) {
+                    std::uint8_t byte = 0u;
+                    const auto address = static_cast<std::uint16_t>(guard.subject + index);
+                    if (!memoryMap_.peekCodeByte(address, byte) ||
+                        byte != guard.bytes[index]) {
+                        return false;
+                    }
+                }
+                break;
+            default:
                 return false;
             }
         }
-        return executionState() == 0u;
+        return true;
     }
 
     bool tryStepIr(CpuFeedback& feedback)
     {
+        ++irStats_.dispatchAttempts;
+        const auto fallback = [&](bool unsupported = false, bool guard = false) {
+            ++irStats_.fallbacks;
+            if (unsupported) ++irStats_.unsupportedFallbacks;
+            if (guard) ++irStats_.guardFailures;
+            return false;
+        };
+
         if (executionState() != 0u) {
-            ++irStats_.fallbacks;
-            return false;
+            clearIrSession();
+            return fallback();
+        }
+        if (irSession_.has_value() && !continuationIsValid()) {
+            clearIrSession();
         }
 
-        std::uint8_t opcode = 0u;
-        if (!memoryMap_.peekCodeByte(cpu_.PC, opcode)) {
-            ++irStats_.fallbacks;
-            return false;
-        }
-        const auto length = irLength(opcode);
-        if (!length.has_value()) {
-            ++irStats_.fallbacks;
-            return false;
-        }
-
-        std::vector<std::uint8_t> bytes(*length);
-        for (std::size_t index = 0u; index < bytes.size(); ++index) {
-            if (!memoryMap_.peekCodeByte(static_cast<std::uint16_t>(cpu_.PC + index), bytes[index])) {
-                ++irStats_.fallbacks;
-                return false;
+        bool reusedArtifact = irSession_.has_value();
+        if (!irSession_.has_value()) {
+            const auto bounded = buildBoundedIrSpan();
+            if (bounded.error != IrBoundingError::None) {
+                return fallback(bounded.error == IrBoundingError::Unsupported);
             }
+            reusedArtifact = bounded.reusedArtifact;
+            irSession_.emplace(std::move(bounded.session));
+
+            const auto guardStarted = detailedIrTimingEnabled_
+                ? std::chrono::steady_clock::now()
+                : std::chrono::steady_clock::time_point{};
+            const auto guardsAccepted = guardsMatch(*irSession_->block);
+            ++irStats_.guardChecks;
+            if (detailedIrTimingEnabled_) {
+                const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - guardStarted).count();
+                irStats_.guardCheckNanos += static_cast<std::uint64_t>(
+                    std::max<std::int64_t>(1, elapsed));
+            }
+            if (!guardsAccepted) {
+                irCache_.erase(cpu_.PC);
+                clearIrSession();
+                return fallback(false, true);
+            }
+            if (bounded.translated) ++irStats_.translations;
         }
 
-        auto found = irCache_.find(cpu_.PC);
-        if (found == irCache_.end() || found->second.mappingGeneration !=
-                                           memoryMap_.codeMappingGeneration() ||
-            found->second.codeBytes != bytes) {
-            IR::SourceInstruction source{.address = cpu_.PC, .length = *length};
-            std::copy(bytes.begin(), bytes.end(), source.bytes.begin());
-            const std::array sourceBlock{source};
-            std::string error;
-            IR::BlockPtr block;
-            try {
-                block = activeIrAdapter_->lower({.instructions = sourceBlock,
-                                                 .mappingGeneration =
-                                                     memoryMap_.codeMappingGeneration(),
-                                                 .executionState = executionState()},
-                                                &error);
-            } catch (...) {
-                ++irStats_.fallbacks;
-                return false;
-            }
-            if (!block || block->instructions.size() != 1u ||
-                block->instructions.front().address != cpu_.PC ||
-                block->instructions.front().length != *length) {
-                ++irStats_.fallbacks;
-                return false;
-            }
-            const auto prepared = irService_->prepare(block, &error);
-            if (!prepared.prepared || !prepared.artifact) {
-                ++irStats_.fallbacks;
-                return false;
-            }
-            IrCacheEntry replacement{
-                .mappingGeneration = memoryMap_.codeMappingGeneration(),
-                .codeBytes = bytes,
-                .block = std::move(block),
-                .artifact = prepared.artifact,
-            };
-            found = irCache_.insert_or_assign(cpu_.PC, std::move(replacement)).first;
-            ++irStats_.translations;
-        }
-
-        if (!guardsMatch(found->second)) {
-            ++irStats_.guardFailures;
-            irCache_.erase(found);
-            return false;
-        }
-
+        const auto index = irSession_->nextIndex;
+        const auto executionStarted = detailedIrTimingEnabled_
+            ? std::chrono::steady_clock::now()
+            : std::chrono::steady_clock::time_point{};
         IR::InterpreterResult result;
-        const auto started = std::chrono::steady_clock::now();
-        if (!irService_->tryExecute(*found->second.block, *found->second.artifact,
-                                    0u, irHost_, &result)) {
-            ++irStats_.guardFailures;
-            return false;
+        if (!irService_->tryExecute(*irSession_->block, *irSession_->artifact,
+                                    index, irHost_, &result)) {
+            if (detailedIrTimingEnabled_) {
+                const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - executionStarted).count();
+                irStats_.executionNanos += static_cast<std::uint64_t>(
+                    std::max<std::int64_t>(1, elapsed));
+            }
+            clearIrSession();
+            return fallback(false, true);
         }
-        irStats_.executionNanos += static_cast<std::uint64_t>(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::steady_clock::now() - started).count());
+        if (detailedIrTimingEnabled_) {
+            const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - executionStarted).count();
+            irStats_.executionNanos += static_cast<std::uint64_t>(
+                std::max<std::int64_t>(1, elapsed));
+        }
         ++irStats_.executions;
+        if (reusedArtifact) ++irStats_.cacheReuses;
 
-        const auto& instruction = found->second.block->instructions.front();
+        const auto& instruction = irSession_->block->instructions[index];
         feedback.pcAfter = cpu_.PC;
         feedback.retiredCycles = result.cycleCondition ? instruction.cyclesTaken
                                                        : instruction.cyclesNotTaken;
         feedback.segmentBoundaryHint = false;
-        feedback.isControlFlow = instruction.controlFlow;
+        feedback.isControlFlow = false;
         feedback.executionPath = ExecutionPathHint::PortableIr;
+        ++irSession_->nextIndex;
+        if (instruction.controlFlow ||
+            irSession_->nextIndex >= irSession_->block->instructions.size()) {
+            clearIrSession();
+        }
         return true;
+    }
+
+    enum class IrBoundingError {
+        None,
+        Unsupported,
+        Ineligible,
+        Preparation,
+    };
+
+    struct BoundedIrSpan {
+        IrSession session{};
+        IrBoundingError error = IrBoundingError::None;
+        bool translated = false;
+        bool reusedArtifact = false;
+    };
+
+    BoundedIrSpan buildBoundedIrSpan()
+    {
+        BoundedIrSpan out;
+        std::vector<IR::SourceInstruction> instructions;
+        std::vector<std::uint8_t> spanBytes;
+        std::uint16_t address = cpu_.PC;
+        const auto mappingGeneration = memoryMap_.codeMappingGeneration();
+        const auto startPage = static_cast<std::uint16_t>(address >> 8u);
+        IrBoundingError emptyError = IrBoundingError::Ineligible;
+
+        while (instructions.size() < IR::IrExecutionService::Limits::kMaxInstructions &&
+               spanBytes.size() < IR::IrExecutionService::Limits::kMaxGuestBytes) {
+            std::uint8_t opcode = 0u;
+            if (!memoryMap_.peekCodeByte(address, opcode)) {
+                emptyError = IrBoundingError::Ineligible;
+                break;
+            }
+            if (isInterruptSensitiveOpcode(opcode)) {
+                emptyError = IrBoundingError::Unsupported;
+                break;
+            }
+            const auto length = irLength(opcode);
+            if (!length.has_value()) {
+                emptyError = IrBoundingError::Unsupported;
+                break;
+            }
+
+            const auto lastByte = static_cast<std::uint32_t>(address) + *length - 1u;
+            if (lastByte > UINT16_MAX || (lastByte >> 8u) != startPage) {
+                emptyError = IrBoundingError::Ineligible;
+                break;
+            }
+            if (spanBytes.size() + *length >
+                IR::IrExecutionService::Limits::kMaxGuestBytes) {
+                emptyError = IrBoundingError::Ineligible;
+                break;
+            }
+
+            IR::SourceInstruction source{.address = address, .length = *length};
+            bool copied = true;
+            for (std::size_t index = 0u; index < *length; ++index) {
+                std::uint8_t byte = 0u;
+                const auto byteAddress = static_cast<std::uint16_t>(address + index);
+                if (!memoryMap_.peekCodeByte(byteAddress, byte)) {
+                    copied = false;
+                    break;
+                }
+                source.bytes[index] = byte;
+            }
+            if (!copied) {
+                emptyError = IrBoundingError::Ineligible;
+                break;
+            }
+
+            instructions.push_back(source);
+            spanBytes.insert(spanBytes.end(), source.bytes.begin(),
+                             source.bytes.begin() + *length);
+
+            if (isControlFlowOpcode(opcode) || isPotentialMemoryStore(opcode)) break;
+
+            const auto next = static_cast<std::uint32_t>(address) + *length;
+            if (next > UINT16_MAX || (next >> 8u) != startPage) break;
+            address = static_cast<std::uint16_t>(next);
+        }
+
+        if (instructions.empty()) {
+            out.error = emptyError;
+            return out;
+        }
+        if (memoryMap_.codeMappingGeneration() != mappingGeneration) {
+            out.error = IrBoundingError::Ineligible;
+            return out;
+        }
+
+        const auto found = irCache_.find(cpu_.PC);
+        if (found != irCache_.end() && found->second.block && found->second.artifact &&
+            found->second.mappingGeneration == mappingGeneration &&
+            found->second.codeBytes.size() <= spanBytes.size() &&
+            std::equal(found->second.codeBytes.begin(), found->second.codeBytes.end(),
+                       spanBytes.begin())) {
+            out.session = IrSession{
+                .mappingGeneration = found->second.mappingGeneration,
+                .nextIndex = 0u,
+                .block = found->second.block,
+                .artifact = found->second.artifact,
+            };
+            out.reusedArtifact = true;
+            return out;
+        }
+
+        IR::LoweringRequest request{
+            .instructions = {instructions.data(), instructions.size()},
+            .mappingGeneration = mappingGeneration,
+            .executionState = executionState(),
+        };
+        const auto loweringStarted = detailedIrTimingEnabled_
+            ? std::chrono::steady_clock::now()
+            : std::chrono::steady_clock::time_point{};
+        const auto noteLoweringDuration = [&]() {
+            if (!detailedIrTimingEnabled_) return;
+            const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - loweringStarted).count();
+            irStats_.loweringNanos += static_cast<std::uint64_t>(
+                std::max<std::int64_t>(1, elapsed));
+        };
+        std::string error;
+        IR::BlockPtr block;
+        BlockBackendArtifactPtr artifact;
+        const auto tryPrepareRequest = [&]() {
+            block = activeIrAdapter_->lower(request, &error);
+            if (!block || block->instructions.empty() ||
+                block->instructions.size() > request.instructions.size() ||
+                block->guestStart != request.instructions.front().address) {
+                return false;
+            }
+            const auto prepared = irService_->prepare(request, block, &error);
+            if (!prepared.prepared || !prepared.artifact) return false;
+            artifact = prepared.artifact;
+            return true;
+        };
+        bool prepared = false;
+        try {
+            prepared = tryPrepareRequest();
+            // Dynamic adapters and backends written against the original
+            // one-instruction dispatch contract may validly decline a wider
+            // request. Preserve that ABI behavior without reducing the span
+            // used by the built-in portable path.
+            if (!prepared && instructions.size() > 1u) {
+                request.instructions = {instructions.data(), 1u};
+                block.reset();
+                artifact.reset();
+                prepared = tryPrepareRequest();
+            }
+        } catch (...) {
+            noteLoweringDuration();
+            out.error = IrBoundingError::Preparation;
+            return out;
+        }
+        if (!prepared) {
+            noteLoweringDuration();
+            out.error = IrBoundingError::Preparation;
+            return out;
+        }
+
+        const auto codeGuard = std::find_if(
+            block->guards.begin(), block->guards.end(), [](const auto& guard) {
+                return guard.kind == IR::GuardKind::CodeBytes;
+            });
+        if (codeGuard == block->guards.end()) {
+            noteLoweringDuration();
+            out.error = IrBoundingError::Preparation;
+            return out;
+        }
+
+        IrCacheEntry replacement{
+            .mappingGeneration = mappingGeneration,
+            .codeBytes = codeGuard->bytes,
+            .block = block,
+            .artifact = artifact,
+        };
+        const auto cached = irCache_.insert_or_assign(
+            cpu_.PC, std::move(replacement)).first;
+        out.session = IrSession{
+            .mappingGeneration = mappingGeneration,
+            .nextIndex = 0u,
+            .block = cached->second.block,
+            .artifact = cached->second.artifact,
+        };
+        out.translated = true;
+        noteLoweringDuration();
+        return out;
+    }
+
+    static bool isControlFlowOpcode(std::uint8_t opcode) noexcept
+    {
+        return opcode == 0x18u;
+    }
+
+    static bool isInterruptSensitiveOpcode(std::uint8_t opcode) noexcept
+    {
+        switch (opcode) {
+        case 0x10u: case 0x76u: case 0xF3u: case 0xFBu:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    static bool isPotentialMemoryStore(std::uint8_t opcode) noexcept
+    {
+        switch (opcode) {
+        case 0x34u: case 0x35u: case 0x36u:
+        case 0x70u: case 0x71u: case 0x72u: case 0x73u:
+        case 0x74u: case 0x75u: case 0x77u:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    bool continuationIsValid() const noexcept
+    {
+        if (!irSession_.has_value() || !irSession_->block || !irSession_->artifact) {
+            return false;
+        }
+        if (irSession_->nextIndex >= irSession_->block->instructions.size()) return false;
+        if (irSession_->mappingGeneration != memoryMap_.codeMappingGeneration()) return false;
+        if (executionState() != 0u) return false;
+        return cpu_.PC == irSession_->block->instructions[irSession_->nextIndex].address;
     }
 
     uint16_t& registerRef(std::string_view id) {
@@ -571,7 +843,9 @@ private:
     std::unique_ptr<IR::IrExecutionService> irService_;
     GameGearIrHost irHost_;
     std::unordered_map<std::uint16_t, IrCacheEntry> irCache_{};
+    std::optional<IrSession> irSession_{};
     GameGearIrStats irStats_{};
+    bool detailedIrTimingEnabled_ = false;
 };
 }
 
@@ -1079,6 +1353,19 @@ std::string GameGearMachine::stopSummary() const {
                 << " banks=[" << std::dec << static_cast<int>(banks[0]) << "," << static_cast<int>(banks[1]) << "," << static_cast<int>(banks[2]) << "]\n";
         }
     }
+    const auto ir = impl->context.irStats();
+    if (ir.dispatchAttempts != 0u) {
+        out << "IR attempts=" << ir.dispatchAttempts
+            << " translations=" << ir.translations
+            << " executions=" << ir.executions
+            << " guard_rejects=" << ir.guardFailures
+            << " unsupported_fallbacks=" << ir.unsupportedFallbacks
+            << " fallbacks=" << ir.fallbacks
+            << " cache_reuses=" << ir.cacheReuses
+            << " lowering_ns=" << ir.loweringNanos
+            << " guard_ns=" << ir.guardCheckNanos
+            << " execution_ns=" << ir.executionNanos << '\n';
+    }
     return out.str();
 }
 
@@ -1106,6 +1393,14 @@ bool GameGearMachine::cpuInterruptsEnabled() const {
 
 GameGearIrStats GameGearMachine::irStats() const noexcept {
     return impl->context.irStats();
+}
+
+bool GameGearMachine::detailedIrTimingEnabled() const noexcept {
+    return impl->context.detailedIrTimingEnabled();
+}
+
+void GameGearMachine::setDetailedIrTimingEnabled(bool enabled) noexcept {
+    impl->context.setDetailedIrTimingEnabled(enabled);
 }
 
 std::uint32_t GameGearMachine::irArchitectureId() const noexcept {
