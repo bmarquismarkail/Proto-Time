@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "cores/gamegear/GameGearMachine.hpp"
+#include "cores/gamegear/GameGearIrExecution.hpp"
 #include "inst_cycle/IrExecutionService.hpp"
 #include "inst_cycle/executor/ExecutorPolicyRegistry.hpp"
 #include "machine/plugins/DynamicPluginModule.hpp"
@@ -87,11 +88,31 @@ void exerciseMachineAttachment(const std::filesystem::path& adapterPluginPath,
     }
 }
 
+void exerciseMissingGuardFallback(const std::filesystem::path& pluginPath)
+{
+    auto module = BMMQ::Plugin::DynamicPluginModule::load(pluginPath);
+    BMMQ::GameGearMachine machine;
+    auto policy = portablePolicy();
+    machine.attachExecutorPolicy(*policy);
+    machine.setIrComponents(
+        module.createIrCoreAdapter("test.ir-adapter.gamegear-nop"), nullptr);
+    module = {};
+    machine.loadRom(std::vector<std::uint8_t>(0x8000u, 0u));
+    machine.step();
+
+    assert(machine.runtimeContext().getLastFeedback().executionPath ==
+           BMMQ::ExecutionPathHint::CanonicalFetchDecodeExecute);
+    const auto stats = machine.irStats();
+    assert(stats.fallbacks == 1u);
+    assert(stats.translations == 0u);
+    assert(stats.executions == 0u);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
 {
-    assert(argc == 6);
+    assert(argc == 7);
     assert(argv != nullptr);
     auto module = BMMQ::Plugin::DynamicPluginModule::load(std::filesystem::path(argv[1]));
     assert(module.irCoreAdapterIds() ==
@@ -107,13 +128,15 @@ int main(int argc, char** argv)
     const std::vector<BMMQ::IR::SourceInstruction> source{
         {.address = 0x100u, .bytes = {0x00u, 0u, 0u, 0u}, .length = 1u}};
     std::string error;
-    const auto block = adapter->lower({.instructions = source,
-                                       .mappingGeneration = 7u,
-                                       .executionState = 0u}, &error);
+    const BMMQ::IR::LoweringRequest request{.instructions = source,
+                                             .mappingGeneration = 7u,
+                                             .executionState = 0u};
+    const auto block = adapter->lower(request, &error);
     assert(block && error.empty());
     {
-        BMMQ::IR::IrExecutionService service(*adapter, *backend);
-        const auto prepared = service.prepare(block, &error);
+        BMMQ::GameGearIR::CoreAdapter hostValidator;
+        BMMQ::IR::IrExecutionService service(*adapter, *backend, hostValidator);
+        const auto prepared = service.prepare(request, block, &error);
         assert(prepared.prepared && prepared.artifact && error.empty());
         Host host;
         BMMQ::IR::InterpreterResult result;
@@ -126,6 +149,7 @@ int main(int argc, char** argv)
 
     exerciseMachineAttachment(std::filesystem::path(argv[4]),
                               std::filesystem::path(argv[5]));
+    exerciseMissingGuardFallback(std::filesystem::path(argv[6]));
 
     bool malformedRejected = false;
     try {

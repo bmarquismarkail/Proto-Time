@@ -68,6 +68,9 @@ public:
     [[nodiscard]] IR::BlockPtr lower(const IR::LoweringRequest& request,
                                      std::string* error) override;
     [[nodiscard]] IR::ValidationResult validateBlock(const IR::Block& block) const override;
+    [[nodiscard]] IR::ValidationResult validateLoweredBlock(
+        const IR::LoweringRequest& request,
+        const IR::Block& block) const override;
     [[nodiscard]] std::optional<std::string>
     validateExecutionState(const IR::Block& block) const override;
 

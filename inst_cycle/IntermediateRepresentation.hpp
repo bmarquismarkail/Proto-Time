@@ -468,12 +468,34 @@ namespace detail {
     if (block.guestEnd != expectedAddress - 1u) {
         return detail::invalid("IR block end does not match its final instruction");
     }
-    for (const auto& guard : block.guards) {
+    for (std::size_t guardIndex = 0u; guardIndex < block.guards.size(); ++guardIndex) {
+        const auto& guard = block.guards[guardIndex];
+        switch (guard.kind) {
+        case GuardKind::MappingGeneration:
+        case GuardKind::CodeBytes:
+        case GuardKind::ExecutionState:
+        case GuardKind::HelperAbi:
+            break;
+        default:
+            return detail::invalid("IR guard has an unknown kind");
+        }
         if (guard.kind == GuardKind::CodeBytes && guard.bytes.empty()) {
             return detail::invalid("code-byte guard has no expected bytes");
         }
         if (guard.kind != GuardKind::CodeBytes && !guard.bytes.empty()) {
             return detail::invalid("non-code IR guard carries code bytes");
+        }
+        if (guard.kind == GuardKind::CodeBytes &&
+            guard.bytes.size() - 1u > UINT64_MAX - guard.subject) {
+            return detail::invalid("code-byte guard address range overflows");
+        }
+        for (std::size_t priorIndex = 0u; priorIndex < guardIndex; ++priorIndex) {
+            const auto& prior = block.guards[priorIndex];
+            if (prior.kind == guard.kind && prior.subject == guard.subject &&
+                prior.expected == guard.expected && prior.mask == guard.mask &&
+                prior.bytes == guard.bytes) {
+                return detail::invalid("IR block contains a duplicate guard");
+            }
         }
     }
     return {};

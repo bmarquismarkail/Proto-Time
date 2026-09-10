@@ -16,10 +16,16 @@ namespace BMMQ {
 class BackgroundTaskService;
 
 struct GameGearIrStats {
+    std::uint64_t dispatchAttempts = 0u;
     std::uint64_t translations = 0u;
     std::uint64_t executions = 0u;
+    std::uint64_t guardChecks = 0u;
     std::uint64_t guardFailures = 0u;
+    std::uint64_t unsupportedFallbacks = 0u;
     std::uint64_t fallbacks = 0u;
+    std::uint64_t cacheReuses = 0u;
+    std::uint64_t loweringNanos = 0u;
+    std::uint64_t guardCheckNanos = 0u;
     std::uint64_t executionNanos = 0u;
 };
 
@@ -68,6 +74,8 @@ public:
     // Test helper: inspect whether CPU IME is currently set.
     bool cpuInterruptsEnabled() const;
     [[nodiscard]] GameGearIrStats irStats() const noexcept;
+    [[nodiscard]] bool detailedIrTimingEnabled() const noexcept;
+    void setDetailedIrTimingEnabled(bool enabled) noexcept;
     [[nodiscard]] std::uint32_t irArchitectureId() const noexcept override;
     void setIrComponents(std::unique_ptr<IR::IIrCoreAdapter> adapter,
                          std::unique_ptr<IR::IIrExecutionBackend> backend) override;

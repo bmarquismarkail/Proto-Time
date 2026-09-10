@@ -299,6 +299,7 @@ void writeDiagnosticsSample(std::ostream& output,
                             const BMMQ::TimingStats& timingStats,
                             const BMMQ::BackgroundTaskStats& backgroundStats,
                             const GameBoyMachine::BlockCacheStats* blockCacheStats,
+                            const BMMQ::GameGearIrStats* gameGearIrStats,
                             bool detailedIrTimingEnabled,
                             const std::optional<std::string>& stateFingerprint,
                             std::string_view executorPolicyId,
@@ -361,7 +362,7 @@ void writeDiagnosticsSample(std::ostream& output,
     output << "\"supported\":" << (blockCacheStats != nullptr ? "true" : "false");
     output << ",\"mode\":\"" << BMMQ::executionBackendName(executionBackend) << "\"";
     output << ",\"detailed_timing_enabled\":"
-           << (detailedIrTimingEnabled ? "true" : "false");
+           << (detailedIrTimingEnabled && blockCacheStats != nullptr ? "true" : "false");
     if (blockCacheStats != nullptr) {
         output << ",\"hits\":" << blockCacheStats->hits.load();
         output << ",\"misses\":" << blockCacheStats->misses.load();
@@ -410,6 +411,26 @@ void writeDiagnosticsSample(std::ostream& output,
                << blockCacheStats->irBlockContinuations.load();
         output << ",\"ir_block_continuation_rejects\":"
                << blockCacheStats->irBlockContinuationRejects.load();
+    }
+    output << "}";
+
+    output << ",\"gamegear_ir\":{";
+    output << "\"supported\":" << (gameGearIrStats != nullptr ? "true" : "false");
+    output << ",\"mode\":\"" << BMMQ::executionBackendName(executionBackend) << "\"";
+    output << ",\"detailed_timing_enabled\":"
+           << (detailedIrTimingEnabled && gameGearIrStats != nullptr ? "true" : "false");
+    if (gameGearIrStats != nullptr) {
+        output << ",\"dispatch_attempts\":" << gameGearIrStats->dispatchAttempts;
+        output << ",\"translations\":" << gameGearIrStats->translations;
+        output << ",\"executions\":" << gameGearIrStats->executions;
+        output << ",\"guard_checks\":" << gameGearIrStats->guardChecks;
+        output << ",\"guard_rejections\":" << gameGearIrStats->guardFailures;
+        output << ",\"unsupported_fallbacks\":" << gameGearIrStats->unsupportedFallbacks;
+        output << ",\"fallbacks\":" << gameGearIrStats->fallbacks;
+        output << ",\"cache_reuses\":" << gameGearIrStats->cacheReuses;
+        output << ",\"lowering_ns\":" << gameGearIrStats->loweringNanos;
+        output << ",\"guard_check_ns\":" << gameGearIrStats->guardCheckNanos;
+        output << ",\"execution_ns\":" << gameGearIrStats->executionNanos;
     }
     output << "}";
 
@@ -837,11 +858,17 @@ int main(int argc, char** argv)
         }
         const auto& activeExecutorPolicy = machine.attachedExecutorPolicy();
         if (options.cpuDetailedTiming) {
-            auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get());
-            if (gameBoyMachine == nullptr) {
-                throw std::runtime_error("detailed IR timing requires the Game Boy core");
+            if (auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get());
+                gameBoyMachine != nullptr) {
+                gameBoyMachine->setDetailedIrTimingEnabled(true);
+            } else if (auto* gameGearMachine =
+                           dynamic_cast<BMMQ::GameGearMachine*>(bootstrapped.machine.get());
+                       gameGearMachine != nullptr) {
+                gameGearMachine->setDetailedIrTimingEnabled(true);
+            } else {
+                throw std::runtime_error(
+                    "detailed IR timing requires the Game Boy or Game Gear core");
             }
-            gameBoyMachine->setDetailedIrTimingEnabled(options.cpuDetailedTiming);
         }
         machine.videoService().setBackgroundTaskService(&backgroundTaskService);
         machine.visualOverrideService().setBackgroundTaskService(&backgroundTaskService);
@@ -1195,16 +1222,24 @@ int main(int argc, char** argv)
                                          machine.audioService(), audioOutput.get());
             }
             std::optional<GameBoyMachine::BlockCacheStats> blockCacheStats;
+            std::optional<BMMQ::GameGearIrStats> gameGearIrStats;
             std::optional<std::string> stateFingerprint;
+            bool detailedIrTimingEnabled = false;
             if (auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(&machine);
                 gameBoyMachine != nullptr) {
                 blockCacheStats = gameBoyMachine->blockCacheStats();
+                detailedIrTimingEnabled = gameBoyMachine->detailedIrTimingEnabled();
                 // Full guest state hashing is intentionally a terminal-sample
                 // operation so periodic observability does not perturb hot-path
                 // performance measurements.
                 if (force) {
                     stateFingerprint = gameBoyMachine->deterministicStateFingerprint();
                 }
+            } else if (auto* gameGearMachine =
+                           dynamic_cast<BMMQ::GameGearMachine*>(&machine);
+                       gameGearMachine != nullptr) {
+                gameGearIrStats = gameGearMachine->irStats();
+                detailedIrTimingEnabled = gameGearMachine->detailedIrTimingEnabled();
             }
 
             writeDiagnosticsSample(diagnosticsReport,
@@ -1217,7 +1252,8 @@ int main(int argc, char** argv)
                                    timingStats,
                                    backgroundTaskService.stats(),
                                    blockCacheStats.has_value() ? &*blockCacheStats : nullptr,
-                                   options.cpuDetailedTiming,
+                                   gameGearIrStats.has_value() ? &*gameGearIrStats : nullptr,
+                                   detailedIrTimingEnabled,
                                    stateFingerprint,
                                    activeExecutorPolicy.metadata().id,
                                    activeExecutorPolicy.backend());

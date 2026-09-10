@@ -533,7 +533,7 @@ auto emitStep(DataType length, BMMQ::OpcodeCycles cycles, Step&& step)
 LR3592_DMG::LR3592_DMG()
 {
     irService_ = std::make_unique<BMMQ::IR::IrExecutionService>(
-        *activeIrAdapter_, *activeIrBackend_);
+        *activeIrAdapter_, *activeIrBackend_, irAdapter_);
     mem.file = buildRegisterfile();
 
     AF.registration(mem.file, "AF");
@@ -2912,7 +2912,7 @@ void LR3592_DMG::populateBlockCache(BMMQ::fetchBlock<AddressType, DataType>& fet
             } else if (portableIrEnabled_ && translated.intermediateRepresentation && irService_) {
                 std::string preparationError;
                 const auto prepared = irService_->prepare(
-                    translated.intermediateRepresentation, &preparationError);
+                    request, translated.intermediateRepresentation, &preparationError);
                 translated.backendArtifact = prepared.artifact;
                 if (!prepared.prepared || !prepared.artifact) {
                     translated.irFallbackReason = preparationError.empty()
@@ -3032,7 +3032,7 @@ void LR3592_DMG::setIrComponents(
     }
 
     auto replacementService = std::make_unique<BMMQ::IR::IrExecutionService>(
-        *selectedAdapter, *selectedBackend);
+        *selectedAdapter, *selectedBackend, irAdapter_);
     resetPortableIrBlockSession();
     invalidateAllBlockCache();
     irService_ = std::move(replacementService);
