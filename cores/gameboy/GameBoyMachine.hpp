@@ -24,6 +24,7 @@
 #include <string>
 #include <vector>
 #include <atomic>
+#include <unordered_map>
 
 #include "../../machine/Machine.hpp"
 #include "../../machine/RuntimeContext.hpp"
@@ -38,6 +39,7 @@
 #include "GameBoyMapper.hpp"
 #include "cartridge/GameBoyCartridge.hpp"
 #include "cartridge/CartridgeSaveManager.hpp"
+#include "../../machine/modding/NativeMod.hpp"
 
 namespace GB {
 
@@ -115,6 +117,13 @@ public:
     BMMQ::ExecutionSliceResult runSlice(
         const BMMQ::ExecutionBudget& budget,
         BMMQ::InstructionRetirementSink* observer = nullptr) override;
+    // Installs a host trampoline over a RET in fixed ROM0 ($0150..$3fff).
+    // CALL supplies the guest stack; HL is the argument and 16-bit result.
+    // Active hooks use baseline execution; the actual RET retires normally.
+    bool installNativeTrampoline(std::uint16_t address,
+                                 std::unique_ptr<BMMQ::Modding::NativeMod> module,
+                                 std::uint32_t hookId);
+    void clearNativeTrampolines() noexcept;
     void step() override;
     void serviceInput() override;
 
@@ -292,6 +301,11 @@ private:
         BMMQ::Plugin::DefaultStepPolicy defaultPolicy;
         std::unique_ptr<BMMQ::Plugin::IExecutorPolicyPlugin> ownedPolicy;
         BMMQ::Plugin::IExecutorPolicyPlugin* activePolicy = &defaultPolicy;
+        struct NativeTrampoline {
+            std::unique_ptr<BMMQ::Modding::NativeMod> module;
+            std::uint32_t hookId = 0;
+        };
+        std::unordered_map<std::uint16_t, NativeTrampoline> nativeTrampolines;
     };
 
     std::unique_ptr<Impl> impl_;

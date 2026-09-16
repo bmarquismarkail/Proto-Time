@@ -50,6 +50,8 @@
 #include "machine/plugins/audio/AlsaMidiSink.hpp"
 #endif
 #include "machine/TimingService.hpp"
+#include "machine/modding/ModDirectoryLoader.hpp"
+#include "machine/modding/NativeMod.hpp"
 #include "cores/gameboy/GameBoyMachine.hpp"
 using GameBoyMachine = GB::GameBoyMachine;
 #include "cores/gamegear/GameGearMachine.hpp"
@@ -71,6 +73,7 @@ void printUsage(std::string_view program)
               << "  --core <name>      Machine core to run: gameboy or gamegear\n"
               << "  --config <path>    Optional INI-style emulator configuration file\n"
               << "  --rom <path>       Cartridge ROM to load\n"
+              << "  --mod <directory>  Load and activate a native mod package (repeatable)\n"
               << "  --boot-rom <path>  Optional external boot ROM for supported cores\n"
               << "  --frontend-plugin <path>\n"
               << "                     Load a frontend from a pure-C ABI module (--plugin is an alias)\n"
@@ -794,6 +797,27 @@ int main(int argc, char** argv)
         auto& machine = *bootstrapped.machine;
         const auto& descriptor = bootstrapped.descriptor;
         const auto romSize = bootstrapped.romSize;
+        std::vector<BMMQ::Modding::LoadedMod> pendingNativeMods;
+        if (!options.modPaths.empty()) {
+            auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get());
+            if (gameBoyMachine == nullptr) {
+                throw std::invalid_argument("--mod is currently supported only by the Game Boy core");
+            }
+            std::ifstream input(options.romPath, std::ios::binary);
+            const std::vector<std::uint8_t> originalRom{
+                std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+            const auto loaded = BMMQ::Modding::loadModDirectories(options.modPaths, originalRom, "gameboy");
+            if (!loaded.prepared) throw std::runtime_error("Unable to load mod: " + loaded.error);
+            auto prepared = *loaded.prepared;
+            gameBoyMachine->loadRom(prepared.rom);
+            gameBoyMachine->modHost() = std::move(prepared.host);
+            for (const auto& mod : prepared.mods) {
+                if (mod.id != "pokered.title-species")
+                    throw std::invalid_argument("mod has no CLI hook integration: " + mod.id);
+            }
+            pendingNativeMods = std::move(prepared.mods);
+            std::cout << "Mods: " << options.modPaths.size() << " loaded\n";
+        }
         std::optional<BMMQ::Plugin::DynamicPluginModule> executorModule;
         std::optional<BMMQ::Plugin::DynamicPluginModule> irAdapterModule;
         std::optional<BMMQ::Plugin::DynamicPluginModule> irBackendModule;
@@ -1333,6 +1357,27 @@ int main(int argc, char** argv)
 
         auto runEmulationLane = [&]() {
             try {
+                if (!pendingNativeMods.empty()) {
+                    auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(&machine);
+                    if (gameBoyMachine == nullptr)
+                        throw std::runtime_error("native mods require the Game Boy core");
+                    for (const auto& mod : pendingNativeMods) {
+                        for (const auto& [symbolName, hookId] : {
+                                 std::pair{"NativeSpeciesSelect", 1u},
+                                 std::pair{"NativeSpeciesRead", 2u}}) {
+                            const auto* symbol = gameBoyMachine->modHost().resolveSymbol(symbolName);
+                            if (symbol == nullptr || symbol->bank != 0)
+                                throw std::runtime_error(
+                                    "mod is missing fixed-bank hook: " + std::string(symbolName));
+                            auto native = BMMQ::Modding::NativeMod::load(
+                                mod, gameBoyMachine->modHost());
+                            if (!gameBoyMachine->installNativeTrampoline(
+                                    symbol->address, std::move(native), hookId))
+                                throw std::runtime_error(
+                                    "unable to install mod hook: " + std::string(symbolName));
+                        }
+                    }
+                }
                 class TimingRetirementSink final : public BMMQ::InstructionRetirementSink {
                 public:
                     TimingRetirementSink(BMMQ::TimingEngine& engine,

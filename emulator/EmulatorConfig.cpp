@@ -314,6 +314,9 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     if (overrides.romPath.has_value()) {
         config.romPath = *overrides.romPath;
     }
+    if (overrides.modPaths.has_value()) {
+        config.modPaths = *overrides.modPaths;
+    }
     if (overrides.bootRomPath.has_value()) {
         config.bootRomPath = *overrides.bootRomPath;
     }
@@ -536,6 +539,11 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
                 throw std::invalid_argument("--rom requires a path");
             }
             assignRomPath(arguments.overrides, argv[++i]);
+        } else if (arg == "--mod") {
+            if (i + 1 >= argc) throw std::invalid_argument("--mod requires a directory");
+            if (!arguments.overrides.modPaths.has_value())
+                arguments.overrides.modPaths = std::vector<std::filesystem::path>{};
+            arguments.overrides.modPaths->emplace_back(argv[++i]);
         } else if (arg == "--boot-rom") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--boot-rom requires a path");

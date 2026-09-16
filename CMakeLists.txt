@@ -20,6 +20,9 @@ if (PROTO_TIME_BUILD_GLFW_FRONTEND AND (TARGET glfw OR TARGET glfw3::glfw))
     find_package(OpenGL QUIET)
 endif()
 find_package(ZLIB REQUIRED)
+find_package(nlohmann_json 3.2 REQUIRED)
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+find_package(Python3 COMPONENTS Interpreter QUIET)
 if (PROTO_TIME_BUILD_ALSA_MIDI)
     find_package(ALSA QUIET)
 endif()
@@ -68,9 +71,16 @@ add_library(time-machine-runtime-common STATIC
     machine/ImageDecoder.cpp
     machine/DebugSnapshotService.cpp
     machine/SaveState.cpp
+    machine/modding/ModHost.cpp
+    machine/modding/PokeredSymbols.cpp
+    machine/modding/ModDirectoryLoader.cpp
+    machine/modding/PokemonSpeciesRegistry.cpp
 )
 set_target_properties(time-machine-runtime-common PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(time-machine-runtime-common PUBLIC ZLIB::ZLIB time-simd-pixel-ops)
+target_link_libraries(time-machine-runtime-common PRIVATE nlohmann_json::nlohmann_json OpenSSL::Crypto)
+add_library(time-native-mod-loader STATIC machine/modding/NativeMod.cpp)
+target_link_libraries(time-native-mod-loader PUBLIC time-machine-runtime-common ${CMAKE_DL_LIBS})
 
 add_library(time-gameboy-interpreter-core
 	cores/gameboy/decode/gb_decoder.cpp
@@ -87,6 +97,7 @@ add_library(time-gameboy-interpreter-core
     cores/gameboy/dma_controller.cpp
     cores/gameboy/vram_manager.cpp
 )
+target_link_libraries(time-gameboy-interpreter-core PUBLIC time-native-mod-loader)
 
 # Sega Game Gear core (WIP)
 add_library(time-gamegear-core STATIC
@@ -820,6 +831,70 @@ add_test(NAME smoke-apu-state-roundtrip COMMAND time-smoke-apu-state-roundtrip)
 add_executable(time-smoke-input-state-roundtrip tests/smoke_input_state_roundtrip.cpp)
 target_link_libraries(time-smoke-input-state-roundtrip time-gameboy-interpreter-core)
 add_test(NAME smoke-input-state-roundtrip COMMAND time-smoke-input-state-roundtrip)
+
+add_executable(time-smoke-modding tests/smoke_modding.cpp)
+target_link_libraries(time-smoke-modding time-machine-runtime-common)
+add_test(NAME smoke-modding COMMAND time-smoke-modding)
+add_executable(time-smoke-mod-directory tests/smoke_mod_directory.cpp)
+target_link_libraries(time-smoke-mod-directory time-machine-runtime-common)
+add_test(NAME smoke-mod-directory COMMAND time-smoke-mod-directory)
+add_library(time-test-native-mod MODULE tests/fixtures/test_native_mod.c)
+add_library(time-test-bad-native-mod MODULE tests/fixtures/test_native_mod.c)
+target_compile_definitions(time-test-bad-native-mod PRIVATE MOD_TEST_ABI=999)
+add_library(time-test-short-native-mod MODULE tests/fixtures/test_native_mod.c)
+target_compile_definitions(time-test-short-native-mod PRIVATE MOD_TEST_SIZE=8)
+add_library(time-test-null-native-mod MODULE tests/fixtures/test_native_mod.c)
+target_compile_definitions(time-test-null-native-mod PRIVATE MOD_TEST_MISSING_CALLBACK=1)
+add_library(time-test-failed-native-mod MODULE tests/fixtures/test_native_mod.c)
+target_compile_definitions(time-test-failed-native-mod PRIVATE MOD_TEST_CREATE_FAIL=1)
+add_executable(time-smoke-native-mod tests/smoke_native_mod.cpp)
+target_link_libraries(time-smoke-native-mod time-native-mod-loader)
+add_dependencies(time-smoke-native-mod time-test-native-mod time-test-bad-native-mod time-test-missing-plugin-entrypoint
+    time-test-short-native-mod time-test-null-native-mod time-test-failed-native-mod)
+add_test(NAME smoke-native-mod COMMAND time-smoke-native-mod
+    $<TARGET_FILE:time-test-native-mod> $<TARGET_FILE:time-test-bad-native-mod>
+    $<TARGET_FILE:time-test-missing-plugin-entrypoint> $<TARGET_FILE:time-test-short-native-mod>
+    $<TARGET_FILE:time-test-null-native-mod> $<TARGET_FILE:time-test-failed-native-mod>)
+add_executable(time-smoke-gameboy-native-trampoline tests/smoke_gameboy_native_trampoline.cpp)
+target_link_libraries(time-smoke-gameboy-native-trampoline time-gameboy-interpreter-core)
+add_dependencies(time-smoke-gameboy-native-trampoline time-test-native-mod)
+add_test(NAME smoke-gameboy-native-trampoline COMMAND time-smoke-gameboy-native-trampoline
+    $<TARGET_FILE:time-test-native-mod>)
+add_executable(time-smoke-pokemon-species-registry tests/smoke_pokemon_species_registry.cpp)
+target_link_libraries(time-smoke-pokemon-species-registry time-machine-runtime-common)
+add_test(NAME smoke-pokemon-species-registry COMMAND time-smoke-pokemon-species-registry)
+
+add_library(time-pokered-species-mod MODULE mods/pokered_species/species.c)
+target_include_directories(time-pokered-species-mod PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_executable(time-smoke-pokered-species-module tests/smoke_pokered_species_module.cpp)
+target_link_libraries(time-smoke-pokered-species-module time-native-mod-loader)
+add_dependencies(time-smoke-pokered-species-module time-pokered-species-mod)
+add_test(NAME smoke-pokered-species-module COMMAND time-smoke-pokered-species-module
+    $<TARGET_FILE:time-pokered-species-mod>)
+add_executable(time-smoke-pokered-species-patch tests/smoke_pokered_species_patch.cpp)
+target_link_libraries(time-smoke-pokered-species-patch time-gameboy-interpreter-core)
+# Optional copyrighted reference inputs are supplied locally, never downloaded or bundled.
+set(TIME_POKERED_TEST_ROM "" CACHE FILEPATH "Local reference Red ROM for species patch integration test")
+set(TIME_POKERED_TEST_MOD "${CMAKE_BINARY_DIR}/pokered-species-demo" CACHE PATH
+    "New directory for the generated pokered title-species mod package")
+if(TIME_POKERED_TEST_ROM AND Python3_Interpreter_FOUND)
+    add_custom_command(
+        OUTPUT "${TIME_POKERED_TEST_MOD}/manifest.json"
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/build_pokered_species_mod.py"
+            --rom "${TIME_POKERED_TEST_ROM}"
+            --module "$<TARGET_FILE:time-pokered-species-mod>"
+            --output "${TIME_POKERED_TEST_MOD}"
+        DEPENDS time-pokered-species-mod
+                "${CMAKE_CURRENT_SOURCE_DIR}/tools/build_pokered_species_mod.py"
+        VERBATIM)
+    add_custom_target(time-pokered-species-package
+        DEPENDS "${TIME_POKERED_TEST_MOD}/manifest.json")
+    add_dependencies(time-smoke-pokered-species-patch time-pokered-species-package)
+    add_test(NAME smoke-pokered-species-patch COMMAND time-smoke-pokered-species-patch
+        "${TIME_POKERED_TEST_ROM}" "${TIME_POKERED_TEST_MOD}")
+elseif(TIME_POKERED_TEST_ROM)
+    message(WARNING "TIME_POKERED_TEST_ROM is set but Python 3 was not found; real-ROM package test is disabled")
+endif()
 
 add_executable(time-smoke-dma-tests tests/dma_tests.cpp)
 target_link_libraries(time-smoke-dma-tests time-gameboy-interpreter-core)

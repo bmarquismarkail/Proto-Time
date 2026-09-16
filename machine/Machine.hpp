@@ -22,6 +22,7 @@
 #include "TimingService.hpp"
 #include "plugins/IoPlugin.hpp"
 #include "plugins/PluginManager.hpp"
+#include "modding/ModHost.hpp"
 
 namespace BMMQ::Plugin {
 class IExecutorPolicyPlugin;
@@ -77,6 +78,8 @@ public:
     virtual const RuntimeContext& runtimeContext() const = 0;
     virtual PluginManager& pluginManager() = 0;
     virtual const PluginManager& pluginManager() const = 0;
+    [[nodiscard]] Modding::ModHost& modHost() noexcept { return modHost_; }
+    [[nodiscard]] const Modding::ModHost& modHost() const noexcept { return modHost_; }
     virtual void save_state(const std::filesystem::path&) {
         throw std::runtime_error("save_state is not implemented for this machine");
     }
@@ -334,6 +337,7 @@ private:
     std::unique_ptr<VisualOverrideService> visualOverrideService_;
     std::unique_ptr<TimingService> timingService_;
     MachineLifecycleCoordinator lifecycleCoordinator_{};
+    Modding::ModHost modHost_{};
 };
 
 inline std::optional<uint32_t> queryDigitalInputMask(const Machine& machine) {
