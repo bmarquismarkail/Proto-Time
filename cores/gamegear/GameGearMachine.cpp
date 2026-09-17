@@ -746,6 +746,12 @@ private:
             return out;
         }
 
+        constexpr std::size_t kMaxIrCacheEntries = 1024u;
+        if (irCache_.find(cpu_.PC) == irCache_.end() &&
+            irCache_.size() >= kMaxIrCacheEntries) {
+            irCache_.clear();
+        }
+
         IrCacheEntry replacement{
             .mappingGeneration = mappingGeneration,
             .codeBytes = codeGuard->bytes,

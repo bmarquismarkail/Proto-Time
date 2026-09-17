@@ -1,4 +1,3 @@
-#include <cassert>
 #include <cstdint>
 #include <stdexcept>
 #include <string_view>
@@ -31,13 +30,15 @@ void assertCpuEquivalent(const BMMQ::GameGearMachine& baseline,
                          const BMMQ::GameGearMachine& ir)
 {
     for (const std::string_view id : {"AF", "BC", "DE", "HL", "IX", "IY", "SP", "PC"}) {
-        assert(baseline.readRegisterPair(id) == ir.readRegisterPair(id));
+        require(baseline.readRegisterPair(id) == ir.readRegisterPair(id),
+                "CPU register state diverged");
     }
     const auto& expected = baseline.runtimeContext().getLastFeedback();
     const auto& actual = ir.runtimeContext().getLastFeedback();
-    assert(expected.pcBefore == actual.pcBefore);
-    assert(expected.pcAfter == actual.pcAfter);
-    assert(expected.retiredCycles == actual.retiredCycles);
+    require(expected.pcBefore == actual.pcBefore, "feedback PC-before diverged");
+    require(expected.pcAfter == actual.pcAfter, "feedback PC-after diverged");
+    require(expected.retiredCycles == actual.retiredCycles,
+            "feedback retired cycles diverged");
 }
 
 void testDifferentialExecutionAndMetrics()
@@ -55,8 +56,10 @@ void testDifferentialExecutionAndMetrics()
         ir.step();
         assertCpuEquivalent(baseline, ir);
     }
-    assert(baseline.recentAudioSamples() == ir.recentAudioSamples());
-    assert(baseline.audioFrameCounter() == ir.audioFrameCounter());
+    require(baseline.recentAudioSamples() == ir.recentAudioSamples(),
+            "audio samples diverged");
+    require(baseline.audioFrameCounter() == ir.audioFrameCounter(),
+            "audio frame counter diverged");
     const auto stats = ir.irStats();
     require(stats.dispatchAttempts == 512u, "IR dispatch-attempt count is ambiguous");
     require(stats.translations > 0u, "IR did not translate the workload");
@@ -100,8 +103,10 @@ void testCodeChangeReplacesCachedIrBeforeExecution()
     machine.step();
     const auto newB = static_cast<std::uint8_t>(machine.readRegisterPair("BC") >> 8u);
     const auto after = machine.irStats();
-    assert(newB == static_cast<std::uint8_t>(oldB + 1u));
-    assert(after.translations == before.translations + 1u);
+    require(newB == static_cast<std::uint8_t>(oldB + 1u),
+            "self-modifying code did not execute the replacement");
+    require(after.translations == before.translations + 1u,
+            "self-modifying code did not invalidate cached IR");
 }
 
 } // namespace

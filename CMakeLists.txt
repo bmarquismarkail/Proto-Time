@@ -478,14 +478,16 @@ target_include_directories(time-test-ir-wrong-arch-abi-plugin PRIVATE ${CMAKE_CU
 target_compile_definitions(time-test-ir-wrong-arch-abi-plugin
     PRIVATE TEST_IR_WRONG_ARCHITECTURE=0x5A8000FFu)
 set_target_properties(time-test-ir-wrong-arch-abi-plugin PROPERTIES PREFIX "")
-add_executable(time-smoke-emulator-ir-cli tests/smoke_emulator_ir_cli.cpp)
-target_link_libraries(time-smoke-emulator-ir-cli time-machine-runtime-common)
-add_test(NAME smoke-emulator-ir-cli COMMAND time-smoke-emulator-ir-cli
-    $<TARGET_FILE:timeEmulator>
-    $<TARGET_FILE:time-test-c-ir-plugin>
-    $<TARGET_FILE:time-test-malformed-ir-plugin>
-    $<TARGET_FILE:time-test-incompatible-ir-plugin>
-    $<TARGET_FILE:time-test-ir-wrong-arch-abi-plugin>)
+if(UNIX)
+    add_executable(time-smoke-emulator-ir-cli tests/smoke_emulator_ir_cli.cpp)
+    target_link_libraries(time-smoke-emulator-ir-cli time-machine-runtime-common)
+    add_test(NAME smoke-emulator-ir-cli COMMAND time-smoke-emulator-ir-cli
+        $<TARGET_FILE:timeEmulator>
+        $<TARGET_FILE:time-test-c-ir-plugin>
+        $<TARGET_FILE:time-test-malformed-ir-plugin>
+        $<TARGET_FILE:time-test-incompatible-ir-plugin>
+        $<TARGET_FILE:time-test-ir-wrong-arch-abi-plugin>)
+endif()
 add_executable(time-smoke-dynamic-ir-module tests/smoke_dynamic_ir_module.cpp)
 target_link_libraries(time-smoke-dynamic-ir-module
     time-dynamic-plugin-loader time-machine-runtime-common time-gamegear-core)
