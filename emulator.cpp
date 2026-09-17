@@ -50,6 +50,8 @@
 #include "machine/plugins/audio/AlsaMidiSink.hpp"
 #endif
 #include "machine/TimingService.hpp"
+#include "machine/modding/ModDirectoryLoader.hpp"
+#include "machine/modding/NativeMod.hpp"
 #include "cores/gameboy/GameBoyMachine.hpp"
 using GameBoyMachine = GB::GameBoyMachine;
 #include "cores/gamegear/GameGearMachine.hpp"
@@ -71,6 +73,7 @@ void printUsage(std::string_view program)
               << "  --core <name>      Machine core to run: gameboy or gamegear\n"
               << "  --config <path>    Optional INI-style emulator configuration file\n"
               << "  --rom <path>       Cartridge ROM to load\n"
+              << "  --mod <directory>  Load and activate a native mod package (repeatable)\n"
               << "  --boot-rom <path>  Optional external boot ROM for supported cores\n"
               << "  --frontend-plugin <path>\n"
               << "                     Load a frontend from a pure-C ABI module (--plugin is an alias)\n"
@@ -299,6 +302,7 @@ void writeDiagnosticsSample(std::ostream& output,
                             const BMMQ::TimingStats& timingStats,
                             const BMMQ::BackgroundTaskStats& backgroundStats,
                             const GameBoyMachine::BlockCacheStats* blockCacheStats,
+                            const BMMQ::GameGearIrStats* gameGearIrStats,
                             bool detailedIrTimingEnabled,
                             const std::optional<std::string>& stateFingerprint,
                             std::string_view executorPolicyId,
@@ -361,7 +365,7 @@ void writeDiagnosticsSample(std::ostream& output,
     output << "\"supported\":" << (blockCacheStats != nullptr ? "true" : "false");
     output << ",\"mode\":\"" << BMMQ::executionBackendName(executionBackend) << "\"";
     output << ",\"detailed_timing_enabled\":"
-           << (detailedIrTimingEnabled ? "true" : "false");
+           << (detailedIrTimingEnabled && blockCacheStats != nullptr ? "true" : "false");
     if (blockCacheStats != nullptr) {
         output << ",\"hits\":" << blockCacheStats->hits.load();
         output << ",\"misses\":" << blockCacheStats->misses.load();
@@ -410,6 +414,26 @@ void writeDiagnosticsSample(std::ostream& output,
                << blockCacheStats->irBlockContinuations.load();
         output << ",\"ir_block_continuation_rejects\":"
                << blockCacheStats->irBlockContinuationRejects.load();
+    }
+    output << "}";
+
+    output << ",\"gamegear_ir\":{";
+    output << "\"supported\":" << (gameGearIrStats != nullptr ? "true" : "false");
+    output << ",\"mode\":\"" << BMMQ::executionBackendName(executionBackend) << "\"";
+    output << ",\"detailed_timing_enabled\":"
+           << (detailedIrTimingEnabled && gameGearIrStats != nullptr ? "true" : "false");
+    if (gameGearIrStats != nullptr) {
+        output << ",\"dispatch_attempts\":" << gameGearIrStats->dispatchAttempts;
+        output << ",\"translations\":" << gameGearIrStats->translations;
+        output << ",\"executions\":" << gameGearIrStats->executions;
+        output << ",\"guard_checks\":" << gameGearIrStats->guardChecks;
+        output << ",\"guard_rejections\":" << gameGearIrStats->guardFailures;
+        output << ",\"unsupported_fallbacks\":" << gameGearIrStats->unsupportedFallbacks;
+        output << ",\"fallbacks\":" << gameGearIrStats->fallbacks;
+        output << ",\"cache_reuses\":" << gameGearIrStats->cacheReuses;
+        output << ",\"lowering_ns\":" << gameGearIrStats->loweringNanos;
+        output << ",\"guard_check_ns\":" << gameGearIrStats->guardCheckNanos;
+        output << ",\"execution_ns\":" << gameGearIrStats->executionNanos;
     }
     output << "}";
 
@@ -773,6 +797,27 @@ int main(int argc, char** argv)
         auto& machine = *bootstrapped.machine;
         const auto& descriptor = bootstrapped.descriptor;
         const auto romSize = bootstrapped.romSize;
+        std::vector<BMMQ::Modding::LoadedMod> pendingNativeMods;
+        if (!options.modPaths.empty()) {
+            auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get());
+            if (gameBoyMachine == nullptr) {
+                throw std::invalid_argument("--mod is currently supported only by the Game Boy core");
+            }
+            std::ifstream input(options.romPath, std::ios::binary);
+            const std::vector<std::uint8_t> originalRom{
+                std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+            const auto loaded = BMMQ::Modding::loadModDirectories(options.modPaths, originalRom, "gameboy");
+            if (!loaded.prepared) throw std::runtime_error("Unable to load mod: " + loaded.error);
+            auto prepared = *loaded.prepared;
+            gameBoyMachine->loadRom(prepared.rom);
+            gameBoyMachine->modHost() = std::move(prepared.host);
+            for (const auto& mod : prepared.mods) {
+                if (mod.id != "pokered.title-species")
+                    throw std::invalid_argument("mod has no CLI hook integration: " + mod.id);
+            }
+            pendingNativeMods = std::move(prepared.mods);
+            std::cout << "Mods: " << options.modPaths.size() << " loaded\n";
+        }
         std::optional<BMMQ::Plugin::DynamicPluginModule> executorModule;
         std::optional<BMMQ::Plugin::DynamicPluginModule> irAdapterModule;
         std::optional<BMMQ::Plugin::DynamicPluginModule> irBackendModule;
@@ -837,11 +882,17 @@ int main(int argc, char** argv)
         }
         const auto& activeExecutorPolicy = machine.attachedExecutorPolicy();
         if (options.cpuDetailedTiming) {
-            auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get());
-            if (gameBoyMachine == nullptr) {
-                throw std::runtime_error("detailed IR timing requires the Game Boy core");
+            if (auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get());
+                gameBoyMachine != nullptr) {
+                gameBoyMachine->setDetailedIrTimingEnabled(true);
+            } else if (auto* gameGearMachine =
+                           dynamic_cast<BMMQ::GameGearMachine*>(bootstrapped.machine.get());
+                       gameGearMachine != nullptr) {
+                gameGearMachine->setDetailedIrTimingEnabled(true);
+            } else {
+                throw std::runtime_error(
+                    "detailed IR timing requires the Game Boy or Game Gear core");
             }
-            gameBoyMachine->setDetailedIrTimingEnabled(options.cpuDetailedTiming);
         }
         machine.videoService().setBackgroundTaskService(&backgroundTaskService);
         machine.visualOverrideService().setBackgroundTaskService(&backgroundTaskService);
@@ -1195,16 +1246,24 @@ int main(int argc, char** argv)
                                          machine.audioService(), audioOutput.get());
             }
             std::optional<GameBoyMachine::BlockCacheStats> blockCacheStats;
+            std::optional<BMMQ::GameGearIrStats> gameGearIrStats;
             std::optional<std::string> stateFingerprint;
+            bool detailedIrTimingEnabled = false;
             if (auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(&machine);
                 gameBoyMachine != nullptr) {
                 blockCacheStats = gameBoyMachine->blockCacheStats();
+                detailedIrTimingEnabled = gameBoyMachine->detailedIrTimingEnabled();
                 // Full guest state hashing is intentionally a terminal-sample
                 // operation so periodic observability does not perturb hot-path
                 // performance measurements.
                 if (force) {
                     stateFingerprint = gameBoyMachine->deterministicStateFingerprint();
                 }
+            } else if (auto* gameGearMachine =
+                           dynamic_cast<BMMQ::GameGearMachine*>(&machine);
+                       gameGearMachine != nullptr) {
+                gameGearIrStats = gameGearMachine->irStats();
+                detailedIrTimingEnabled = gameGearMachine->detailedIrTimingEnabled();
             }
 
             writeDiagnosticsSample(diagnosticsReport,
@@ -1217,7 +1276,8 @@ int main(int argc, char** argv)
                                    timingStats,
                                    backgroundTaskService.stats(),
                                    blockCacheStats.has_value() ? &*blockCacheStats : nullptr,
-                                   options.cpuDetailedTiming,
+                                   gameGearIrStats.has_value() ? &*gameGearIrStats : nullptr,
+                                   detailedIrTimingEnabled,
                                    stateFingerprint,
                                    activeExecutorPolicy.metadata().id,
                                    activeExecutorPolicy.backend());
@@ -1297,6 +1357,27 @@ int main(int argc, char** argv)
 
         auto runEmulationLane = [&]() {
             try {
+                if (!pendingNativeMods.empty()) {
+                    auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(&machine);
+                    if (gameBoyMachine == nullptr)
+                        throw std::runtime_error("native mods require the Game Boy core");
+                    for (const auto& mod : pendingNativeMods) {
+                        for (const auto& [symbolName, hookId] : {
+                                 std::pair{"NativeSpeciesSelect", 1u},
+                                 std::pair{"NativeSpeciesRead", 2u}}) {
+                            const auto* symbol = gameBoyMachine->modHost().resolveSymbol(symbolName);
+                            if (symbol == nullptr || symbol->bank != 0)
+                                throw std::runtime_error(
+                                    "mod is missing fixed-bank hook: " + std::string(symbolName));
+                            auto native = BMMQ::Modding::NativeMod::load(
+                                mod, gameBoyMachine->modHost());
+                            if (!gameBoyMachine->installNativeTrampoline(
+                                    symbol->address, std::move(native), hookId))
+                                throw std::runtime_error(
+                                    "unable to install mod hook: " + std::string(symbolName));
+                        }
+                    }
+                }
                 class TimingRetirementSink final : public BMMQ::InstructionRetirementSink {
                 public:
                     TimingRetirementSink(BMMQ::TimingEngine& engine,

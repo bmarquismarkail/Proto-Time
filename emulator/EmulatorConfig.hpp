@@ -17,6 +17,7 @@ struct AudioProcessorConfigSpec {
 struct EmulatorConfig {
     std::optional<std::string> machineKind;
     std::filesystem::path romPath;
+    std::vector<std::filesystem::path> modPaths;
     std::optional<std::filesystem::path> bootRomPath;
     std::optional<std::filesystem::path> pluginPath;
     std::optional<std::string> frontendId;
@@ -62,6 +63,7 @@ struct EmulatorConfig {
 struct CommandLineConfigOverrides {
     std::optional<std::string> machineKind;
     std::optional<std::filesystem::path> romPath;
+    std::optional<std::vector<std::filesystem::path>> modPaths;
     std::optional<std::filesystem::path> bootRomPath;
     std::optional<std::filesystem::path> pluginPath;
     std::optional<std::string> frontendId;

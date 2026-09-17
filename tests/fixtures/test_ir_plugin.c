@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "machine/plugins/abi/TimePluginAbi.h"
@@ -61,8 +62,28 @@ static int32_t lower_nop(void* opaque,
     if (builder->add_guard(builder->host_context, &guard) != TIME_IR_OK_V1) {
         return TIME_IR_ERROR_V1;
     }
+#if !defined(TEST_IR_OMIT_HELPER_GUARD)
+    guard.kind = TIME_IR_GUARD_HELPER_ABI_V1;
+    guard.subject = 0u;
+    guard.expected = 1u;
+    guard.mask = UINT64_MAX;
+    guard.byte_count = 0u;
+    guard.bytes = NULL;
+    if (builder->add_guard(builder->host_context, &guard) != TIME_IR_OK_V1) {
+        return TIME_IR_ERROR_V1;
+    }
+#endif
+    guard.kind = TIME_IR_GUARD_EXECUTION_STATE_V1;
+    guard.subject = 0u;
+    guard.expected = request->execution_state;
+    guard.mask = 0x7u;
+    if (builder->add_guard(builder->host_context, &guard) != TIME_IR_OK_V1) {
+        return TIME_IR_ERROR_V1;
+    }
     guard.kind = TIME_IR_GUARD_CODE_BYTES_V1;
     guard.subject = request->instructions[0].address;
+    guard.expected = 0u;
+    guard.mask = UINT64_MAX;
     guard.byte_count = 1u;
     guard.bytes = request->instructions[0].bytes;
     if (builder->add_guard(builder->host_context, &guard) != TIME_IR_OK_V1) {
@@ -111,6 +132,7 @@ static int32_t lower_nop(void* opaque,
         return TIME_IR_ERROR_V1;
     }
     instance->error = NULL;
+    fprintf(stderr, "fixture-ir: adapter-lowered\n");
     return TIME_IR_OK_V1;
 }
 
@@ -175,6 +197,7 @@ static int32_t execute_block(void* opaque, void* raw_artifact,
     result->exit_requested = 0u;
     result->cycle_condition = 0u;
     result->retirement_reached = 1u;
+    fprintf(stderr, "fixture-ir: backend-executed\n");
     return TIME_IR_OK_V1;
 }
 

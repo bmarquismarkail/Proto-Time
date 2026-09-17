@@ -255,6 +255,17 @@ IR::ValidationResult CoreAdapter::validateBlock(const IR::Block& block) const
     return {};
 }
 
+IR::ValidationResult CoreAdapter::validateLoweredBlock(
+    const IR::LoweringRequest& request,
+    const IR::Block& block) const
+{
+    const auto blockValidation = validateBlock(block);
+    if (!blockValidation) return blockValidation;
+    return IR::validateRequiredGuardProfile(
+        request, block, kHelperAbiVersion,
+        Halted | InterruptPending | DeferredInterruptEnable, 0xFFFFu);
+}
+
 std::optional<std::string> CoreAdapter::validateExecutionState(const IR::Block& block) const
 {
     if (opaque_ == nullptr || executionState_ == nullptr) return {};

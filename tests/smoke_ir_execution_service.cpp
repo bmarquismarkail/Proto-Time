@@ -1,3 +1,4 @@
+#include <array>
 #include <cassert>
 #include <cstdint>
 #include <optional>
@@ -104,20 +105,32 @@ BlockPtr makeBlock()
     return builder.finish(BlockExit::ControlFlow);
 }
 
+LoweringRequest makeRequest()
+{
+    static constexpr std::array source{
+        SourceInstruction{.address = 0x1000u,
+                          .bytes = {0x00u, 0u, 0u, 0u},
+                          .length = 1u},
+    };
+    return {.instructions = source,
+            .mappingGeneration = 0u,
+            .executionState = 0u};
+}
+
 void testCompatibilityAndValidationPrecedeCompile()
 {
     StubAdapter adapter;
     StubBackend backend;
-    IrExecutionService service(adapter, backend);
+    IrExecutionService service(adapter, backend, adapter);
 
     backend.supports_ = false;
-    auto result = service.prepare(makeBlock());
+    auto result = service.prepare(makeRequest(), makeBlock());
     assert(!result.prepared && result.fallback);
     assert(backend.compileCalls_ == 0u);
 
     backend.supports_ = true;
     adapter.rejectBlock_ = true;
-    result = service.prepare(makeBlock());
+    result = service.prepare(makeRequest(), makeBlock());
     assert(!result.prepared && result.fallback);
     assert(result.message == "adapter rejected block");
     assert(backend.compileCalls_ == 0u);
@@ -128,9 +141,9 @@ void testCompileDeclineFallsBackWithoutPreparedState()
     StubAdapter adapter;
     StubBackend backend;
     backend.declineCompile_ = true;
-    IrExecutionService service(adapter, backend);
+    IrExecutionService service(adapter, backend, adapter);
     std::string error;
-    const auto result = service.prepare(makeBlock(), &error);
+    const auto result = service.prepare(makeRequest(), makeBlock(), &error);
     assert(!result.prepared && result.fallback);
     assert(error == "backend declined block");
     assert(!result.artifact);
@@ -140,16 +153,16 @@ void testPreparationExceptionsAreFallbacks()
 {
     StubAdapter adapter;
     StubBackend backend;
-    IrExecutionService service(adapter, backend);
+    IrExecutionService service(adapter, backend, adapter);
 
     adapter.throwBlock_ = true;
-    auto result = service.prepare(makeBlock());
+    auto result = service.prepare(makeRequest(), makeBlock());
     assert(!result.prepared && result.fallback);
     assert(result.message == "IR preparation failed: adapter validation failed");
 
     adapter.throwBlock_ = false;
     backend.throwCompile_ = true;
-    result = service.prepare(makeBlock());
+    result = service.prepare(makeRequest(), makeBlock());
     assert(!result.prepared && result.fallback);
     assert(result.message == "IR preparation failed: backend compile failed");
 }
@@ -158,14 +171,14 @@ void testUntrustedNumericBoundsRejectBeforeCompile()
 {
     StubAdapter adapter;
     StubBackend backend;
-    IrExecutionService service(adapter, backend);
+    IrExecutionService service(adapter, backend, adapter);
 
     auto oversizedId = std::make_shared<Block>(*makeBlock());
     oversizedId->instructions.front().operations.front().operands.front().kind =
         OperandKind::GuestRegister;
     oversizedId->instructions.front().operations.front().operands.front().payload =
         std::uint64_t{UINT32_MAX} + 1u;
-    auto result = service.prepare(oversizedId);
+    auto result = service.prepare(makeRequest(), oversizedId);
     assert(!result.prepared && result.fallback);
     assert(backend.compileCalls_ == 0u);
 
@@ -174,7 +187,7 @@ void testUntrustedNumericBoundsRejectBeforeCompile()
         IrExecutionService::Limits::kMaxCyclesPerInstruction + 1u;
     oversizedCycles->instructions.front().cyclesTaken =
         oversizedCycles->instructions.front().cyclesNotTaken;
-    result = service.prepare(oversizedCycles);
+    result = service.prepare(makeRequest(), oversizedCycles);
     assert(!result.prepared && result.fallback);
     assert(backend.compileCalls_ == 0u);
 }
@@ -183,9 +196,9 @@ void testExecutionRetiresExactlyOneInstruction()
 {
     StubAdapter adapter;
     StubBackend backend;
-    IrExecutionService service(adapter, backend);
+    IrExecutionService service(adapter, backend, adapter);
     const auto block = makeBlock();
-    const auto prepared = service.prepare(block);
+    const auto prepared = service.prepare(makeRequest(), block);
     assert(prepared.prepared && prepared.artifact);
 
     MockHost host;
@@ -200,9 +213,9 @@ void testStateGuardRejectsBeforeBackendMutation()
 {
     StubAdapter adapter;
     StubBackend backend;
-    IrExecutionService service(adapter, backend);
+    IrExecutionService service(adapter, backend, adapter);
     const auto block = makeBlock();
-    const auto prepared = service.prepare(block);
+    const auto prepared = service.prepare(makeRequest(), block);
     assert(prepared.prepared && prepared.artifact);
     adapter.rejectState_ = true;
 
@@ -223,9 +236,9 @@ void testPostDispatchFailureIsFatal()
     StubAdapter adapter;
     StubBackend backend;
     backend.executeSucceeds_ = false;
-    IrExecutionService service(adapter, backend);
+    IrExecutionService service(adapter, backend, adapter);
     const auto block = makeBlock();
-    auto prepared = service.prepare(block);
+    auto prepared = service.prepare(makeRequest(), block);
     assert(prepared.prepared && prepared.artifact);
 
     MockHost host;
@@ -239,7 +252,7 @@ void testPostDispatchFailureIsFatal()
 
     backend.executeSucceeds_ = true;
     backend.throwExecute_ = true;
-    prepared = service.prepare(block);
+    prepared = service.prepare(makeRequest(), block);
     assert(prepared.prepared && prepared.artifact);
     threw = false;
     try {
@@ -252,7 +265,7 @@ void testPostDispatchFailureIsFatal()
 
     backend.throwExecute_ = false;
     backend.retire_ = false;
-    prepared = service.prepare(block);
+    prepared = service.prepare(makeRequest(), block);
     assert(prepared.prepared && prepared.artifact);
     threw = false;
     try {
@@ -267,9 +280,9 @@ void testBuiltInPortableBackendExecutesValidatedIr()
 {
     StubAdapter adapter;
     PortableIrExecutionBackend backend;
-    IrExecutionService service(adapter, backend);
+    IrExecutionService service(adapter, backend, adapter);
     const auto block = makeBlock();
-    const auto prepared = service.prepare(block);
+    const auto prepared = service.prepare(makeRequest(), block);
     assert(prepared.prepared && prepared.artifact);
 
     MockHost host;

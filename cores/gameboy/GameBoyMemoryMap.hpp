@@ -58,6 +58,10 @@ public:
     // ROM/RAM window installation (called by mapper on bank change)
     void installRomWindow(uint16_t base, std::span<const uint8_t> data);
     void clearRomWindow(uint16_t base);
+    // Host-owned mod data can be exposed through the same validated ROM-window
+    // path without changing LR35902's 16-bit address space.
+    void mapModRegion(uint16_t base, std::span<const uint8_t> data) { installRomWindow(base, data); }
+    void clearModRegion(uint16_t base) { clearRomWindow(base); }
 
     // Debug introspection
     [[nodiscard]] std::span<const uint8_t> vramSpan() const noexcept { return vram_; }

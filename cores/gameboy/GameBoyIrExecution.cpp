@@ -467,6 +467,16 @@ BMMQ::IR::ValidationResult GameBoyCoreAdapter::validateBlock(const BMMQ::IR::Blo
     return {};
 }
 
+BMMQ::IR::ValidationResult GameBoyCoreAdapter::validateLoweredBlock(
+    const BMMQ::IR::LoweringRequest& request,
+    const BMMQ::IR::Block& block) const
+{
+    const auto blockValidation = validateBlock(block);
+    if (!blockValidation) return blockValidation;
+    return BMMQ::IR::validateRequiredGuardProfile(
+        request, block, kAbiVersion, kAllExecutionStateBits, 0xFFFFu);
+}
+
 std::optional<std::string> GameBoyCoreAdapter::validateExecutionState(
     const BMMQ::IR::Block&) const
 {

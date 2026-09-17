@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <limits>
 #include <optional>
@@ -12,6 +13,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
+#include <unordered_map>
 
 #include "../../inst_cycle/executor/PluginContract.hpp"
 #include "../../machine/SaveState.hpp"
@@ -644,6 +646,10 @@ public:
     }
 
     BMMQ::CpuFeedback step(FetchBlock& fetchBlock) override {
+        if (nativeDispatcher && !fetchBlock.getblockData().empty() &&
+            !fetchBlock.getblockData()[0].data.empty()) {
+            nativeDispatcher(fetchBlock.getbaseAddress());
+        }
         if (fastExecutionAllowed() && runtime_.cpu().tryFastExecute(fetchBlock)) {
             return runtime_.getLastFeedback();
         }
@@ -798,8 +804,10 @@ public:
     }
 
     [[nodiscard]] bool fastExecutionAllowed() const noexcept {
-        return allowFastPath_;
+        return allowFastPath_ && !nativeDispatcher;
     }
+
+    std::function<void(std::uint16_t)> nativeDispatcher;
 
 protected:
     void beginExecutionSlice(const BMMQ::ExecutionBudget&) override {
@@ -959,6 +967,7 @@ GameBoyMachine::GameBoyMachine() : impl_(std::make_unique<Impl>()) {
 
 GameBoyMachine::~GameBoyMachine() {
     (void)flushCartridgeSave();
+    clearNativeTrampolines();
     if (impl_->pluginManager.initialized()) {
         impl_->pluginManager.shutdown(view());
     }
@@ -974,6 +983,7 @@ void GameBoyMachine::loadRom(const std::vector<uint8_t>& bytes) {
 
     (void)flushCartridgeSave();
 
+    clearNativeTrampolines();
     // Load into cartridge (for save management)
     impl_->cartridge_.load(bytes);
 
@@ -1167,6 +1177,33 @@ BMMQ::ExecutionSliceResult GameBoyMachine::runSlice(
         return result;
     }
     return BMMQ::Machine::runSlice(budget, observer);
+}
+
+bool GameBoyMachine::installNativeTrampoline(
+    std::uint16_t address, std::unique_ptr<BMMQ::Modding::NativeMod> module,
+    std::uint32_t hookId)
+{
+    if (!module || hookId == 0u || address < 0x150u || address >= 0x4000u ||
+        impl_->context->read8(address) != 0xC9u || impl_->nativeTrampolines.contains(address)) return false;
+    impl_->context->nativeDispatcher = [this](std::uint16_t pc) {
+        const auto it = impl_->nativeTrampolines.find(pc);
+        if (it == impl_->nativeTrampolines.end()) return;
+        TimeModCallV1 call{sizeof(TimeModCallV1), it->second.hookId, pc,
+            impl_->context->readRegister16(GB::RegisterId::HL), 0u};
+        if (impl_->context->read8(pc) != 0xC9u || !it->second.module->invoke(call) || call.result > 0xFFFFu)
+            throw std::runtime_error("native Game Boy trampoline invocation failed");
+        impl_->context->writeRegister16(GB::RegisterId::HL, static_cast<std::uint16_t>(call.result));
+        // The ordinary interpreter retires the fetched RET, including its timing.
+    };
+    impl_->nativeTrampolines.emplace(address,
+        Impl::NativeTrampoline{std::move(module), hookId});
+    return true;
+}
+
+void GameBoyMachine::clearNativeTrampolines() noexcept
+{
+    impl_->nativeTrampolines.clear();
+    impl_->context->nativeDispatcher = {};
 }
 
 void GameBoyMachine::step() {
@@ -1576,6 +1613,7 @@ void GameBoyMachine::setDetailedIrTimingEnabled(bool enabled) {
 }
 
 void GameBoyMachine::save_state(const std::filesystem::path& path) {
+    if (!impl_->nativeTrampolines.empty()) throw std::runtime_error("Native-mod save states are not supported");
     if (!impl_->romLoaded) {
         throw std::runtime_error("Cannot save Game Boy state before ROM is loaded");
     }
@@ -1655,6 +1693,7 @@ std::string GameBoyMachine::deterministicStateFingerprint() const {
 }
 
 void GameBoyMachine::load_state(const std::filesystem::path& path) {
+    if (!impl_->nativeTrampolines.empty()) throw std::runtime_error("Native-mod save states are not supported");
     if (!impl_->romLoaded) {
         throw std::runtime_error("Load ROM before loading Game Boy save state");
     }

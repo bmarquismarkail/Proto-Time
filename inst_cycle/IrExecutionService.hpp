@@ -30,6 +30,15 @@ struct LoweringRequest {
     std::uint64_t executionState = 0u;
 };
 
+// Validates the current single-profile core guard contract against copied
+// source instructions. Core adapters supply only architecture-owned constants.
+[[nodiscard]] ValidationResult validateRequiredGuardProfile(
+    const LoweringRequest& request,
+    const Block& block,
+    std::uint64_t helperAbiVersion,
+    std::uint64_t executionStateMask,
+    std::uint64_t maximumGuestAddress);
+
 class IIrCoreAdapter {
 public:
     IIrCoreAdapter() = default;
@@ -43,6 +52,15 @@ public:
     [[nodiscard]] virtual BlockPtr lower(const LoweringRequest& request,
                                          std::string* error) = 0;
     [[nodiscard]] virtual ValidationResult validateBlock(const Block& block) const = 0;
+    // Host adapters override this to validate selected-adapter output against
+    // the copied lowering request. Dynamic adapter validation is supplemental.
+    [[nodiscard]] virtual ValidationResult validateLoweredBlock(
+        const LoweringRequest& request,
+        const Block& block) const
+    {
+        (void)request;
+        return validateBlock(block);
+    }
     [[nodiscard]] virtual std::optional<std::string>
     validateExecutionState(const Block& block) const = 0;
 };
@@ -100,12 +118,13 @@ public:
     };
 
     explicit IrExecutionService(IIrCoreAdapter& adapter,
-                                IIrExecutionBackend& backend) noexcept;
+                                IIrExecutionBackend& backend,
+                                IIrCoreAdapter& hostValidator) noexcept;
 
-    // Caller precondition: block must have been lowered by the same adapter
-    // instance represented by adapter_. prepare neither lowers the block nor
-    // verifies its origin, so callers must preserve that adapter coupling.
-    [[nodiscard]] PrepareResult prepare(const BlockPtr& block,
+    // The copied lowering request remains authoritative through preparation.
+    // hostValidator is a built-in core adapter even when adapter is dynamic.
+    [[nodiscard]] PrepareResult prepare(const LoweringRequest& request,
+                                        const BlockPtr& block,
                                         std::string* error = nullptr) const;
     // Returns false only when a pre-execution state guard rejects the prepared
     // block. Once backend execution begins, failure is fatal and is never
@@ -123,6 +142,7 @@ private:
 
     IIrCoreAdapter& adapter_;
     IIrExecutionBackend& backend_;
+    IIrCoreAdapter& hostValidator_;
 };
 
 } // namespace BMMQ::IR
