@@ -35,8 +35,8 @@ symbol, and executes the actual ROM selector/header call sites in multi-instruct
 slices. It checks all 16 selections, full-width identity, external header bytes,
 register/stack preservation, and the initial vanilla-header fallback. This is
 headless routine-level integration, not a complete boot or visual gameplay test.
-The normal `timeEmulator` CLI does not yet activate this package automatically.
-The verifier's setup shows the embedding API sequence for activation.
+The normal `timeEmulator` CLI can activate this package with the command below;
+the verifier's setup also shows the lower-level embedding API sequence.
 
 The Game Boy CLI can activate the generated package directly:
 

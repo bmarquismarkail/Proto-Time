@@ -136,6 +136,8 @@ ModDirectoryLoadResult loadModDirectories(std::span<const std::filesystem::path>
                     require(info.trampolines.back().hookId != 0, "trampoline hookId must be nonzero");
                 }
             }
+            require(info.trampolines.empty() || !info.nativeModule.empty(),
+                    "trampolines require nativeModule");
             require(ids.insert(info.id).second, "duplicate mod ID");
             packages.push_back({root, std::move(manifest), std::move(info)});
         }

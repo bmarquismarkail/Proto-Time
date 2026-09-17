@@ -50,6 +50,16 @@ int main()
     const auto nativePrepared = load();
     assert(nativePrepared.prepared);
     assert(nativePrepared.prepared->mods[0].nativeModule == root / "module.so");
+    manifest(R"(,"trampolines":[{"symbol":"Target","hookId":1}]})");
+    assert(!load().prepared); // A hook declaration must have a loadable module.
+    manifest(R"(,"nativeModule":"module.so","trampolines":[{"symbol":"Target","hookId":0}]})");
+    assert(!load().prepared); // Hook IDs are explicit and nonzero.
+    manifest(R"(,"nativeModule":"module.so","trampolines":[{"symbol":"Target","hookId":1,"extra":2}]})");
+    assert(!load().prepared); // Reject undeclared trampoline fields.
+    manifest(R"(,"nativeModule":"module.so","trampolines":[{"symbol":"Target","hookId":1}]})");
+    const auto trampolinePrepared = load();
+    assert(trampolinePrepared.prepared && trampolinePrepared.prepared->mods[0].trampolines.size() == 1);
+    assert(trampolinePrepared.prepared->mods[0].trampolines[0].symbol == "Target");
     manifest(R"(,"patches":[{"bank":0,"address":3,"expected":"61","replacement":"62"}]})");
     assert(!load().prepared);
     manifest(R"(,"patches":[{"bank":0,"address":0,"expected":"61","replacement":"6263"}]})");
