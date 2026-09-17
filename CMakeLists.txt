@@ -162,6 +162,7 @@ target_link_libraries(time-machine-factory
 target_link_libraries(time-emulator-config PUBLIC time-machine-factory time-dynamic-plugin-loader)
 add_library(time-emulator-host STATIC
     emulator/EmulatorHost.cpp
+    emulator/RiverXmbIntegration.cpp
 )
 target_link_libraries(time-emulator-host
     PUBLIC

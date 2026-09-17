@@ -34,6 +34,7 @@
 #include "emulator/EmulatorConfig.hpp"
 #include "emulator/DiagnosticsJson.hpp"
 #include "emulator/EmulatorHost.hpp"
+#include "emulator/RiverXmbIntegration.hpp"
 #include "inst_cycle/IrExecutionService.hpp"
 #include "inst_cycle/executor/ExecutorPolicyRegistry.hpp"
 #include "machine/BackgroundTaskService.hpp"
@@ -128,6 +129,7 @@ void printUsage(std::string_view program)
               << "                     Capture observed decoded visual resources for pack authoring\n"
               << "  --visual-pack-reload\n"
               << "                     Poll visual pack manifests/assets and reload changed packs\n"
+              << "  --river-xmb-simulated  Publish simulated Pokemon Red context/telemetry to River XMB\n"
               << "  --headless         Run without a frontend plugin\n"
               << "  -h, --help         Show this help text\n\n"
               << "Controls:\n"
@@ -793,29 +795,37 @@ int main(int argc, char** argv)
         BMMQ::DebugSnapshotService debugSnapshotService;
         debugSnapshotService.setBackgroundTaskService(&backgroundTaskService);
 
-        auto bootstrapped = BMMQ::bootstrapMachine(options);
+        std::vector<std::uint8_t> launchRom;
+        std::optional<BMMQ::Modding::PreparedMods> preparedMods;
+        if (!options.modPaths.empty()) {
+            if (options.machineKind.value() != "gameboy")
+                throw std::invalid_argument("--mod is currently supported only by the Game Boy core");
+            std::ifstream input(options.romPath, std::ios::binary);
+            launchRom.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+            const auto loaded = BMMQ::Modding::loadModDirectories(options.modPaths, launchRom, "gameboy");
+            if (!loaded.prepared) throw std::runtime_error("Unable to load mod: " + loaded.error);
+            preparedMods = std::move(*loaded.prepared);
+            launchRom = preparedMods->rom;
+        }
+        auto bootstrapped = options.modPaths.empty()
+            ? BMMQ::bootstrapMachine(options)
+            : BMMQ::bootstrapMachine(options, launchRom);
         auto& machine = *bootstrapped.machine;
+        std::optional<BMMQ::RiverXmbIntegration> riverXmb;
+        if (options.riverXmbSimulated && options.machineKind.value() == "gameboy") {
+            riverXmb.emplace();
+            riverXmb->contextSet(BMMQ::RiverXmbContext{});
+            std::cout << "River XMB: simulated Pokemon Red telemetry enabled\n";
+        }
         const auto& descriptor = bootstrapped.descriptor;
         const auto romSize = bootstrapped.romSize;
         std::vector<BMMQ::Modding::LoadedMod> pendingNativeMods;
-        if (!options.modPaths.empty()) {
+        std::vector<std::unique_ptr<BMMQ::Modding::NativeMod>> loadedNativeModules;
+        if (preparedMods.has_value()) {
             auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get());
-            if (gameBoyMachine == nullptr) {
-                throw std::invalid_argument("--mod is currently supported only by the Game Boy core");
-            }
-            std::ifstream input(options.romPath, std::ios::binary);
-            const std::vector<std::uint8_t> originalRom{
-                std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
-            const auto loaded = BMMQ::Modding::loadModDirectories(options.modPaths, originalRom, "gameboy");
-            if (!loaded.prepared) throw std::runtime_error("Unable to load mod: " + loaded.error);
-            auto prepared = *loaded.prepared;
-            gameBoyMachine->loadRom(prepared.rom);
-            gameBoyMachine->modHost() = std::move(prepared.host);
-            for (const auto& mod : prepared.mods) {
-                if (mod.id != "pokered.title-species")
-                    throw std::invalid_argument("mod has no CLI hook integration: " + mod.id);
-            }
-            pendingNativeMods = std::move(prepared.mods);
+            if (gameBoyMachine == nullptr) throw std::runtime_error("native mods require the Game Boy core");
+            gameBoyMachine->modHost() = std::move(preparedMods->host);
+            pendingNativeMods = std::move(preparedMods->mods);
             std::cout << "Mods: " << options.modPaths.size() << " loaded\n";
         }
         std::optional<BMMQ::Plugin::DynamicPluginModule> executorModule;
@@ -1362,19 +1372,21 @@ int main(int argc, char** argv)
                     if (gameBoyMachine == nullptr)
                         throw std::runtime_error("native mods require the Game Boy core");
                     for (const auto& mod : pendingNativeMods) {
-                        for (const auto& [symbolName, hookId] : {
-                                 std::pair{"NativeSpeciesSelect", 1u},
-                                 std::pair{"NativeSpeciesRead", 2u}}) {
-                            const auto* symbol = gameBoyMachine->modHost().resolveSymbol(symbolName);
+                        if (mod.nativeModule.empty())
+                            throw std::runtime_error("mod declares native trampolines without a native module: " + mod.id);
+                        if (mod.trampolines.empty())
+                            loadedNativeModules.push_back(BMMQ::Modding::NativeMod::load(mod, gameBoyMachine->modHost()));
+                        for (const auto& trampoline : mod.trampolines) {
+                            const auto* symbol = gameBoyMachine->modHost().resolveSymbol(trampoline.symbol);
                             if (symbol == nullptr || symbol->bank != 0)
                                 throw std::runtime_error(
-                                    "mod is missing fixed-bank hook: " + std::string(symbolName));
+                                    "mod is missing fixed-bank hook: " + trampoline.symbol);
                             auto native = BMMQ::Modding::NativeMod::load(
                                 mod, gameBoyMachine->modHost());
                             if (!gameBoyMachine->installNativeTrampoline(
-                                    symbol->address, std::move(native), hookId))
+                                    symbol->address, std::move(native), trampoline.hookId))
                                 throw std::runtime_error(
-                                    "unable to install mod hook: " + std::string(symbolName));
+                                    "unable to install mod hook: " + trampoline.symbol);
                         }
                     }
                 }
@@ -1447,6 +1459,14 @@ int main(int argc, char** argv)
                     }
 
                     const auto now = SteadyClock::now();
+                    if (riverXmb.has_value() && (steps % 60000u) == 0u) {
+                        BMMQ::RiverXmbTelemetry telemetry;
+                        telemetry.playTime = static_cast<unsigned>(steps / 60000u);
+                        telemetry.badges = telemetry.playTime / 2u;
+                        telemetry.hp = 20u - static_cast<unsigned>((steps / 60000u) % 6u);
+                        telemetry.location = (telemetry.playTime % 2u) ? "Viridian City" : "Pallet Town";
+                        riverXmb->telemetryUpdate(telemetry);
+                    }
                     if (frontendInputTickPending.exchange(false, std::memory_order_acq_rel)) {
                         machine.serviceInput();
                     }
@@ -1582,6 +1602,10 @@ int main(int argc, char** argv)
 
         stopRequested.store(true, std::memory_order_release);
         emulationThread.join();
+        if (riverXmb.has_value()) {
+            riverXmb->contextClear();
+            riverXmb->stop();
+        }
         if (emulationFailure != nullptr) {
             std::rethrow_exception(emulationFailure);
         }

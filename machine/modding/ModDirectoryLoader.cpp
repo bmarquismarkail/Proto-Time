@@ -118,15 +118,24 @@ ModDirectoryLoadResult loadModDirectories(std::span<const std::filesystem::path>
                 return true;
             };
             auto manifest = Json::parse(bytes, callback);
-            keys(manifest, {"schemaVersion", "id", "version", "priority", "target", "romSha256", "symbols", "regions", "patches", "nativeModule"});
+            keys(manifest, {"schemaVersion", "id", "version", "priority", "target", "romSha256", "symbols", "regions", "patches", "nativeModule", "trampolines"});
             require(number(manifest, "schemaVersion", 1) == 1, "unsupported schemaVersion");
             require(stringField(manifest, "target") == machineId, "wrong machine target");
             const auto hash = hex(stringField(manifest, "romSha256"));
             require(hash.size() == digestSize && std::equal(hash.begin(), hash.end(), digest), "ROM SHA-256 mismatch");
             LoadedMod info{stringField(manifest, "id"), stringField(manifest, "version"),
-                manifest.contains("priority") ? number(manifest, "priority", UINT32_MAX) : 0, {}, {}};
+                manifest.contains("priority") ? number(manifest, "priority", UINT32_MAX) : 0, {}, {}, {}};
             if (manifest.contains("nativeModule"))
                 info.nativeModule = asset(root, stringField(manifest, "nativeModule"));
+            if (manifest.contains("trampolines")) {
+                require(manifest.at("trampolines").is_array() && manifest.at("trampolines").size() <= 256,
+                        "invalid trampolines array");
+                for (const auto& t : manifest.at("trampolines")) {
+                    keys(t, {"symbol", "hookId"});
+                    info.trampolines.push_back({stringField(t, "symbol"), number(t, "hookId", UINT32_MAX)});
+                    require(info.trampolines.back().hookId != 0, "trampoline hookId must be nonzero");
+                }
+            }
             require(ids.insert(info.id).second, "duplicate mod ID");
             packages.push_back({root, std::move(manifest), std::move(info)});
         }

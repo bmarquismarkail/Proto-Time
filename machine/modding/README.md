@@ -61,6 +61,11 @@ name, bounded region reads/writes, and bank/address symbol resolution. Handles
 are restricted to the module's declared regions. It receives no raw C++ objects.
 Native code has process privileges; these API checks do not sandbox a module.
 
+An optional `trampolines` array declares fixed-bank symbol names and numeric
+hook IDs. The emulator CLI loads the trusted module on the emulation lane and
+installs one instance for each declaration; a native module without declarations
+is still loaded for lifecycle use.
+
 `NativeMod` pins the shared host and library through instance destruction. Use
 and destroy it on its creating emulation thread, with no concurrent calls. Host
 callbacks are only valid during a module callback. Reentrant/wrong-thread public

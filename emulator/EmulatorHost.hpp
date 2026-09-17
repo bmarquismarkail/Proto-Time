@@ -3,6 +3,8 @@
 
 #include <cstddef>
 #include <memory>
+#include <span>
+#include <cstdint>
 
 #include "emulator/EmulatorConfig.hpp"
 #include "emulator/MachineFactory.hpp"
@@ -26,6 +28,8 @@ struct BootstrappedMachine {
 };
 
 [[nodiscard]] BootstrappedMachine bootstrapMachine(const EmulatorConfig& options);
+[[nodiscard]] BootstrappedMachine bootstrapMachine(const EmulatorConfig& options,
+                                                   std::span<const std::uint8_t> romBytes);
 
 } // namespace BMMQ
 

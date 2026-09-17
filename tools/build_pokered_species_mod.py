@@ -71,7 +71,9 @@ def generate(rom_path, module, output):
     shutil.copyfile(module, output / module.name)
     (output / "hooks.sym").write_text(f"00:{select_trap:04x} NativeSpeciesSelect\n00:{read_trap:04x} NativeSpeciesRead\n")
     manifest = dict(schemaVersion=1, id="pokered.title-species", version="1", target="gameboy",
-                    romSha256=ROM_SHA256, nativeModule=module.name, symbols="hooks.sym", patches=patches,
+                    romSha256=ROM_SHA256, nativeModule=module.name, symbols="hooks.sym",
+                    trampolines=[dict(symbol="NativeSpeciesSelect", hookId=1),
+                                 dict(symbol="NativeSpeciesRead", hookId=2)], patches=patches,
                     regions=[dict(name=n, size=len(d), file=n + ".bin") for n, d in assets.items()])
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
