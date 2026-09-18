@@ -812,10 +812,13 @@ int main(int argc, char** argv)
             : BMMQ::bootstrapMachine(options, launchRom);
         auto& machine = *bootstrapped.machine;
         std::optional<BMMQ::RiverXmbIntegration> riverXmb;
-        if (options.riverXmbSimulated && options.machineKind.value() == "gameboy") {
+        if (options.machineKind.value() == "gameboy") {
             riverXmb.emplace();
-            riverXmb->contextSet(BMMQ::RiverXmbContext{});
-            std::cout << "River XMB: simulated Pokemon Red telemetry enabled\n";
+            auto* gameBoy = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get());
+            const auto context = BMMQ::makeGameBoyContext(gameBoy != nullptr ? gameBoy->cartridgeTitle() : "");
+            riverXmb->contextSet(context);
+            std::cout << "River XMB: " << context.presentation << " presentation enabled\n";
+            if (options.riverXmbSimulated) std::cout << "River XMB: simulated telemetry enabled\n";
         }
         const auto& descriptor = bootstrapped.descriptor;
         const auto romSize = bootstrapped.romSize;
@@ -1459,7 +1462,7 @@ int main(int argc, char** argv)
                     }
 
                     const auto now = SteadyClock::now();
-                    if (riverXmb.has_value() && (steps % 60000u) == 0u) {
+                    if (riverXmb.has_value() && options.riverXmbSimulated && (steps % 60000u) == 0u) {
                         BMMQ::RiverXmbTelemetry telemetry;
                         telemetry.playTime = static_cast<unsigned>(steps / 60000u);
                         telemetry.badges = telemetry.playTime / 2u;

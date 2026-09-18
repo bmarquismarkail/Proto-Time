@@ -11,9 +11,31 @@
 #include <unistd.h>
 #include <openssl/sha.h>
 #include <nlohmann/json.hpp>
+#include <algorithm>
+#include <cctype>
+#include <chrono>
 
 namespace BMMQ {
 using json = nlohmann::json;
+
+RiverXmbContext makeGameBoyContext(std::string_view cartridgeTitle) {
+    RiverXmbContext context;
+    std::string title(cartridgeTitle);
+    std::transform(title.begin(), title.end(), title.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+    });
+    if (title.find("POKEMON RED") != std::string::npos || title == "POKEMON") {
+        context.game = "Pokemon Red";
+        context.title = "Pokemon Red";
+        context.presentation = "pokemon";
+        context.artworkKey = "pokemon-red";
+        context.visualizerColor = "#d94b4b";
+    } else {
+        context.title = cartridgeTitle.empty() ? "Game Boy" : std::string(cartridgeTitle);
+        context.visualizerColor = "#8bac0f";
+    }
+    return context;
+}
 
 RiverXmbIntegration::RiverXmbIntegration(std::size_t capacity) : capacity_(capacity) { thread_ = std::thread(&RiverXmbIntegration::worker, this); }
 RiverXmbIntegration::~RiverXmbIntegration() { stop(); }
@@ -31,7 +53,7 @@ std::optional<std::string> RiverXmbIntegration::socketPath() {
 }
 
 std::string RiverXmbIntegration::contextJson(const RiverXmbContext& c, std::string_view action) {
-    return json{{"action", action}, {"context", {{"emulator", c.emulator}, {"platform", c.platform}, {"game", c.game}, {"title", c.title}, {"artwork_key", c.artworkKey}, {"visualizer", c.visualizer}, {"visualizer_color", c.visualizerColor}}}}.dump() + "\n";
+    return json{{"action", action}, {"context", {{"emulator", c.emulator}, {"platform", c.platform}, {"game", c.game}, {"title", c.title}, {"presentation", c.presentation}, {"artwork_key", c.artworkKey}, {"visualizer", c.visualizer}, {"visualizer_color", c.visualizerColor}}}}.dump() + "\n";
 }
 std::string RiverXmbIntegration::telemetryJson(const RiverXmbTelemetry& t) {
     return json{{"action", "telemetry-update"}, {"telemetry", {{"location", t.location}, {"play_time", t.playTime}, {"badges", t.badges}, {"party", json::array({{{"name", "Bulbasaur"}, {"level", 5}, {"hp", t.hp}, {"max_hp", t.maxHp}}})}}}}.dump() + "\n";
@@ -41,5 +63,55 @@ void RiverXmbIntegration::contextUpdate(const RiverXmbContext& c) { enqueue(cont
 void RiverXmbIntegration::contextClear() { enqueue(json{{"action", "context-clear"}}.dump() + "\n", false); }
 void RiverXmbIntegration::telemetryUpdate(const RiverXmbTelemetry& t) { auto m = telemetryJson(t); std::lock_guard lock(mutex_); if (m == lastTelemetry_) return; lastTelemetry_ = m; if (queue_.size() >= capacity_) { for (auto it = queue_.begin(); it != queue_.end(); ++it) if (it->find("telemetry-update") != std::string::npos) { queue_.erase(it); break; } } if (queue_.size() >= capacity_) queue_.pop_front(); queue_.push_back(std::move(m)); ready_.notify_one(); }
 void RiverXmbIntegration::enqueue(std::string message, bool) { std::lock_guard lock(mutex_); if (stopping_) return; if (queue_.size() >= capacity_) queue_.pop_front(); queue_.push_back(std::move(message)); ready_.notify_one(); }
-void RiverXmbIntegration::worker() { for (;;) { std::string message; { std::unique_lock lock(mutex_); ready_.wait(lock, [&]{ return stopping_ || !queue_.empty(); }); if (queue_.empty() && stopping_) return; message = std::move(queue_.front()); queue_.pop_front(); } auto path = socketPath(); if (!path) continue; int fd = ::socket(AF_UNIX, SOCK_STREAM, 0); if (fd < 0) { std::cerr << "warning: River XMB IPC socket creation failed\n"; continue; } sockaddr_un address{}; address.sun_family = AF_UNIX; std::strncpy(address.sun_path, path->c_str(), sizeof(address.sun_path)-1); if (::connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0) { if (::send(fd, message.data(), message.size(), MSG_NOSIGNAL) < 0) std::cerr << "warning: River XMB IPC send failed\n"; } else if (errno != ENOENT && errno != ECONNREFUSED) { std::cerr << "warning: River XMB IPC connect failed: " << std::strerror(errno) << "\n"; } ::close(fd); } }
+void RiverXmbIntegration::worker() {
+    for (;;) {
+        std::string message;
+        {
+            std::unique_lock lock(mutex_);
+            ready_.wait(lock, [&] { return stopping_ || !queue_.empty(); });
+            if (stopping_) return;
+            message = std::move(queue_.front());
+            queue_.pop_front();
+        }
+
+        bool delivered = false;
+        for (unsigned attempt = 0; attempt < 10 && !delivered; ++attempt) {
+            const auto path = socketPath();
+            if (!path) break;
+            const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+            if (fd < 0) {
+                std::cerr << "warning: River XMB IPC socket creation failed\n";
+                break;
+            }
+            sockaddr_un address{};
+            address.sun_family = AF_UNIX;
+            std::strncpy(address.sun_path, path->c_str(), sizeof(address.sun_path) - 1);
+            if (::connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0) {
+                delivered = ::send(fd, message.data(), message.size(), MSG_NOSIGNAL) >= 0;
+                if (!delivered) std::cerr << "warning: River XMB IPC send failed\n";
+            } else if (errno != ENOENT && errno != ECONNREFUSED) {
+                std::cerr << "warning: River XMB IPC connect failed: " << std::strerror(errno) << "\n";
+            }
+            ::close(fd);
+            if (!delivered && attempt != 9) {
+                std::unique_lock lock(mutex_);
+                if (ready_.wait_for(lock, std::chrono::milliseconds(100), [&] { return stopping_; })) break;
+            }
+        }
+        if (!delivered) {
+            std::lock_guard lock(mutex_);
+            if (!stopping_) {
+                if (message.find("telemetry-update") != std::string::npos) {
+                    for (auto it = queue_.begin(); it != queue_.end();) {
+                        if (it->find("telemetry-update") != std::string::npos) it = queue_.erase(it);
+                        else ++it;
+                    }
+                }
+                if (queue_.size() >= capacity_) queue_.pop_front();
+                queue_.push_back(std::move(message));
+                ready_.notify_one();
+            }
+        }
+    }
+}
 } // namespace BMMQ

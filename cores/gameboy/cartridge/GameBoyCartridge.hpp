@@ -9,6 +9,8 @@
 #include <span>
 #include <stdexcept>
 #include <vector>
+#include <string>
+#include <cctype>
 
 namespace GB {
 
@@ -21,6 +23,7 @@ enum class CartridgeMapper {
 };
 
 struct CartridgeMetadata {
+    std::string title;
     CartridgeMapper mapper = CartridgeMapper::None;
     uint8_t cartridgeType = 0x00u;
     uint8_t romSizeCode = 0x00u;
@@ -125,6 +128,13 @@ struct CartridgeWriteResult {
 [[nodiscard]] inline CartridgeMetadata parseCartridgeMetadata(std::span<const uint8_t> bytes)
 {
     CartridgeMetadata metadata{};
+    if (bytes.size() > 0x134u) {
+        const auto end = std::min<std::size_t>(bytes.size(), 0x144u);
+        for (std::size_t i = 0x134u; i < end && bytes[i] != 0; ++i) {
+            const auto ch = static_cast<char>(bytes[i]);
+            metadata.title += static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+        }
+    }
     metadata.cartridgeType = bytes.size() > 0x147u ? bytes[0x147u] : 0x00u;
     metadata.romSizeCode = bytes.size() > 0x148u ? bytes[0x148u] : 0x00u;
     metadata.ramSizeCode = bytes.size() > 0x149u ? bytes[0x149u] : 0x00u;

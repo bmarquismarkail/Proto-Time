@@ -14,12 +14,15 @@ namespace BMMQ {
 struct RiverXmbContext {
     std::string emulator = "T.I.M.E.";
     std::string platform = "Game Boy";
-    std::string game = "Pokemon Red";
-    std::string title = "Pokemon Red";
-    std::string artworkKey = "pokemon-red";
+    std::string game = "Game Boy";
+    std::string title = "Game Boy";
+    std::string presentation = "gameboy";
+    std::string artworkKey = "gameboy";
     std::string visualizer = "off";
     std::string visualizerColor = "#d94b4b";
 };
+
+[[nodiscard]] RiverXmbContext makeGameBoyContext(std::string_view cartridgeTitle);
 
 struct RiverXmbTelemetry {
     std::string location = "Pallet Town";
