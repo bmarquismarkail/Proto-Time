@@ -470,7 +470,12 @@ int main()
         schedulerUpdates.load(std::memory_order_relaxed) > 0u &&
         schedulerExecutedInstructions.load(std::memory_order_relaxed) > 0u &&
         timingStats.executionSlicesEntered > 0u &&
-        schedulerIdleWaits.load(std::memory_order_relaxed) > 0u &&
+        // Idle-waits proves the emulation thread throttled once the guest caught
+        // up to wall-clock. Under TSAN the guest runs several times slower than
+        // wall-clock, so it never catches up and never idles — a wall-clock-relative
+        // property that cannot hold under the sanitizer. Waive it when wall-clock
+        // thresholds are disabled; every other structural check stays active.
+        (!kEnforceWallClockThresholds || schedulerIdleWaits.load(std::memory_order_relaxed) > 0u) &&
         diagnostics.overwriteRealtimeFrameCount == 0u &&
         diagnostics.staleEpochDropCount == 0u;
     const bool latencyPass = !kEnforceWallClockThresholds ||

@@ -177,7 +177,7 @@ int main(int argc, char* argv[])
 
     const std::vector<std::string> base{
         emulator.string(), "--core", "gamegear", "--rom", rom.string(),
-        "--headless", "--steps", "1", "--unthrottled",
+        "--headless", "--steps", "1", "--unthrottled", "--no-audio",
     };
     const auto with = [&](std::initializer_list<std::string_view> additions) {
         auto arguments = base;

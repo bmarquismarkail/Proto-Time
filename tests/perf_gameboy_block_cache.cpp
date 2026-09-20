@@ -245,9 +245,19 @@ int main()
     require(detailed.irLoweringNanos > 0u, "detailed lowering timer recorded no time");
     require(detailed.irGuardCheckNanos > 0u, "detailed guard timer recorded no time");
     require(detailed.irExecutionNanos > 0u, "detailed execution timer recorded no time");
+#if defined(BMMQ_TSAN_ENABLED) || defined(__SANITIZE_THREAD__)
+    // The paired-speedup gate is a wall-clock perf threshold. TSAN inflates all
+    // three measurement paths (baseline/block/IR) by different factors, so the
+    // ratio is not a meaningful production-speedup signal under the sanitizer.
+    // Consistent with the "wall-clock thresholds disabled under TSAN" contract,
+    // the structural/perf-correctness requires above remain active.
+    (void)pairedSpeedupMedian;
+    (void)pairedSpeedupLowerQuartile;
+#else
     require(pairedSpeedupMedian >= kRequiredSpeedup + kMeasurementMargin,
             "Phase 10 paired median did not clear the 2.0x gate with measurement margin");
     require(pairedSpeedupLowerQuartile >= kRequiredSpeedup,
             "Phase 10 paired lower quartile fell below 2.0x");
+#endif
     return 0;
 }
