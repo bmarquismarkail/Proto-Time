@@ -49,7 +49,12 @@ The gate requires:
   with input-to-presented-frame p99 below 16 ms.
 
 The wall-clock limits are disabled under TSAN, while frame counts, lifecycle
-correctness, and overwrite requirements remain enforced.
+correctness, and overwrite requirements remain enforced. The requirement for at
+least one scheduler idle wait is also waived: an instrumented guest may never
+catch up with wall time. Scheduler updates, executed instructions, execution
+slices, and all six visible input responses are still required. The internal
+two-second performance deadline is disabled under TSAN; CTest retains its
+ten-second timeout to bound hangs.
 
 ```bash
 cmake --build build-working --target time-perf-headless-scheduling-video -j4
@@ -79,3 +84,31 @@ the emulation-lane publish operation itself takes no mutex.
 
 The benchmark is intentionally part of default CTest so threshold regressions
 are release-blocking rather than informational.
+
+## Sanitizer waiver audit
+
+The test-only `PerfTimingSupport.hpp` switch disables only host-performance
+assertions. It does not change production execution or normal-build thresholds.
+
+| Test | TSAN exception | Checks retained |
+|---|---|---|
+| `perf_concurrency_success_gates` | Measured latency limits, including the audio diagnostics p99 bound | Sample counts, prepared audio, zero underruns/silence, byte-exact publication and transport correctness |
+| `perf_headless_scheduling_video` | Latency limits, two-second performance deadline, and wall-clock-dependent idle-wait presence | Frame/input counts, execution activity, zero overwrites and stale epochs; CTest hang timeout |
+| `perf-gameboy-block-cache` | Paired median and lower-quartile speedup thresholds | Cache hits/continuations, IR execution/fallback/lowering/guards, native activity when supported, and populated detailed timers |
+| `smoke-video-engine` | Default elapsed-time budget increases from 1000 to 5000 ms | Rendering assertions and explicit `PERF_TEST_TIMEOUT_MS` override |
+
+TSAN still instruments the exercised paths and race reports must fail the run.
+The speedup gate reports whether enforcement is enabled, just as latency gates do.
+
+### Verification (2026-09-20)
+
+- Reconfigured and built `build-tsan` with `BMMQ_ENABLE_TSAN=ON` and
+  `RelWithDebInfo`; full CTest passed 140/140 with no sanitizer reports.
+- Reconfigured and built `build-working`; full CTest passed 141/141 with normal
+  performance enforcement enabled. The extra test uses the locally configured
+  reference ROM (`smoke-pokered-species-patch`).
+- The queue-full smoke test now waits for all workers to enter blocking tasks
+  before filling every queue slot. This preserves the rejection assertion without
+  depending on worker scheduling speed; it passed ten consecutive TSAN runs.
+- Run these suites sequentially: `visual_manifest_tests` uses a shared temporary
+  directory, so concurrent normal/TSAN instances can delete each other's inputs.
