@@ -3,6 +3,7 @@
 #include "emulator/RiverXmbIntegration.hpp"
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <span>
 
 namespace BMMQ {
@@ -17,7 +18,10 @@ class PokemonRedSnapshot final {
 public:
     [[nodiscard]] static PokemonRedSnapshot capture(const RuntimeContext& runtime);
     explicit PokemonRedSnapshot(std::array<std::uint8_t, 0x2000> wram) : wram_(wram) {}
-    [[nodiscard]] RiverXmbTelemetry telemetry() const;
+    // A value exists only when this owned snapshot is a defensibly complete
+    // gameplay state. Callers must not publish partial boot, title, or
+    // transitional RAM to River XMB.
+    [[nodiscard]] std::optional<RiverXmbTelemetry> telemetry() const;
 private:
     std::array<std::uint8_t, 0x2000> wram_;
 };

@@ -26,8 +26,9 @@ Verified against the local pokered disassembly and `symbols:pokered.sym` at
 | Badges | D356, wObtainedBadges | Population count of eight flags |
 | Play time | DA41 hours, DA43 minutes, DA44 seconds | Integer elapsed in-game seconds; DA42 is the maxed flag, not an hours byte |
 
-D732 bit 0 identifies game timer counting; invalid/uninitialized state emits
-`available: false`, an empty location and empty party to clear previous data.
+D732 bit 0 identifies game timer counting. Invalid, uninitialized, boot, and
+title state produces no telemetry payload, preserving the last valid River XMB
+view until a defensibly valid gameplay snapshot is available.
 Clock ranges, map IDs, party counts/terminators, nickname termination, species
 consistency, levels and HP bounds are validated. Zero HP is valid. An empty party
 is valid once the game initializes it. Unrepresented name glyphs become `?`.

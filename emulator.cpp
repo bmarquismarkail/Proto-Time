@@ -1477,7 +1477,8 @@ int main(int argc, char** argv)
                                 static_cast<unsigned>(emulatedCycles / 4194304u)));
                         } else {
                             const auto snapshot = BMMQ::PokemonRedSnapshot::capture(machine.runtimeContext());
-                            riverXmb->telemetryUpdate(snapshot.telemetry());
+                            if (const auto telemetry = snapshot.telemetry())
+                                riverXmb->telemetryUpdate(*telemetry);
                         }
                     }
                     if (frontendInputTickPending.exchange(false, std::memory_order_acq_rel)) {

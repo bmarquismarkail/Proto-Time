@@ -21,7 +21,7 @@ PokemonRedSnapshot PokemonRedSnapshot::capture(const RuntimeContext& runtime) {
     return PokemonRedSnapshot(bytes);
 }
 
-RiverXmbTelemetry PokemonRedSnapshot::telemetry() const {
+std::optional<RiverXmbTelemetry> PokemonRedSnapshot::telemetry() const {
     const auto byte = [&](unsigned address) { return wram_[address - 0xc000]; };
     const auto word = [&](unsigned address) -> unsigned {
         return (unsigned(byte(address)) << 8) | byte(address + 1);
@@ -31,7 +31,7 @@ RiverXmbTelemetry PokemonRedSnapshot::telemetry() const {
     // Reject boot/title RAM and partially updated or malformed party/time data.
     if (!(byte(0xd732) & 1) || count > 6 || byte(0xd164 + count) != 0xff ||
         byte(0xda43) >= 60 || byte(0xda44) >= 60 || byte(0xda45) >= 60)
-        return result;
+        return std::nullopt;
     const auto mapName = [](unsigned map) -> std::string {
         switch (map) {
 #include "emulator/PokemonRedMapNames.inc"
@@ -39,7 +39,7 @@ RiverXmbTelemetry PokemonRedSnapshot::telemetry() const {
         }
     };
     result.location = mapName(byte(0xd35e));
-    if (result.location.empty()) return {};
+    if (result.location.empty()) return std::nullopt;
     result.badges = std::popcount(unsigned(byte(0xd356)));
     result.playTime = unsigned(byte(0xda41)) * 3600 + unsigned(byte(0xda43)) * 60 + byte(0xda44);
     for (unsigned i = 0; i < count; ++i) {
@@ -49,7 +49,7 @@ RiverXmbTelemetry PokemonRedSnapshot::telemetry() const {
         member.level = byte(base + 33);
         member.hp = word(base + 1);
         member.maxHp = word(base + 34);
-        if (member.species == 0 || member.species > 190 || member.species != byte(0xd164 + i)) return {};
+        if (member.species == 0 || member.species > 190 || member.species != byte(0xd164 + i)) return std::nullopt;
         // Battle HP changes before the corresponding party record is synchronized.
         // Preserve party identity (Transform changes battle species), and avoid
         // the previous battle's buffer until the first monsters are out.
@@ -57,7 +57,7 @@ RiverXmbTelemetry PokemonRedSnapshot::telemetry() const {
             member.hp = word(0xd015);
             member.maxHp = word(0xd023);
         }
-        if (!member.level || member.level > 100 || !member.maxHp || member.maxHp > 999 || member.hp > member.maxHp) return {};
+        if (!member.level || member.level > 100 || !member.maxHp || member.maxHp > 999 || member.hp > member.maxHp) return std::nullopt;
         bool terminated = false;
         for (unsigned n = 0; n < 11; ++n) {
             const auto c = byte(0xd2b5 + 11 * i + n);
@@ -76,7 +76,7 @@ RiverXmbTelemetry PokemonRedSnapshot::telemetry() const {
             else if (c == 0xf5) member.name += "♀";
             else member.name += '?';
         }
-        if (!terminated) return {};
+        if (!terminated) return std::nullopt;
         if (member.name.empty()) member.name = "Species " + std::to_string(member.species);
         result.party.push_back(std::move(member));
     }
