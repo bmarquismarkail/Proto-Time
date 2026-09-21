@@ -76,6 +76,15 @@ with:
 independently with `--audio-backend sdl|dummy|file`; external audio-output
 modules use `--audio-plugin <path>`.
 
+Game Boy sessions publish context to River XMB when its socket is available.
+English retail Pokémon Red (1 MiB, SHA-1
+`ea9bcae617fdf159b045185467ae58b2e4a48b9a`) also publishes real location,
+party nicknames/levels/current and maximum HP, badge count, and in-game play time
+in seconds. Telemetry is captured on the emulation thread at up to 4 Hz and sent
+through the bounded IPC worker. Unsupported or patched ROMs retain presentation
+without real RAM decoding. `--river-xmb-simulated` enables demo data as a fallback
+for unsupported ROMs; recognized Red ROMs always use real telemetry.
+
 Executor policies are a separate extension layer. Built-in policies can be
 selected by stable ID, while external modules use the pure-C ABI in
 `machine/plugins/abi/TimePluginAbi.h`:

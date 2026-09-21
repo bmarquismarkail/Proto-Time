@@ -192,6 +192,9 @@ public:
         saveDirty_ = false;
     }
 
+    // Owner-lane inspection; callers must not retain this across ROM loads.
+    [[nodiscard]] std::span<const uint8_t> romBytes() const noexcept { return rom_; }
+
     [[nodiscard]] const CartridgeMetadata& metadata() const noexcept
     {
         return metadata_;

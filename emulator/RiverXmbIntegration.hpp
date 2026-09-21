@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 namespace BMMQ {
 
@@ -24,13 +25,23 @@ struct RiverXmbContext {
 
 [[nodiscard]] RiverXmbContext makeGameBoyContext(std::string_view cartridgeTitle);
 
-struct RiverXmbTelemetry {
-    std::string location = "Pallet Town";
-    unsigned playTime = 0;
-    unsigned badges = 0;
-    unsigned hp = 20;
-    unsigned maxHp = 20;
+struct RiverXmbPartyMember {
+    std::string name;
+    unsigned species = 0; // Generation I internal species ID, not a Pokedex number.
+    unsigned level = 0;
+    unsigned hp = 0;
+    unsigned maxHp = 0;
 };
+
+struct RiverXmbTelemetry {
+    bool available = false;
+    std::string location;
+    unsigned playTime = 0; // In-game elapsed seconds, not host uptime.
+    unsigned badges = 0;
+    std::vector<RiverXmbPartyMember> party;
+};
+
+[[nodiscard]] RiverXmbTelemetry simulatedRiverXmbTelemetry(unsigned seconds);
 
 class RiverXmbIntegration final {
 public:

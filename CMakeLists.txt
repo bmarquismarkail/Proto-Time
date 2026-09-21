@@ -163,6 +163,7 @@ target_link_libraries(time-emulator-config PUBLIC time-machine-factory time-dyna
 add_library(time-emulator-host STATIC
     emulator/EmulatorHost.cpp
     emulator/RiverXmbIntegration.cpp
+    emulator/PokemonRedTelemetry.cpp
 )
 target_link_libraries(time-emulator-host
     PUBLIC
@@ -585,6 +586,9 @@ add_test(NAME smoke-machine-factory COMMAND time-smoke-machine-factory)
 add_executable(time-smoke-emulator-host tests/smoke_emulator_host.cpp)
 target_link_libraries(time-smoke-emulator-host time-emulator-host)
 add_test(NAME smoke-emulator-host COMMAND time-smoke-emulator-host)
+add_executable(time-smoke-pokemon-red-telemetry tests/smoke_pokemon_red_telemetry.cpp)
+target_link_libraries(time-smoke-pokemon-red-telemetry time-emulator-host time-gameboy-interpreter-core)
+add_test(NAME smoke-pokemon-red-telemetry COMMAND time-smoke-pokemon-red-telemetry)
 add_executable(time-smoke-river-xmb-integration tests/smoke_river_xmb_integration.cpp)
 target_link_libraries(time-smoke-river-xmb-integration time-emulator-host)
 add_test(NAME smoke-river-xmb-integration COMMAND time-smoke-river-xmb-integration)

@@ -35,6 +35,7 @@
 #include "emulator/DiagnosticsJson.hpp"
 #include "emulator/EmulatorHost.hpp"
 #include "emulator/RiverXmbIntegration.hpp"
+#include "emulator/PokemonRedTelemetry.hpp"
 #include "inst_cycle/IrExecutionService.hpp"
 #include "inst_cycle/executor/ExecutorPolicyRegistry.hpp"
 #include "machine/BackgroundTaskService.hpp"
@@ -812,11 +813,14 @@ int main(int argc, char** argv)
             : BMMQ::bootstrapMachine(options, launchRom);
         auto& machine = *bootstrapped.machine;
         std::optional<BMMQ::RiverXmbIntegration> riverXmb;
+        bool realPokemonTelemetry = false;
         if (options.machineKind.value() == "gameboy") {
             riverXmb.emplace();
             auto* gameBoy = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get());
             const auto context = BMMQ::makeGameBoyContext(gameBoy != nullptr ? gameBoy->cartridgeTitle() : "");
             riverXmb->contextSet(context);
+            realPokemonTelemetry = gameBoy != nullptr &&
+                BMMQ::supportsPokemonRedTelemetry(gameBoy->cartridge().romBytes());
             std::cout << "River XMB: " << context.presentation << " presentation enabled\n";
             if (options.riverXmbSimulated) std::cout << "River XMB: simulated telemetry enabled\n";
         }
@@ -1370,6 +1374,7 @@ int main(int argc, char** argv)
 
         auto runEmulationLane = [&]() {
             try {
+                auto nextRiverTelemetry = SteadyClock::now();
                 if (!pendingNativeMods.empty()) {
                     auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(&machine);
                     if (gameBoyMachine == nullptr)
@@ -1462,13 +1467,18 @@ int main(int argc, char** argv)
                     }
 
                     const auto now = SteadyClock::now();
-                    if (riverXmb.has_value() && options.riverXmbSimulated && (steps % 60000u) == 0u) {
-                        BMMQ::RiverXmbTelemetry telemetry;
-                        telemetry.playTime = static_cast<unsigned>(steps / 60000u);
-                        telemetry.badges = telemetry.playTime / 2u;
-                        telemetry.hp = 20u - static_cast<unsigned>((steps / 60000u) % 6u);
-                        telemetry.location = (telemetry.playTime % 2u) ? "Viridian City" : "Pallet Town";
-                        riverXmb->telemetryUpdate(telemetry);
+                    if (riverXmb && now >= nextRiverTelemetry &&
+                        (realPokemonTelemetry || options.riverXmbSimulated)) {
+                        nextRiverTelemetry = now + std::chrono::milliseconds(250);
+                        // A recognized Red ROM always wins over the demo flag. The
+                        // flag is the opt-in fallback for unsupported ROMs.
+                        if (!realPokemonTelemetry && options.riverXmbSimulated) {
+                            riverXmb->telemetryUpdate(BMMQ::simulatedRiverXmbTelemetry(
+                                static_cast<unsigned>(emulatedCycles / 4194304u)));
+                        } else {
+                            const auto snapshot = BMMQ::PokemonRedSnapshot::capture(machine.runtimeContext());
+                            riverXmb->telemetryUpdate(snapshot.telemetry());
+                        }
                     }
                     if (frontendInputTickPending.exchange(false, std::memory_order_acq_rel)) {
                         machine.serviceInput();

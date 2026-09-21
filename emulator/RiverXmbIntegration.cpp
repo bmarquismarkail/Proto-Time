@@ -37,7 +37,7 @@ RiverXmbContext makeGameBoyContext(std::string_view cartridgeTitle) {
     return context;
 }
 
-RiverXmbIntegration::RiverXmbIntegration(std::size_t capacity) : capacity_(capacity) { thread_ = std::thread(&RiverXmbIntegration::worker, this); }
+RiverXmbIntegration::RiverXmbIntegration(std::size_t capacity) : capacity_(std::max<std::size_t>(1, capacity)) { thread_ = std::thread(&RiverXmbIntegration::worker, this); }
 RiverXmbIntegration::~RiverXmbIntegration() { stop(); }
 void RiverXmbIntegration::stop() { { std::lock_guard lock(mutex_); if (stopping_) return; stopping_ = true; } ready_.notify_one(); if (thread_.joinable()) thread_.join(); }
 
@@ -55,13 +55,43 @@ std::optional<std::string> RiverXmbIntegration::socketPath() {
 std::string RiverXmbIntegration::contextJson(const RiverXmbContext& c, std::string_view action) {
     return json{{"action", action}, {"context", {{"emulator", c.emulator}, {"platform", c.platform}, {"game", c.game}, {"title", c.title}, {"presentation", c.presentation}, {"artwork_key", c.artworkKey}, {"visualizer", c.visualizer}, {"visualizer_color", c.visualizerColor}}}}.dump() + "\n";
 }
+RiverXmbTelemetry simulatedRiverXmbTelemetry(unsigned seconds) {
+    RiverXmbTelemetry result;
+    result.available = true;
+    result.location = seconds % 2 ? "Viridian City" : "Pallet Town";
+    result.playTime = seconds;
+    result.badges = (seconds / 2) % 9;
+    result.party.push_back({"Bulbasaur", 153, 5, 20 - seconds % 6, 20});
+    return result;
+}
+
 std::string RiverXmbIntegration::telemetryJson(const RiverXmbTelemetry& t) {
-    return json{{"action", "telemetry-update"}, {"telemetry", {{"location", t.location}, {"play_time", t.playTime}, {"badges", t.badges}, {"party", json::array({{{"name", "Bulbasaur"}, {"level", 5}, {"hp", t.hp}, {"max_hp", t.maxHp}}})}}}}.dump() + "\n";
+    auto party = json::array();
+    for (const auto& member : t.party) {
+        if (party.size() == 6) break;
+        party.push_back({{"name", member.name}, {"species", member.species},
+                         {"level", member.level}, {"hp", member.hp}, {"max_hp", member.maxHp}});
+    }
+    return json{{"action", "telemetry-update"}, {"telemetry", {
+        {"available", t.available}, {"location", t.location}, {"play_time", t.playTime},
+        {"badges", t.badges}, {"party", std::move(party)}}}}.dump() + "\n";
 }
 void RiverXmbIntegration::contextSet(const RiverXmbContext& c) { enqueue(contextJson(c, "context-set"), false); }
 void RiverXmbIntegration::contextUpdate(const RiverXmbContext& c) { enqueue(contextJson(c, "context-update"), false); }
 void RiverXmbIntegration::contextClear() { enqueue(json{{"action", "context-clear"}}.dump() + "\n", false); }
-void RiverXmbIntegration::telemetryUpdate(const RiverXmbTelemetry& t) { auto m = telemetryJson(t); std::lock_guard lock(mutex_); if (m == lastTelemetry_) return; lastTelemetry_ = m; if (queue_.size() >= capacity_) { for (auto it = queue_.begin(); it != queue_.end(); ++it) if (it->find("telemetry-update") != std::string::npos) { queue_.erase(it); break; } } if (queue_.size() >= capacity_) queue_.pop_front(); queue_.push_back(std::move(m)); ready_.notify_one(); }
+void RiverXmbIntegration::telemetryUpdate(const RiverXmbTelemetry& t) {
+    // Only this owned, immutable serialized copy crosses into the IPC worker.
+    auto message = telemetryJson(t);
+    std::lock_guard lock(mutex_);
+    if (stopping_ || message == lastTelemetry_) return;
+    lastTelemetry_ = message;
+    std::erase_if(queue_, [](const auto& queued) {
+        return queued.find("telemetry-update") != std::string::npos;
+    });
+    if (queue_.size() >= capacity_) queue_.pop_front();
+    queue_.push_back(std::move(message));
+    ready_.notify_one();
+}
 void RiverXmbIntegration::enqueue(std::string message, bool) { std::lock_guard lock(mutex_); if (stopping_) return; if (queue_.size() >= capacity_) queue_.pop_front(); queue_.push_back(std::move(message)); ready_.notify_one(); }
 void RiverXmbIntegration::worker() {
     for (;;) {
@@ -78,7 +108,7 @@ void RiverXmbIntegration::worker() {
         for (unsigned attempt = 0; attempt < 10 && !delivered; ++attempt) {
             const auto path = socketPath();
             if (!path) break;
-            const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+            const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
             if (fd < 0) {
                 std::cerr << "warning: River XMB IPC socket creation failed\n";
                 break;
@@ -87,7 +117,7 @@ void RiverXmbIntegration::worker() {
             address.sun_family = AF_UNIX;
             std::strncpy(address.sun_path, path->c_str(), sizeof(address.sun_path) - 1);
             if (::connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0) {
-                delivered = ::send(fd, message.data(), message.size(), MSG_NOSIGNAL) >= 0;
+                delivered = ::send(fd, message.data(), message.size(), MSG_NOSIGNAL) == static_cast<ssize_t>(message.size());
                 if (!delivered) std::cerr << "warning: River XMB IPC send failed\n";
             } else if (errno != ENOENT && errno != ECONNREFUSED) {
                 std::cerr << "warning: River XMB IPC connect failed: " << std::strerror(errno) << "\n";
@@ -99,18 +129,16 @@ void RiverXmbIntegration::worker() {
             }
         }
         if (!delivered) {
-            std::lock_guard lock(mutex_);
-            if (!stopping_) {
-                if (message.find("telemetry-update") != std::string::npos) {
-                    for (auto it = queue_.begin(); it != queue_.end();) {
-                        if (it->find("telemetry-update") != std::string::npos) it = queue_.erase(it);
-                        else ++it;
-                    }
-                }
-                if (queue_.size() >= capacity_) queue_.pop_front();
-                queue_.push_back(std::move(message));
-                ready_.notify_one();
+            std::unique_lock lock(mutex_);
+            if (stopping_) return;
+            const bool telemetry = message.find("telemetry-update") != std::string::npos;
+            // Never replace a newer queued snapshot with an old failed send.
+            if (!telemetry || message == lastTelemetry_) {
+                if (queue_.size() >= capacity_) queue_.pop_back();
+                queue_.push_front(std::move(message));
             }
+            // Also back off when no runtime directory/socket can be resolved.
+            ready_.wait_for(lock, std::chrono::milliseconds(100), [&] { return stopping_; });
         }
     }
 }
