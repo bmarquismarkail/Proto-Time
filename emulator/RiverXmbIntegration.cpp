@@ -10,6 +10,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <openssl/sha.h>
+#include <openssl/rand.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cctype>
@@ -37,7 +38,13 @@ RiverXmbContext makeGameBoyContext(std::string_view cartridgeTitle) {
     return context;
 }
 
-RiverXmbIntegration::RiverXmbIntegration(std::size_t capacity) : capacity_(std::max<std::size_t>(1, capacity)) { thread_ = std::thread(&RiverXmbIntegration::worker, this); }
+RiverXmbIntegration::RiverXmbIntegration(std::size_t capacity) : capacity_(std::max<std::size_t>(1, capacity)) {
+    unsigned char nonce[16]{};
+    if (RAND_bytes(nonce, sizeof nonce) != 1) throw std::runtime_error("River XMB instance ID generation failed");
+    appId_ = "timeEmulator-";
+    for (unsigned char byte : nonce) { char hex[3]; std::snprintf(hex, sizeof hex, "%02x", byte); appId_ += hex; }
+    thread_ = std::thread(&RiverXmbIntegration::worker, this);
+}
 RiverXmbIntegration::~RiverXmbIntegration() { stop(); }
 void RiverXmbIntegration::stop() { { std::lock_guard lock(mutex_); if (stopping_) return; stopping_ = true; } ready_.notify_one(); if (thread_.joinable()) thread_.join(); }
 
@@ -76,9 +83,20 @@ std::string RiverXmbIntegration::telemetryJson(const RiverXmbTelemetry& t) {
         {"available", t.available}, {"location", t.location}, {"play_time", t.playTime},
         {"badges", t.badges}, {"party", std::move(party)}}}}.dump() + "\n";
 }
-void RiverXmbIntegration::contextSet(const RiverXmbContext& c) { enqueue(contextJson(c, "context-set"), false); }
-void RiverXmbIntegration::contextUpdate(const RiverXmbContext& c) { enqueue(contextJson(c, "context-update"), false); }
-void RiverXmbIntegration::contextClear() { enqueue(json{{"action", "context-clear"}}.dump() + "\n", false); }
+void RiverXmbIntegration::contextSet(const RiverXmbContext& c) {
+    auto message = contextJson(c, "context-set");
+    { std::lock_guard lock(mutex_); lastContext_ = message; lastTelemetry_.reset(); }
+    enqueue(std::move(message), false);
+}
+void RiverXmbIntegration::contextUpdate(const RiverXmbContext& c) {
+    auto message = contextJson(c, "context-update");
+    { std::lock_guard lock(mutex_); lastContext_ = contextJson(c, "context-set"); }
+    enqueue(std::move(message), false);
+}
+void RiverXmbIntegration::contextClear() {
+    { std::lock_guard lock(mutex_); lastContext_.reset(); lastTelemetry_.reset(); }
+    enqueue(json{{"action", "context-clear"}}.dump() + "\n", false);
+}
 void RiverXmbIntegration::telemetryUpdate(const RiverXmbTelemetry& t) {
     // Only this owned, immutable serialized copy crosses into the IPC worker.
     auto message = telemetryJson(t);
@@ -93,51 +111,95 @@ void RiverXmbIntegration::telemetryUpdate(const RiverXmbTelemetry& t) {
     ready_.notify_one();
 }
 void RiverXmbIntegration::enqueue(std::string message, bool) { std::lock_guard lock(mutex_); if (stopping_) return; if (queue_.size() >= capacity_) queue_.pop_front(); queue_.push_back(std::move(message)); ready_.notify_one(); }
+static std::optional<json> sendRequest(json message) {
+    const auto path = RiverXmbIntegration::socketPath();
+    if (!path || path->size() >= sizeof(sockaddr_un::sun_path)) return std::nullopt;
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) return std::nullopt;
+    timeval timeout{0, 250000};
+    ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
+    ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof timeout);
+    sockaddr_un address{};
+    address.sun_family = AF_UNIX;
+    std::strncpy(address.sun_path, path->c_str(), sizeof(address.sun_path) - 1);
+    std::optional<json> result;
+    if (::connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof address) == 0) {
+        const auto payload = message.dump() + "\n";
+        std::size_t sent = 0;
+        while (sent < payload.size()) {
+            const auto n = ::send(fd, payload.data() + sent, payload.size() - sent, MSG_NOSIGNAL);
+            if (n <= 0) break;
+            sent += static_cast<std::size_t>(n);
+        }
+        if (sent == payload.size()) {
+            std::string response;
+            char byte;
+            while (response.size() < 65536 && ::recv(fd, &byte, 1, 0) == 1) {
+                if (byte == '\n') break;
+                response += byte;
+            }
+            if (!response.empty()) result = json::parse(response, nullptr, false);
+        }
+    }
+    ::close(fd);
+    if (result && result->is_object()) return result;
+    return std::nullopt;
+}
 void RiverXmbIntegration::worker() {
+    std::string token;
     for (;;) {
         std::string message;
+        bool stopping = false;
         {
             std::unique_lock lock(mutex_);
-            ready_.wait(lock, [&] { return stopping_ || !queue_.empty(); });
-            if (stopping_) return;
-            message = std::move(queue_.front());
-            queue_.pop_front();
-        }
-
-        bool delivered = false;
-        for (unsigned attempt = 0; attempt < 10 && !delivered; ++attempt) {
-            const auto path = socketPath();
-            if (!path) break;
-            const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-            if (fd < 0) {
-                std::cerr << "warning: River XMB IPC socket creation failed\n";
-                break;
-            }
-            sockaddr_un address{};
-            address.sun_family = AF_UNIX;
-            std::strncpy(address.sun_path, path->c_str(), sizeof(address.sun_path) - 1);
-            if (::connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0) {
-                delivered = ::send(fd, message.data(), message.size(), MSG_NOSIGNAL) == static_cast<ssize_t>(message.size());
-                if (!delivered) std::cerr << "warning: River XMB IPC send failed\n";
-            } else if (errno != ENOENT && errno != ECONNREFUSED) {
-                std::cerr << "warning: River XMB IPC connect failed: " << std::strerror(errno) << "\n";
-            }
-            ::close(fd);
-            if (!delivered && attempt != 9) {
-                std::unique_lock lock(mutex_);
-                if (ready_.wait_for(lock, std::chrono::milliseconds(100), [&] { return stopping_; })) break;
+            ready_.wait_for(lock, std::chrono::seconds(5), [&] { return stopping_ || !queue_.empty(); });
+            stopping = stopping_;
+            if (!stopping && !queue_.empty()) {
+                message = std::move(queue_.front());
+                queue_.pop_front();
             }
         }
-        if (!delivered) {
+        if (stopping) {
+            if (!token.empty()) sendRequest({{"action", "context-clear"}, {"owner_token", token}});
+            return;
+        }
+        if (token.empty()) {
+            if (message.empty() || message.find("context-clear") != std::string::npos) continue;
+            const auto registration = sendRequest({{"action", "game-register"}, {"app_id", appId_}});
+            if (registration && registration->value("ok", false) &&
+                registration->contains("owner_token")) {
+                token = (*registration)["owner_token"].get<std::string>();
+                std::lock_guard lock(mutex_);
+                queue_.clear();
+                if (lastContext_) queue_.push_back(*lastContext_);
+                if (lastTelemetry_) queue_.push_back(*lastTelemetry_);
+                continue;
+            }
+        } else {
+            auto request = message.empty() ? json{{"action", "game-renew"}} :
+                                              json::parse(message, nullptr, false);
+            if (request.is_object()) {
+                request["owner_token"] = token;
+                const auto response = sendRequest(request);
+                if (response && response->value("ok", false)) {
+                    if (request.value("action", "") == "context-clear") token.clear();
+                    continue;
+                }
+                if (response && response->value("error", "").find("owner") != std::string::npos)
+                    token.clear();
+            }
+        }
+        if (!message.empty()) {
             std::unique_lock lock(mutex_);
             if (stopping_) return;
             const bool telemetry = message.find("telemetry-update") != std::string::npos;
-            // Never replace a newer queued snapshot with an old failed send.
             if (!telemetry || message == lastTelemetry_) {
                 if (queue_.size() >= capacity_) queue_.pop_back();
                 queue_.push_front(std::move(message));
             }
-            // Also back off when no runtime directory/socket can be resolved.
+            ready_.wait_for(lock, std::chrono::milliseconds(100), [&] { return stopping_; });
+        } else {
+            std::unique_lock lock(mutex_);
             ready_.wait_for(lock, std::chrono::milliseconds(100), [&] { return stopping_; });
         }
     }

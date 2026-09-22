@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -49,6 +50,10 @@ public:
             glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
             glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
             glfwWindowHint(GLFW_VISIBLE, visibilityRequested_ ? GLFW_TRUE : GLFW_FALSE);
+#ifdef GLFW_WAYLAND_APP_ID
+            if (const char* appId = std::getenv("BMMQ_RIVER_XMB_APP_ID"))
+                glfwWindowHintString(GLFW_WAYLAND_APP_ID, appId);
+#endif
             const auto width = scaledDimension(frameWidth_);
             const auto height = scaledDimension(frameHeight_);
             window_ = glfwCreateWindow(width, height, title_.c_str(), nullptr, nullptr);

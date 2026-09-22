@@ -54,6 +54,7 @@ public:
     void telemetryUpdate(const RiverXmbTelemetry& telemetry);
     void contextClear();
     void stop();
+    [[nodiscard]] const std::string& appId() const noexcept { return appId_; }
 
     [[nodiscard]] static std::string contextJson(const RiverXmbContext& context, std::string_view action);
     [[nodiscard]] static std::string telemetryJson(const RiverXmbTelemetry& telemetry);
@@ -68,6 +69,8 @@ private:
     std::size_t capacity_;
     bool stopping_ = false;
     std::optional<std::string> lastTelemetry_;
+    std::optional<std::string> lastContext_;
+    std::string appId_;
     std::thread thread_;
 };
 

@@ -6,6 +6,7 @@
 #include <thread>
 #include <cstring>
 #include <filesystem>
+#include <utility>
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -47,7 +48,7 @@ int main() {
         std::this_thread::sleep_for(std::chrono::milliseconds(150));
         for (unsigned i = 1; i <= 100; ++i)
             integration.telemetryUpdate(BMMQ::simulatedRiverXmbTelemetry(i));
-        // Let the old unavailable-endpoint send exhaust its retries first.
+        // Registration waits until River and the matching window are available.
         std::this_thread::sleep_for(std::chrono::milliseconds(1100));
         const int server = socket(AF_UNIX, SOCK_STREAM, 0);
         assert(server >= 0);
@@ -56,26 +57,37 @@ int main() {
         std::strcpy(address.sun_path, socketName.c_str());
         assert(bind(server, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0);
         assert(listen(server, 8) == 0);
-        pollfd ready{server, POLLIN, 0};
-        assert(poll(&ready, 1, 2500) == 1);
-        const int client = accept(server, nullptr, nullptr);
-        assert(client >= 0);
-        std::string message;
-        char buffer[1024];
-        for (;;) {
-            pollfd incoming{client, POLLIN, 0};
-            assert(poll(&incoming, 1, 1000) == 1);
-            const auto size = recv(client, buffer, sizeof(buffer), 0);
-            assert(size >= 0);
-            if (!size) break;
-            message.append(buffer, size);
-        }
-        close(client);
-        const auto received = nlohmann::json::parse(message);
+        auto receiveRequest = [&]() {
+            pollfd ready{server, POLLIN, 0};
+            assert(poll(&ready, 1, 2500) == 1);
+            const int client = accept(server, nullptr, nullptr);
+            assert(client >= 0);
+            std::string message;
+            char byte;
+            while (recv(client, &byte, 1, 0) == 1 && byte != '\n') message += byte;
+            return std::pair{client, nlohmann::json::parse(message)};
+        };
+        auto [registrationClient, registration] = receiveRequest();
+        assert(registration["action"] == "game-register");
+        assert(registration["app_id"] == integration.appId());
+        const char* accepted = "{\"ok\":true,\"owner_token\":\"test-token\",\"window_id\":\"test-window\"}\n";
+        assert(send(registrationClient, accepted, std::strlen(accepted), MSG_NOSIGNAL) > 0);
+        close(registrationClient);
+        auto [telemetryClient, received] = receiveRequest();
+        assert(received["action"] == "telemetry-update");
+        assert(received["owner_token"] == "test-token");
         assert(received["telemetry"]["play_time"] == 100);
+        const char* updated = "{\"ok\":true}\n";
+        assert(send(telemetryClient, updated, std::strlen(updated), MSG_NOSIGNAL) > 0);
+        close(telemetryClient);
         integration.telemetryUpdate(BMMQ::simulatedRiverXmbTelemetry(100));
+        pollfd ready{server, POLLIN, 0};
         assert(poll(&ready, 1, 150) == 0); // Duplicate suppression.
         integration.stop();
+        auto [clearClient, clear] = receiveRequest();
+        assert(clear["action"] == "context-clear");
+        assert(clear["owner_token"] == "test-token");
+        close(clearClient);
         integration.telemetryUpdate(BMMQ::simulatedRiverXmbTelemetry(101));
         assert(poll(&ready, 1, 150) == 0); // No post-stop publication.
         close(server);

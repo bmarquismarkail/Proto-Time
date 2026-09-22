@@ -816,6 +816,7 @@ int main(int argc, char** argv)
         bool realPokemonTelemetry = false;
         if (options.machineKind.value() == "gameboy") {
             riverXmb.emplace();
+            setenv("BMMQ_RIVER_XMB_APP_ID", riverXmb->appId().c_str(), 1);
             auto* gameBoy = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get());
             const auto context = BMMQ::makeGameBoyContext(gameBoy != nullptr ? gameBoy->cartridgeTitle() : "");
             riverXmb->contextSet(context);

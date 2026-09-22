@@ -1,8 +1,15 @@
 # River XMB game presentation
 
-Game Boy sessions publish a display-scoped River XMB context through the
-newline-delimited UNIX-socket protocol. The context is presentation-only and
-does not change emulator window geometry.
+Game Boy sessions publish a window-scoped River XMB context through the
+newline-delimited UNIX-socket protocol. The GLFW Wayland window receives a
+unique `timeEmulator-<instance>` app ID through either the SDL or GLFW frontend.
+The IPC worker retries `game-register`
+until River returns that window's compositor identifier and owner token. Every
+game update carries the token; the worker renews the 15-second lease every five
+seconds while idle. Window close, explicit clear, and lease expiry remove the
+owner. Each River output displays its selected game window's state; another
+window's selection restores the ordinary scene. The context is presentation-only
+and does not change emulator window geometry.
 
 The small schema is:
 
