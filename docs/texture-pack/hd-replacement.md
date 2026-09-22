@@ -78,7 +78,7 @@ Replacement images should have dimensions that are multiples of the canonical ti
     {
       "match": {
         "kind": "Tile",
-        "decodedHash": "<8-digit-hash>",
+        "decodedHash": "0x1234567890abcdef",
         "width": 8,
         "height": 8
       },
@@ -91,6 +91,9 @@ Replacement images should have dimensions that are multiples of the canonical ti
 ```
 
 ### Match Rules
+
+Replace the example hash with the captured 64-bit hash (16 hexadecimal digits
+after `0x`), as described in the [authoring guide](author-workflow.md#hash-contract).
 
 Use the same match rules as standard texture packs:
 

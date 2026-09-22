@@ -1,5 +1,10 @@
 # Proto-Time SDL Subsystem Migration Plan
 
+> **Status: Delivered migration record.**
+> The completion evidence below is dated. Pre-migration analysis, illustrative
+> API shapes, and rollout instructions are retained as history. Use the
+> [current architecture](../../docs/architecture.md) for the supported boundary.
+
 ## Status
 
 Implemented on 2026-07-15. The coupling analysis below records the pre-migration

@@ -1,8 +1,13 @@
 # T.I.M.E. Emulator Concurrency Implementation Plan
 
-## Status: Active Reference
+## Status: Historical roadmap and closure record
 
-This plan is derived from the concurrency research in `time-deep-research-improving-concurrency.md` and tailored to Proto-Time's current codebase. It defines the three-lane architecture, implementation roadmap, and design decisions for moving forward.
+This preserves the original concurrency roadmap and accumulated milestone
+closures. Its state assessment, proposed files, commands, and unresolved questions
+refer to their recorded stages; they are not current implementation instructions.
+Use the [documentation index](../../../docs/README.md) to find the current
+architecture, retained phase contracts, and later decisions. The native expansion
+no-go remains recorded in [Phase 11E](../../docs/proto-time-phase-11e-native-backend-spike.md).
 
 ---
 

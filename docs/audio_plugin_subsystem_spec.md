@@ -1,8 +1,18 @@
 # Proto-Time Audio Plugin Subsystem Specification
 
-This document defines the target and current-reference architecture for the Proto-Time audio plugin subsystem.
+> **Status: Historical design reference.**
+> This records the earlier callback-processing design. Its "current" descriptions
+> and callback API lists are historical. The retained host path prepares and
+> processes audio on the audio worker; the device callback only drains prepared
+> samples. Use [current ownership](architecture.md#deadline-domains) and the
+> [PSG contract](../.internal/docs/psg-audio-processor-plugin-contract.md) for changes.
 
-Unlike the other non-audio subsystem specs, this document describes a subsystem that already exists in meaningful form in the repository. It should therefore be treated as both a design reference and a normalization target for future audio changes.
+This document records the earlier target and then-current reference architecture
+for the Proto-Time audio plugin subsystem.
+
+It remains useful for service/lifecycle rationale. Its callback-processing flow
+has been superseded by worker preparation and drain-only backend consumption;
+it is not the normalization target for new callback code.
 
 ## Goal
 
@@ -311,8 +321,8 @@ Allowed operations by state:
 
 Rules:
 
-- processor mutation is allowed only while `PausedOrClosed`
-- reset and configure operations are allowed only while `PausedOrClosed`
+- processor mutation requires a reset-safe state as listed in the table above
+- reset and configure operations require a reset-safe state as listed above
 - backend adapters are responsible for updating service state on lifecycle transitions
 - backends must call `setBackendPausedOrClosed(true)` before close, pause, reset-safe reconfiguration, or fault handoff to non-real-time code
 - backends must call `setBackendPausedOrClosed(false)` only after open succeeds and callback-capable activity is actually live

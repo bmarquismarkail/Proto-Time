@@ -1,5 +1,9 @@
 # Timing Jitter Fix Brief
 
+> **Status: Historical implementation brief.**
+> Preserve this as diagnosis and rationale. The [concurrency gates](../.internal/docs/concurrency-success-gates.md)
+> and current timing implementation take precedence over its next-step instructions.
+
 ## Objective
 
 Reduce or eliminate emulation-rate jitter that presents most obviously as audio slowing down and speeding up.

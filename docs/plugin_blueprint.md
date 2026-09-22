@@ -1,5 +1,10 @@
 # Proto-Time Plugin Subsystem Blueprint
 
+> **Status: Design reference.**
+> The engine/service/contract/adapter split is shared design vocabulary. Examples
+> are not a claim that every subsystem or public module ABI has shipped. For
+> external ABI boundaries and present ownership, use [current architecture](architecture.md).
+
 This document captures the reference architecture for plugin subsystem development in Proto-Time.
 
 The audio subsystem is the first subsystem to fully exercise this pattern. Future plugin families should use the same shape unless there is a strong, explicit reason not to.

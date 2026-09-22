@@ -6,6 +6,10 @@ Active design. This document supersedes the plugin-boundary portions of the
 March 30, 2026 `time-space` design and implementation plan. Those archived
 documents remain the historical record of the machine-owned runtime milestone.
 
+For the complete runtime map, see [current architecture](../../docs/architecture.md).
+The March documents retain their historical paths under `superpowers/`; their
+CPU/executor-only external ABI scope is superseded by this decision.
+
 ## Decisions
 
 Proto-Time uses four deliberately separate extension layers:
@@ -20,8 +24,11 @@ Proto-Time uses four deliberately separate extension layers:
 3. **I/O extensions** remain internal C++ interfaces owned by the existing
    machine-driven `PluginManager`. They are not part of the stable module ABI.
 4. **Host modules** are shared libraries discovered through a generic loader.
-   Their public boundary is a versioned pure-C function table. Executor and
-   frontend descriptors may coexist in one module.
+   Their public boundary is a versioned pure-C function table. Executor,
+   frontend, audio-output, audio-processor, IR core-adapter, and IR backend
+   descriptors may coexist in one module. See the [ABI header](../../machine/plugins/abi/TimePluginAbi.h)
+   for exact tables, the [shared IR contract](proto-time-phase-12-multi-core-ir-il.md),
+   and the [PSG processor contract](psg-audio-processor-plugin-contract.md).
 
 CPU runtimes remain replaceable components inside a machine, but are not an
 external loading boundary in this revision. CPU state, interrupts, memory,

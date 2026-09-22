@@ -1,5 +1,11 @@
 # Proto-Time Timing Service Blueprint
 
+> **Status: Historical extraction design.**
+> The TimingService/TimingEngine split now exists. The prospective extraction
+> steps and sample loop below describe the earlier design; do not reintroduce
+> per-instruction calls to mutex-protected services. Use [current architecture](architecture.md)
+> and the [concurrency gates](../.internal/docs/concurrency-success-gates.md).
+
 This document defines the reference design for emulation speed regulation in Proto-Time.
 
 Proto-Time already has a working wall-clock pacing loop in `emulator.cpp`. The next step is to promote that logic into a reusable subsystem so timing policy is explicit, testable, and extensible.

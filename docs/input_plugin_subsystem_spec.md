@@ -1,5 +1,9 @@
 # Proto-Time Input Plugin Subsystem Specification
 
+> **Status: Target design reference.**
+> Proposed API shapes, lifecycle states, and queue policies need implementation
+> verification. Use [current architecture](architecture.md) for implemented ownership.
+
 This document defines the target architecture for the Proto-Time input plugin subsystem.
 
 It applies the plugin subsystem blueprint to non-audio input handling and should be read together with the existing machine input abstraction design note.

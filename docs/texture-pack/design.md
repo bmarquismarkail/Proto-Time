@@ -1,5 +1,10 @@
 # Texture Pack / Visual Override Design for the Emulator Framework
 
+> **Status: Original design reference.**
+> The [authoring workflow](author-workflow.md) and [HD guide](hd-replacement.md)
+> define supported behavior. Proposed fields, APIs, stages, and programmable
+> effects below are not all implemented. See the [v1 boundary](spec-gap-assessment.md).
+
 Date: 2026-04-17
 
 ## Goal

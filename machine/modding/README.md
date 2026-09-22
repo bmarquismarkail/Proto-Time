@@ -5,7 +5,8 @@ selected packages. Success returns a `PreparedMods` containing the patched ROM,
 populated host, and ordered mod metadata including region handles. Failure
 returns an error with the package path and no prepared state. The input ROM and
 existing machines are never modified. Call this before loading the returned ROM
-into a machine; automatic machine installation and guest traps are separate work.
+into a machine. Preparation does not install guest hooks; the emulator's
+`--mod` activation path performs the explicit installation described below.
 
 Each directory contains `manifest.json`:
 
@@ -74,8 +75,9 @@ asynchronously. Destruction calls the module's destroy callback before unloading
 Failed creation also destroys a non-null partial instance.
 
 `invoke` forwards a numeric hook ID, PC, and argument, publishing only the result
-field on success. Hook IDs belong to the module; CPU traps and guest register or
-memory access require a future machine adapter. No guest hooks install themselves
+field on success. Hook IDs belong to the module. The Game Boy adapter below
+bridges guest calls and the `HL` register; this generic module API does not expose
+arbitrary guest memory or register access. No guest hooks install themselves
 when a module is loaded. A failed call does not roll back module/region mutations.
 
 `save` returns native bytes with mod ID, version, and state schema. `restore`
