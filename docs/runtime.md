@@ -45,8 +45,9 @@ with:
 independently with `--audio-backend sdl|dummy|file`; external audio-output
 modules use `--audio-plugin <path>`.
 
-For optional desktop presentation and real Pokémon Red telemetry, see
-[River XMB integration](river_xmb_game_integration.md).
+Native modules may optionally observe read-only machine state through the
+[versioned observation interface](native_observation.md). Desktop integrations
+and game-specific decoding live in independently maintained modules.
 
 ## Executor policies and IR components
 

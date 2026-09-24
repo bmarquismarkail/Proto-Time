@@ -38,7 +38,7 @@ public:
     {
         if (ready_) return true;
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
-        if (const char* appId = std::getenv("BMMQ_RIVER_XMB_APP_ID"))
+        if (const char* appId = std::getenv("TIME_FRONTEND_APP_ID"))
             SDL_SetHint("SDL_VIDEO_WAYLAND_WMCLASS", appId);
         if (SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
             fail(SDL_GetError());

@@ -74,3 +74,16 @@ static const struct TimeModApiV1 api = {
     create, destroy, MOD_TEST_INVOKE, reset, 1, save, restore
 };
 TIME_MOD_EXPORT const struct TimeModApiV1* time_get_mod_v1(void) { (void)invoke; return &api; }
+
+#ifdef MOD_TEST_OBSERVER
+static int32_t observe(void* context, const struct TimeModObservationV1* o) {
+    struct State* s = context;
+    uint8_t value = 0;
+    if (!o || o->struct_size < sizeof(*o) || o->abi_version != 1 || !o->rom_sha1 || !o->frontend_app_id) return 0;
+    if (!o->read_memory(o->context, 0xc000, &value, 1)) return 0;
+    s->counter = value + o->generation;
+    return 1;
+}
+static const struct TimeModObserverV1 observer = {sizeof(struct TimeModObserverV1), 1, observe};
+TIME_MOD_EXPORT const struct TimeModObserverV1* time_get_mod_observer_v1(void) { return &observer; }
+#endif

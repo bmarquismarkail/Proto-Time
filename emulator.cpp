@@ -34,8 +34,8 @@
 #include "emulator/EmulatorConfig.hpp"
 #include "emulator/DiagnosticsJson.hpp"
 #include "emulator/EmulatorHost.hpp"
-#include "emulator/RiverXmbIntegration.hpp"
-#include "emulator/PokemonRedTelemetry.hpp"
+#include <openssl/sha.h>
+#include <unistd.h>
 #include "inst_cycle/IrExecutionService.hpp"
 #include "inst_cycle/executor/ExecutorPolicyRegistry.hpp"
 #include "machine/BackgroundTaskService.hpp"
@@ -130,7 +130,6 @@ void printUsage(std::string_view program)
               << "                     Capture observed decoded visual resources for pack authoring\n"
               << "  --visual-pack-reload\n"
               << "                     Poll visual pack manifests/assets and reload changed packs\n"
-              << "  --river-xmb-simulated  Publish simulated Pokemon Red context/telemetry to River XMB\n"
               << "  --headless         Run without a frontend plugin\n"
               << "  -h, --help         Show this help text\n\n"
               << "Controls:\n"
@@ -812,19 +811,8 @@ int main(int argc, char** argv)
             ? BMMQ::bootstrapMachine(options)
             : BMMQ::bootstrapMachine(options, launchRom);
         auto& machine = *bootstrapped.machine;
-        std::optional<BMMQ::RiverXmbIntegration> riverXmb;
-        bool realPokemonTelemetry = false;
-        if (options.machineKind.value() == "gameboy") {
-            riverXmb.emplace();
-            setenv("BMMQ_RIVER_XMB_APP_ID", riverXmb->appId().c_str(), 1);
-            auto* gameBoy = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get());
-            const auto context = BMMQ::makeGameBoyContext(gameBoy != nullptr ? gameBoy->cartridgeTitle() : "");
-            riverXmb->contextSet(context);
-            realPokemonTelemetry = gameBoy != nullptr &&
-                BMMQ::supportsPokemonRedTelemetry(gameBoy->cartridge().romBytes());
-            std::cout << "River XMB: " << context.presentation << " presentation enabled\n";
-            if (options.riverXmbSimulated) std::cout << "River XMB: simulated telemetry enabled\n";
-        }
+        const std::string frontendAppId = "timeEmulator-" + std::to_string(getpid());
+        setenv("TIME_FRONTEND_APP_ID", frontendAppId.c_str(), 1);
         const auto& descriptor = bootstrapped.descriptor;
         const auto romSize = bootstrapped.romSize;
         std::vector<BMMQ::Modding::LoadedMod> pendingNativeMods;
@@ -1375,7 +1363,11 @@ int main(int argc, char** argv)
 
         auto runEmulationLane = [&]() {
             try {
-                auto nextRiverTelemetry = SteadyClock::now();
+                auto nextObservation = SteadyClock::now();
+                std::uint64_t observedGeneration = ~std::uint64_t{0};
+                std::string romIdentity;
+                struct ReadContext { BMMQ::RuntimeContext* runtime; std::thread::id owner; bool active; };
+                ReadContext readContext{&machine.runtimeContext(), std::this_thread::get_id(), false};
                 if (!pendingNativeMods.empty()) {
                     auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(&machine);
                     if (gameBoyMachine == nullptr)
@@ -1468,19 +1460,37 @@ int main(int argc, char** argv)
                     }
 
                     const auto now = SteadyClock::now();
-                    if (riverXmb && now >= nextRiverTelemetry &&
-                        (realPokemonTelemetry || options.riverXmbSimulated)) {
-                        nextRiverTelemetry = now + std::chrono::milliseconds(250);
-                        // A recognized Red ROM always wins over the demo flag. The
-                        // flag is the opt-in fallback for unsupported ROMs.
-                        if (!realPokemonTelemetry && options.riverXmbSimulated) {
-                            riverXmb->telemetryUpdate(BMMQ::simulatedRiverXmbTelemetry(
-                                static_cast<unsigned>(emulatedCycles / 4194304u)));
-                        } else {
-                            const auto snapshot = BMMQ::PokemonRedSnapshot::capture(machine.runtimeContext());
-                            if (const auto telemetry = snapshot.telemetry())
-                                riverXmb->telemetryUpdate(*telemetry);
+                    if (!loadedNativeModules.empty() && now >= nextObservation) {
+                        nextObservation = now + std::chrono::milliseconds(100);
+                        if (observedGeneration != machine.observationGeneration()) {
+                            observedGeneration = machine.observationGeneration();
+                            romIdentity.clear();
+                            if (auto* gb = dynamic_cast<GameBoyMachine*>(&machine)) {
+                                const auto rom = gb->cartridge().romBytes();
+                                unsigned char digest[SHA_DIGEST_LENGTH];
+                                SHA1(rom.data(), rom.size(), digest);
+                                constexpr char hex[] = "0123456789abcdef";
+                                for (auto c : digest) { romIdentity += hex[c >> 4]; romIdentity += hex[c & 15]; }
+                            }
                         }
+                        TimeModObservationV1 observation{sizeof(TimeModObservationV1), 1, observedGeneration,
+                            romIdentity.c_str(), frontendAppId.c_str(), &readContext,
+                            [](void* ptr, uint32_t address, uint8_t* bytes, uint32_t size) -> int32_t {
+                                auto& context = *static_cast<ReadContext*>(ptr);
+                                if (context.owner != std::this_thread::get_id() || !context.active || !bytes ||
+                                    size > 8192 || address > 65536 || size > 65536-address) return 0;
+                                for (uint32_t i = 0; i < size; ++i) bytes[i] = context.runtime->peek8(address+i);
+                                return 1;
+                            }};
+                        readContext.active = true;
+                        for (auto it = loadedNativeModules.begin(); it != loadedNativeModules.end();) {
+                            bool accepted = false;
+                            try { accepted = (*it)->observe(observation); } catch (...) {}
+                            if (accepted) { ++it; continue; }
+                            std::cerr << "warning: disabling failed native observer\n";
+                            it = loadedNativeModules.erase(it);
+                        }
+                        readContext.active = false;
                     }
                     if (frontendInputTickPending.exchange(false, std::memory_order_acq_rel)) {
                         machine.serviceInput();
@@ -1588,6 +1598,7 @@ int main(int argc, char** argv)
                 emulationFailure = std::current_exception();
                 stopRequested.store(true, std::memory_order_release);
             }
+            loadedNativeModules.clear(); // Join plugin workers before unloading, on the owning lane.
             emulationFinished.store(true, std::memory_order_release);
         };
 
@@ -1617,10 +1628,6 @@ int main(int argc, char** argv)
 
         stopRequested.store(true, std::memory_order_release);
         emulationThread.join();
-        if (riverXmb.has_value()) {
-            riverXmb->contextClear();
-            riverXmb->stop();
-        }
         if (emulationFailure != nullptr) {
             std::rethrow_exception(emulationFailure);
         }

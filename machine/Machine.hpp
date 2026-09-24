@@ -58,6 +58,12 @@ public:
 class Machine {
 public:
     virtual ~Machine() = default;
+    [[nodiscard]] std::uint64_t observationGeneration() const noexcept { return observationGeneration_; }
+protected:
+    void advanceObservationGeneration() noexcept { ++observationGeneration_; }
+private:
+    std::uint64_t observationGeneration_ = 0;
+public:
     Machine()
         : audioService_(std::make_unique<AudioService>()),
           inputService_(std::make_unique<InputService>()),

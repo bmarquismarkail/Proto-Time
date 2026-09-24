@@ -10,6 +10,7 @@ namespace BMMQ::Modding {
 struct NativeMod::Impl {
     void* library = nullptr;
     TimeModApiV1 api{};
+    TimeModObserverV1 observer{};
     void* instance = nullptr;
     std::shared_ptr<ModHost> host;
     LoadedMod metadata;
@@ -97,6 +98,13 @@ std::unique_ptr<NativeMod> NativeMod::load(const LoadedMod& metadata, std::share
     if (!api->create || !api->destroy || !api->invoke || !api->reset || !api->save || !api->restore ||
         api->state_size > 16 * 1024 * 1024)
         throw std::runtime_error("invalid native mod callbacks/state size");
+    if (auto entry = reinterpret_cast<TimeGetModObserverV1>(dlsym(s.library, TIME_MOD_OBSERVER_ENTRYPOINT_V1))) {
+        const auto* extension = entry();
+        if (!extension || extension->struct_size < sizeof(TimeModObserverV1) ||
+            extension->abi_version != 1 || !extension->observe)
+            throw std::runtime_error("incompatible native observer ABI");
+        s.observer = *extension;
+    }
     s.api = *api;
     s.bridge = {sizeof(TimeModHostV1), TIME_MOD_ABI_V1, &s,
                 Impl::find, Impl::transfer<false>, Impl::transfer<true>, Impl::symbol};
@@ -118,6 +126,12 @@ bool NativeMod::invoke(TimeModCallV1& input)
     if (s.api.invoke(s.instance, &copy) != 1) return false;
     input.result = copy.result;
     return true;
+}
+bool NativeMod::observe(const TimeModObservationV1& observation) {
+    Impl::Call guard(*impl_);
+    if (!impl_->observer.observe) return true;
+    if (observation.struct_size < sizeof(TimeModObservationV1) || observation.abi_version != 1) return false;
+    return impl_->observer.observe(impl_->instance, &observation) == 1;
 }
 bool NativeMod::reset() {
     Impl::Call guard(*impl_);

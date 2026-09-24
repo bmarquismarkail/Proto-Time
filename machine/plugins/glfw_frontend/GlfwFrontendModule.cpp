@@ -51,7 +51,7 @@ public:
             glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
             glfwWindowHint(GLFW_VISIBLE, visibilityRequested_ ? GLFW_TRUE : GLFW_FALSE);
 #ifdef GLFW_WAYLAND_APP_ID
-            if (const char* appId = std::getenv("BMMQ_RIVER_XMB_APP_ID"))
+            if (const char* appId = std::getenv("TIME_FRONTEND_APP_ID"))
                 glfwWindowHintString(GLFW_WAYLAND_APP_ID, appId);
 #endif
             const auto width = scaledDimension(frameWidth_);

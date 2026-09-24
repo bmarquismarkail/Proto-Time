@@ -226,9 +226,6 @@ void applyConfigValue(EmulatorConfig& config,
         } else {
             throw std::invalid_argument("Unknown config key: " + label);
         }
-    } else if (section == "river_xmb") {
-        if (key == "simulated") config.riverXmbSimulated = parseBool(text, label);
-        else throw std::invalid_argument("Unknown config key: " + label);
     } else if (section == "background") {
         if (key == "workers") {
             const auto parsed = std::min<std::uint64_t>(parseUnsigned(text, label), 256u);
@@ -431,7 +428,6 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     if (overrides.visualPackReload.has_value()) {
         config.visualPackReload = *overrides.visualPackReload;
     }
-    if (overrides.riverXmbSimulated.has_value()) config.riverXmbSimulated = *overrides.riverXmbSimulated;
 }
 
 void validateEmulatorConfig(const EmulatorConfig& config)
@@ -739,8 +735,6 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
             arguments.overrides.visualPackReload = true;
         } else if (arg == "--headless") {
             arguments.overrides.headless = true;
-        } else if (arg == "--river-xmb-simulated") {
-            arguments.overrides.riverXmbSimulated = true;
         } else if (arg == "-h" || arg == "--help") {
             arguments.helpRequested = true;
             return arguments;

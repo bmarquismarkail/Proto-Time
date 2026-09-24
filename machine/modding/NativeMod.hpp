@@ -21,6 +21,7 @@ public:
     NativeMod& operator=(const NativeMod&) = delete;
     bool invoke(TimeModCallV1&);
     bool reset();
+    bool observe(const TimeModObservationV1&);
     NativeModState save();
     bool restore(const NativeModState&);
 private:

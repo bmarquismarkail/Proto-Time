@@ -32,7 +32,7 @@ proof of implementation; a historical completion report is not a fresh test run.
 | Visual pack authoring, capture, matching, reload | [Texture-pack index](texture-pack/README.md) |
 | Manifest directories, native modules, Game Boy trampolines | [Modding contract](../machine/modding/README.md) |
 | Revision-pinned title-screen species extension | [Pokémon demo](../mods/pokered_species/README.md) |
-| Optional desktop presentation and real telemetry | [River XMB guide](river_xmb_game_integration.md), [telemetry contract](../.internal/docs/pokemon-red-river-telemetry.md) |
+| Optional native observation | [Native observation interface](native_observation.md) |
 | Concurrency criteria and dated validation evidence | [Success gates](../.internal/docs/concurrency-success-gates.md) |
 | Contributor/agent workflow | Root `AGENTS.md` when present; [CMakeLists.txt](../CMakeLists.txt) owns build/test registration |
 

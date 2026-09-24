@@ -162,8 +162,6 @@ target_link_libraries(time-machine-factory
 target_link_libraries(time-emulator-config PUBLIC time-machine-factory time-dynamic-plugin-loader)
 add_library(time-emulator-host STATIC
     emulator/EmulatorHost.cpp
-    emulator/RiverXmbIntegration.cpp
-    emulator/PokemonRedTelemetry.cpp
 )
 target_link_libraries(time-emulator-host
     PUBLIC
@@ -586,12 +584,6 @@ add_test(NAME smoke-machine-factory COMMAND time-smoke-machine-factory)
 add_executable(time-smoke-emulator-host tests/smoke_emulator_host.cpp)
 target_link_libraries(time-smoke-emulator-host time-emulator-host)
 add_test(NAME smoke-emulator-host COMMAND time-smoke-emulator-host)
-add_executable(time-smoke-pokemon-red-telemetry tests/smoke_pokemon_red_telemetry.cpp)
-target_link_libraries(time-smoke-pokemon-red-telemetry time-emulator-host time-gameboy-interpreter-core)
-add_test(NAME smoke-pokemon-red-telemetry COMMAND time-smoke-pokemon-red-telemetry)
-add_executable(time-smoke-river-xmb-integration tests/smoke_river_xmb_integration.cpp)
-target_link_libraries(time-smoke-river-xmb-integration time-emulator-host)
-add_test(NAME smoke-river-xmb-integration COMMAND time-smoke-river-xmb-integration)
 add_executable(time-smoke-video-engine tests/smoke_video_engine.cpp)
 target_link_libraries(time-smoke-video-engine time-gameboy-interpreter-core)
 add_test(NAME smoke-video-engine COMMAND time-smoke-video-engine)
@@ -924,3 +916,13 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         endif()
     endforeach()
 endif()
+
+add_library(time-test-native-observer MODULE tests/fixtures/test_native_mod.c)
+target_include_directories(time-test-native-observer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(time-test-native-observer PRIVATE MOD_TEST_OBSERVER=1)
+add_executable(time-smoke-native-observer tests/smoke_native_observer.cpp)
+target_link_libraries(time-smoke-native-observer time-native-mod-loader time-gameboy-interpreter-core)
+add_dependencies(time-smoke-native-observer time-test-native-observer time-test-native-mod)
+add_test(NAME smoke-native-observer COMMAND time-smoke-native-observer $<TARGET_FILE:time-test-native-observer> $<TARGET_FILE:time-test-native-mod>)
+
+target_compile_options(time-smoke-native-observer PRIVATE -UNDEBUG)

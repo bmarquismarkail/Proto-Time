@@ -158,7 +158,7 @@ uint8_t GameBoyMemoryMap::readRaw(uint16_t addr) const {
 
     // IE (0xFFFF)
     if (addr == 0xFFFFu) {
-        return hram_[0xFFu];
+        return hram_[0x7Fu];
     }
 
     return 0xFF;
@@ -240,7 +240,7 @@ void GameBoyMemoryMap::writeRaw(uint16_t addr, uint8_t value) {
 
     // IE (0xFFFF)
     if (addr == 0xFFFFu) {
-        hram_[0xFFu] = value;
+        hram_[0x7Fu] = value;
         return;
     }
 
@@ -376,7 +376,7 @@ void GameBoyMemoryMap::setIoRegisterRaw(uint16_t address, uint8_t value) {
     if (address >= 0xFF00u && address < 0xFF80u) {
         ioRegs_[address - 0xFF00u] = value;
     } else if (address == 0xFFFFu) {
-        hram_[0xFFu] = value;
+        hram_[0x7Fu] = value;
     }
 }
 

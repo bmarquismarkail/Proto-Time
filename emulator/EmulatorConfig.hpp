@@ -58,7 +58,6 @@ struct EmulatorConfig {
     std::vector<std::filesystem::path> visualPackPaths;
     std::optional<std::filesystem::path> visualCapturePath;
     bool visualPackReload = false;
-    bool riverXmbSimulated = false;
 };
 
 struct CommandLineConfigOverrides {
@@ -103,7 +102,6 @@ struct CommandLineConfigOverrides {
     std::optional<std::vector<std::filesystem::path>> visualPackPaths;
     std::optional<std::filesystem::path> visualCapturePath;
     std::optional<bool> visualPackReload;
-    std::optional<bool> riverXmbSimulated;
 };
 
 struct ParsedEmulatorArguments {
