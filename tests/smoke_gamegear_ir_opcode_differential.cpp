@@ -217,7 +217,7 @@ void assertEquivalent(const CaseMetadata& meta,
     }
 }
 
-void executeAndCompare(const CaseMetadata& meta)
+void executeAndCompare(const CaseMetadata& meta, bool cachedBlock = false)
 {
     const auto rom = makeRom(meta);
     BMMQ::GameGearMachine baseline;
@@ -226,15 +226,18 @@ void executeAndCompare(const CaseMetadata& meta)
     ir.loadRom(rom);
     initializeMachine(baseline, meta);
     initializeMachine(ir, meta);
-    BMMQ::Plugin::PortableIrStepPolicy policy;
-    ir.attachExecutorPolicy(policy);
+    BMMQ::Plugin::PortableIrStepPolicy irPolicy;
+    BMMQ::Plugin::VisibleStatePreservingStepPolicy cachedPolicy;
+    if (cachedBlock) ir.attachExecutorPolicy(cachedPolicy);
+    else ir.attachExecutorPolicy(irPolicy);
 
     baseline.step();
     ir.step();
     DIFF_CHECK(baseline.runtimeContext().getLastFeedback().executionPath ==
                BMMQ::ExecutionPathHint::CanonicalFetchDecodeExecute, meta);
     DIFF_CHECK(ir.runtimeContext().getLastFeedback().executionPath ==
-               BMMQ::ExecutionPathHint::PortableIr, meta);
+               (cachedBlock ? BMMQ::ExecutionPathHint::CachedBlock
+                            : BMMQ::ExecutionPathHint::PortableIr), meta);
     assertEquivalent(meta, baseline, ir);
 }
 
@@ -280,7 +283,7 @@ void assertSerializedStateEqual(const CaseMetadata& meta,
     DIFF_CHECK(readFile(baselinePath) == readFile(irPath), meta);
 }
 
-void testExecutionStateFallbacks()
+void testExecutionStateFallbacks(bool cachedBlock = false)
 {
     TemporaryDirectory temporary;
     for (const auto [prelude, name] :
@@ -294,8 +297,10 @@ void testExecutionStateFallbacks()
         BMMQ::GameGearMachine ir;
         baseline.loadRom(rom);
         ir.loadRom(rom);
-        BMMQ::Plugin::PortableIrStepPolicy policy;
-        ir.attachExecutorPolicy(policy);
+        BMMQ::Plugin::PortableIrStepPolicy irPolicy;
+        BMMQ::Plugin::VisibleStatePreservingStepPolicy cachedPolicy;
+        if (cachedBlock) ir.attachExecutorPolicy(cachedPolicy);
+        else ir.attachExecutorPolicy(irPolicy);
         baseline.step();
         ir.step();
         baseline.step();
@@ -312,8 +317,10 @@ void testExecutionStateFallbacks()
     BMMQ::GameGearMachine ir;
     baseline.loadRom(rom);
     ir.loadRom(rom);
-    BMMQ::Plugin::PortableIrStepPolicy policy;
-    ir.attachExecutorPolicy(policy);
+    BMMQ::Plugin::PortableIrStepPolicy irPolicy;
+    BMMQ::Plugin::VisibleStatePreservingStepPolicy cachedPolicy;
+    if (cachedBlock) ir.attachExecutorPolicy(cachedPolicy);
+    else ir.attachExecutorPolicy(irPolicy);
     for (auto* machine : {&baseline, &ir}) {
         const auto statePath = temporary.path() /
             (machine == &baseline ? "pending-baseline.ptss" : "pending-ir.ptss");
@@ -432,9 +439,11 @@ int main()
         for (std::uint8_t variant = 0u; variant < kSeeds.size(); ++variant) {
             CaseMetadata meta{kSeeds[variant], opcode, variant, "supported opcode"};
             executeAndCompare(meta);
+            executeAndCompare(meta, true);
         }
     }
     testExecutionStateFallbacks();
+    testExecutionStateFallbacks(true);
     testAddressBoundaries();
     testCacheReuseAndInvalidation();
     return 0;

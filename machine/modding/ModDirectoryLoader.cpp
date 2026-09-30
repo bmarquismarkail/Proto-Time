@@ -95,8 +95,8 @@ ModDirectoryLoadResult loadModDirectories(std::span<const std::filesystem::path>
     try {
         require(directories.size() <= 128, "too many packages");
         require(rom.size() <= maxData, "ROM exceeds size limit");
-        // ROM offset translation is explicitly Game Boy-specific for this adapter.
-        require(machineId == "gameboy", "unsupported mod ROM adapter");
+        require(machineId == "gameboy" || machineId == "gamegear",
+                "unsupported mod ROM adapter");
         unsigned char digest[EVP_MAX_MD_SIZE];
         unsigned digestSize = 0;
         require(EVP_Digest(rom.data(), rom.size(), digest, &digestSize, EVP_sha256(), nullptr) == 1,
@@ -153,7 +153,7 @@ ModDirectoryLoadResult loadModDirectories(std::span<const std::filesystem::path>
             if (m.contains("symbols")) {
                 const auto path = asset(package.root, stringField(m, "symbols"));
                 require(std::filesystem::file_size(path) <= maxManifest * 16, "symbol file too large");
-                const auto result = loadPokeredSymbols(path, prepared.host);
+                const auto result = loadSymbols(path, prepared.host);
                 require(result.error.empty() && result.rejected == 0, "invalid or conflicting symbols: " + result.error);
             }
             if (m.contains("regions")) {
@@ -191,8 +191,12 @@ ModDirectoryLoadResult loadModDirectories(std::span<const std::filesystem::path>
                     }
                     const auto expected = hex(stringField(p, "expected"));
                     const auto replacement = hex(stringField(p, "replacement"));
-                    require((target.bank == 0 && target.address < 0x4000) ||
-                            (target.bank > 0 && target.address >= 0x4000 && target.address < 0x8000), "patch target is not ROM");
+                    const bool gameBoyTarget =
+                        (target.bank == 0 && target.address < 0x4000) ||
+                        (target.bank > 0 && target.address >= 0x4000 && target.address < 0x8000);
+                    const bool gameGearTarget = target.address < 0xC000;
+                    require(machineId == "gameboy" ? gameBoyTarget : gameGearTarget,
+                            "patch target is not ROM");
                     require(expected.size() <= 0x4000u - (target.address % 0x4000u), "patch crosses ROM bank");
                     const std::size_t offset = std::size_t(target.bank) * 0x4000u + target.address % 0x4000u;
                     require(offset <= rom.size() && expected.size() <= rom.size() - offset, "patch outside ROM");

@@ -22,6 +22,8 @@ public:
     [[nodiscard]] bool handlesMappedWrite(uint16_t addr) const noexcept;
     [[nodiscard]] uint8_t read(uint16_t addr) const;
     void write(uint16_t addr, uint8_t value);
+    [[nodiscard]] bool romBankForAddress(uint16_t addr,
+                                         std::size_t& bank) const noexcept override;
     [[nodiscard]] bool supportsSaveData() const noexcept;
     [[nodiscard]] bool hasDirtySaveData() const noexcept;
     void markSaveClean() noexcept;

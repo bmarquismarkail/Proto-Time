@@ -10,6 +10,7 @@
 #include <string_view>
 #include <vector>
 #include "machine/Machine.hpp"
+#include "machine/modding/NativeMod.hpp"
 
 namespace BMMQ {
 
@@ -60,16 +61,23 @@ public:
     uint32_t audioSampleRate() const override;
     uint8_t audioChannelCount() const override;
     uint64_t audioFrameCounter() const override;
+    std::string_view visualTargetId() const noexcept override;
+    const IVisualDebugAdapter* visualDebugAdapter() const noexcept override;
     std::optional<VideoDebugFrameModel> videoDebugFrameModel(
         const VideoDebugRenderRequest& request) const override;
     std::optional<RealtimeVideoSubmission> realtimeVideoPacket(
         const VideoDebugRenderRequest& request) const override;
+    std::optional<VideoStateView> videoStateSnapshot() const override;
     std::optional<RealtimeAudioPacket> realtimeAudioPacket() const override;
     uint32_t clockHz() const override;
     std::string stopSummary() const override;
     [[nodiscard]] bool flushCartridgeSave();
     void flushPendingBackgroundWork() override;
     void setBackgroundTaskService(BMMQ::BackgroundTaskService* service) noexcept;
+    bool installNativeTrampoline(std::uint16_t address, std::uint8_t romBank,
+                                 std::unique_ptr<Modding::NativeMod> module,
+                                 std::uint32_t hookId);
+    void clearNativeTrampolines() noexcept;
     void loadExternalBootRom(const std::vector<uint8_t>& bytes) override;
     // Test helper: inspect whether CPU IME is currently set.
     bool cpuInterruptsEnabled() const;

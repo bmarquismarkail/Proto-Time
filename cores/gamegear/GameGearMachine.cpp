@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <unordered_map>
+#include <map>
 #include "inst_cycle/executor/PluginContract.hpp"
 #include "machine/plugins/IoPlugin.hpp"
 #include "machine/plugins/PluginManager.hpp"
@@ -26,6 +27,7 @@
 #include "GameGearMemoryMap.hpp"
 #include "GameGearSaveManager.hpp"
 #include "GameGearIrExecution.hpp"
+#include "GameGearVisualDebugAdapter.hpp"
 
 namespace BMMQ {
 
@@ -290,7 +292,9 @@ public:
             return lastFeedback_;
         }
         lastFeedback_.pcBefore = cpu_.PC;
-        if (activePolicy_->backend() == ExecutionBackend::PortableIr &&
+        if (!cpu_.hasInstructionFetchObserver() &&
+            (activePolicy_->backend() == ExecutionBackend::PortableIr ||
+             activePolicy_->backend() == ExecutionBackend::CachedBlock) &&
             tryStepIr(lastFeedback_)) {
             return lastFeedback_;
         }
@@ -569,7 +573,9 @@ private:
                                                        : instruction.cyclesNotTaken;
         feedback.segmentBoundaryHint = false;
         feedback.isControlFlow = false;
-        feedback.executionPath = ExecutionPathHint::PortableIr;
+        feedback.executionPath = activePolicy_->backend() == ExecutionBackend::CachedBlock
+            ? ExecutionPathHint::CachedBlock
+            : ExecutionPathHint::PortableIr;
         ++irSession_->nextIndex;
         if (instruction.controlFlow ||
             irSession_->nextIndex >= irSession_->block->instructions.size()) {
@@ -916,6 +922,12 @@ struct GameGearMachine::Impl {
     // Interrupt request raised by VDP (VBlank) or other devices. Consumed
     // atomically by the Z80 interrupt provider.
     bool interruptRequested = false;
+    struct NativeTrampoline {
+        std::size_t romBank = 0u;
+        std::uint32_t hookId = 0u;
+        std::unique_ptr<Modding::NativeMod> module;
+    };
+    std::map<std::uint16_t, NativeTrampoline> nativeTrampolines;
     GameGearRuntimeContext context{cpu, mem, romLoaded, activePolicy,
                                    interruptRequested, vdp};
 };
@@ -925,8 +937,7 @@ std::span<const IoRegionDescriptor> GameGearMachine::describeIoRegions() const {
 }
 
 void GameGearMachine::attachExecutorPolicy(const Plugin::IExecutorPolicyPlugin& policy) {
-    if (policy.backend() == ExecutionBackend::CachedBlock ||
-        policy.backend() == ExecutionBackend::NativeExperimental) {
+    if (policy.backend() == ExecutionBackend::NativeExperimental) {
         throw std::runtime_error("Game Gear does not support the selected execution backend");
     }
     Plugin::validateExecutorPolicyForRuntime(policy, impl->context);
@@ -949,6 +960,7 @@ uint16_t GameGearMachine::readRegisterPair(std::string_view name) const {
 }
 
 GameGearMachine::GameGearMachine() : impl(std::make_unique<Impl>()) {
+    videoService().setVisualDebugAdapter(visualDebugAdapter());
     (void)audioService().configureEngine({
         .sourceSampleRate = 48000,
         .deviceSampleRate = 48000,
@@ -963,7 +975,26 @@ GameGearMachine::GameGearMachine() : impl(std::make_unique<Impl>()) {
     );
     impl->cpu.setIoInterface(
         [this](uint8_t port) { return impl->mem.readIoPort(port); },
-        [this](uint8_t port, uint8_t value) { impl->mem.writeIoPort(port, value); }
+        [this](uint8_t port, uint8_t value) {
+            impl->mem.writeIoPort(port, value);
+            if (impl->pluginManager.size() == 0u) return;
+            const auto emit = [this, port, value](MachineEventType type, PluginCategory category,
+                                                  const char* detail) {
+                impl->pluginManager.emit(view(), MachineEvent{
+                    type, category, impl->stepCounter, port, value,
+                    &runtimeContext().getLastFeedback(), detail});
+            };
+            if (port == 0x01u || port == 0x03u || port == 0x05u) {
+                emit(MachineEventType::SerialActivity, PluginCategory::Serial,
+                     "serial system-port write");
+            } else if ((port & 0xC1u) == 0x80u || (port & 0xC1u) == 0x81u) {
+                emit(MachineEventType::MemoryWriteObserved, PluginCategory::Video,
+                     "VDP port write");
+            } else if ((port & 0xC0u) == 0x40u || port == 0x06u) {
+                emit(MachineEventType::MemoryWriteObserved, PluginCategory::Audio,
+                     "PSG register write");
+            }
+        }
     );
     // Leave memory map using its fallback cartridge until a ROM is loaded.
     impl->mem.setInput(&impl->input);
@@ -1002,6 +1033,7 @@ void GameGearMachine::loadRom(const std::vector<uint8_t>& bytes) {
         throw std::runtime_error("ROM too large");
     }
     (void)flushCartridgeSave();
+    clearNativeTrampolines();
     // Create an appropriate mapper for the ROM and bind it into the
     // memory map. The factory returns a mapper with the ROM already
     // loaded.
@@ -1069,6 +1101,9 @@ const PluginManager& GameGearMachine::pluginManager() const {
 }
 
 void GameGearMachine::save_state(const std::filesystem::path& path) {
+    if (!impl->nativeTrampolines.empty()) {
+        throw std::runtime_error("Cannot save Game Gear state while native mod hooks are active");
+    }
     if (!impl->romLoaded || !impl->cart) {
         throw std::runtime_error("Cannot save Game Gear state before ROM is loaded");
     }
@@ -1096,6 +1131,9 @@ void GameGearMachine::save_state(const std::filesystem::path& path) {
 }
 
 void GameGearMachine::load_state(const std::filesystem::path& path) {
+    if (!impl->nativeTrampolines.empty()) {
+        throw std::runtime_error("Cannot load Game Gear state while native mod hooks are active");
+    }
     if (!impl->romLoaded || !impl->cart) {
         throw std::runtime_error("Load ROM before loading Game Gear save state");
     }
@@ -1257,8 +1295,16 @@ void GameGearMachine::serviceInput() {
         (void)inputService().pollActiveAdapter(impl->inputGeneration);
         if (const auto committedInput = inputService().committedDigitalMask(); committedInput.has_value()) {
             const auto pressedMask = *committedInput;
+            const bool changed = !impl->lastDigitalInputMask.has_value() ||
+                                 *impl->lastDigitalInputMask != pressedMask;
             impl->input.setLogicalButtons(pressedMask);
             impl->lastDigitalInputMask = pressedMask;
+            if (changed && impl->pluginManager.size() != 0u) {
+                impl->pluginManager.emit(view(), MachineEvent{
+                    MachineEventType::DigitalInputChanged, PluginCategory::DigitalInput,
+                    impl->stepCounter, 0x00DCu, static_cast<std::uint8_t>(pressedMask),
+                    nullptr, "input service sample"});
+            }
             return;
         }
     }
@@ -1269,8 +1315,16 @@ void GameGearMachine::serviceInput() {
 
     if (const auto sampledInput = impl->pluginManager.sampleDigitalInput(view()); sampledInput.has_value()) {
         const auto pressedMask = *sampledInput;
+        const bool changed = !impl->lastDigitalInputMask.has_value() ||
+                             *impl->lastDigitalInputMask != pressedMask;
         impl->input.setLogicalButtons(pressedMask);
         impl->lastDigitalInputMask = pressedMask;
+        if (changed) {
+            impl->pluginManager.emit(view(), MachineEvent{
+                MachineEventType::DigitalInputChanged, PluginCategory::DigitalInput,
+                impl->stepCounter, 0x00DCu, static_cast<std::uint8_t>(pressedMask),
+                nullptr, "plugin input sample"});
+        }
     }
 }
 
@@ -1297,13 +1351,40 @@ uint64_t GameGearMachine::audioFrameCounter() const {
 std::optional<VideoDebugFrameModel> GameGearMachine::videoDebugFrameModel(
     const VideoDebugRenderRequest& request) const
 {
-    return impl->vdp.buildFrameModel(request);
+    return gameGearVisualDebugAdapter().buildFrameModel(*this, request);
 }
 
 std::optional<RealtimeVideoSubmission> GameGearMachine::realtimeVideoPacket(
     const VideoDebugRenderRequest& request) const
 {
     return impl->vdp.buildRealtimeFrame(request);
+}
+
+std::string_view GameGearMachine::visualTargetId() const noexcept {
+    return "gamegear";
+}
+
+const IVisualDebugAdapter* GameGearMachine::visualDebugAdapter() const noexcept {
+    return &gameGearVisualDebugAdapter();
+}
+
+std::optional<VideoStateView> GameGearMachine::videoStateSnapshot() const {
+    VideoStateView state;
+    state.machineId = "gamegear";
+    state.vramRegion = {PluginCategory::Video, 0x0000u, 0x4000u,
+                        "VDP VRAM", true, true};
+    state.oamRegion = {PluginCategory::Video, 0x0000u, 0x00A0u,
+                       "VDP Sprite Attributes", true, true};
+    state.registerRegion = {PluginCategory::Video, 0x00BEu, 0x0002u,
+                            "VDP Ports (IO)", true, true};
+    const auto& vram = impl->vdp.debugVram();
+    const auto& oam = impl->vdp.debugOam();
+    const auto& registers = impl->vdp.debugRegisters();
+    state.vram.assign(vram.begin(), vram.end());
+    state.oam.assign(oam.begin(), oam.end());
+    state.deviceRegisters.assign(registers.begin(), registers.end());
+    state.deviceState = impl->vdp.exportState();
+    return state;
 }
 
 std::optional<RealtimeAudioPacket> GameGearMachine::realtimeAudioPacket() const
@@ -1391,6 +1472,46 @@ void GameGearMachine::flushPendingBackgroundWork()
 
 void GameGearMachine::setBackgroundTaskService(BMMQ::BackgroundTaskService* service) noexcept {
     impl->backgroundTaskService = service;
+}
+
+bool GameGearMachine::installNativeTrampoline(
+    std::uint16_t address, std::uint8_t romBank,
+    std::unique_ptr<Modding::NativeMod> module, std::uint32_t hookId) {
+    std::size_t mappedBank = 0u;
+    std::uint8_t opcode = 0u;
+    if (!module || hookId == 0u || address >= 0xC000u ||
+        !impl->cart || !impl->cart->romBankForAddress(address, mappedBank) ||
+        mappedBank != romBank || !impl->mem.peekCodeByte(address, opcode) ||
+        opcode != 0xC9u || impl->nativeTrampolines.contains(address)) {
+        return false;
+    }
+    impl->nativeTrampolines.emplace(address, Impl::NativeTrampoline{
+        mappedBank, hookId, std::move(module)});
+    impl->cpu.setInstructionFetchObserver([this](std::uint16_t pc) {
+        const auto found = impl->nativeTrampolines.find(pc);
+        if (found == impl->nativeTrampolines.end()) return;
+        std::size_t activeBank = 0u;
+        std::uint8_t activeOpcode = 0u;
+        if (!impl->cart || !impl->cart->romBankForAddress(pc, activeBank) ||
+            activeBank != found->second.romBank ||
+            !impl->mem.peekCodeByte(pc, activeOpcode) || activeOpcode != 0xC9u) {
+            return;
+        }
+        TimeModCallV1 call{sizeof(TimeModCallV1), found->second.hookId,
+                           pc, impl->cpu.HL, 0u};
+        if (!found->second.module->invoke(call) || call.result > 0xFFFFu) {
+            throw std::runtime_error("native Game Gear trampoline invocation failed");
+        }
+        impl->cpu.HL = static_cast<std::uint16_t>(call.result);
+    });
+    impl->context.clearIrCache();
+    return true;
+}
+
+void GameGearMachine::clearNativeTrampolines() noexcept {
+    impl->nativeTrampolines.clear();
+    impl->cpu.setInstructionFetchObserver({});
+    impl->context.clearIrCache();
 }
 
 bool GameGearMachine::cpuInterruptsEnabled() const {

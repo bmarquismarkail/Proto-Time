@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -222,11 +223,14 @@ struct IoRegionDescriptor {
 };
 
 struct VideoStateView {
+    std::string machineId;
     IoRegionDescriptor vramRegion{};
     IoRegionDescriptor oamRegion{};
     IoRegionDescriptor registerRegion{};
     std::vector<uint8_t> vram;
     std::vector<uint8_t> oam;
+    std::vector<uint8_t> deviceRegisters;
+    std::vector<uint8_t> deviceState;
     uint8_t lcdc = 0;
     uint8_t stat = 0;
     uint8_t scy = 0;

@@ -30,6 +30,10 @@ public:
     // provider MUST atomically clear the pending request when it returns a
     // value, and the interpreter will call it from the CPU thread.
     void setInterruptRequestProvider(std::function<std::optional<uint8_t>()> provider);
+    void setInstructionFetchObserver(std::function<void(uint16_t)> observer);
+    [[nodiscard]] bool hasInstructionFetchObserver() const noexcept {
+        return static_cast<bool>(instructionFetchObserver_);
+    }
 
     // Programmatic setter for interrupt mode (0,1,2). Invalid values fall
     // back to IM1 so interrupt handling stays in a defined state.
@@ -141,6 +145,7 @@ private:
     // expected to atomically consume the request when returning a non-empty
     // optional.
     std::function<std::optional<uint8_t>()> interruptRequestProvider;
+    std::function<void(uint16_t)> instructionFetchObserver_;
     // Interrupt mode (0,1,2). Defaults to IM1.
     uint8_t interruptMode_ = 1u;
 };

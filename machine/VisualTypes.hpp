@@ -26,6 +26,7 @@ enum class VisualResourceKind : uint8_t {
 enum class VisualPixelFormat : uint8_t {
     Unknown = 0,
     Indexed2,
+    Indexed4,
     Rgba8888,
 };
 
@@ -218,6 +219,8 @@ struct ResolvedVisualOverride {
     switch (format) {
     case VisualPixelFormat::Indexed2:
         return "Indexed2";
+    case VisualPixelFormat::Indexed4:
+        return "Indexed4";
     case VisualPixelFormat::Rgba8888:
         return "Rgba8888";
     case VisualPixelFormat::Unknown:
@@ -230,6 +233,9 @@ struct ResolvedVisualOverride {
 {
     if (value == "Indexed2" || value == "indexed2") {
         return VisualPixelFormat::Indexed2;
+    }
+    if (value == "Indexed4" || value == "indexed4") {
+        return VisualPixelFormat::Indexed4;
     }
     if (value == "Rgba8888" || value == "RGBA8888" || value == "rgba8888") {
         return VisualPixelFormat::Rgba8888;

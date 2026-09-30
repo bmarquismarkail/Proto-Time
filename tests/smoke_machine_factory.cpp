@@ -65,9 +65,10 @@ int main()
     assert(gameGearInstance.descriptor.id == "gamegear");
     (void)gameGearInstance.machine->pluginManager();
     assert(gameGearInstance.machine->clockHz() != 0u);
-    assert(!gameGearInstance.machine->supportsVisualPacks());
-    assert(!gameGearInstance.machine->supportsVisualCapture());
-    assert(gameGearInstance.machine->visualTargetId().empty());
+    assert(gameGearInstance.machine->supportsVisualPacks());
+    assert(gameGearInstance.machine->supportsVisualCapture());
+    assert(gameGearInstance.machine->visualTargetId() == "gamegear");
+    assert(gameGearInstance.machine->visualDebugAdapter() != nullptr);
     std::vector<std::uint8_t> gameGearRom(0x4000u, 0x00u);
     std::size_t pc = 0u;
     auto emit8 = [&](std::uint8_t value) {

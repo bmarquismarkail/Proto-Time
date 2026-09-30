@@ -70,6 +70,10 @@ void Z80Interpreter::setInterruptRequestProvider(std::function<std::optional<uin
     interruptRequestProvider = std::move(provider);
 }
 
+void Z80Interpreter::setInstructionFetchObserver(std::function<void(uint16_t)> observer) {
+    instructionFetchObserver_ = std::move(observer);
+}
+
 uint8_t Z80Interpreter::readIo(uint8_t port) const {
     return ioRead ? ioRead(port) : 0xFFu;
 }
@@ -889,6 +893,9 @@ uint32_t Z80Interpreter::step() {
     }
     if (halted_) {
         return 4u;
+    }
+    if (instructionFetchObserver_) {
+        instructionFetchObserver_(PC);
     }
     const uint8_t opcode = fetchOpcode();
     const uint32_t cycles = executeOpcode(opcode);

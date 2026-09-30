@@ -73,7 +73,7 @@ int main()
     manifest("}");
     const std::vector<std::uint8_t> wrongRom{'x'};
     assert(!loadModDirectories(dirs, wrongRom, "gameboy").prepared);
-    assert(!loadModDirectories(dirs, rom, "gamegear").prepared);
+    assert(!loadModDirectories(dirs, rom, "gamegear").prepared); // manifest target is still Game Boy.
     const std::vector<std::filesystem::path> duplicates{root, root};
     assert(!loadModDirectories(duplicates, rom, "gameboy").prepared);
     // Packages are sorted by priority, then ID, independent of selection order.

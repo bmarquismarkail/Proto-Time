@@ -798,11 +798,12 @@ int main(int argc, char** argv)
         std::vector<std::uint8_t> launchRom;
         std::optional<BMMQ::Modding::PreparedMods> preparedMods;
         if (!options.modPaths.empty()) {
-            if (options.machineKind.value() != "gameboy")
-                throw std::invalid_argument("--mod is currently supported only by the Game Boy core");
+            const auto machineId = options.machineKind.value();
+            if (machineId != "gameboy" && machineId != "gamegear")
+                throw std::invalid_argument("--mod is unsupported for the selected core");
             std::ifstream input(options.romPath, std::ios::binary);
             launchRom.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
-            const auto loaded = BMMQ::Modding::loadModDirectories(options.modPaths, launchRom, "gameboy");
+            const auto loaded = BMMQ::Modding::loadModDirectories(options.modPaths, launchRom, machineId);
             if (!loaded.prepared) throw std::runtime_error("Unable to load mod: " + loaded.error);
             preparedMods = std::move(*loaded.prepared);
             launchRom = preparedMods->rom;
@@ -818,9 +819,13 @@ int main(int argc, char** argv)
         std::vector<BMMQ::Modding::LoadedMod> pendingNativeMods;
         std::vector<std::unique_ptr<BMMQ::Modding::NativeMod>> loadedNativeModules;
         if (preparedMods.has_value()) {
-            auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get());
-            if (gameBoyMachine == nullptr) throw std::runtime_error("native mods require the Game Boy core");
-            gameBoyMachine->modHost() = std::move(preparedMods->host);
+            if (auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get())) {
+                gameBoyMachine->modHost() = std::move(preparedMods->host);
+            } else if (auto* gameGearMachine = dynamic_cast<BMMQ::GameGearMachine*>(bootstrapped.machine.get())) {
+                gameGearMachine->modHost() = std::move(preparedMods->host);
+            } else {
+                throw std::runtime_error("mod packages require a supported console core");
+            }
             pendingNativeMods = std::move(preparedMods->mods);
             std::cout << "Mods: " << options.modPaths.size() << " loaded\n";
         }
@@ -1370,22 +1375,31 @@ int main(int argc, char** argv)
                 ReadContext readContext{&machine.runtimeContext(), std::this_thread::get_id(), false};
                 if (!pendingNativeMods.empty()) {
                     auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(&machine);
-                    if (gameBoyMachine == nullptr)
-                        throw std::runtime_error("native mods require the Game Boy core");
+                    auto* gameGearMachine = dynamic_cast<BMMQ::GameGearMachine*>(&machine);
+                    if (gameBoyMachine == nullptr && gameGearMachine == nullptr)
+                        throw std::runtime_error("native mods require a supported console core");
+                    auto& modHost = gameBoyMachine != nullptr
+                        ? gameBoyMachine->modHost()
+                        : gameGearMachine->modHost();
                     for (const auto& mod : pendingNativeMods) {
                         if (mod.nativeModule.empty())
                             throw std::runtime_error("mod declares native trampolines without a native module: " + mod.id);
                         if (mod.trampolines.empty())
-                            loadedNativeModules.push_back(BMMQ::Modding::NativeMod::load(mod, gameBoyMachine->modHost()));
+                            loadedNativeModules.push_back(BMMQ::Modding::NativeMod::load(mod, modHost));
                         for (const auto& trampoline : mod.trampolines) {
-                            const auto* symbol = gameBoyMachine->modHost().resolveSymbol(trampoline.symbol);
-                            if (symbol == nullptr || symbol->bank != 0)
+                            const auto* symbol = modHost.resolveSymbol(trampoline.symbol);
+                            if (symbol == nullptr ||
+                                (gameBoyMachine != nullptr && symbol->bank != 0))
                                 throw std::runtime_error(
-                                    "mod is missing fixed-bank hook: " + trampoline.symbol);
+                                    "mod is missing a supported ROM hook: " + trampoline.symbol);
                             auto native = BMMQ::Modding::NativeMod::load(
-                                mod, gameBoyMachine->modHost());
-                            if (!gameBoyMachine->installNativeTrampoline(
-                                    symbol->address, std::move(native), trampoline.hookId))
+                                mod, modHost);
+                            const bool installed = gameBoyMachine != nullptr
+                                ? gameBoyMachine->installNativeTrampoline(
+                                    symbol->address, std::move(native), trampoline.hookId)
+                                : gameGearMachine->installNativeTrampoline(
+                                    symbol->address, symbol->bank, std::move(native), trampoline.hookId);
+                            if (!installed)
                                 throw std::runtime_error(
                                     "unable to install mod hook: " + trampoline.symbol);
                         }

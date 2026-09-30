@@ -373,6 +373,32 @@ int main() {
     assert(initialModel->displayEnabled);
     assert(initialModel->width == 160);
     assert(initialModel->height == 144);
+    assert(initialModel->semantics.size() == initialModel->argbPixels.size());
+    assert(!initialModel->resources.empty());
+    for (const auto& semantic : initialModel->semantics) {
+        if (!semantic.hasResource()) continue;
+        assert(semantic.resourceIndex < initialModel->resources.size());
+        assert(semantic.sampleX < 8u);
+        assert(semantic.sampleY < 8u);
+    }
+    assert(gg.visualTargetId() == "gamegear");
+    assert(gg.visualDebugAdapter() != nullptr);
+    const auto videoSnapshot = gg.videoStateSnapshot();
+    assert(videoSnapshot.has_value());
+    assert(videoSnapshot->machineId == "gamegear");
+    assert(videoSnapshot->vram.size() == 0x4000u);
+    assert(videoSnapshot->oam.size() == 0x00A0u);
+    assert(!videoSnapshot->deviceRegisters.empty());
+    assert(!videoSnapshot->deviceState.empty());
+    const auto snapshotModel = gg.visualDebugAdapter()->buildFrameModelFromState(
+        *videoSnapshot, BMMQ::VideoDebugRenderRequest{160, 144});
+    assert(snapshotModel.has_value());
+    assert(snapshotModel->argbPixels == initialModel->argbPixels);
+    auto decodedTile = gg.visualDebugAdapter()->decodeTile(
+        videoSnapshot->vram, 0, 0, 0, BMMQ::VisualTileDecodeRequest{});
+    assert(decodedTile.has_value());
+    assert(decodedTile->descriptor.machineId == "gamegear");
+    assert(decodedTile->descriptor.decodedFormat == BMMQ::VisualPixelFormat::Indexed4);
     std::unordered_set<std::uint32_t> initialColors(
         initialModel->argbPixels.begin(),
         initialModel->argbPixels.end());

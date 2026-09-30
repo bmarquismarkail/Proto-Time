@@ -102,6 +102,19 @@ uint8_t GameGearCartridge::read(uint16_t addr) const {
     return romOffset < rom.size() ? rom[romOffset] : 0xFFu;
 }
 
+bool GameGearCartridge::romBankForAddress(uint16_t addr,
+                                          std::size_t& bank) const noexcept {
+    if (!loaded() || addr >= 0xC000u || (addr >= 0x8000u && sramEnabled())) {
+        return false;
+    }
+    if (addr < 0x0400u) {
+        bank = 0u;
+        return true;
+    }
+    bank = pageBank(static_cast<std::size_t>(addr / kPageSize));
+    return true;
+}
+
 void GameGearCartridge::write(uint16_t addr, uint8_t value) {
     // Mapper registers $FFFC-$FFFF
     if (addr >= 0xFFFCu) {

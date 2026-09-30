@@ -6,7 +6,7 @@
 
 namespace BMMQ::Modding {
 
-SymbolLoadResult loadPokeredSymbols(const std::filesystem::path& path, ModHost& host)
+SymbolLoadResult loadSymbols(const std::filesystem::path& path, ModHost& host)
 {
     std::ifstream input(path);
     if (!input) return {0u, 0u, "unable to open symbol file"};
@@ -43,6 +43,11 @@ SymbolLoadResult loadPokeredSymbols(const std::filesystem::path& path, ModHost& 
     }
     if (input.bad()) result.error = "symbol file read failed";
     return result;
+}
+
+SymbolLoadResult loadPokeredSymbols(const std::filesystem::path& path, ModHost& host)
+{
+    return loadSymbols(path, host);
 }
 
 } // namespace BMMQ::Modding

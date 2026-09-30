@@ -13,6 +13,7 @@ enum class ExecutionPathHint {
     Unknown,
     CanonicalFetchDecodeExecute,
     CpuOptimizedFastPath,
+    CachedBlock,
     PortableIr,
     NativeIr,
 };

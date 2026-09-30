@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstddef>
 #include <stdexcept>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -491,6 +492,10 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
     out.scanlineIndex = static_cast<uint8_t>(scanline_ & 0x00FFu);
     const auto pixelCount = static_cast<std::size_t>(out.width) * static_cast<std::size_t>(out.height);
     out.colorIndices.resize(pixelCount);
+    out.resourceTileIndices.assign(pixelCount, UINT16_MAX);
+    out.resourceKinds.assign(pixelCount, 0u);
+    out.resourceSampleXs.assign(pixelCount, 0u);
+    out.resourceSampleYs.assign(pixelCount, 0u);
     addNs(setupNs, renderStart, Clock::now());
     if (!out.displayEnabled) {
         std::fill_n(out.colorIndices.data(), pixelCount, backdropIndex);
@@ -530,6 +535,9 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                 const auto colorCode = static_cast<uint8_t>(foreground ? (color >> 4u) : (color & 0x0Fu));
                 const auto pixelIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(out.width)
                                       + static_cast<std::size_t>(x);
+                out.resourceTileIndices[pixelIndex] = static_cast<std::uint16_t>(tileIndex);
+                out.resourceSampleXs[pixelIndex] = static_cast<std::uint8_t>(pixelX);
+                out.resourceSampleYs[pixelIndex] = static_cast<std::uint8_t>(pixelY);
                 out.colorIndices[pixelIndex] = colorCode == 0u
                     ? backdropIndex
                     : static_cast<std::uint8_t>(16u + (colorCode & 0x0Fu));
@@ -727,6 +735,10 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                     const auto sampleX = flipH ? (7u - tilePixelX) : tilePixelX;
                     const auto colorCode = rowColors[sampleX];
                     const auto pixelIndex = rowOffset + static_cast<std::size_t>(x + run);
+                    out.resourceTileIndices[pixelIndex] = tileIndex;
+                    out.resourceSampleXs[pixelIndex] = static_cast<std::uint8_t>(sampleX);
+                    out.resourceSampleYs[pixelIndex] = static_cast<std::uint8_t>(
+                        flipV ? (7u - pixelY) : pixelY);
                     out.colorIndices[pixelIndex] = static_cast<std::uint8_t>(
                         (palette1 ? 16u : 0u) + colorCode);
                     if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
@@ -904,6 +916,9 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                     const auto colorCode = decodedPatternRows[tileX][sampleX];
                     const auto dstX = static_cast<std::size_t>(x + run);
                     const auto pixelIndex = rowOffset + dstX;
+                    out.resourceTileIndices[pixelIndex] = decoded.tileIndex;
+                    out.resourceSampleXs[pixelIndex] = static_cast<std::uint8_t>(sampleX);
+                    out.resourceSampleYs[pixelIndex] = static_cast<std::uint8_t>(sampleY);
                     out.colorIndices[pixelIndex] = static_cast<std::uint8_t>(
                         (decoded.palette1 ? 16u : 0u) + (colorCode & 0x0Fu));
                     if (hasVisibleSprites) {
@@ -1021,6 +1036,10 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                         continue;
                     }
                     out.colorIndices[pixelIndex] = static_cast<std::uint8_t>(16u + (colorCode & 0x0Fu));
+                    out.resourceTileIndices[pixelIndex] = rowTileIndex;
+                    out.resourceKinds[pixelIndex] = 1u;
+                    out.resourceSampleXs[pixelIndex] = static_cast<std::uint8_t>(sampleX);
+                    out.resourceSampleYs[pixelIndex] = static_cast<std::uint8_t>(rowSampleY);
                     spriteMask[pixelIndex] |= kSpriteMaskOccupied;
                 }
             }
@@ -1065,6 +1084,47 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
     model.argbPixels.resize(out.colorIndices.size());
     std::transform(out.colorIndices.begin(), out.colorIndices.end(), model.argbPixels.begin(),
                    [&out](std::uint8_t index) { return out.paletteArgb[index & 0x1Fu]; });
+    model.semantics.resize(out.colorIndices.size());
+    std::unordered_map<std::uint32_t, std::uint32_t> resourceIndices;
+    const auto spriteBase = spriteGeneratorBase();
+    for (std::size_t pixel = 0u; pixel < out.resourceTileIndices.size(); ++pixel) {
+        const auto tile = out.resourceTileIndices[pixel];
+        if (tile == UINT16_MAX) continue;
+        const bool sprite = out.resourceKinds[pixel] != 0u;
+        const auto kind = sprite ? BMMQ::VisualResourceKind::Sprite
+                                 : BMMQ::VisualResourceKind::BackgroundTile;
+        const auto key = (static_cast<std::uint32_t>(kind) << 16u) | tile;
+        auto found = resourceIndices.find(key);
+        if (found == resourceIndices.end()) {
+            BMMQ::DecodedVisualResource resource;
+            resource.descriptor.machineId = "gamegear";
+            resource.descriptor.kind = kind;
+            resource.descriptor.width = 8u;
+            resource.descriptor.height = 8u;
+            resource.descriptor.decodedFormat = BMMQ::VisualPixelFormat::Indexed4;
+            resource.descriptor.source.index = tile;
+            const auto patternBase = sprite ? spriteBase : 0u;
+            resource.descriptor.source.address = static_cast<std::uint32_t>(
+                patternBase + static_cast<std::size_t>(tile) * 32u);
+            resource.descriptor.source.label = sprite ? "sprite_tile" : "background_tile";
+            resource.pixels.resize(64u);
+            for (std::size_t y = 0u; y < 8u; ++y) {
+                for (std::size_t x = 0u; x < 8u; ++x) {
+                    resource.pixels[y * 8u + x] = samplePatternColor(patternBase, tile, x, y);
+                }
+            }
+            resource.stride = 8u;
+            resource.descriptor.sourceHash = BMMQ::hashVisualSourceBytes(resource.pixels);
+            resource.descriptor.contentHash = BMMQ::hashDecodedVisualContent(resource);
+            found = resourceIndices.emplace(
+                key, static_cast<std::uint32_t>(model.resources.size())).first;
+            model.resources.push_back(std::move(resource));
+        }
+        auto& semantic = model.semantics[pixel];
+        semantic.resourceIndex = found->second;
+        semantic.sampleX = out.resourceSampleXs[pixel];
+        semantic.sampleY = out.resourceSampleYs[pixel];
+    }
     return model;
 }
 

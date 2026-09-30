@@ -50,6 +50,14 @@ public:
         return GameGearCartridge::read(addr);
     }
 
+    [[nodiscard]] bool romBankForAddress(uint16_t addr,
+                                         std::size_t& bank) const noexcept override {
+        if (extraRamMapped_ && addr >= 0xA000u && addr < 0xC000u) {
+            return false;
+        }
+        return GameGearCartridge::romBankForAddress(addr, bank);
+    }
+
     void write(uint16_t addr, uint8_t value) override {
         if (addr < 0xC000u) {
             // Treat writes anywhere in a 16KB slot as a control write for that slot

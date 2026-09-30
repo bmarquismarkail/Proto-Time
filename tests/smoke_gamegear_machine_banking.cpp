@@ -1,4 +1,5 @@
 #include "cores/gamegear/GameGearMachine.hpp"
+#include "inst_cycle/executor/PluginContract.hpp"
 
 #include <cassert>
 #include <cstdint>
@@ -70,6 +71,27 @@ int main() {
         return gg.runtimeContext().read8(0xC002u) == 0x22u;
     });
     assert(seen2 && "Bank2 code did not run after bank register write");
+
+    BMMQ::GameGearMachine canonical;
+    BMMQ::GameGearMachine cached;
+    BMMQ::Plugin::VisibleStatePreservingStepPolicy cachedPolicy;
+    cached.attachExecutorPolicy(cachedPolicy);
+    canonical.loadRom(rom);
+    cached.loadRom(rom);
+    for (std::size_t step = 0u; step < 64u; ++step) {
+        canonical.step();
+        cached.step();
+        assert(canonical.readRegisterPair("PC") == cached.readRegisterPair("PC"));
+        assert(canonical.readRegisterPair("HL") == cached.readRegisterPair("HL"));
+        assert(canonical.readRegisterPair("AF") == cached.readRegisterPair("AF"));
+        assert(canonical.runtimeContext().read8(0xC001u) ==
+               cached.runtimeContext().read8(0xC001u));
+        assert(canonical.runtimeContext().read8(0xC002u) ==
+               cached.runtimeContext().read8(0xC002u));
+        if (canonical.runtimeContext().read8(0xC002u) == 0x22u) break;
+    }
+    assert(canonical.runtimeContext().read8(0xC001u) == 0x11u);
+    assert(canonical.runtimeContext().read8(0xC002u) == 0x22u);
 
     return 0;
 }
