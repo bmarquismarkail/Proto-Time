@@ -215,7 +215,7 @@ BMMQ::CpuFeedback readCpuFeedback(StateReader& reader)
     feedback.pcAfter = reader.u32();
     feedback.retiredCycles = reader.u32();
     const auto path = reader.u32();
-    if (path > static_cast<uint32_t>(BMMQ::ExecutionPathHint::NativeIr)) {
+    if (path > static_cast<uint32_t>(BMMQ::ExecutionPathHint::CachedBlock)) {
         throw std::invalid_argument("save state execution path invalid");
     }
     feedback.executionPath = static_cast<BMMQ::ExecutionPathHint>(path);
@@ -999,6 +999,7 @@ void GameBoyMachine::loadRom(const std::vector<uint8_t>& bytes) {
     }
     impl_->pendingRomSourcePath.reset();
 
+    advanceObservationGeneration();
     // Reset subsystems
     impl_->memoryMap.reset();
     impl_->ppu.reset();
@@ -1757,6 +1758,7 @@ void GameBoyMachine::load_state(const std::filesystem::path& path) {
     // Preserve the existing memory write observer across the memory-map replacement.
     const auto preservedWriteObserver = impl_->memoryMap.writeObserver();
 
+    advanceObservationGeneration();
     // Commit staged state into the live machine only after all imports succeeded.
     impl_->mapper = std::move(nextMapper);
     impl_->cartridge_ = std::move(nextCartridge);

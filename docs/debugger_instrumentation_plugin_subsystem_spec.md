@@ -1,5 +1,9 @@
 # Proto-Time Debugger and Instrumentation Plugin Subsystem Specification
 
+> **Status: Target design reference.**
+> This specifies intended observation and control boundaries; it is not an
+> implementation-completeness report. See [current architecture](architecture.md).
+
 This document defines the target architecture for the Proto-Time debugger and instrumentation plugin subsystem.
 
 It applies the plugin subsystem blueprint to tracing, breakpoints, watchpoints, machine inspection, and developer-facing observability.

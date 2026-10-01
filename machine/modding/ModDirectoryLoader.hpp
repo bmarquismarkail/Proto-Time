@@ -12,6 +12,8 @@ struct LoadedMod {
     std::uint32_t priority = 0;
     std::unordered_map<std::string, std::uint32_t> regions;
     std::filesystem::path nativeModule;
+    struct Trampoline { std::string symbol; std::uint32_t hookId = 0; };
+    std::vector<Trampoline> trampolines;
 };
 
 struct PreparedMods {

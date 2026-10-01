@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+#include "cores/gamegear/GameGearMachine.hpp"
 using GameBoyMachine = GB::GameBoyMachine;
 #include "machine/plugins/LoggingPlugins.hpp"
 #include "machine/plugins/PluginManager.hpp"
@@ -81,14 +82,16 @@ struct RecordingSerialPlugin final : BMMQ::ISerialPlugin {
 
 struct RecordingDigitalInputPlugin final : BMMQ::IDigitalInputPlugin {
     int eventCount = 0;
+    BMMQ::MachineEvent lastEvent{};
     std::optional<BMMQ::DigitalInputStateView> lastInputState;
 
     std::string_view id() const override {
         return "test.input.recorder";
     }
 
-    void onDigitalInputEvent(const BMMQ::MachineEvent&, const BMMQ::MachineView& view) override {
+    void onDigitalInputEvent(const BMMQ::MachineEvent& event, const BMMQ::MachineView& view) override {
         ++eventCount;
+        lastEvent = event;
         lastInputState = view.digitalInputState();
     }
 };
@@ -474,5 +477,55 @@ int main()
     assert(video->detachCount == 1);
 
     fs::remove(logPath);
+
+    BMMQ::GameGearMachine gameGear;
+    auto ggVideoPlugin = std::make_unique<RecordingVideoPlugin>();
+    auto* ggVideo = ggVideoPlugin.get();
+    auto ggAudioPlugin = std::make_unique<RecordingAudioPlugin>();
+    auto* ggAudio = ggAudioPlugin.get();
+    auto ggSerialPlugin = std::make_unique<RecordingSerialPlugin>();
+    auto* ggSerial = ggSerialPlugin.get();
+    auto ggInputPlugin = std::make_unique<RecordingDigitalInputPlugin>();
+    auto* ggInput = ggInputPlugin.get();
+    gameGear.pluginManager().add(std::move(ggVideoPlugin));
+    gameGear.pluginManager().add(std::move(ggAudioPlugin));
+    gameGear.pluginManager().add(std::move(ggSerialPlugin));
+    gameGear.pluginManager().add(std::move(ggInputPlugin));
+    gameGear.pluginManager().add(std::make_unique<FixedDigitalInputPlugin>(
+        BMMQ::inputButtonMask(BMMQ::InputButton::Button1)));
+
+    // LD A,n / OUT (n),A exercises VDP control/data, PSG, and serial ports.
+    std::vector<std::uint8_t> ggRom(0x4000u, 0x00u);
+    std::size_t cursor = 0;
+    auto out = [&](std::uint8_t value, std::uint8_t port) {
+        ggRom[cursor++] = 0x3Eu;
+        ggRom[cursor++] = value;
+        ggRom[cursor++] = 0xD3u;
+        ggRom[cursor++] = port;
+    };
+    out(0x00u, 0xBFu);
+    out(0x40u, 0xBFu);
+    out(0x5Au, 0xBEu);
+    out(0x9Fu, 0x7Fu);
+    out(0xA5u, 0x03u);
+    out(0x81u, 0x05u);
+    ggRom[cursor] = 0x76u;
+    gameGear.loadRom(ggRom);
+    gameGear.pluginManager().initialize(gameGear.mutableView());
+    gameGear.serviceInput();
+    assert(ggInput->eventCount >= 1);
+    assert(ggInput->lastEvent.type == BMMQ::MachineEventType::DigitalInputChanged);
+    const auto initialInputEvents = ggInput->eventCount;
+    gameGear.serviceInput();
+    assert(ggInput->eventCount == initialInputEvents);
+    for (std::size_t i = 0; i < cursor + 1u; ++i) gameGear.step();
+    assert(ggVideo->videoEventCount >= 3);
+    assert(ggVideo->lastVideoEvent.type == BMMQ::MachineEventType::MemoryWriteObserved);
+    assert(ggVideo->lastVideoDebugModel.has_value());
+    assert(ggVideo->lastVideoDebugModel->semantics.size() ==
+           ggVideo->lastVideoDebugModel->argbPixels.size());
+    assert(ggAudio->audioEventCount >= 1);
+    assert(ggSerial->serialEventCount >= 2);
+    gameGear.pluginManager().shutdown(gameGear.mutableView());
     return 0;
 }

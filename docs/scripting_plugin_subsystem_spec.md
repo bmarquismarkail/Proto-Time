@@ -1,5 +1,10 @@
 # Proto-Time Scripting Plugin Subsystem Specification
 
+> **Status: Target design reference.**
+> This describes a proposed behavioral-extension subsystem, not an available
+> general scripting runtime. Native mods and declarative visual-pack effects
+> have separate [current guides](README.md#current-guides-and-contracts).
+
 This document defines the target architecture for the Proto-Time scripting plugin subsystem.
 
 It applies the plugin subsystem blueprint to embedded or attached scripting runtimes used for automation, tooling, debugging, and controlled machine interaction.

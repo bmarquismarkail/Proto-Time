@@ -34,6 +34,8 @@
 #include "emulator/EmulatorConfig.hpp"
 #include "emulator/DiagnosticsJson.hpp"
 #include "emulator/EmulatorHost.hpp"
+#include <openssl/sha.h>
+#include <unistd.h>
 #include "inst_cycle/IrExecutionService.hpp"
 #include "inst_cycle/executor/ExecutorPolicyRegistry.hpp"
 #include "machine/BackgroundTaskService.hpp"
@@ -793,29 +795,41 @@ int main(int argc, char** argv)
         BMMQ::DebugSnapshotService debugSnapshotService;
         debugSnapshotService.setBackgroundTaskService(&backgroundTaskService);
 
-        auto bootstrapped = BMMQ::bootstrapMachine(options);
+        std::vector<std::uint8_t> launchRom;
+        std::optional<BMMQ::Modding::PreparedMods> preparedMods;
+        if (!options.modPaths.empty()) {
+            const auto machineId = options.machineKind.value();
+            if (machineId != "gameboy" && machineId != "gamegear")
+                throw std::invalid_argument("--mod is unsupported for the selected core");
+            std::ifstream input(options.romPath, std::ios::binary);
+            if (!input) {
+                throw std::runtime_error("Unable to open ROM file: " + options.romPath.string());
+            }
+            launchRom.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+            const auto loaded = BMMQ::Modding::loadModDirectories(options.modPaths, launchRom, machineId);
+            if (!loaded.prepared) throw std::runtime_error("Unable to load mod: " + loaded.error);
+            preparedMods = std::move(*loaded.prepared);
+            launchRom = preparedMods->rom;
+        }
+        auto bootstrapped = options.modPaths.empty()
+            ? BMMQ::bootstrapMachine(options)
+            : BMMQ::bootstrapMachine(options, launchRom);
         auto& machine = *bootstrapped.machine;
+        const std::string frontendAppId = "timeEmulator-" + std::to_string(getpid());
+        setenv("TIME_FRONTEND_APP_ID", frontendAppId.c_str(), 1);
         const auto& descriptor = bootstrapped.descriptor;
         const auto romSize = bootstrapped.romSize;
         std::vector<BMMQ::Modding::LoadedMod> pendingNativeMods;
-        if (!options.modPaths.empty()) {
-            auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get());
-            if (gameBoyMachine == nullptr) {
-                throw std::invalid_argument("--mod is currently supported only by the Game Boy core");
+        std::vector<std::unique_ptr<BMMQ::Modding::NativeMod>> loadedNativeModules;
+        if (preparedMods.has_value()) {
+            if (auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(bootstrapped.machine.get())) {
+                gameBoyMachine->modHost() = std::move(preparedMods->host);
+            } else if (auto* gameGearMachine = dynamic_cast<BMMQ::GameGearMachine*>(bootstrapped.machine.get())) {
+                gameGearMachine->modHost() = std::move(preparedMods->host);
+            } else {
+                throw std::runtime_error("mod packages require a supported console core");
             }
-            std::ifstream input(options.romPath, std::ios::binary);
-            const std::vector<std::uint8_t> originalRom{
-                std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
-            const auto loaded = BMMQ::Modding::loadModDirectories(options.modPaths, originalRom, "gameboy");
-            if (!loaded.prepared) throw std::runtime_error("Unable to load mod: " + loaded.error);
-            auto prepared = *loaded.prepared;
-            gameBoyMachine->loadRom(prepared.rom);
-            gameBoyMachine->modHost() = std::move(prepared.host);
-            for (const auto& mod : prepared.mods) {
-                if (mod.id != "pokered.title-species")
-                    throw std::invalid_argument("mod has no CLI hook integration: " + mod.id);
-            }
-            pendingNativeMods = std::move(prepared.mods);
+            pendingNativeMods = std::move(preparedMods->mods);
             std::cout << "Mods: " << options.modPaths.size() << " loaded\n";
         }
         std::optional<BMMQ::Plugin::DynamicPluginModule> executorModule;
@@ -1357,24 +1371,41 @@ int main(int argc, char** argv)
 
         auto runEmulationLane = [&]() {
             try {
+                auto nextObservation = SteadyClock::now();
+                std::uint64_t observedGeneration = ~std::uint64_t{0};
+                std::string romIdentity;
+                struct ReadContext { BMMQ::RuntimeContext* runtime; std::thread::id owner; bool active; };
+                ReadContext readContext{&machine.runtimeContext(), std::this_thread::get_id(), false};
                 if (!pendingNativeMods.empty()) {
                     auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(&machine);
-                    if (gameBoyMachine == nullptr)
-                        throw std::runtime_error("native mods require the Game Boy core");
+                    auto* gameGearMachine = dynamic_cast<BMMQ::GameGearMachine*>(&machine);
+                    if (gameBoyMachine == nullptr && gameGearMachine == nullptr)
+                        throw std::runtime_error("native mods require a supported console core");
+                    auto& modHost = gameBoyMachine != nullptr
+                        ? gameBoyMachine->modHost()
+                        : gameGearMachine->modHost();
                     for (const auto& mod : pendingNativeMods) {
-                        for (const auto& [symbolName, hookId] : {
-                                 std::pair{"NativeSpeciesSelect", 1u},
-                                 std::pair{"NativeSpeciesRead", 2u}}) {
-                            const auto* symbol = gameBoyMachine->modHost().resolveSymbol(symbolName);
-                            if (symbol == nullptr || symbol->bank != 0)
+                        if (mod.nativeModule.empty() && !mod.trampolines.empty())
+                            throw std::runtime_error("mod declares native trampolines without a native module: " + mod.id);
+                        if (mod.nativeModule.empty()) continue;
+                        if (mod.trampolines.empty())
+                            loadedNativeModules.push_back(BMMQ::Modding::NativeMod::load(mod, modHost));
+                        for (const auto& trampoline : mod.trampolines) {
+                            const auto* symbol = modHost.resolveSymbol(trampoline.symbol);
+                            if (symbol == nullptr ||
+                                (gameBoyMachine != nullptr && symbol->bank != 0))
                                 throw std::runtime_error(
-                                    "mod is missing fixed-bank hook: " + std::string(symbolName));
+                                    "mod is missing a supported ROM hook: " + trampoline.symbol);
                             auto native = BMMQ::Modding::NativeMod::load(
-                                mod, gameBoyMachine->modHost());
-                            if (!gameBoyMachine->installNativeTrampoline(
-                                    symbol->address, std::move(native), hookId))
+                                mod, modHost);
+                            const bool installed = gameBoyMachine != nullptr
+                                ? gameBoyMachine->installNativeTrampoline(
+                                    symbol->address, std::move(native), trampoline.hookId)
+                                : gameGearMachine->installNativeTrampoline(
+                                    symbol->address, symbol->bank, std::move(native), trampoline.hookId);
+                            if (!installed)
                                 throw std::runtime_error(
-                                    "unable to install mod hook: " + std::string(symbolName));
+                                    "unable to install mod hook: " + trampoline.symbol);
                         }
                     }
                 }
@@ -1447,6 +1478,44 @@ int main(int argc, char** argv)
                     }
 
                     const auto now = SteadyClock::now();
+                    if (!loadedNativeModules.empty() && now >= nextObservation) {
+                        nextObservation = now + std::chrono::milliseconds(100);
+                        if (observedGeneration != machine.observationGeneration()) {
+                            observedGeneration = machine.observationGeneration();
+                            romIdentity.clear();
+                            if (auto* gb = dynamic_cast<GameBoyMachine*>(&machine)) {
+                                const auto rom = gb->cartridge().romBytes();
+                                unsigned char digest[SHA_DIGEST_LENGTH];
+                                SHA1(rom.data(), rom.size(), digest);
+                                constexpr char hex[] = "0123456789abcdef";
+                                for (auto c : digest) { romIdentity += hex[c >> 4]; romIdentity += hex[c & 15]; }
+                            } else if (auto* gg = dynamic_cast<BMMQ::GameGearMachine*>(&machine)) {
+                                const auto& rom = gg->romData();
+                                unsigned char digest[SHA_DIGEST_LENGTH];
+                                SHA1(rom.data(), rom.size(), digest);
+                                constexpr char hex[] = "0123456789abcdef";
+                                for (auto c : digest) { romIdentity += hex[c >> 4]; romIdentity += hex[c & 15]; }
+                            }
+                        }
+                        TimeModObservationV1 observation{sizeof(TimeModObservationV1), 1, observedGeneration,
+                            romIdentity.c_str(), frontendAppId.c_str(), &readContext,
+                            [](void* ptr, uint32_t address, uint8_t* bytes, uint32_t size) -> int32_t {
+                                auto& context = *static_cast<ReadContext*>(ptr);
+                                if (context.owner != std::this_thread::get_id() || !context.active || !bytes ||
+                                    size > 8192 || address > 65536 || size > 65536-address) return 0;
+                                for (uint32_t i = 0; i < size; ++i) bytes[i] = context.runtime->peek8(address+i);
+                                return 1;
+                            }};
+                        readContext.active = true;
+                        for (auto it = loadedNativeModules.begin(); it != loadedNativeModules.end();) {
+                            bool accepted = false;
+                            try { accepted = (*it)->observe(observation); } catch (...) {}
+                            if (accepted) { ++it; continue; }
+                            std::cerr << "warning: disabling failed native observer\n";
+                            it = loadedNativeModules.erase(it);
+                        }
+                        readContext.active = false;
+                    }
                     if (frontendInputTickPending.exchange(false, std::memory_order_acq_rel)) {
                         machine.serviceInput();
                     }
@@ -1553,6 +1622,12 @@ int main(int argc, char** argv)
                 emulationFailure = std::current_exception();
                 stopRequested.store(true, std::memory_order_release);
             }
+            if (auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(&machine)) {
+                gameBoyMachine->clearNativeTrampolines();
+            } else if (auto* gameGearMachine = dynamic_cast<BMMQ::GameGearMachine*>(&machine)) {
+                gameGearMachine->clearNativeTrampolines();
+            }
+            loadedNativeModules.clear(); // Join plugin workers before unloading, on the owning lane.
             emulationFinished.store(true, std::memory_order_release);
         };
 

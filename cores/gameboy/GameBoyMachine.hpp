@@ -105,6 +105,7 @@ public:
     // Cartridge access (for tests)
     [[nodiscard]] GameBoyCartridge& cartridge() { return impl_->cartridge_; }
     [[nodiscard]] const GameBoyCartridge& cartridge() const { return impl_->cartridge_; }
+    [[nodiscard]] std::string cartridgeTitle() const { return impl_->cartridge_.metadata().title; }
 
     // Save management
     bool flushCartridgeSave();

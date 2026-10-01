@@ -109,6 +109,50 @@ void testCodeChangeReplacesCachedIrBeforeExecution()
             "self-modifying code did not invalidate cached IR");
 }
 
+void testCachedBlockPolicyMatchesCanonicalExecution()
+{
+    BMMQ::GameGearMachine baseline;
+    BMMQ::GameGearMachine cached;
+    BMMQ::Plugin::VisibleStatePreservingStepPolicy policy;
+    cached.attachExecutorPolicy(policy);
+    const auto rom = makeRom();
+    baseline.loadRom(rom);
+    cached.loadRom(rom);
+
+    for (std::size_t instruction = 0u; instruction < 512u; ++instruction) {
+        baseline.step();
+        cached.step();
+        assertCpuEquivalent(baseline, cached);
+        require(cached.runtimeContext().getLastFeedback().executionPath ==
+                    BMMQ::ExecutionPathHint::CachedBlock,
+                "cached-block execution path was not reported");
+    }
+    require(cached.recentAudioSamples() == baseline.recentAudioSamples(),
+            "cached-block audio samples diverged");
+
+    // HALT is outside the translated subset and must retire through canonical execution.
+    BMMQ::GameGearMachine fallback;
+    fallback.attachExecutorPolicy(policy);
+    fallback.loadRom(std::vector<std::uint8_t>(0x4000u, 0x76u));
+    fallback.step();
+    require(fallback.runtimeContext().getLastFeedback().executionPath ==
+                BMMQ::ExecutionPathHint::CanonicalFetchDecodeExecute,
+            "unsupported HALT did not use canonical fallback");
+}
+
+void testNativeExperimentalRemainsUnsupported()
+{
+    BMMQ::GameGearMachine machine;
+    BMMQ::Plugin::NativeExperimentalStepPolicy policy;
+    bool rejected = false;
+    try {
+        machine.attachExecutorPolicy(policy);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    require(rejected, "Game Gear accepted the frozen native experimental backend");
+}
+
 } // namespace
 
 int main()
@@ -116,5 +160,7 @@ int main()
     testDifferentialExecutionAndMetrics();
     testDetailedTimingIsExplicitAndComplete();
     testCodeChangeReplacesCachedIrBeforeExecution();
+    testCachedBlockPolicyMatchesCanonicalExecution();
+    testNativeExperimentalRemainsUnsupported();
     return 0;
 }

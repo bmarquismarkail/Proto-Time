@@ -10,11 +10,12 @@
 namespace BMMQ {
 
 enum class ExecutionPathHint {
-    Unknown,
-    CanonicalFetchDecodeExecute,
-    CpuOptimizedFastPath,
-    PortableIr,
-    NativeIr,
+    Unknown = 0,
+    CanonicalFetchDecodeExecute = 1,
+    CpuOptimizedFastPath = 2,
+    PortableIr = 3,
+    NativeIr = 4,
+    CachedBlock = 5,
 };
 
 struct CpuFeedback {

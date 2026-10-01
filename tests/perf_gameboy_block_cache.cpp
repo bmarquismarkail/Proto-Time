@@ -8,6 +8,7 @@
 #include "cores/gameboy/GameBoyMachine.hpp"
 #include "cores/gameboy/GameBoyNativeExecution.hpp"
 #include "inst_cycle/executor/PluginContract.hpp"
+#include "PerfTimingSupport.hpp"
 
 namespace {
 
@@ -245,9 +246,16 @@ int main()
     require(detailed.irLoweringNanos > 0u, "detailed lowering timer recorded no time");
     require(detailed.irGuardCheckNanos > 0u, "detailed guard timer recorded no time");
     require(detailed.irExecutionNanos > 0u, "detailed execution timer recorded no time");
-    require(pairedSpeedupMedian >= kRequiredSpeedup + kMeasurementMargin,
-            "Phase 10 paired median did not clear the 2.0x gate with measurement margin");
-    require(pairedSpeedupLowerQuartile >= kRequiredSpeedup,
-            "Phase 10 paired lower quartile fell below 2.0x");
+    // Instrumentation changes the relative cost of each execution path; only
+    // production builds can enforce speedup. All activity checks above still run.
+    constexpr bool enforceSpeedup = BMMQ::Tests::Perf::kEnforceWallClockThresholds;
+    std::cout << "gate block_cache_paired_speedup enforced="
+              << (enforceSpeedup ? "true" : "false") << '\n';
+    if constexpr (enforceSpeedup) {
+        require(pairedSpeedupMedian >= kRequiredSpeedup + kMeasurementMargin,
+                "Phase 10 paired median did not clear the 2.0x gate with measurement margin");
+        require(pairedSpeedupLowerQuartile >= kRequiredSpeedup,
+                "Phase 10 paired lower quartile fell below 2.0x");
+    }
     return 0;
 }

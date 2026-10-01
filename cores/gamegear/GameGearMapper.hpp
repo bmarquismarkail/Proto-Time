@@ -21,6 +21,10 @@ public:
     virtual bool handlesMappedWrite(uint16_t addr) const noexcept = 0;
     virtual uint8_t read(uint16_t addr) const = 0;
     virtual void write(uint16_t addr, uint8_t value) = 0;
+    // Physical 16 KiB ROM bank currently visible at this CPU address.
+    // Returns false for non-ROM or cartridge-RAM windows.
+    [[nodiscard]] virtual bool romBankForAddress(uint16_t addr,
+                                                  std::size_t& bank) const noexcept = 0;
 
     // Save (SRAM) support
     virtual bool supportsSaveData() const noexcept = 0;

@@ -43,6 +43,11 @@ BootstrappedMachine::~BootstrappedMachine()
 
 BootstrappedMachine bootstrapMachine(const EmulatorConfig& options)
 {
+    return bootstrapMachine(options, readBinaryFile(options.romPath));
+}
+
+BootstrappedMachine bootstrapMachine(const EmulatorConfig& options, std::span<const std::uint8_t> suppliedRom)
+{
     const auto kind = parseMachineKind(options.machineKind.value());
     auto instance = createMachine(kind);
 
@@ -59,7 +64,8 @@ BootstrappedMachine bootstrapMachine(const EmulatorConfig& options)
         bootRomMachine->loadExternalBootRom(readBinaryFile(*options.bootRomPath));
     }
 
-    const auto romBytes = readBinaryFile(options.romPath);
+    const std::vector<std::uint8_t> romBytes(suppliedRom.begin(), suppliedRom.end());
+    if (romBytes.empty()) throw std::runtime_error("ROM is empty: " + options.romPath.string());
     instance.machine->loadRom(romBytes);
 
     if (!options.visualPackPaths.empty()) {

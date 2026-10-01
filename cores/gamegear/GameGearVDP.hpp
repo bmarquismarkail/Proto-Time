@@ -21,6 +21,10 @@ public:
     [[nodiscard]] const std::array<uint8_t, 0x0040>& debugCram() const noexcept { return cram_; }
     // Test-only: expose decoded CRAM color (ARGB) cache per color index (0..31)
     [[nodiscard]] uint32_t debugDecodedCramColor(std::size_t colorIndex) const noexcept;
+    [[nodiscard]] const std::array<uint8_t, 0x4000u>& debugVram() const noexcept { return vram_; }
+    [[nodiscard]] const std::array<uint8_t, 0x00A0u>& debugOam() const noexcept { return oam_; }
+    [[nodiscard]] const std::array<uint8_t, 0x000Bu>& debugRegisters() const noexcept { return registers_; }
+    [[nodiscard]] const std::array<uint8_t, 0x0040u>& debugCramBytes() const noexcept { return cram_; }
     // Test-only: expose the current Mode 4 simple-background path predicate.
     [[nodiscard]] bool debugMode4SimpleBackgroundPathEligible() const noexcept;
 public:
@@ -73,7 +77,12 @@ private:
         uint8_t scanlineIndex = 0u;
         std::array<std::uint32_t, 32u> paletteArgb{};
         std::vector<std::uint8_t> colorIndices;
+        std::vector<std::uint16_t> resourceTileIndices;
+        std::vector<std::uint8_t> resourceKinds;
+        std::vector<std::uint8_t> resourceSampleXs;
+        std::vector<std::uint8_t> resourceSampleYs;
     };
+    template<bool CollectResourceSemantics>
     [[nodiscard]] PixelRenderOutput renderFramePixels(
         const BMMQ::VideoDebugRenderRequest& request) const;
     [[nodiscard]] static uint32_t paletteColor(uint8_t shade) noexcept;

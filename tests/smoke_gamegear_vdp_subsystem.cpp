@@ -614,6 +614,14 @@ int main()
         if (tmsModel.argbPixels[1] != 0xFF0000FFu) {
             return fail("Game Gear TMS Graphics II background pixel did not use CRAM color 18");
         }
+        if (!tmsModel.resources.empty()) {
+            return fail("Game Gear TMS Graphics II pixels were linked to Mode 4 resources");
+        }
+        for (const auto& semantic : tmsModel.semantics) {
+            if (semantic.hasResource()) {
+                return fail("Game Gear TMS Graphics II pixel has Mode 4 tile semantics");
+            }
+        }
     }
 
     {

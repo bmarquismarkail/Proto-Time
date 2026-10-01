@@ -35,8 +35,8 @@ symbol, and executes the actual ROM selector/header call sites in multi-instruct
 slices. It checks all 16 selections, full-width identity, external header bytes,
 register/stack preservation, and the initial vanilla-header fallback. This is
 headless routine-level integration, not a complete boot or visual gameplay test.
-The normal `timeEmulator` CLI does not yet activate this package automatically.
-The verifier's setup shows the embedding API sequence for activation.
+The normal `timeEmulator` CLI can activate this package with the command below;
+the verifier's setup also shows the lower-level embedding API sequence.
 
 The Game Boy CLI can activate the generated package directly:
 
@@ -46,10 +46,11 @@ The Game Boy CLI can activate the generated package directly:
   --mod /absolute/path/to/pokered-species-demo
 ```
 
-Repeat `--mod` to select multiple packages. The current CLI hook integration is
-limited to this title-species package; it validates the original ROM while
-loading, applies the guarded patches, and installs both native hooks before
-execution.
+Repeat `--mod` to select multiple packages. Native hooks are installed from
+each package manifest's `trampolines` declarations after the original ROM has
+been validated and guarded patches have been applied. This package declares two
+hooks; other Game Boy and Game Gear packages can declare their own supported
+hooks under the shared mod contract.
 
 Native-module unit tests run without copyrighted inputs. Regenerate into a new
 directory after changing the native module, since the package contains its own

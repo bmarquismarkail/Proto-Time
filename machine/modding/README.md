@@ -5,7 +5,8 @@ selected packages. Success returns a `PreparedMods` containing the patched ROM,
 populated host, and ordered mod metadata including region handles. Failure
 returns an error with the package path and no prepared state. The input ROM and
 existing machines are never modified. Call this before loading the returned ROM
-into a machine; automatic machine installation and guest traps are separate work.
+into a machine. Preparation does not install guest hooks; the emulator's
+`--mod` activation path performs the explicit installation described below.
 
 Each directory contains `manifest.json`:
 
@@ -30,8 +31,9 @@ Each directory contains `manifest.json`:
 `symbols`, `regions`, `patches`, and `priority` are optional. Patch targets use
 either a symbol or integer `bank` and `address`. Byte strings are contiguous
 hexadecimal, with equal nonzero lengths. Patches cannot cross a 16 KiB ROM bank.
-Game Boy ROM0 uses bank 0 and addresses below 16384; ROMX uses banks 1–255 and
-addresses 16384–32767. Other cores are rejected until their offset adapter exists.
+For Game Boy, ROM0 uses bank 0 and addresses below 16384; ROMX uses banks 1–255
+and addresses 16384–32767. Game Gear patches use banks 0–255 and ROM addresses
+below `0xC000`, translated through the active cartridge mapper.
 
 Region `guestBase` and `bank` are optional integer metadata; preparation does not
 map the region. Files initialize the region and any remaining bytes are zero.
@@ -61,6 +63,11 @@ name, bounded region reads/writes, and bank/address symbol resolution. Handles
 are restricted to the module's declared regions. It receives no raw C++ objects.
 Native code has process privileges; these API checks do not sandbox a module.
 
+An optional `trampolines` array declares fixed-bank symbol names and numeric
+hook IDs. The emulator CLI loads the trusted module on the emulation lane and
+installs one instance for each declaration; a native module without declarations
+is still loaded for lifecycle use.
+
 `NativeMod` pins the shared host and library through instance destruction. Use
 and destroy it on its creating emulation thread, with no concurrent calls. Host
 callbacks are only valid during a module callback. Reentrant/wrong-thread public
@@ -69,8 +76,9 @@ asynchronously. Destruction calls the module's destroy callback before unloading
 Failed creation also destroys a non-null partial instance.
 
 `invoke` forwards a numeric hook ID, PC, and argument, publishing only the result
-field on success. Hook IDs belong to the module; CPU traps and guest register or
-memory access require a future machine adapter. No guest hooks install themselves
+field on success. Hook IDs belong to the module. The Game Boy adapter below
+bridges guest calls and the `HL` register; this generic module API does not expose
+arbitrary guest memory or register access. No guest hooks install themselves
 when a module is loaded. A failed call does not roll back module/region mutations.
 
 `save` returns native bytes with mod ID, version, and state schema. `restore`

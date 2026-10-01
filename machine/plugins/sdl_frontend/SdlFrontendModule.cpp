@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <string>
 
@@ -37,6 +38,9 @@ public:
     {
         if (ready_) return true;
 #if BMMQ_SDL_FRONTEND_COMPILED_WITH_SDL
+        if (const char* appId = std::getenv("TIME_FRONTEND_APP_ID")) {
+            SDL_setenv("SDL_VIDEO_WAYLAND_WMCLASS", appId, 1);
+        }
         if (SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
             fail(SDL_GetError());
             return false;

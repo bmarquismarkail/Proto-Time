@@ -49,6 +49,26 @@ struct TimeModApiV1 {
     /* Must validate before mutation; rejection leaves the instance unchanged. */
     int32_t (*restore)(void*, const uint8_t* bytes, uint32_t size);
 };
+/* Optional observation extension, independent of the stable mod ABI.
+ * All pointers are borrowed for the synchronous callback. read_memory is
+ * read-only, bounded to 8192 bytes/call, and valid only on this callback's lane.
+ * observe must not block, perform I/O, or retain host pointers. */
+#define TIME_MOD_OBSERVER_ENTRYPOINT_V1 "time_get_mod_observer_v1"
+struct TimeModObservationV1 {
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint64_t generation;
+    const char* rom_sha1;
+    const char* frontend_app_id;
+    void* context;
+    int32_t (*read_memory)(void*, uint32_t address, uint8_t*, uint32_t size);
+};
+struct TimeModObserverV1 {
+    uint32_t struct_size;
+    uint32_t abi_version;
+    int32_t (*observe)(void* instance, const struct TimeModObservationV1*);
+};
+typedef const struct TimeModObserverV1* (*TimeGetModObserverV1)(void);
 typedef const struct TimeModApiV1* (*TimeGetModV1)(void);
 #ifdef __cplusplus
 }

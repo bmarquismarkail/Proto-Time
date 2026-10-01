@@ -95,8 +95,8 @@ ModDirectoryLoadResult loadModDirectories(std::span<const std::filesystem::path>
     try {
         require(directories.size() <= 128, "too many packages");
         require(rom.size() <= maxData, "ROM exceeds size limit");
-        // ROM offset translation is explicitly Game Boy-specific for this adapter.
-        require(machineId == "gameboy", "unsupported mod ROM adapter");
+        require(machineId == "gameboy" || machineId == "gamegear",
+                "unsupported mod ROM adapter");
         unsigned char digest[EVP_MAX_MD_SIZE];
         unsigned digestSize = 0;
         require(EVP_Digest(rom.data(), rom.size(), digest, &digestSize, EVP_sha256(), nullptr) == 1,
@@ -118,15 +118,26 @@ ModDirectoryLoadResult loadModDirectories(std::span<const std::filesystem::path>
                 return true;
             };
             auto manifest = Json::parse(bytes, callback);
-            keys(manifest, {"schemaVersion", "id", "version", "priority", "target", "romSha256", "symbols", "regions", "patches", "nativeModule"});
+            keys(manifest, {"schemaVersion", "id", "version", "priority", "target", "romSha256", "symbols", "regions", "patches", "nativeModule", "trampolines"});
             require(number(manifest, "schemaVersion", 1) == 1, "unsupported schemaVersion");
             require(stringField(manifest, "target") == machineId, "wrong machine target");
             const auto hash = hex(stringField(manifest, "romSha256"));
             require(hash.size() == digestSize && std::equal(hash.begin(), hash.end(), digest), "ROM SHA-256 mismatch");
             LoadedMod info{stringField(manifest, "id"), stringField(manifest, "version"),
-                manifest.contains("priority") ? number(manifest, "priority", UINT32_MAX) : 0, {}, {}};
+                manifest.contains("priority") ? number(manifest, "priority", UINT32_MAX) : 0, {}, {}, {}};
             if (manifest.contains("nativeModule"))
                 info.nativeModule = asset(root, stringField(manifest, "nativeModule"));
+            if (manifest.contains("trampolines")) {
+                require(manifest.at("trampolines").is_array() && manifest.at("trampolines").size() <= 256,
+                        "invalid trampolines array");
+                for (const auto& t : manifest.at("trampolines")) {
+                    keys(t, {"symbol", "hookId"});
+                    info.trampolines.push_back({stringField(t, "symbol"), number(t, "hookId", UINT32_MAX)});
+                    require(info.trampolines.back().hookId != 0, "trampoline hookId must be nonzero");
+                }
+            }
+            require(info.trampolines.empty() || !info.nativeModule.empty(),
+                    "trampolines require nativeModule");
             require(ids.insert(info.id).second, "duplicate mod ID");
             packages.push_back({root, std::move(manifest), std::move(info)});
         }
@@ -142,7 +153,7 @@ ModDirectoryLoadResult loadModDirectories(std::span<const std::filesystem::path>
             if (m.contains("symbols")) {
                 const auto path = asset(package.root, stringField(m, "symbols"));
                 require(std::filesystem::file_size(path) <= maxManifest * 16, "symbol file too large");
-                const auto result = loadPokeredSymbols(path, prepared.host);
+                const auto result = loadSymbols(path, prepared.host);
                 require(result.error.empty() && result.rejected == 0, "invalid or conflicting symbols: " + result.error);
             }
             if (m.contains("regions")) {
@@ -180,8 +191,12 @@ ModDirectoryLoadResult loadModDirectories(std::span<const std::filesystem::path>
                     }
                     const auto expected = hex(stringField(p, "expected"));
                     const auto replacement = hex(stringField(p, "replacement"));
-                    require((target.bank == 0 && target.address < 0x4000) ||
-                            (target.bank > 0 && target.address >= 0x4000 && target.address < 0x8000), "patch target is not ROM");
+                    const bool gameBoyTarget =
+                        (target.bank == 0 && target.address < 0x4000) ||
+                        (target.bank > 0 && target.address >= 0x4000 && target.address < 0x8000);
+                    const bool gameGearTarget = target.address < 0xC000;
+                    require(machineId == "gameboy" ? gameBoyTarget : gameGearTarget,
+                            "patch target is not ROM");
                     require(expected.size() <= 0x4000u - (target.address % 0x4000u), "patch crosses ROM bank");
                     const std::size_t offset = std::size_t(target.bank) * 0x4000u + target.address % 0x4000u;
                     require(offset <= rom.size() && expected.size() <= rom.size() - offset, "patch outside ROM");

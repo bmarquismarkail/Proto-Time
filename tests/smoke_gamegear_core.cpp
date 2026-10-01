@@ -8,6 +8,7 @@
 #include "machine/plugins/IoPlugin.hpp"
 #include "machine/plugins/PluginManager.hpp"
 #include <cassert>
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
@@ -350,6 +351,7 @@ int main() {
     BMMQ::GameGearMachine gg;
     const std::vector<uint8_t> rom = makeFrontendProofRom();
     gg.loadRom(rom);
+    assert(gg.romData() == rom);
     assert(stepUntil(gg, 256, [&] {
         return gg.runtimeContext().read8(0xFF41u) == 0x60u;
     }));
@@ -373,6 +375,54 @@ int main() {
     assert(initialModel->displayEnabled);
     assert(initialModel->width == 160);
     assert(initialModel->height == 144);
+    assert(initialModel->semantics.size() == initialModel->argbPixels.size());
+    assert(!initialModel->resources.empty());
+    for (const auto& semantic : initialModel->semantics) {
+        if (!semantic.hasResource()) continue;
+        assert(semantic.resourceIndex < initialModel->resources.size());
+        assert(semantic.sampleX < 8u);
+        assert(semantic.sampleY < 8u);
+    }
+    assert(gg.visualTargetId() == "gamegear");
+    assert(gg.visualDebugAdapter() != nullptr);
+    const auto videoSnapshot = gg.videoStateSnapshot();
+    assert(videoSnapshot.has_value());
+    assert(videoSnapshot->machineId == "gamegear");
+    assert(videoSnapshot->vram.size() == 0x4000u);
+    assert(videoSnapshot->oam.size() == 0x00A0u);
+    assert(!videoSnapshot->deviceRegisters.empty());
+    assert(!videoSnapshot->deviceState.empty());
+    const auto snapshotModel = gg.visualDebugAdapter()->buildFrameModelFromState(
+        *videoSnapshot, BMMQ::VideoDebugRenderRequest{160, 144});
+    assert(snapshotModel.has_value());
+    assert(snapshotModel->argbPixels == initialModel->argbPixels);
+    for (const auto& resource : snapshotModel->resources) {
+        std::array<std::uint8_t, 32u> sourceBytes{};
+        for (std::size_t byte = 0u; byte < sourceBytes.size(); ++byte) {
+            sourceBytes[byte] = videoSnapshot->vram[(resource.descriptor.source.address + byte) & 0x3FFFu];
+        }
+        assert(resource.descriptor.sourceHash == BMMQ::hashVisualSourceBytes(sourceBytes));
+    }
+    auto decodedTile = gg.visualDebugAdapter()->decodeTile(
+        videoSnapshot->vram, 0, 0, 0, BMMQ::VisualTileDecodeRequest{});
+    assert(decodedTile.has_value());
+    assert(decodedTile->descriptor.machineId == "gamegear");
+    assert(decodedTile->descriptor.decodedFormat == BMMQ::VisualPixelFormat::Indexed4);
+    std::vector<std::uint8_t> tileAddressVram(0x4000u, 0u);
+    tileAddressVram[0x2000u] = 0xFFu;
+    BMMQ::VisualTileDecodeRequest spriteDecodeRequest;
+    spriteDecodeRequest.tileAddress = 0x2000u;
+    spriteDecodeRequest.kind = BMMQ::VisualResourceKind::Sprite;
+    const auto decodedSpriteTile = gg.visualDebugAdapter()->decodeTile(
+        tileAddressVram, 0, 0, 0, spriteDecodeRequest);
+    assert(decodedSpriteTile.has_value());
+    assert(decodedSpriteTile->descriptor.source.address == 0x2000u);
+    assert(decodedSpriteTile->pixels[0] == 1u);
+    assert(decodedSpriteTile->descriptor.sourceHash == BMMQ::hashVisualSourceBytes(
+        std::span<const std::uint8_t>(tileAddressVram.data() + 0x2000u, 32u)));
+    spriteDecodeRequest.tileAddress = 0x3FF0u;
+    assert(!gg.visualDebugAdapter()->decodeTile(
+        tileAddressVram, 0, 0, 0, spriteDecodeRequest).has_value());
     std::unordered_set<std::uint32_t> initialColors(
         initialModel->argbPixels.begin(),
         initialModel->argbPixels.end());

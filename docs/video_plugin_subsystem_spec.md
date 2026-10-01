@@ -1,5 +1,10 @@
 # Proto-Time Video Plugin Subsystem Specification
 
+> **Status: Target design reference.**
+> The current realtime path uses latest-frame mailbox delivery. FIFO/queue
+> examples below are design sketches, not its exact implementation. See
+> [current ownership](architecture.md#deadline-domains).
+
 This document defines the target architecture for the Proto-Time video plugin subsystem.
 
 It applies the plugin subsystem blueprint to machine video inspection, frame preparation, and backend presentation.

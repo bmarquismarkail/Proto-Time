@@ -17,3 +17,6 @@ entities.json
 
 # graphify knowledge-graph output (generated)
 graphify-out/
+
+# zvec-grep workspace index (generated)
+.zvec-grep/

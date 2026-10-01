@@ -365,13 +365,13 @@ int main()
         BMMQ::validateEmulatorConfig(config);
     }));
 
-    CHECK_TRUE(throwsInvalidArgumentContaining("unsupported by core 'gamegear'", [] {
+    {
         BMMQ::EmulatorConfig config;
         config.machineKind = std::string("gamegear");
         config.romPath = "game.gg";
         config.cpuMode = "block";
         BMMQ::validateEmulatorConfig(config);
-    }));
+    }
 
     {
         BMMQ::EmulatorConfig config;
@@ -616,21 +616,24 @@ int main()
     CHECK_TRUE(resolved.visualCapturePath == "cli-capture");
     CHECK_TRUE(resolved.visualPackReload);
 
-    CHECK_TRUE(throwsInvalidArgumentContaining("does not support visual packs", [&] {
-        auto invalid = parseArgs({"timeEmulator",
-                                  "--core", "gamegear",
-                                  "--rom", "cli.gg",
-                                  "--visual-pack", "gg-pack.json"});
-        (void)BMMQ::resolveEmulatorConfig(invalid);
-    }));
+    {
+        auto gameGearVisualPack = parseArgs({"timeEmulator",
+                                             "--core", "gamegear",
+                                             "--rom", "cli.gg",
+                                             "--visual-pack", "gg-pack.json"});
+        const auto resolvedVisualPack = BMMQ::resolveEmulatorConfig(gameGearVisualPack);
+        CHECK_TRUE(resolvedVisualPack.visualPackPaths.size() == 1u);
+        CHECK_TRUE(resolvedVisualPack.visualPackPaths[0] == "gg-pack.json");
+    }
 
-    CHECK_TRUE(throwsInvalidArgumentContaining("does not support visual capture", [&] {
-        auto invalid = parseArgs({"timeEmulator",
-                                  "--core", "gamegear",
-                                  "--rom", "cli.gg",
-                                  "--visual-capture", "gg-capture"});
-        (void)BMMQ::resolveEmulatorConfig(invalid);
-    }));
+    {
+        auto gameGearCapture = parseArgs({"timeEmulator",
+                                          "--core", "gamegear",
+                                          "--rom", "cli.gg",
+                                          "--visual-capture", "gg-capture"});
+        const auto resolvedCapture = BMMQ::resolveEmulatorConfig(gameGearCapture);
+        CHECK_TRUE(resolvedCapture.visualCapturePath == "gg-capture");
+    }
 
     {
         auto gameGearBootRom = parseArgs({"timeEmulator",

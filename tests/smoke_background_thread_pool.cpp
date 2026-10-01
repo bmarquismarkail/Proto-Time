@@ -175,16 +175,26 @@ int main()
         BMMQ::BackgroundThreadPool pool(kThreadCount, kMaxPerWorker);
         pool.start();
 
-        // Block all workers by filling their queues.
+        // Pin every worker before filling the queues: executing tasks no longer
+        // occupy queue slots, regardless of host speed or instrumentation.
         std::mutex gMutex;
         std::condition_variable gCv;
         bool allowAll = false;
-
-        for (std::size_t i = 0; i < kThreadCount * kMaxPerWorker; ++i) {
+        std::atomic<std::size_t> blockersRunning{0u};
+        for (std::size_t i = 0; i < kThreadCount; ++i) {
             const bool ok = pool.submit([&]() {
                 std::unique_lock<std::mutex> lock(gMutex);
-               gCv.wait(lock, [&allowAll]() { return allowAll; });
+                blockersRunning.fetch_add(1u, std::memory_order_release);
+                gCv.wait(lock, [&allowAll]() { return allowAll; });
             });
+            assert(ok);
+        }
+        assert(waitUntil([&]() {
+            return blockersRunning.load(std::memory_order_acquire) == kThreadCount;
+        }, std::chrono::seconds(2)));
+
+        for (std::size_t i = 0; i < kThreadCount * kMaxPerWorker; ++i) {
+            const bool ok = pool.submit([]() {});
             assert(ok);
         }
 

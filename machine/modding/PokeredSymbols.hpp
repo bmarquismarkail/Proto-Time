@@ -13,6 +13,9 @@ struct SymbolLoadResult {
     std::string error;
 };
 
+[[nodiscard]] SymbolLoadResult loadSymbols(const std::filesystem::path& path,
+                                           ModHost& host);
+// Compatibility alias retained for existing callers.
 [[nodiscard]] SymbolLoadResult loadPokeredSymbols(const std::filesystem::path& path,
                                                   ModHost& host);
 
