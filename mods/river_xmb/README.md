@@ -13,7 +13,7 @@ cmake -S . -B build-working -DTIME_RIVER_XMB_TELEMETRY=ON
 cmake --build build-working -j4
 python3 mods/river_xmb/package.py --rom /absolute/game.gb --target gameboy \
   --module build-working/libtime-river-xmb-telemetry.so --output /tmp/time-telemetry-mod
-build-working/timeEmulator --rom /absolute/game.gb --mod /tmp/time-telemetry-mod
+build-working/timeEmulator --core gameboy --rom /absolute/game.gb --mod /tmp/time-telemetry-mod
 ```
 
 Use `--target gamegear` for a Game Gear package and the emulator's normal Game
