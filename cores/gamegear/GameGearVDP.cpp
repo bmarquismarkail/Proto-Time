@@ -443,6 +443,7 @@ void GameGearVDP::evaluateScanlineStatus(uint8_t scanline) noexcept {
     }
 }
 
+template<bool CollectResourceSemantics>
 GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
     const BMMQ::VideoDebugRenderRequest& request) const
 {
@@ -492,10 +493,12 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
     out.scanlineIndex = static_cast<uint8_t>(scanline_ & 0x00FFu);
     const auto pixelCount = static_cast<std::size_t>(out.width) * static_cast<std::size_t>(out.height);
     out.colorIndices.resize(pixelCount);
-    out.resourceTileIndices.assign(pixelCount, UINT16_MAX);
-    out.resourceKinds.assign(pixelCount, 0u);
-    out.resourceSampleXs.assign(pixelCount, 0u);
-    out.resourceSampleYs.assign(pixelCount, 0u);
+    if constexpr (CollectResourceSemantics) {
+        out.resourceTileIndices.assign(pixelCount, UINT16_MAX);
+        out.resourceKinds.assign(pixelCount, 0u);
+        out.resourceSampleXs.assign(pixelCount, 0u);
+        out.resourceSampleYs.assign(pixelCount, 0u);
+    }
     addNs(setupNs, renderStart, Clock::now());
     if (!out.displayEnabled) {
         std::fill_n(out.colorIndices.data(), pixelCount, backdropIndex);
@@ -535,9 +538,11 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                 const auto colorCode = static_cast<uint8_t>(foreground ? (color >> 4u) : (color & 0x0Fu));
                 const auto pixelIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(out.width)
                                       + static_cast<std::size_t>(x);
-                out.resourceTileIndices[pixelIndex] = static_cast<std::uint16_t>(tileIndex);
-                out.resourceSampleXs[pixelIndex] = static_cast<std::uint8_t>(pixelX);
-                out.resourceSampleYs[pixelIndex] = static_cast<std::uint8_t>(pixelY);
+                if constexpr (CollectResourceSemantics) {
+                    out.resourceTileIndices[pixelIndex] = static_cast<std::uint16_t>(tileIndex);
+                    out.resourceSampleXs[pixelIndex] = static_cast<std::uint8_t>(pixelX);
+                    out.resourceSampleYs[pixelIndex] = static_cast<std::uint8_t>(pixelY);
+                }
                 out.colorIndices[pixelIndex] = colorCode == 0u
                     ? backdropIndex
                     : static_cast<std::uint8_t>(16u + (colorCode & 0x0Fu));
@@ -735,10 +740,12 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                     const auto sampleX = flipH ? (7u - tilePixelX) : tilePixelX;
                     const auto colorCode = rowColors[sampleX];
                     const auto pixelIndex = rowOffset + static_cast<std::size_t>(x + run);
-                    out.resourceTileIndices[pixelIndex] = tileIndex;
-                    out.resourceSampleXs[pixelIndex] = static_cast<std::uint8_t>(sampleX);
-                    out.resourceSampleYs[pixelIndex] = static_cast<std::uint8_t>(
-                        flipV ? (7u - pixelY) : pixelY);
+                    if constexpr (CollectResourceSemantics) {
+                        out.resourceTileIndices[pixelIndex] = tileIndex;
+                        out.resourceSampleXs[pixelIndex] = static_cast<std::uint8_t>(sampleX);
+                        out.resourceSampleYs[pixelIndex] = static_cast<std::uint8_t>(
+                            flipV ? (7u - pixelY) : pixelY);
+                    }
                     out.colorIndices[pixelIndex] = static_cast<std::uint8_t>(
                         (palette1 ? 16u : 0u) + colorCode);
                     if constexpr (kEnableMode4SimpleBackgroundDiagnostics) {
@@ -916,9 +923,11 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                     const auto colorCode = decodedPatternRows[tileX][sampleX];
                     const auto dstX = static_cast<std::size_t>(x + run);
                     const auto pixelIndex = rowOffset + dstX;
-                    out.resourceTileIndices[pixelIndex] = decoded.tileIndex;
-                    out.resourceSampleXs[pixelIndex] = static_cast<std::uint8_t>(sampleX);
-                    out.resourceSampleYs[pixelIndex] = static_cast<std::uint8_t>(sampleY);
+                    if constexpr (CollectResourceSemantics) {
+                        out.resourceTileIndices[pixelIndex] = decoded.tileIndex;
+                        out.resourceSampleXs[pixelIndex] = static_cast<std::uint8_t>(sampleX);
+                        out.resourceSampleYs[pixelIndex] = static_cast<std::uint8_t>(sampleY);
+                    }
                     out.colorIndices[pixelIndex] = static_cast<std::uint8_t>(
                         (decoded.palette1 ? 16u : 0u) + (colorCode & 0x0Fu));
                     if (hasVisibleSprites) {
@@ -1036,10 +1045,12 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                         continue;
                     }
                     out.colorIndices[pixelIndex] = static_cast<std::uint8_t>(16u + (colorCode & 0x0Fu));
-                    out.resourceTileIndices[pixelIndex] = rowTileIndex;
-                    out.resourceKinds[pixelIndex] = 1u;
-                    out.resourceSampleXs[pixelIndex] = static_cast<std::uint8_t>(sampleX);
-                    out.resourceSampleYs[pixelIndex] = static_cast<std::uint8_t>(rowSampleY);
+                    if constexpr (CollectResourceSemantics) {
+                        out.resourceTileIndices[pixelIndex] = rowTileIndex;
+                        out.resourceKinds[pixelIndex] = 1u;
+                        out.resourceSampleXs[pixelIndex] = static_cast<std::uint8_t>(sampleX);
+                        out.resourceSampleYs[pixelIndex] = static_cast<std::uint8_t>(rowSampleY);
+                    }
                     spriteMask[pixelIndex] |= kSpriteMaskOccupied;
                 }
             }
@@ -1074,7 +1085,7 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
 BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
     const BMMQ::VideoDebugRenderRequest& request) const
 {
-    auto out = renderFramePixels(request);
+    auto out = renderFramePixels<true>(request);
     BMMQ::VideoDebugFrameModel model;
     model.width = out.width;
     model.height = out.height;
@@ -1104,17 +1115,21 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
             resource.descriptor.decodedFormat = BMMQ::VisualPixelFormat::Indexed4;
             resource.descriptor.source.index = tile;
             const auto patternBase = sprite ? spriteBase : 0u;
-            resource.descriptor.source.address = static_cast<std::uint32_t>(
-                patternBase + static_cast<std::size_t>(tile) * 32u);
+            const auto sourceAddress = patternBase + static_cast<std::size_t>(tile) * 32u;
+            resource.descriptor.source.address = static_cast<std::uint32_t>(sourceAddress & 0x3FFFu);
             resource.descriptor.source.label = sprite ? "sprite_tile" : "background_tile";
             resource.pixels.resize(64u);
+            std::array<std::uint8_t, 32u> sourceBytes{};
+            for (std::size_t byte = 0u; byte < sourceBytes.size(); ++byte) {
+                sourceBytes[byte] = vram_[(sourceAddress + byte) & 0x3FFFu];
+            }
             for (std::size_t y = 0u; y < 8u; ++y) {
                 for (std::size_t x = 0u; x < 8u; ++x) {
                     resource.pixels[y * 8u + x] = samplePatternColor(patternBase, tile, x, y);
                 }
             }
             resource.stride = 8u;
-            resource.descriptor.sourceHash = BMMQ::hashVisualSourceBytes(resource.pixels);
+            resource.descriptor.sourceHash = BMMQ::hashVisualSourceBytes(sourceBytes);
             resource.descriptor.contentHash = BMMQ::hashDecodedVisualContent(resource);
             found = resourceIndices.emplace(
                 key, static_cast<std::uint32_t>(model.resources.size())).first;
@@ -1131,7 +1146,7 @@ BMMQ::VideoDebugFrameModel GameGearVDP::buildFrameModel(
 BMMQ::RealtimeVideoSubmission GameGearVDP::buildRealtimeFrame(
     const BMMQ::VideoDebugRenderRequest& request) const
 {
-    auto out = renderFramePixels(request);
+    auto out = renderFramePixels<false>(request);
     BMMQ::RealtimeVideoPacket packet;
     packet.width = out.width;
     packet.height = out.height;

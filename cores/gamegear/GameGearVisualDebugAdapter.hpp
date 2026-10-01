@@ -33,6 +33,10 @@ public:
         const VisualTileDecodeRequest& request) const override {
         constexpr std::size_t kTileBytes = 32u;
         if (request.tileIndex >= 512u || vram.size() != 0x4000u) return std::nullopt;
+        const auto sourceOffset = request.tileAddress != 0u
+            ? static_cast<std::size_t>(request.tileAddress)
+            : static_cast<std::size_t>(request.tileIndex) * kTileBytes;
+        if (sourceOffset > vram.size() - kTileBytes) return std::nullopt;
         DecodedVisualResource resource;
         resource.descriptor.machineId = "gamegear";
         resource.descriptor.kind = request.kind == VisualResourceKind::Unknown
@@ -41,15 +45,13 @@ public:
         resource.descriptor.height = 8u;
         resource.descriptor.decodedFormat = VisualPixelFormat::Indexed4;
         resource.descriptor.source.index = request.tileIndex;
-        resource.descriptor.source.address = request.tileAddress != 0u
-            ? request.tileAddress
-            : static_cast<std::uint32_t>(request.tileIndex * kTileBytes);
+        resource.descriptor.source.address = static_cast<std::uint32_t>(sourceOffset);
         resource.descriptor.source.paletteValue = request.paletteValue;
         resource.descriptor.source.paletteRegister = std::string(request.paletteRegister);
         resource.descriptor.source.label = std::string(request.semanticContext.semanticLabel);
         resource.pixels.resize(64u);
         for (std::size_t y = 0u; y < 8u; ++y) {
-            const auto row = static_cast<std::size_t>(request.tileIndex) * kTileBytes + y * 4u;
+            const auto row = sourceOffset + y * 4u;
             for (std::size_t x = 0u; x < 8u; ++x) {
                 const auto bit = static_cast<std::uint8_t>(7u - x);
                 const auto color = static_cast<std::uint8_t>(
@@ -61,7 +63,8 @@ public:
             }
         }
         resource.stride = 8u;
-        resource.descriptor.sourceHash = hashVisualSourceBytes(resource.pixels);
+        resource.descriptor.sourceHash = hashVisualSourceBytes(
+            std::span<const std::uint8_t>(vram.data() + sourceOffset, kTileBytes));
         resource.descriptor.contentHash = hashDecodedVisualContent(resource);
         return resource;
     }

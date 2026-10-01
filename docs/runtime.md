@@ -228,7 +228,8 @@ perf report
 
 ## Native mods
 
-Use repeatable `--mod <directory>` flags for explicitly selected Game Boy
-packages. Read the [manifest and native-module contract](../machine/modding/README.md)
+Use repeatable `--mod <directory>` flags for explicitly selected Game Boy or
+Game Gear packages. Each package manifest must target the selected core. Read
+the [manifest and native-module contract](../machine/modding/README.md)
 and the [revision-pinned Pokémon title demo](../mods/pokered_species/README.md)
 for preparation, activation, and current limits.

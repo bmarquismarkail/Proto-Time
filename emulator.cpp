@@ -1382,8 +1382,9 @@ int main(int argc, char** argv)
                         ? gameBoyMachine->modHost()
                         : gameGearMachine->modHost();
                     for (const auto& mod : pendingNativeMods) {
-                        if (mod.nativeModule.empty())
+                        if (mod.nativeModule.empty() && !mod.trampolines.empty())
                             throw std::runtime_error("mod declares native trampolines without a native module: " + mod.id);
+                        if (mod.nativeModule.empty()) continue;
                         if (mod.trampolines.empty())
                             loadedNativeModules.push_back(BMMQ::Modding::NativeMod::load(mod, modHost));
                         for (const auto& trampoline : mod.trampolines) {

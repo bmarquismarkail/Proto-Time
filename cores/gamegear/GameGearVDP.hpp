@@ -82,6 +82,7 @@ private:
         std::vector<std::uint8_t> resourceSampleXs;
         std::vector<std::uint8_t> resourceSampleYs;
     };
+    template<bool CollectResourceSemantics>
     [[nodiscard]] PixelRenderOutput renderFramePixels(
         const BMMQ::VideoDebugRenderRequest& request) const;
     [[nodiscard]] static uint32_t paletteColor(uint8_t shade) noexcept;

@@ -1,11 +1,14 @@
-# Pokémon Red River XMB telemetry
+# Historical proposal: Pokémon Red River XMB telemetry
 
-Real telemetry is automatic for the English retail Pokémon Red ROM with SHA-1
-`ea9bcae617fdf159b045185467ae58b2e4a48b9a` (1 MiB). Header titles still select
-presentation, but cannot authorize RAM decoding. Other versions, translations,
-and modified ROMs do not publish real telemetry. `--river-xmb-simulated` enables
-demonstration data as a fallback for unsupported ROMs. Recognized Red ROMs always
-use real telemetry, including when this flag is present.
+> **Status: not implemented.** This document records a proposed integration and must not be read as a description of current runtime behavior. The runtime does not provide built-in Pokémon Red/River telemetry, and `--river-xmb-simulated` is unsupported. For the current plugin observation API, see [native observation](../../docs/native_observation.md).
+
+The proposal described automatic real telemetry for the English retail Pokémon
+Red ROM with SHA-1 `ea9bcae617fdf159b045185467ae58b2e4a48b9a` (1 MiB). Header
+titles would select presentation, but could not authorize RAM decoding. Other
+versions, translations, and modified ROMs would not publish real telemetry. The
+proposed `--river-xmb-simulated` option would enable demonstration data as a
+fallback for unsupported ROMs. Recognized Red ROMs would always use real
+telemetry, including when that flag was present.
 
 ## Authoritative data
 

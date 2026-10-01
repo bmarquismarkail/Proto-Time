@@ -31,8 +31,9 @@ Each directory contains `manifest.json`:
 `symbols`, `regions`, `patches`, and `priority` are optional. Patch targets use
 either a symbol or integer `bank` and `address`. Byte strings are contiguous
 hexadecimal, with equal nonzero lengths. Patches cannot cross a 16 KiB ROM bank.
-Game Boy ROM0 uses bank 0 and addresses below 16384; ROMX uses banks 1–255 and
-addresses 16384–32767. Other cores are rejected until their offset adapter exists.
+For Game Boy, ROM0 uses bank 0 and addresses below 16384; ROMX uses banks 1–255
+and addresses 16384–32767. Game Gear patches use banks 0–255 and ROM addresses
+below `0xC000`, translated through the active cartridge mapper.
 
 Region `guestBase` and `bank` are optional integer metadata; preparation does not
 map the region. Files initialize the region and any remaining bytes are zero.

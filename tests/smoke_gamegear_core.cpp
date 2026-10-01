@@ -8,6 +8,7 @@
 #include "machine/plugins/IoPlugin.hpp"
 #include "machine/plugins/PluginManager.hpp"
 #include <cassert>
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
@@ -394,11 +395,33 @@ int main() {
         *videoSnapshot, BMMQ::VideoDebugRenderRequest{160, 144});
     assert(snapshotModel.has_value());
     assert(snapshotModel->argbPixels == initialModel->argbPixels);
+    for (const auto& resource : snapshotModel->resources) {
+        std::array<std::uint8_t, 32u> sourceBytes{};
+        for (std::size_t byte = 0u; byte < sourceBytes.size(); ++byte) {
+            sourceBytes[byte] = videoSnapshot->vram[(resource.descriptor.source.address + byte) & 0x3FFFu];
+        }
+        assert(resource.descriptor.sourceHash == BMMQ::hashVisualSourceBytes(sourceBytes));
+    }
     auto decodedTile = gg.visualDebugAdapter()->decodeTile(
         videoSnapshot->vram, 0, 0, 0, BMMQ::VisualTileDecodeRequest{});
     assert(decodedTile.has_value());
     assert(decodedTile->descriptor.machineId == "gamegear");
     assert(decodedTile->descriptor.decodedFormat == BMMQ::VisualPixelFormat::Indexed4);
+    std::vector<std::uint8_t> tileAddressVram(0x4000u, 0u);
+    tileAddressVram[0x2000u] = 0xFFu;
+    BMMQ::VisualTileDecodeRequest spriteDecodeRequest;
+    spriteDecodeRequest.tileAddress = 0x2000u;
+    spriteDecodeRequest.kind = BMMQ::VisualResourceKind::Sprite;
+    const auto decodedSpriteTile = gg.visualDebugAdapter()->decodeTile(
+        tileAddressVram, 0, 0, 0, spriteDecodeRequest);
+    assert(decodedSpriteTile.has_value());
+    assert(decodedSpriteTile->descriptor.source.address == 0x2000u);
+    assert(decodedSpriteTile->pixels[0] == 1u);
+    assert(decodedSpriteTile->descriptor.sourceHash == BMMQ::hashVisualSourceBytes(
+        std::span<const std::uint8_t>(tileAddressVram.data() + 0x2000u, 32u)));
+    spriteDecodeRequest.tileAddress = 0x3FF0u;
+    assert(!gg.visualDebugAdapter()->decodeTile(
+        tileAddressVram, 0, 0, 0, spriteDecodeRequest).has_value());
     std::unordered_set<std::uint32_t> initialColors(
         initialModel->argbPixels.begin(),
         initialModel->argbPixels.end());

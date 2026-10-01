@@ -215,7 +215,7 @@ BMMQ::CpuFeedback readCpuFeedback(StateReader& reader)
     feedback.pcAfter = reader.u32();
     feedback.retiredCycles = reader.u32();
     const auto path = reader.u32();
-    if (path > static_cast<uint32_t>(BMMQ::ExecutionPathHint::NativeIr)) {
+    if (path > static_cast<uint32_t>(BMMQ::ExecutionPathHint::CachedBlock)) {
         throw std::invalid_argument("save state execution path invalid");
     }
     feedback.executionPath = static_cast<BMMQ::ExecutionPathHint>(path);

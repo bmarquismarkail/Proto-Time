@@ -124,6 +124,22 @@ void writeRom(const std::filesystem::path& path)
     if (!output) throw std::runtime_error("unable to write fixture ROM");
 }
 
+void writePatchOnlyMod(const std::filesystem::path& path)
+{
+    std::filesystem::create_directories(path);
+    std::ofstream manifest(path / "manifest.json", std::ios::binary | std::ios::trunc);
+    if (!manifest) throw std::runtime_error("unable to create patch-only mod manifest");
+    manifest << R"({
+  "schemaVersion": 1,
+  "id": "patch-only-gamegear",
+  "version": "1.0",
+  "target": "gamegear",
+  "romSha256": "c35020473aed1b4642cd726cad727b63fff2824ad68cedd7ffb73c7cbd890479",
+  "patches": [{"bank": 1, "address": 16384, "expected": "00", "replacement": "C9"}]
+})";
+    if (!manifest) throw std::runtime_error("unable to write patch-only mod manifest");
+}
+
 std::string readText(const std::filesystem::path& path)
 {
     std::ifstream input(path, std::ios::binary);
@@ -190,6 +206,11 @@ int main(int argc, char* argv[])
                 "Executor policy: bmmq.executor.policy.portable-ir",
                 "Execution backend: portable-ir",
                 "Stopped after 1 instruction steps"});
+
+    const auto patchOnlyMod = temporary.path() / "patch-only-mod";
+    writePatchOnlyMod(patchOnlyMod);
+    expectCase("Game Gear patch-only mod", runProcess(with({"--mod", patchOnlyMod.string()})),
+               EXIT_SUCCESS, {"Core: gamegear", "Stopped after 1 instruction steps"});
 
     const auto diagnostics = temporary.path() / "gamegear-ir.jsonl";
     expectCase("Game Gear detailed diagnostics",

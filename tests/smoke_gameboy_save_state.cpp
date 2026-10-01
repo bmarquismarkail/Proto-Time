@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+#include "machine/CPU.hpp"
 
 namespace {
 
@@ -41,6 +42,9 @@ void removeIfExists(const std::filesystem::path& path)
 
 int main()
 {
+    static_assert(static_cast<std::uint32_t>(BMMQ::ExecutionPathHint::PortableIr) == 3u);
+    static_assert(static_cast<std::uint32_t>(BMMQ::ExecutionPathHint::NativeIr) == 4u);
+    static_assert(static_cast<std::uint32_t>(BMMQ::ExecutionPathHint::CachedBlock) == 5u);
     const auto savePath = makeSavePath();
     removeIfExists(savePath);
 
