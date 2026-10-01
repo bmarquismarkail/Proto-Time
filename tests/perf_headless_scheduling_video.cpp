@@ -377,7 +377,6 @@ int main()
                 machine.serviceInput();
                 servicedInputRevision = inputRevision;
             }
-            bool executed = false;
             std::uint32_t slices = 0u;
             double wakeCycles = 0.0;
             bool sliceActive = false;
@@ -396,22 +395,18 @@ int main()
                 const auto charged = std::max(timingConfig.minInstructionCycles, retired);
                 wakeCycles += charged;
                 timing.charge(retired);
-                executed = true;
                 if (timing.recordExecutionSliceCycles(charged).executionSliceComplete) {
                     schedulerCompletedSlices.fetch_add(1u, std::memory_order_relaxed);
                     sliceActive = false;
                 }
             }
-            if (!executed) {
+            const auto idleNow = Clock::now();
+            const auto wake = timing.nextBatchWakeTime(idleNow);
+            if (wake > idleNow) {
                 schedulerIdleWaits.fetch_add(1u, std::memory_order_relaxed);
-                const auto idleNow = Clock::now();
-                const auto wake = timing.nextWakeTime(idleNow);
-                if (timing.shouldSleep(idleNow) && wake > idleNow) {
-                    std::this_thread::sleep_until(wake);
-                } else {
-                    std::this_thread::yield();
-                }
+                std::this_thread::sleep_until(wake);
             }
+
         }
         emulationDone.store(true, std::memory_order_release);
     });

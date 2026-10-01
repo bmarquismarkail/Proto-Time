@@ -22,8 +22,8 @@ struct TimingConfig {
     double executionSliceSeconds = 0.001;
     double frontendServiceSliceSeconds = 0.001;
     std::chrono::nanoseconds maxCatchUp = std::chrono::milliseconds(8);
-    // Minimum host sleep quantum; deficits smaller than this should
-    // not trigger a `sleep_until()` call in the emulator idle loop.
+    // Legacy instruction-deficit sleep threshold. Batch pacing uses its own
+    // host cadence, so sub-quantum instruction waits do not cause busy polling.
     std::chrono::nanoseconds minSleepQuantum = std::chrono::milliseconds(1);
     std::uint32_t maxExecutionSlicesPerWake = 4;
     double maxCyclesPerWake = 4096.0;
@@ -32,6 +32,8 @@ struct TimingConfig {
     std::chrono::nanoseconds sleepSpinCap = std::chrono::microseconds(250);
     bool throttled = true;
     TimingPolicyProfile profile = TimingPolicyProfile::Balanced;
+    // Host pacing cadence; instruction eligibility remains cycle-budget based.
+    std::chrono::nanoseconds batchInterval = std::chrono::milliseconds(1);
 };
 
 struct TimingStats {
@@ -79,6 +81,7 @@ struct TimingStats {
     std::chrono::nanoseconds frontendTickDelayLast = std::chrono::nanoseconds::zero();
     std::chrono::nanoseconds frontendTickDelayHighWater = std::chrono::nanoseconds::zero();
     TimingPolicyProfile activeProfile = TimingPolicyProfile::Balanced;
+    std::chrono::nanoseconds configuredBatchInterval = std::chrono::milliseconds(1);
 };
 
 struct TimingControlState {
@@ -114,6 +117,11 @@ public:
         std::chrono::steady_clock::time_point now) noexcept;
     [[nodiscard]] bool shouldSleep(std::chrono::steady_clock::time_point now) noexcept;
 
+    // Call after a bounded execution batch, including productive iterations.
+    // Accounts for elapsed work since update(); does not grant guest cycles.
+    [[nodiscard]] std::chrono::steady_clock::time_point nextBatchWakeTime(
+        std::chrono::steady_clock::time_point now) noexcept;
+
     [[nodiscard]] const TimingStats& stats() const noexcept { return stats_; }
 
 private:
@@ -145,6 +153,9 @@ public:
     [[nodiscard]] TimingSliceDecision recordExecutionSliceCycles(double chargedCycles) noexcept;
 
     [[nodiscard]] std::chrono::steady_clock::time_point nextWakeTime(
+        std::chrono::steady_clock::time_point now) noexcept;
+
+    [[nodiscard]] std::chrono::steady_clock::time_point nextBatchWakeTime(
         std::chrono::steady_clock::time_point now) noexcept;
 
     [[nodiscard]] TimingControlState takeControlSnapshot() noexcept;

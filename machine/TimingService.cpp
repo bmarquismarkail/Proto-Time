@@ -14,8 +14,37 @@ void updateCycleDebt(TimingStats& stats) noexcept
     stats.cycleDebt = std::max(0.0, -stats.cycleBudget);
 }
 
+// Engine snapshots must not erase service-owned host sleep, wake-burst, or
+// UI tick measurements collected between publications.
+void mergeEngineStats(TimingStats& destination, const TimingStats& source) noexcept
+{
+    destination.cycleBudget = source.cycleBudget;
+    destination.cycleDebt = source.cycleDebt;
+    destination.effectiveClockHz = source.effectiveClockHz;
+    destination.catchUpClampCount = source.catchUpClampCount;
+    destination.wakeSleeps = source.wakeSleeps;
+    destination.idleLoops = source.idleLoops;
+    destination.singleStepsGranted = source.singleStepsGranted;
+    destination.paused = source.paused;
+    destination.throttled = source.throttled;
+    destination.speedMultiplier = source.speedMultiplier;
+    destination.sleepDecisions = source.sleepDecisions;
+    destination.sleepSkippedForSmallDeficit = source.sleepSkippedForSmallDeficit;
+    destination.configuredMinSleepQuantum = source.configuredMinSleepQuantum;
+    destination.executionSlicesEntered = source.executionSlicesEntered;
+    destination.executionSlicesCompleted = source.executionSlicesCompleted;
+    destination.frontendServiceChecks = source.frontendServiceChecks;
+    destination.lastExecutionSliceCycles = source.lastExecutionSliceCycles;
+    destination.currentExecutionSliceCycles = source.currentExecutionSliceCycles;
+    destination.activeProfile = source.activeProfile;
+    destination.configuredBatchInterval = source.configuredBatchInterval;
+}
+
 void sanitizeTimingConfig(TimingConfig& config) noexcept
 {
+    config.batchInterval = std::clamp(config.batchInterval,
+        std::chrono::nanoseconds(std::chrono::microseconds(1)),
+        std::chrono::nanoseconds(std::chrono::milliseconds(2)));
     if (config.executionSliceSeconds <= 0.0) {
         config.executionSliceSeconds = kMinTimingSliceSeconds;
     }
@@ -81,6 +110,7 @@ void applyTimingPolicyProfileDefaults(TimingPolicyProfile profile, TimingConfig&
     config.profile = profile;
     switch (profile) {
     case TimingPolicyProfile::Balanced:
+        config.batchInterval = std::chrono::milliseconds(1);
         config.minSleepQuantum = std::chrono::milliseconds(1);
         config.maxExecutionSlicesPerWake = 4u;
         config.adaptiveSleepEnabled = true;
@@ -88,6 +118,7 @@ void applyTimingPolicyProfileDefaults(TimingPolicyProfile profile, TimingConfig&
         config.sleepSpinCap = std::chrono::microseconds(250);
         break;
     case TimingPolicyProfile::LowLatency:
+        config.batchInterval = std::chrono::microseconds(250);
         config.minSleepQuantum = std::chrono::microseconds(250);
         config.maxExecutionSlicesPerWake = 3u;
         config.adaptiveSleepEnabled = true;
@@ -95,6 +126,7 @@ void applyTimingPolicyProfileDefaults(TimingPolicyProfile profile, TimingConfig&
         config.sleepSpinCap = std::chrono::microseconds(350);
         break;
     case TimingPolicyProfile::PowerSaver:
+        config.batchInterval = std::chrono::milliseconds(2);
         config.minSleepQuantum = std::chrono::milliseconds(2);
         config.maxExecutionSlicesPerWake = 6u;
         config.adaptiveSleepEnabled = false;
@@ -102,6 +134,7 @@ void applyTimingPolicyProfileDefaults(TimingPolicyProfile profile, TimingConfig&
         config.sleepSpinCap = std::chrono::nanoseconds::zero();
         break;
     case TimingPolicyProfile::DeterministicTest:
+        config.batchInterval = std::chrono::microseconds(1);
         config.minSleepQuantum = std::chrono::microseconds(1);
         config.maxExecutionSlicesPerWake = 2u;
         config.adaptiveSleepEnabled = false;
@@ -126,6 +159,7 @@ void TimingEngine::configure(const TimingConfig& config) noexcept
     stats_.speedMultiplier = control_.speedMultiplier;
     stats_.effectiveClockHz = config_.baseClockHz * control_.speedMultiplier;
     stats_.activeProfile = config_.profile;
+    stats_.configuredBatchInterval = config_.batchInterval;
     updateCycleDebt(stats_);
 }
 
@@ -142,6 +176,7 @@ void TimingEngine::applyControl(const TimingControlState& control) noexcept
     stats_.speedMultiplier = control_.speedMultiplier;
     stats_.effectiveClockHz = config_.baseClockHz * control_.speedMultiplier;
     stats_.activeProfile = config_.profile;
+    stats_.configuredBatchInterval = config_.batchInterval;
     updateCycleDebt(stats_);
 }
 
@@ -262,6 +297,31 @@ std::chrono::steady_clock::time_point TimingEngine::nextWakeTime(
     }
     ++stats_.sleepDecisions;
     return now + dur;
+}
+
+std::chrono::steady_clock::time_point TimingEngine::nextBatchWakeTime(
+    std::chrono::steady_clock::time_point now) noexcept
+{
+    if (control_.paused) {
+        return control_.singleStepRequested ? now : now + config_.batchInterval;
+    }
+    if (!control_.throttled) return now;
+    if (stats_.effectiveClockHz <= 0.0) return now + config_.batchInterval;
+    // Unconsumed budget means bounded catch-up work is still pending.
+    if (stats_.cycleBudget >= config_.minInstructionCycles) return now;
+
+    const double interval = std::chrono::duration<double>(config_.batchInterval).count();
+    const double catchUp = std::chrono::duration<double>(config_.maxCatchUp).count();
+    const double targetCycles = std::max(config_.minInstructionCycles,
+        stats_.effectiveClockHz * std::min(interval, std::max(0.0, catchUp)));
+    const auto delay = std::chrono::ceil<std::chrono::steady_clock::duration>(
+        std::chrono::duration<double>((targetCycles - stats_.cycleBudget) / stats_.effectiveClockHz));
+    // Anchor to the last budget update, not completion of housekeeping. This
+    // subtracts execution time and repays instruction overshoot without drift.
+    // Bound control/stop polling even for unusually slow guest clocks or debt.
+    const auto wake = std::min(lastTick_ + delay, now + config_.batchInterval);
+    if (wake > now) ++stats_.sleepDecisions;
+    return std::max(now, wake);
 }
 
 bool TimingEngine::shouldSleep(std::chrono::steady_clock::time_point now) noexcept
@@ -407,6 +467,16 @@ std::chrono::steady_clock::time_point TimingService::nextWakeTime(
     return nt;
 }
 
+std::chrono::steady_clock::time_point TimingService::nextBatchWakeTime(
+    std::chrono::steady_clock::time_point now) noexcept
+{
+    std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
+    const auto wake = engine_.nextBatchWakeTime(now);
+    mergeEngineStats(stats_, engine_.stats());
+    stats_.configuredMinSleepQuantum = config_.minSleepQuantum;
+    return wake;
+}
+
 TimingControlState TimingService::takeControlSnapshot() noexcept
 {
     std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
@@ -422,7 +492,7 @@ TimingControlState TimingService::takeControlSnapshot() noexcept
 void TimingService::publishEngineStats(const TimingStats& stats) noexcept
 {
     std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
-    stats_ = stats;
+    mergeEngineStats(stats_, stats);
     stats_.paused = control_.paused;
     stats_.throttled = control_.throttled;
     stats_.speedMultiplier = control_.speedMultiplier;

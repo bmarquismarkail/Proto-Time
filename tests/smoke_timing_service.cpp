@@ -37,6 +37,7 @@ int main()
 
     const auto t0 = SteadyClock::now();
     svc.start(t0);
+    CHECK_TRUE(svc.nextBatchWakeTime(t0) == t0 + cfg.batchInterval);
 
     // Accumulate a little time and ensure execution is permitted.
     svc.update(t0 + std::chrono::milliseconds(1));
@@ -160,6 +161,24 @@ int main()
         CHECK_TRUE(s6.frontendTicksMerged >= 3u);
         CHECK_TRUE(s6.frontendTickDelayLast >= std::chrono::microseconds(1200));
     }
+
+    // Outer-batch publication and pacing cannot reset host-lane diagnostics.
+    const auto measured = subQuantumSvc.stats();
+    BMMQ::TimingEngine independent(subQuantumCfg);
+    independent.start(t0);
+    independent.update(t0 + std::chrono::milliseconds(1));
+    (void)subQuantumSvc.nextBatchWakeTime(subNow);
+    subQuantumSvc.publishEngineStats(independent.stats());
+    subQuantumSvc.publishEngineStats(independent.stats());
+    const auto merged = subQuantumSvc.stats();
+    CHECK_TRUE(merged.cycleBudget != measured.cycleBudget);
+    CHECK_TRUE(merged.sleepCalls == measured.sleepCalls);
+    CHECK_TRUE(merged.sleepOvershootHighWater == measured.sleepOvershootHighWater);
+    CHECK_TRUE(merged.sleepWakeLateStreakHighWater == measured.sleepWakeLateStreakHighWater);
+    CHECK_TRUE(merged.wakeBurstSamples == measured.wakeBurstSamples);
+    CHECK_TRUE(merged.wakeBurstCycleLimitHitCount == measured.wakeBurstCycleLimitHitCount);
+    CHECK_TRUE(merged.frontendTicksExecuted == measured.frontendTicksExecuted);
+    CHECK_TRUE(merged.configuredBatchInterval == subQuantumCfg.batchInterval);
 
     return 0;
 }

@@ -10,7 +10,7 @@ at most once per 100 ms. Its borrowed `TimeModObservationV1` includes the curren
 ROM SHA-1, unique frontend app ID, lifecycle generation, and a bounded read-only
 memory callback. Window-owning third parties resolve the unique app ID against
 the desktop's compositor identifiers; T.I.M.E. does not depend on a desktop API.
-The current frontend native-mod path supports the Game Boy address space.
+The current frontend native-mod path supports Game Boy and Game Gear address spaces.
 
 Read requests are limited to 8192 bytes, cannot wrap the 16-bit address space,
 and are valid only during the observation callback on its owning thread. Copy
@@ -33,3 +33,8 @@ existing `--mod <manifest-directory>` flow without installing guest trampolines.
 Validation: `smoke-native-observer` checks optional ABI compatibility, callback
 thread ownership, read observations, and generation changes. Existing native-mod
 and Game Boy save-state tests continue to exercise the original lifecycle.
+
+An optional generic River XMB telemetry module can be built with
+`TIME_RIVER_XMB_TELEMETRY=ON` and explicitly loaded through `--mod`. See
+[build, packaging, and ownership details](../mods/river_xmb/README.md). It uses
+this observer extension without changing the emulator or adding game decoding.

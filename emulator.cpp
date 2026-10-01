@@ -1523,7 +1523,6 @@ int main(int argc, char** argv)
                     timingEngine.applyControl(timingService.takeControlSnapshot());
                     timingEngine.update(now);
 
-                    bool executedInstruction = false;
                     bool executionSliceActive = false;
                     std::uint32_t wakeExecutionSlices = 0u;
                     double wakeExecutionCycles = 0.0;
@@ -1571,7 +1570,6 @@ int main(int argc, char** argv)
                         if (sliceResult.progress.retiredInstructions == 0u) {
                             break;
                         }
-                        executedInstruction = true;
                         if (timingSliceComplete) {
                             break;
                         }
@@ -1584,25 +1582,23 @@ int main(int argc, char** argv)
                         break;
                     }
 
-                    const auto idleNow = SteadyClock::now();
                     pollVisualPackReload();
+                    const auto idleNow = SteadyClock::now();
 
-                    if (!executedInstruction) {
-                        const auto nextStepTime = timingEngine.nextWakeTime(idleNow);
-                        const bool timingSleepDue =
-                            timingEngine.shouldSleep(idleNow) && (nextStepTime > idleNow);
-
-                        if (timingSleepDue && nextStepTime > idleNow) {
+                    {
+                        const auto nextStepTime = timingEngine.nextBatchWakeTime(idleNow);
+                        if (nextStepTime > idleNow) {
                             const auto requestedSleep =
                                 std::chrono::duration_cast<std::chrono::nanoseconds>(nextStepTime - idleNow);
                             const auto beforeSleep = SteadyClock::now();
-                            if (timingConfig.adaptiveSleepEnabled &&
+                            if (!timingEngine.stats().paused && timingConfig.adaptiveSleepEnabled &&
                                 requestedSleep > timingConfig.sleepSpinWindow &&
                                 timingConfig.sleepSpinWindow > std::chrono::nanoseconds::zero()) {
                                 const auto coarseWake = nextStepTime - timingConfig.sleepSpinWindow;
                                 std::this_thread::sleep_until(coarseWake);
                                 const auto spinStart = SteadyClock::now();
-                                while (SteadyClock::now() < nextStepTime) {
+                                while (!stopRequested.load(std::memory_order_acquire) &&
+                                       gStopRequested == 0 && SteadyClock::now() < nextStepTime) {
                                     if (SteadyClock::now() - spinStart >= timingConfig.sleepSpinCap) {
                                         break;
                                     }
