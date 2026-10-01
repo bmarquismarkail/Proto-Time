@@ -12,6 +12,7 @@ int main()
     timing.frontendTicksExecuted = 12;
     timing.frontendTicksMerged = 13;
     timing.sleepCalls = 21;
+    timing.configuredBatchInterval = std::chrono::microseconds(250);
     timing.sleepWakeJitterOver2msCount = 22;
     timing.sleepOvershootLast = std::chrono::nanoseconds(23);
     timing.wakeBurstSliceLimitHitCount = 24;
@@ -25,6 +26,7 @@ int main()
     assert(timingText.find("\"frontend_ticks_executed\":12") != std::string::npos);
     assert(timingText.find("\"frontend_ticks_merged\":13") != std::string::npos);
     assert(timingText.find("\"sleep_calls\":21") != std::string::npos);
+    assert(timingText.find("\"configured_batch_interval_ns\":250000") != std::string::npos);
     assert(timingText.find("\"wake_jitter_over_2ms\":22") != std::string::npos);
     assert(timingText.find("\"sleep_overshoot_last_ns\":23") != std::string::npos);
     assert(timingText.find("\"wake_burst_slice_limit_hits\":24") != std::string::npos);

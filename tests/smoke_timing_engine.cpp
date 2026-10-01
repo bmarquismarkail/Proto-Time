@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <iostream>
 
 #include "machine/TimingService.hpp"
@@ -145,6 +146,99 @@ int main()
     CHECK_TRUE(!sliceDecision.executionSliceComplete);
     CHECK_TRUE(!sliceDecision.frontendServiceDue);
     CHECK_TRUE(sliceEngine.stats().executionSlicesEntered == 2u);
+
+    // Native Game Boy instruction deficits are sub-microsecond; host pacing
+    // must still sleep after productive work without changing cycle accounting.
+    BMMQ::TimingConfig batchCfg;
+    batchCfg.baseClockHz = 4'194'304.0;
+    batchCfg.maxCyclesPerWake = batchCfg.baseClockHz * 0.004;
+    BMMQ::TimingEngine batch(batchCfg);
+    batch.start(t0);
+    CHECK_TRUE(batch.nextBatchWakeTime(t0) == t0 + std::chrono::milliseconds(1));
+    const auto tick = t0 + std::chrono::milliseconds(1);
+    batch.update(tick);
+    batch.charge(4200); // overshoot is debt, not discarded
+    const auto afterWork = tick + std::chrono::microseconds(100);
+    const auto wake = batch.nextBatchWakeTime(afterWork);
+    CHECK_TRUE(wake > tick + std::chrono::milliseconds(1));
+    CHECK_TRUE(wake < afterWork + std::chrono::milliseconds(1));
+    CHECK_TRUE(batch.stats().cycleDebt > 5.0);
+    batch.update(wake);
+    CHECK_TRUE(batch.canExecute());
+    CHECK_TRUE(batch.stats().cycleBudget >= batchCfg.baseClockHz * 0.001);
+
+    // Repeated productive batches retain their phase despite host work and
+    // variable instruction overshoot. Total guest cycles track elapsed time.
+    batch.start(t0);
+    auto sampleTime = t0;
+    double cycles = 0;
+    for (unsigned i = 0; i < 1000; ++i) {
+        sampleTime = batch.nextBatchWakeTime(sampleTime + std::chrono::microseconds(100));
+        batch.update(sampleTime);
+        while (batch.canExecute()) { batch.charge(12); cycles += 12; }
+    }
+    const auto elapsed = std::chrono::duration<double>(sampleTime - t0).count();
+    CHECK_TRUE(std::abs(cycles - elapsed * batchCfg.baseClockHz) <= 12.0);
+    CHECK_TRUE(elapsed >= 1.0 && elapsed < 1.003);
+
+    // Overdue work is immediate and a late wake remains catch-up bounded.
+    batch.start(t0);
+    CHECK_TRUE(batch.nextBatchWakeTime(t0 + std::chrono::milliseconds(10)) == t0 + std::chrono::milliseconds(10));
+    batch.update(t0 + std::chrono::milliseconds(100));
+    CHECK_TRUE(batch.stats().cycleBudget <= batchCfg.baseClockHz * 0.008);
+    CHECK_TRUE(batch.nextBatchWakeTime(t0 + std::chrono::milliseconds(100)) == t0 + std::chrono::milliseconds(100));
+
+    BMMQ::TimingControlState batchControl;
+    batchControl.paused = true;
+    batch.applyControl(batchControl);
+    CHECK_TRUE(batch.nextBatchWakeTime(sampleTime) == sampleTime + batchCfg.batchInterval);
+    batchControl.singleStepRequested = true;
+    batch.applyControl(batchControl);
+    CHECK_TRUE(batch.nextBatchWakeTime(sampleTime) == sampleTime);
+    batch.charge(4);
+    CHECK_TRUE(!batch.canExecute());
+    CHECK_TRUE(batch.nextBatchWakeTime(sampleTime) > sampleTime);
+    batchControl = {};
+    batchControl.throttled = false;
+    batch.applyControl(batchControl);
+    CHECK_TRUE(batch.nextBatchWakeTime(sampleTime) == sampleTime);
+
+    // Speed changes alter accumulated guest cycles, not the host cadence.
+    batchControl.throttled = true;
+    batchControl.speedMultiplier = 2.0;
+    batch.applyControl(batchControl);
+    batch.start(t0);
+    CHECK_TRUE(batch.nextBatchWakeTime(t0) == t0 + batchCfg.batchInterval);
+    batch.update(t0 + batchCfg.batchInterval);
+    CHECK_TRUE(batch.stats().cycleBudget >= batchCfg.baseClockHz * 0.002);
+
+    for (const auto profile : {BMMQ::TimingPolicyProfile::Balanced,
+                              BMMQ::TimingPolicyProfile::LowLatency,
+                              BMMQ::TimingPolicyProfile::PowerSaver,
+                              BMMQ::TimingPolicyProfile::DeterministicTest}) {
+        BMMQ::applyTimingPolicyProfileDefaults(profile, batchCfg);
+        batch.configure(batchCfg);
+        batch.start(t0);
+        CHECK_TRUE(batch.nextBatchWakeTime(t0) == t0 + batchCfg.batchInterval);
+    }
+    BMMQ::applyTimingPolicyProfileDefaults(BMMQ::TimingPolicyProfile::PowerSaver, batchCfg);
+    CHECK_TRUE(batchCfg.batchInterval == std::chrono::milliseconds(2));
+    BMMQ::applyTimingPolicyProfileDefaults(BMMQ::TimingPolicyProfile::LowLatency, batchCfg);
+    CHECK_TRUE(batchCfg.batchInterval == std::chrono::microseconds(250));
+    batchCfg.batchInterval = std::chrono::seconds(1);
+    batch.configure(batchCfg);
+    CHECK_TRUE(batch.config().batchInterval == std::chrono::milliseconds(2));
+    batchCfg.batchInterval = std::chrono::nanoseconds::zero();
+    batch.configure(batchCfg);
+    CHECK_TRUE(batch.config().batchInterval > std::chrono::nanoseconds::zero());
+
+    // A very slow clock or deep debt cannot postpone control polling forever.
+    batchCfg.baseClockHz = 1.0;
+    batchCfg.batchInterval = std::chrono::milliseconds(1);
+    batch.configure(batchCfg);
+    batch.start(t0);
+    batch.charge(100);
+    CHECK_TRUE(batch.nextBatchWakeTime(t0) == t0 + batchCfg.batchInterval);
 
     return 0;
 }

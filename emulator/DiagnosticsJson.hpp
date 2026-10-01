@@ -51,6 +51,7 @@ inline void writeTimingDiagnosticsJson(std::ostream& output, const TimingStats& 
     output << ",\"idle_loops\":" << stats.idleLoops;
     output << ",\"sleep_decisions\":" << stats.sleepDecisions;
     output << ",\"sleep_skipped_small_deficit\":" << stats.sleepSkippedForSmallDeficit;
+    output << ",\"configured_batch_interval_ns\":" << stats.configuredBatchInterval.count();
     output << ",\"configured_min_sleep_quantum_ns\":"
            << stats.configuredMinSleepQuantum.count();
     output << ",\"execution_slices_entered\":" << stats.executionSlicesEntered;
