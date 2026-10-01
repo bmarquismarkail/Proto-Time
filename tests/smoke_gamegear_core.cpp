@@ -351,6 +351,7 @@ int main() {
     BMMQ::GameGearMachine gg;
     const std::vector<uint8_t> rom = makeFrontendProofRom();
     gg.loadRom(rom);
+    assert(gg.romData() == rom);
     assert(stepUntil(gg, 256, [&] {
         return gg.runtimeContext().read8(0xFF41u) == 0x60u;
     }));

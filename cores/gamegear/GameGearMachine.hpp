@@ -39,6 +39,7 @@ public:
     ~GameGearMachine() override;
 
     void loadRom(const std::vector<uint8_t>& bytes) override;
+    [[nodiscard]] const std::vector<uint8_t>& romData() const noexcept;
     void setRomSourcePath(const std::optional<std::filesystem::path>& path) override;
     RuntimeContext& runtimeContext() override;
     const RuntimeContext& runtimeContext() const override;

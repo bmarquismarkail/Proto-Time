@@ -802,6 +802,9 @@ int main(int argc, char** argv)
             if (machineId != "gameboy" && machineId != "gamegear")
                 throw std::invalid_argument("--mod is unsupported for the selected core");
             std::ifstream input(options.romPath, std::ios::binary);
+            if (!input) {
+                throw std::runtime_error("Unable to open ROM file: " + options.romPath.string());
+            }
             launchRom.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
             const auto loaded = BMMQ::Modding::loadModDirectories(options.modPaths, launchRom, machineId);
             if (!loaded.prepared) throw std::runtime_error("Unable to load mod: " + loaded.error);
@@ -1486,6 +1489,12 @@ int main(int argc, char** argv)
                                 SHA1(rom.data(), rom.size(), digest);
                                 constexpr char hex[] = "0123456789abcdef";
                                 for (auto c : digest) { romIdentity += hex[c >> 4]; romIdentity += hex[c & 15]; }
+                            } else if (auto* gg = dynamic_cast<BMMQ::GameGearMachine*>(&machine)) {
+                                const auto& rom = gg->romData();
+                                unsigned char digest[SHA_DIGEST_LENGTH];
+                                SHA1(rom.data(), rom.size(), digest);
+                                constexpr char hex[] = "0123456789abcdef";
+                                for (auto c : digest) { romIdentity += hex[c >> 4]; romIdentity += hex[c & 15]; }
                             }
                         }
                         TimeModObservationV1 observation{sizeof(TimeModObservationV1), 1, observedGeneration,
@@ -1612,6 +1621,11 @@ int main(int argc, char** argv)
             } catch (...) {
                 emulationFailure = std::current_exception();
                 stopRequested.store(true, std::memory_order_release);
+            }
+            if (auto* gameBoyMachine = dynamic_cast<GameBoyMachine*>(&machine)) {
+                gameBoyMachine->clearNativeTrampolines();
+            } else if (auto* gameGearMachine = dynamic_cast<BMMQ::GameGearMachine*>(&machine)) {
+                gameGearMachine->clearNativeTrampolines();
             }
             loadedNativeModules.clear(); // Join plugin workers before unloading, on the owning lane.
             emulationFinished.store(true, std::memory_order_release);

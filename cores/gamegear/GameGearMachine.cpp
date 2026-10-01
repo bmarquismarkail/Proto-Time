@@ -1076,6 +1076,11 @@ void GameGearMachine::loadRom(const std::vector<uint8_t>& bytes) {
     }
 }
 
+const std::vector<uint8_t>& GameGearMachine::romData() const noexcept {
+    static const std::vector<uint8_t> empty;
+    return impl->cart ? impl->cart->romData() : empty;
+}
+
 void GameGearMachine::setRomSourcePath(const std::optional<std::filesystem::path>& path) {
     impl->pendingRomSourcePath = path;
 }

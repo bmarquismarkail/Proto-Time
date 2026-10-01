@@ -538,11 +538,7 @@ GameGearVDP::PixelRenderOutput GameGearVDP::renderFramePixels(
                 const auto colorCode = static_cast<uint8_t>(foreground ? (color >> 4u) : (color & 0x0Fu));
                 const auto pixelIndex = static_cast<std::size_t>(y) * static_cast<std::size_t>(out.width)
                                       + static_cast<std::size_t>(x);
-                if constexpr (CollectResourceSemantics) {
-                    out.resourceTileIndices[pixelIndex] = static_cast<std::uint16_t>(tileIndex);
-                    out.resourceSampleXs[pixelIndex] = static_cast<std::uint8_t>(pixelX);
-                    out.resourceSampleYs[pixelIndex] = static_cast<std::uint8_t>(pixelY);
-                }
+                // TMS 1bpp patterns are not Indexed4 Mode 4 tiles; leave the sentinel.
                 out.colorIndices[pixelIndex] = colorCode == 0u
                     ? backdropIndex
                     : static_cast<std::uint8_t>(16u + (colorCode & 0x0Fu));

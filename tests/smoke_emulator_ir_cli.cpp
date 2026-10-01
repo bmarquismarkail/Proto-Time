@@ -211,6 +211,17 @@ int main(int argc, char* argv[])
     writePatchOnlyMod(patchOnlyMod);
     expectCase("Game Gear patch-only mod", runProcess(with({"--mod", patchOnlyMod.string()})),
                EXIT_SUCCESS, {"Core: gamegear", "Stopped after 1 instruction steps"});
+    const auto missingRom = temporary.path() / "missing.gg";
+    auto missingRomArguments = with({"--mod", patchOnlyMod.string()});
+    for (std::size_t index = 0u; index + 1u < missingRomArguments.size(); ++index) {
+        if (missingRomArguments[index] == "--rom") {
+            missingRomArguments[index + 1u] = missingRom.string();
+            break;
+        }
+    }
+    const auto missingRomDiagnostic = "Unable to open ROM file: " + missingRom.string();
+    expectCase("missing ROM with mod", runProcess(missingRomArguments), EXIT_FAILURE,
+               {missingRomDiagnostic});
 
     const auto diagnostics = temporary.path() / "gamegear-ir.jsonl";
     expectCase("Game Gear detailed diagnostics",
