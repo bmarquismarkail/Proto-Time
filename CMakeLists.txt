@@ -934,3 +934,15 @@ add_dependencies(time-smoke-native-observer time-test-native-observer time-test-
 add_test(NAME smoke-native-observer COMMAND time-smoke-native-observer $<TARGET_FILE:time-test-native-observer> $<TARGET_FILE:time-test-native-mod>)
 
 target_compile_options(time-smoke-native-observer PRIVATE -UNDEBUG)
+
+option(TIME_RIVER_XMB_TELEMETRY "Build optional River XMB native observation module" OFF)
+if(TIME_RIVER_XMB_TELEMETRY AND UNIX)
+    add_library(time-river-xmb-telemetry MODULE mods/river_xmb/Plugin.cpp)
+    target_include_directories(time-river-xmb-telemetry PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(time-river-xmb-telemetry PRIVATE nlohmann_json::nlohmann_json OpenSSL::Crypto pthread)
+    add_executable(time-smoke-river-xmb-telemetry tests/smoke_river_xmb_telemetry.cpp)
+    target_link_libraries(time-smoke-river-xmb-telemetry PRIVATE time-native-mod-loader nlohmann_json::nlohmann_json OpenSSL::Crypto pthread)
+    target_compile_options(time-smoke-river-xmb-telemetry PRIVATE -UNDEBUG)
+    add_dependencies(time-smoke-river-xmb-telemetry time-river-xmb-telemetry)
+    add_test(NAME smoke-river-xmb-telemetry COMMAND time-smoke-river-xmb-telemetry $<TARGET_FILE:time-river-xmb-telemetry>)
+endif()
