@@ -950,7 +950,7 @@ endif()
 
 # S.P.A.C.E. is an internal analysis component; no plugin ABI changes.
 find_package(Threads REQUIRED)
-add_library(time-space-analysis STATIC space/Execution.cpp space/Analysis.cpp space/Operands.cpp space/Project.cpp space/Session.cpp space/Viewer.cpp)
+add_library(time-space-analysis STATIC space/Porting.cpp space/Execution.cpp space/Analysis.cpp space/Operands.cpp space/Project.cpp space/Session.cpp space/Viewer.cpp)
 target_link_libraries(time-space-analysis PUBLIC time-gameboy-interpreter-core nlohmann_json::nlohmann_json OpenSSL::Crypto Threads::Threads)
 add_executable(time-space space/main.cpp)
 target_link_libraries(time-space PRIVATE time-space-analysis)
@@ -973,4 +973,21 @@ add_test(NAME smoke-space-analysis COMMAND time-smoke-space-analysis)
 if(Python3_Interpreter_FOUND)
     add_test(NAME smoke-space-analysis-cli COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke_space_analysis_cli.py $<TARGET_FILE:time-space>)
+endif()
+
+# Stage-5 fixture tooling; reference libretro harnesses remain separate processes.
+add_executable(time-space-port-capture tests/space_port_capture.cpp)
+target_link_libraries(time-space-port-capture PRIVATE time-space-analysis)
+add_executable(time-space-port-state tests/space_port_state.cpp)
+target_link_libraries(time-space-port-state PRIVATE time-space-analysis time-gamegear-core)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME smoke-space-port COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke_space_port.py $<TARGET_FILE:time-space>)
+    set_tests_properties(smoke-space-port PROPERTIES SKIP_RETURN_CODE 77)
+endif()
+if(Python3_Interpreter_FOUND)
+    add_test(NAME smoke-space-port-proof COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke_space_port_proof.py $<TARGET_FILE:time-space>
+        $<TARGET_FILE:time-space-port-capture> $<TARGET_FILE:time-space-port-state>)
+    set_tests_properties(smoke-space-port-proof PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
 endif()

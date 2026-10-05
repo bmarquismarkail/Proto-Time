@@ -29,3 +29,17 @@ const annotationExpression = source.match(/JSON.stringify\(b\.instructions\.filt
 const notes = JSON.parse(new Script(annotationExpression).runInContext(context));
 assert.ok(notes.some(note => note.instruction === interior && note.annotations[0].text === 'Interior instruction note'));
 console.log('Viewer syntax, canonical identity and annotation serialization checks passed; UI not inspected.');
+if (project.porting) {
+    context.project.portBinding = await new Script('sha(canonical((({revision,verification,...rest})=>rest)(project.porting)))').runInContext(context);
+    const portHelpers = source.slice(source.indexOf('function portMapping('), source.indexOf('function portFlag('));
+    new Script(portHelpers).runInContext(context);
+    assert.equal(new Script('conversionStatus(b)').runInContext(context), 'converted');
+    const before = structuredClone(context.project);
+    context.project.porting.mappings.forEach(mapping => { mapping.implemented = false; });
+    assert.equal(new Script('conversionStatus(b)').runInContext(context), 'unconverted');
+    context.project = before;
+    assert.match(new Script('verificationStatus()').runInContext(context), /behavioral: passed/);
+    context.project.portBinding = 'changed';
+    assert.match(new Script('verificationStatus()').runInContext(context), /stale/);
+    console.log('Conversion overlay and stale-verification helpers passed; no browser presentation claimed.');
+}

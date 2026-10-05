@@ -3,9 +3,10 @@
 #include <fstream>
 #include <future>
 namespace BMMQ::Space {
-Session::Session(GB::GameBoyMachine& machine,std::span<const uint8_t> rom,const std::filesystem::path& path)
+Session::Session(GB::GameBoyMachine& machine,std::span<const uint8_t> rom,const std::filesystem::path& path,std::shared_ptr<StateBudget> budget)
  :machine_(machine),rom_(rom.begin(),rom.end()),capture_(std::make_unique<Capture>()),project_(digest(rom)) {
     if(!path.empty()&&std::filesystem::exists(path))project_=Project::load(path,digest(rom));
+    if(budget)capture_->budget=std::move(budget);
     project_.startHistory();
     project_.setBudget(capture_->budget);
     execution_=std::make_unique<Execution>(machine_,*capture_);

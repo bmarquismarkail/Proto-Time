@@ -1,4 +1,5 @@
 #include "Analysis.hpp"
+#include "Porting.hpp"
 #include "cores/gameboy/hardware_registers.hpp"
 #include <map>
 #include <set>
@@ -213,6 +214,8 @@ void validateAnalysis(const Json& p){
     for(auto& e:a["dependencyEdges"]){if(!deps.contains(e.at("from").get<std::string>())||!deps.contains(e.at("to").get<std::string>())||(e.at("kind")!="copy"&&e["kind"]!="supplier"))throw std::invalid_argument("invalid dependency edge");}
 }
 Json queryAnalysis(const Json& p,const Json& request){
+    auto port=request.value("type",std::string());
+    if(port=="port"||port=="inventory"||port=="conversions"||port=="obligations"||port=="verification")return queryPorting(p,request);
     if(!p.contains("analysis"))throw std::invalid_argument("capture is not analyzed; run analyze explicitly");
     validateAnalysis(p);auto& a=p["analysis"];
     if(request.contains("analysisId")&&request["analysisId"]!=a["id"])throw std::invalid_argument("query analysis identity mismatch");

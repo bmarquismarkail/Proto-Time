@@ -8,7 +8,7 @@
 namespace BMMQ::Space {
 class Session {
 public:
-    Session(GB::GameBoyMachine& machine,std::span<const uint8_t> rom,const std::filesystem::path& projectPath={});
+    Session(GB::GameBoyMachine& machine,std::span<const uint8_t> rom,const std::filesystem::path& projectPath={},std::shared_ptr<StateBudget> budget={});
     ~Session();
     Session(const Session&)=delete;
     Session& operator=(const Session&)=delete;

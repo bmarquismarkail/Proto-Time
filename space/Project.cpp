@@ -1,5 +1,6 @@
 #include "Project.hpp"
 #include "Analysis.hpp"
+#include "Porting.hpp"
 #include <fstream>
 #include <set>
 #include <chrono>
@@ -298,7 +299,12 @@ void Project::validate(const Json& j){
             auto f=t.at("flow").get<std::string>();if(f!="fallthrough"&&f!="branch"&&f!="call"&&f!="return"&&f!="indirect"&&f!="halt"&&f!="stop"&&f!="interrupt")throw std::invalid_argument("invalid transfer flow");
         }
     }
+    if(j.contains("captureWindows")){auto& c=j["captureWindows"];if(c.at("version")!=1||!c.at("windows").is_array()||!c.at("intentionalOmissions").is_array())throw std::invalid_argument("invalid capture window metadata");
+        std::set<std::string> windows;for(auto& w:c["windows"]){auto id=w.at("id").get<std::string>();if(id.empty()||!windows.insert(id).second||std::find(j["sessions"].begin(),j["sessions"].end(),Json(id))==j["sessions"].end())throw std::invalid_argument("duplicate/unknown capture window");counter(w.at("startStep"));counter(w.at("waitSteps"));bounded(w.at("count"),128);if(w["count"]==0)throw std::invalid_argument("empty capture window");}
+        for(auto& o:c["intentionalOmissions"]){if(counter(o.at("toStep"))<=counter(o.at("fromStep")))throw std::invalid_argument("invalid intentional omission");o.at("reason").get<std::string>();if(!windows.contains(o.at("captureId").get<std::string>()))throw std::invalid_argument("unknown omission capture identity");}}
     if(j.contains("analysis"))validateAnalysis(j);
+    validatePorting(j);
+    if(j.contains("porting")&&j.dump().size()>defaultBudget/2)throw std::invalid_argument("port accounting exceeds analysis state budget");
     if(j.dump().size()>defaultBudget*2)throw std::invalid_argument("project budget exceeded");
 }
 Project Project::load(const std::filesystem::path& path,const std::string& expected){
@@ -332,6 +338,8 @@ void Project::merge(const Json& j){
     for(const char* key:{"edges","gaps","inputs","sessions"}){std::set<std::string> existing;for(auto& v:next[key])existing.insert(v.dump());
         for(auto& v:j.at(key))if(existing.insert(v.dump()).second)next[key].push_back(v);}
     for(auto it=j["annotations"].begin();it!=j["annotations"].end();++it){auto& values=next["annotations"][it.key()];if(values.is_null())values=Json::array();for(auto& v:it.value())if(std::find(values.begin(),values.end(),v)==values.end())values.push_back(v);}
+    if(j.contains("captureWindows")){if(!next.contains("captureWindows"))next["captureWindows"]=j["captureWindows"];else{for(auto key:{"windows","intentionalOmissions"})for(auto& v:j["captureWindows"][key]){auto& entries=next["captureWindows"][key];if(std::find(entries.begin(),entries.end(),v)==entries.end())entries.push_back(v);}}}
+    if(j.contains("porting"))next["porting"]=next.contains("porting")?mergePorting(next["porting"],j["porting"]):j["porting"];
     if(next==state_)return;
     if(evidenceDigest(next)!=evidenceDigest(state_))next.erase("analysis");
     auto validation=next;validation["revision"]=decimal(revision_);validation["history"]=history();

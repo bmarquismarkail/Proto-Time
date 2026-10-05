@@ -1,4 +1,5 @@
 #include "Session.hpp"
+#include "Porting.hpp"
 #include <iostream>
 #include <fstream>
 #include <set>
@@ -17,13 +18,26 @@ int main(int argc,char** argv){
             "time-space analyze --project PROJECT --output ANALYZED\n"
             "time-space query --project ANALYZED --commands JSONL\n"
             "time-space merge --project PROJECT --input OTHER\n"
-            "time-space export --project PROJECT --html VIEWER\n";return 0;}
+            "time-space export --project PROJECT --html VIEWER\n"
+            "time-space port init|import|check|record-verification --project PROJECT --rom GB --target GG [--input JSON]\n";return 0;}
         std::map<std::string,std::string> args;
-        for(int i=2;i<argc;i+=2){if(i+1>=argc)throw std::invalid_argument("missing option value");std::string key=argv[i];
-            if(key!="--rom"&&key!="--project"&&key!="--commands"&&key!="--input"&&key!="--html"&&key!="--execution"&&key!="--output")throw std::invalid_argument("unknown option "+key);
+        std::string mode=argv[1],portOp;int first=2;if(mode=="port"){if(argc<3)throw std::invalid_argument("missing port operation");portOp=argv[2];first=3;}
+        for(int i=first;i<argc;i+=2){if(i+1>=argc)throw std::invalid_argument("missing option value");std::string key=argv[i];
+            if(key!="--rom"&&key!="--project"&&key!="--commands"&&key!="--input"&&key!="--html"&&key!="--execution"&&key!="--output"&&key!="--target")throw std::invalid_argument("unknown option "+key);
             if(!args.emplace(key,argv[i+1]).second)throw std::invalid_argument("duplicate option "+key);}
         auto require=[&](std::string key){if(!args.contains(key)||args[key].empty())throw std::invalid_argument("missing "+key);return std::filesystem::path(args[key]);};
-        std::string mode=argv[1];auto projectPath=require("--project");
+        auto projectPath=require("--project");
+        if(mode=="port"){
+            Json document;if(portOp=="init"&&!std::filesystem::exists(projectPath)){auto rom=readRom(require("--rom"));document=Project(digest(rom)).document();}else document=Project::read(projectPath);
+            Project::validate(document);
+            if(portOp=="init")attachPorting(document,Project::read(require("--input")));
+            else if(portOp=="import"){auto incoming=Project::read(require("--input"));auto ledger=incoming.contains("porting")?incoming["porting"]:incoming;attachPorting(document,document.contains("porting")?mergePorting(document["porting"],ledger):ledger);}
+            else if(portOp=="record-verification")recordVerification(document,Project::read(require("--input")));
+            else if(portOp!="check")throw std::invalid_argument("unknown port operation");
+            verifyPortArtifacts(document,require("--rom"),require("--target"));auto check=checkPorting(document);
+            if(portOp!="check"){Project::write(projectPath,document);}
+            std::cout<<Json({{"ok",true},{"result",check}}).dump()<<'\n';return 0;
+        }
         if(mode=="analyze"){auto frozen=Project::read(projectPath);auto task=std::async(std::launch::async,[p=std::move(frozen)]()mutable{return analyzeProject(std::move(p));});Project::write(require("--output"),task.get());return 0;}
         if(mode=="query"){auto frozen=Project::read(projectPath);Project::validate(frozen);std::ifstream input(require("--commands"));if(!input)throw std::runtime_error("cannot read commands");std::string line;
             while(std::getline(input,line)){if(line.empty())continue;if(line.size()>65536)throw std::invalid_argument("command exceeds 64 KiB");auto request=Json::parse(line);std::cout<<Json({{"ok",true},{"result",queryAnalysis(frozen,request)}}).dump()<<'\n';}return 0;}

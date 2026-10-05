@@ -339,3 +339,54 @@ node tests/smoke_space_viewer.mjs build-working/space-analyzed.html
 ```
 
 This check does not inspect the rendered browser interface.
+
+## Stage 5: offline conversion accounting
+
+The optional schema-1 `porting` section is independent of hardware-role analysis.
+It binds the exact source/target ROMs, build/source/art digests, reviewed inventory,
+static instruction identities, typed translations/replacements, contracts and
+hardware/control-flow obligations. Imports validate before atomic publication.
+Inventory partitions physical bytes, including FF padding and explicit unknown
+regions. Unknown/unreviewed classifications and unaccounted code/data block
+completeness; annotations never count as conversion. Executable regions need
+complete instruction boundaries and stable bank-aware identities.
+
+```sh
+time-space port init --project project.json --rom source.gb --target target.gg --input ledger.json
+time-space port import --project project.json --rom source.gb --target target.gg --input other-ledger.json
+time-space port check --project project.json --rom source.gb --target target.gg
+time-space port record-verification --project project.json --rom source.gb --target target.gg --input verification.json
+time-space query --project project.json --commands port-queries.jsonl
+```
+
+Port operations consume UTF-8 JSON files and emit JSON results. `init` explicitly
+replaces the ledger; `import` merges matching ledgers idempotently and rejects
+conflicts. Both require exact ROM/build/supplemental bytes. Verification recording
+also checks cited artifact files; current records must bind the current ledger.
+Revised artifact/contract/model evidence makes prior records stale. A check
+against modified files fails explicitly rather than passing old evidence.
+Evidence paths resolve from the source ROM directory. Offline JSON queries may
+inspect archived evidence without requiring its original files.
+
+Queries use `type`: `port`, `inventory`, `conversions`, `obligations`, or
+`verification`, with integer `offset` and `limit` (default 256, maximum 1024).
+They work without a stage-4 analysis section, retain a frozen ledger identity and
+revision, and report truncation/incompleteness. Accounting never owns, resumes,
+imports execution state into, or modifies a guest machine.
+
+Verification records contain `id`, `binding`, `type` (`behavioral`, `independent`,
+`live`, `viewer`), `status` (`passed`, `failed`, `not run`), contract IDs, scenario
+names, exact artifact hashes, tool names/versions/hashes and evidence. IDs cannot
+be overwritten with conflicting evidence. Completion and verification are
+separate. Acceptance requires complete accounting plus current passing behavioral,
+independent and live records covering all declared contracts/scenarios; a partial
+scenario record cannot pass that gate. Viewer sign-off is tracked separately.
+No live record is created by the proof runner.
+
+See [the fixture workflow](../tests/fixtures/space/port-game/README.md) for builds,
+ROM-first discovery, 16 bounded fresh-history capture windows, independent-core
+checks, exact `.gg` artifacts and private live RetroArch instructions. Intentional
+untraced intervals persist in optional version-1 `captureWindows` metadata;
+evidence loss remains in `gaps`. The offline viewer overlays captured instruction
+conversion and exposes full-ROM inventory and source/target contracts. Replacing
+a displayed revision remains explicit.
