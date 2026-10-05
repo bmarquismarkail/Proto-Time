@@ -12,19 +12,19 @@ std::vector<uint8_t> readRom(const std::filesystem::path& path){
 int main(int argc,char** argv){
     using namespace BMMQ::Space;
     try {
-        if(argc<2){std::cout<<"time-space explore --rom ROM --project PROJECT [--commands JSONL]\n"
+        if(argc<2){std::cout<<"time-space explore --rom ROM --project PROJECT [--commands JSONL] [--execution baseline|snapshot]\n"
             "time-space merge --project PROJECT --input OTHER\n"
             "time-space export --project PROJECT --html VIEWER\n";return 0;}
         std::map<std::string,std::string> args;
         for(int i=2;i<argc;i+=2){if(i+1>=argc)throw std::invalid_argument("missing option value");std::string key=argv[i];
-            if(key!="--rom"&&key!="--project"&&key!="--commands"&&key!="--input"&&key!="--html")throw std::invalid_argument("unknown option "+key);
+            if(key!="--rom"&&key!="--project"&&key!="--commands"&&key!="--input"&&key!="--html"&&key!="--execution")throw std::invalid_argument("unknown option "+key);
             if(!args.emplace(key,argv[i+1]).second)throw std::invalid_argument("duplicate option "+key);}
         auto require=[&](std::string key){if(!args.contains(key)||args[key].empty())throw std::invalid_argument("missing "+key);return std::filesystem::path(args[key]);};
         std::string mode=argv[1];auto projectPath=require("--project");
         if(mode=="export"){auto p=Project::load(projectPath);exportHtml(p,require("--html"));return 0;}
         if(mode=="merge"){auto p=Project::load(projectPath);p.merge(Project::read(require("--input")));p.save(projectPath);return 0;}
         if(mode!="explore")throw std::invalid_argument("unknown subcommand");
-        auto rom=readRom(require("--rom"));GB::GameBoyMachine machine;machine.loadRom(rom);Session session(machine,rom,projectPath);
+        auto rom=readRom(require("--rom"));GB::GameBoyMachine machine;machine.loadRom(rom);Session session(machine,rom,projectPath);session.executionMode(args.contains("--execution")?args["--execution"]:"baseline");
         std::ifstream file;std::istream* commands=&std::cin;
         if(args.contains("--commands")){file.open(args["--commands"]);if(!file)throw std::runtime_error("cannot read commands");commands=&file;}
         std::string line;bool failed=false;
@@ -36,13 +36,18 @@ int main(int argc,char** argv){
                 if(op=="step"||op=="run"){
                     auto count=command.value("count",Json(1));if(!count.is_number_integer()||count<1||count>1000000)throw std::invalid_argument("step count must be 1–1000000");
                     uint64_t n=count.get<uint64_t>();
-                    for(uint64_t i=0;i<n;++i){machine.step();if((i&31)==31)session.flush();}session.flush();
+                    uint64_t executed=0;
+                    try{for(;executed<n;++executed){session.step();if(session.executionStatus()["activeMode"]=="paused"){++executed;break;}}}
+                    catch(const ExecutionPaused& e){result["paused"]=true;result["pauseReason"]=e.what();}
+                    result["execution"]=session.executionStatus();if(result["execution"]["activeMode"]=="paused")result["paused"]=true;
+                    session.flush();n=executed;
                     result["fingerprint"]=machine.deterministicStateFingerprint();result["count"]=decimal(n);
                 } else if(op=="input") {auto mask=command.at("mask");if(!mask.is_number_integer()||mask<0||mask>255)throw std::invalid_argument("input mask must be 0–255");session.input(mask.get<uint8_t>());}
+                else if(op=="execution"){session.executionMode(command.at("mode").get<std::string>());result["execution"]=session.executionStatus();}
                 else if(op=="checkpoint")session.checkpoint(command.at("path").get<std::string>());
                 else if(op=="restore")session.restore(command.at("path").get<std::string>());
                 else if(op=="export") {auto path=command.value("path",projectPath.string());session.save(path);if(command.contains("html")){auto p=Project::load(path);exportHtml(p,command["html"].get<std::string>());}}
-                else if(op=="status"){auto d=session.document();result["revision"]=d["revision"];result["blocks"]=d["blocks"].size();result["gaps"]=d["gaps"];result["history"]=d["history"];result["fingerprint"]=machine.deterministicStateFingerprint();}
+                else if(op=="status"){auto d=session.document();result["revision"]=d["revision"];result["blocks"]=d["blocks"].size();result["gaps"]=d["gaps"];result["history"]=d["history"];result["execution"]=session.executionStatus();result["fingerprint"]=machine.deterministicStateFingerprint();}
                 else if(op=="quit"){session.save(projectPath);std::cout<<result.dump()<<'\n';break;}
                 else throw std::invalid_argument("unknown command "+op);
                 std::cout<<result.dump()<<'\n'<<std::flush;

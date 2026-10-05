@@ -350,6 +350,8 @@ void GameBoyMemoryMap::write(uint16_t addr, uint8_t value) {
 
     const auto beforeLocation = analysisLocation(resolved);
     auto observe = [&] {
+        if(snapshotExecution && resolved>=0xC000 && resolved<0xE000) snapshotExecution->canonicalWrite(resolved,value);
+        if(snapshotExecution && resolved>=0xFF80 && resolved<0xFFFF) snapshotExecution->canonicalWrite(resolved,value);
         if (!analysisCapture || !analysisCapture->onProducerLane()) return;
         BMMQ::Space::Record record;
         record.kind = resolved < 0x8000 ? BMMQ::Space::Kind::Mapping : BMMQ::Space::Kind::Write;

@@ -39,6 +39,7 @@ namespace BMMQ {
 		AddressType maxAccessed;
 	public:
 		SnapshotStorage(MemoryStorage<AddressType, DataType>& m);
+		void reserve(std::size_t bytes, std::size_t pools) {mem.reserve(bytes);pool.reserve(pools);}
 		void read(std::span<DataType> stream, AddressType address);
 		void write(std::span<const DataType> stream, AddressType address);
 		[[nodiscard]] const std::vector<std::pair<AddressType, std::size_t>>& pools() const noexcept { return pool; }

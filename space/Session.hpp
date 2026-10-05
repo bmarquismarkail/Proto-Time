@@ -1,5 +1,6 @@
 #pragma once
 #include "Project.hpp"
+#include "Execution.hpp"
 #include "cores/gameboy/GameBoyMachine.hpp"
 #include <thread>
 #include <mutex>
@@ -14,6 +15,9 @@ public:
     void save(const std::filesystem::path& path);
     Json document();
     void input(uint8_t mask);
+    void executionMode(const std::string&);
+    Json executionStatus() const;
+    void step();
     void checkpoint(const std::filesystem::path& directory);
     void restore(const std::filesystem::path& directory);
 private:
@@ -21,6 +25,7 @@ private:
     std::vector<uint8_t> rom_;
     std::unique_ptr<Capture> capture_;
     Project project_;
+    std::unique_ptr<Execution> execution_;
     std::mutex mutex_;
     std::atomic<bool> stopping_{false};
     std::thread worker_;

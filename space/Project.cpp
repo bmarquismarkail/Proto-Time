@@ -37,7 +37,7 @@ void Project::gap(std::string reason){
 void Project::ingest(const Record& r){
     if(exhausted_)return;
     if(r.kind==Kind::Input){
-        if(512>budget_-std::min(budget_,used_)){gap("analysis budget exhausted; capture stopped");exhausted_=true;return;}
+        if(512>budget_-std::min(budget_,used_)||(sharedBudget_&&!sharedBudget_->reserve(512))){gap("analysis budget exhausted; capture stopped");exhausted_=true;return;}
         used_+=512;state_["inputs"].push_back({{"branch",branch_},{"sequence",decimal(visit_)},{"position",decimal(++inputPosition_)},{"mask",r.value}});++revision_;return;
     }
     if(r.kind==Kind::Begin){if(active_)gap("incomplete instruction capture");begin_=r;accesses_.clear();active_=true;return;}
@@ -50,7 +50,7 @@ void Project::ingest(const Record& r){
 void Project::finish(const Record& end){
     // A conservative allocation charge includes node/map/string overhead, not just payload bytes.
     size_t charge=2048+accesses_.size()*768;
-    if(charge>budget_-std::min(budget_,used_)){gap("analysis budget exhausted; capture stopped");exhausted_=true;return;}
+    if(charge>budget_-std::min(budget_,used_)||(sharedBudget_&&!sharedBudget_->reserve(charge))){gap("analysis budget exhausted; capture stopped");exhausted_=true;return;}
     used_+=charge;++visit_;++revision_;
     std::string id;
     auto info=decode(std::span(end.bytes.data(),end.length),begin_.registers[5],end.registers[5],static_cast<uint8_t>(begin_.registers[0]));
@@ -102,7 +102,8 @@ void Project::finish(const Record& end){
         }
     };
     if(end.length){for(int lane=0;lane<10;++lane){auto key="r:"+std::string(regs[lane]);
-        if(info.reads&(1<<lane))dep(key,regValue(begin_,lane),"read",true,"cpu");
+        if(info.reads&(1<<lane)){dep(key,regValue(begin_,lane),"read",true,"cpu");
+            if(end.executionSource){auto& d=state_["dependencies"].back();d["executionSource"]="snapshot";d["executionSupplier"]={{"sequence",decimal(end.registerSuppliers[lane])},{"block",decimal(end.registerSupplierBlocks[lane])},{"epoch",decimal(end.registerSupplierEpochs[lane])}};}}
         if(info.writes&(1<<lane))dep(key,regValue(end,lane),"write",true,"cpu");
         state_["instructions"][id]["registers"][regs[lane]]=regValue(end,lane);
         views_[id]["registers"][regs[lane]]=regValue(end,lane);
@@ -112,6 +113,8 @@ void Project::finish(const Record& end){
         if(a.kind==Kind::Fetch||a.kind==Kind::Inspection)continue;
         dep("m:"+loc(a.location),a.value,a.isWrite?"write":"read",a.accepted,
             (a.kind==Kind::Device || ((a.location>>32)==5) || ((a.location>>32)==6))?"device":a.kind==Kind::Dma?"dma":a.kind==Kind::Mapping?"mapping":end.length?"cpu":"boundary");
+        if(a.kind==Kind::Read){auto& d=state_["dependencies"].back();d["executionSource"]=a.executionSource==1?"snapshot":a.executionSource==2?"initialization":"bus";
+            if(a.executionSource)d["executionSupplier"]={{"sequence",decimal(a.supplierSequence)},{"block",decimal(a.supplierBlock)},{"epoch",decimal(a.supplierEpoch)}};}
     }
     if(!end.length){ // register mutations caused by interrupt entry, not a fabricated instruction
         state_["boundaries"].push_back({{"branch",branch_},{"sequence",decimal(visit_)},{"cycles",decimal(end.cycles)},
@@ -237,6 +240,8 @@ void Project::validate(const Json& j){
         auto inst=d.at("instruction").get<std::string>();if(!inst.empty()&&!j["instructions"].contains(inst))throw std::invalid_argument("unknown dependency instruction");
         auto supplier=d.at("supplier").at("instruction").get<std::string>();if(!supplier.empty()&&!j["instructions"].contains(supplier))throw std::invalid_argument("unknown supplier");counter(d.at("sequence"));counter(d.at("supplier").at("sequence"));
         d.at("accepted").get<bool>();bounded(d.at("value"),65535);
+        if(d.contains("executionSource")){auto source=d["executionSource"].get<std::string>();if(source!="snapshot"&&source!="initialization"&&source!="bus")throw std::invalid_argument("invalid execution source");}
+        if(d.contains("executionSupplier")){for(auto key:{"epoch","block","sequence"})counter(d["executionSupplier"].at(key));}
         auto key=d.at("location").get<std::string>();checkKey(key);if(key.rfind("m:",0)==0)counter(Json(key.substr(2)));else if(key.rfind("r:",0)!=0)throw std::invalid_argument("invalid dependency location");
     }
     for(auto& input:j["inputs"]){bounded(input.at("mask"),255);counter(input.at("sequence"));if(input.contains("position"))counter(input["position"]);input.at("branch").get<std::string>();}

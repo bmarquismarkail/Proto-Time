@@ -12,6 +12,7 @@
 
 #include <array>
 #include "space/Capture.hpp"
+#include "space/ExecutionContract.hpp"
 #include <cstdint>
 #include <functional>
 #include <span>
@@ -30,6 +31,7 @@ public:
     ~GameBoyMemoryMap() = default;
 
     void reset();
+    BMMQ::Space::ExecutionController* snapshotExecution=nullptr;
     BMMQ::Space::Capture* analysisCapture = nullptr;
     [[nodiscard]] uint64_t analysisLocation(uint16_t address) const noexcept;
 

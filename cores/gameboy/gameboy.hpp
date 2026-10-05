@@ -388,6 +388,11 @@ public:
 
   BMMQ::MemoryPool<AddressType, DataType, AddressType> &getMemory();
   const BMMQ::MemoryPool<AddressType, DataType, AddressType> &getMemory() const;
+  bool snapshotOpcodeSupported(uint8_t code)const noexcept {return opcodeTable[code].has_value();}
+  bool snapshotBoundaryOnly()const;
+  bool handleMemoryWriteUntraced(AddressType,std::span<const DataType>);
+  bool handleMemoryReadUntraced(AddressType,std::span<DataType>)const;
+  bool snapshotRamBlocked() const noexcept {return dmaActive;}
   void setIme(bool enabled);
   void scheduleImeEnable();
   void resetDivider();

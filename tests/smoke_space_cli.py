@@ -64,3 +64,26 @@ with tempfile.TemporaryDirectory(prefix='time-space-cli-') as work:
                  if n['address']==0xc000}
     assert revisions == {'00','3ec3'}, revisions
 print('S.P.A.C.E. CLI checkpoint replay and manual capture passed')
+
+# Stage 3: repeat the public workflow explicitly in snapshot mode, including replay.
+with tempfile.TemporaryDirectory(prefix='time-space-execution-cli-') as work:
+    root = Path(work)
+    rom, project, checkpoint = root/'fixture.gb', root/'project.json', root/'checkpoint'
+    subprocess.run([sys.executable,str(fixture),str(rom)],check=True)
+    commands = [{'op':'run','count':24},{'op':'input','mask':1},{'op':'checkpoint','path':str(checkpoint)},
+                {'op':'run','count':8},{'op':'restore','path':str(checkpoint)},{'op':'run','count':8},
+                {'op':'status'},{'op':'execution','mode':'baseline'},{'op':'run','count':2},{'op':'quit'}]
+    batch=root/'commands.jsonl';batch.write_text('\n'.join(map(json.dumps,commands)))
+    result=subprocess.run([space,'explore','--rom',str(rom),'--project',str(project),
+                           '--execution','snapshot','--commands',str(batch)],capture_output=True,text=True,check=True)
+    replies=[json.loads(line) for line in result.stdout.splitlines()]
+    assert all(r['ok'] for r in replies), replies
+    assert replies[3]['fingerprint']==replies[5]['fingerprint']
+    assert replies[6]['execution']['activeMode']=='snapshot'
+    assert int(replies[6]['execution']['snapshotReads'])>0
+    assert replies[8]['execution']['activeMode']=='baseline'
+    assert int(replies[8]['execution']['baselineInstructions'])==2
+    evidence=json.loads(project.read_text())
+    assert any(d.get('executionSource')=='snapshot' and 'executionSupplier' in d for d in evidence['dependencies'])
+    assert json.loads((checkpoint/'manifest.json').read_text())['schemaVersion']==2
+print('S.P.A.C.E. snapshot CLI replay and explicit mode switch passed')

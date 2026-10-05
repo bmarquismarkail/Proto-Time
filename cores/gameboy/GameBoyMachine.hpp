@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include "../../space/ExecutionContract.hpp"
 #include <optional>
 #include <span>
 #include <string>
@@ -54,6 +55,10 @@ public:
     GameBoyMachine();
     ~GameBoyMachine() override;
 
+    BMMQ::MemoryPool<uint16_t,uint8_t,uint16_t>& executionMemory();
+    bool snapshotBoundaryOnly() const;
+    bool snapshotOpcodeSupported(uint8_t) const;
+    void setSnapshotExecution(BMMQ::Space::ExecutionController* controller);
     void setAnalysisCapture(BMMQ::Space::Capture* capture);
 
     // Machine interface

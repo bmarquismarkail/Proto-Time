@@ -950,7 +950,7 @@ endif()
 
 # S.P.A.C.E. is an internal analysis component; no plugin ABI changes.
 find_package(Threads REQUIRED)
-add_library(time-space-analysis STATIC space/Operands.cpp space/Project.cpp space/Session.cpp space/Viewer.cpp)
+add_library(time-space-analysis STATIC space/Execution.cpp space/Operands.cpp space/Project.cpp space/Session.cpp space/Viewer.cpp)
 target_link_libraries(time-space-analysis PUBLIC time-gameboy-interpreter-core nlohmann_json::nlohmann_json OpenSSL::Crypto Threads::Threads)
 add_executable(time-space space/main.cpp)
 target_link_libraries(time-space PRIVATE time-space-analysis)
@@ -962,3 +962,6 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME smoke-space-cli COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke_space_cli.py $<TARGET_FILE:time-space> $<TARGET_FILE:timeEmulator>)
 endif()
+add_executable(time-smoke-space-execution tests/smoke_space_execution.cpp)
+target_link_libraries(time-smoke-space-execution PRIVATE time-space-analysis)
+add_test(NAME smoke-space-execution COMMAND time-smoke-space-execution)

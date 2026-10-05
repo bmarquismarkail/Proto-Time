@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <memory>
@@ -7,6 +8,14 @@
 #include <string>
 namespace BMMQ::Space {
 enum class Kind : uint8_t { Begin, Fetch, Read, Write, Device, Dma, Mapping, End, Inspection, Gap, Input };
+class StateBudget {
+public:
+    explicit StateBudget(size_t maximum=64u*1024u*1024u):maximum(maximum){}
+    bool reserve(size_t charge) noexcept {auto old=used.load();while(charge<=maximum-std::min(maximum,old)){if(used.compare_exchange_weak(old,old+charge))return true;}return false;}
+    void release(size_t charge) noexcept {used.fetch_sub(charge);}
+    std::atomic<size_t> used{0};
+    size_t maximum;
+};
 // Fixed records: callbacks never allocate, lock, perform I/O, or inspect the bus.
 struct Record {
     Kind kind{};
@@ -21,6 +30,9 @@ struct Record {
     std::array<uint16_t,6> registers{}; // AF, BC, DE, HL, SP, PC
     std::array<uint8_t,3> bytes{};
     uint8_t length = 0;
+    uint8_t executionSource = 0; // 0 canonical bus, 1 snapshot, 2 initialization
+    uint64_t supplierSequence = 0, supplierBlock = 0, supplierEpoch = 0;
+    std::array<uint64_t,10> registerSuppliers{}, registerSupplierBlocks{}, registerSupplierEpochs{};
 };
 class Capture {
 public:
@@ -51,6 +63,8 @@ public:
     uint64_t pending() const noexcept { return written_.load()-read_.load(); }
     uint64_t lost() const noexcept { return lost_.load(); }
     void stop() noexcept { stopped_.store(true); }
+    bool stopped() const noexcept { return stopped_.load(); }
+    std::shared_ptr<StateBudget> budget=std::make_shared<StateBudget>();
     Kind phase = Kind::Inspection; // producer lane only
     uint64_t sequence = 0;
 private:

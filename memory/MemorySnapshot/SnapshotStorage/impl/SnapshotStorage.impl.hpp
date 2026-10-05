@@ -53,7 +53,7 @@ namespace BMMQ {
 		// if the last entry doesn't have it, then none will:
 		else if (at >= pool.back().first) {
 			auto capacity = (mem.size() - pool.back().second);
-			if (at < pool.back().first + capacity) {
+			if (static_cast<std::uintmax_t>(at - pool.back().first) < capacity) {
 				isAddressInSnapshot = true;
 				relofs = at - pool.back().first;
 				rellength = capacity - relofs;
@@ -76,7 +76,7 @@ namespace BMMQ {
 				(std::next(iter_start) == pool.end() ? (mem.size()) : std::next(iter_start)->second)
 				- iter_start->second;
 
-			isAddressInSnapshot = (at < (iter_start->first + entry_size));
+			isAddressInSnapshot = (static_cast<std::uintmax_t>(at - iter_start->first) < entry_size);
 			entry_idx = std::distance(pool.begin(), iter_start);
 			if (isAddressInSnapshot) {
 				relofs = at - iter_start->first;
@@ -135,11 +135,9 @@ namespace BMMQ {
 				count -= static_cast<std::size_t>(entrycap);
 			}
 			else {
-				auto readcount = count;
-				if (std::next(poolit) != pool.end()) {
-					auto nextaddress = std::next(poolit)->first;
-					readcount = static_cast<std::size_t>(nextaddress - index);
-				}
+                auto readcount=count;
+                auto next=std::upper_bound(pool.begin(),pool.end(),index,[](AddressType key,const auto& entry){return key<entry.first;});
+                if(next!=pool.end())readcount=std::min(count,static_cast<std::size_t>(next->first-index));
 				store.read(std::span<DataType>(streamIterator, readcount), index);
 				streamIterator += readcount;
 				index = static_cast<AddressType>(index + static_cast<AddressType>(readcount));
@@ -164,65 +162,27 @@ namespace BMMQ {
 
 		AddressType endAddress = static_cast<AddressType>(address + static_cast<AddressType>(count - 1u));
 		maxAccessed = std::max(maxAccessed, endAddress);
-		auto memit = mem.begin();
-		auto poolit = pool.begin();
-		auto memindex = 0;
-		if (mem.empty())
-		{
-			mem.insert(memit, stream.begin(), stream.begin() + count);
-			pool.push_back(std::make_pair(address, 0));
-			return;
-		}
-
-		auto p = isAddressInSnapshot(address);
-		auto info = p.info;
-		auto new_alloc_len = count;
-		auto pool_index = std::get<0>(info);
-		auto entrycap = std::get<2>(info);
-		memindex = pool.at(pool_index).second + std::get<1>(info);
-		if (!p.isAddressInSnapshot) {
-			std::advance(poolit, pool_index);
-			if (std::abs(entrycap) != 1) {
-				poolit = pool.insert(((entrycap < 0) ? poolit : std::next(poolit)), std::make_pair(address, memindex));
-			}
-			else if (entrycap < 0) {
-				poolit->first = address;
-			}
-			std::for_each(std::next(poolit), pool.end(), [&new_alloc_len](auto& pe) {pe.second += new_alloc_len; });
-		}
-		else {
-			std::advance(poolit, pool_index);
-			if (count >= static_cast<std::size_t>(entrycap)) {
-				memindex = pool.at(pool_index).second + std::get<1>(info);
-				auto endaddress = address + count - 1;
-				auto address_return_data = isAddressInSnapshot(endaddress);
-				auto address_return_info = address_return_data.info;
-				auto delpoolit = pool.end();
-
-				if (std::get<0>(address_return_info) + 1 != pool.size())
-					std::advance(delpoolit, std::get<0>(address_return_info) - pool.size() + 1);
-
-				if (delpoolit == pool.end()) {
-					entrycap = mem.size() - memindex;
-					pool.erase(std::next(poolit), delpoolit);
-				}
-				else if (delpoolit != poolit) {
-					entrycap = delpoolit->second + std::get<1>(address_return_info) + 1;
-					if (std::next(poolit) == delpoolit) pool.erase(delpoolit);
-					else pool.erase(std::next(poolit), delpoolit);
-				}
-
-				new_alloc_len -= entrycap;
-			}
-		}
-		std::advance(memit, memindex);
-		mem.insert(memit, stream.begin(), stream.begin() + new_alloc_len);
-		memit = mem.begin();
-		std::advance(memit, memindex + new_alloc_len);
-		auto streamIterator = stream.begin() + new_alloc_len;
-		std::for_each_n(memit, count - new_alloc_len, [&streamIterator](auto& d) { d = *streamIterator++; });
-		return;
-	}
+        // Packed pool offsets are independent of the gaps between guest addresses.
+        // A short overwrite must not subtract the capacity of a following pool.
+        for(std::size_t i=0;i<count;++i) {
+            const auto at=static_cast<AddressType>(address+static_cast<AddressType>(i));
+            if(!pool.empty()&&at<pool.front().first)(void)isAddressInSnapshot(at);
+            auto next=std::upper_bound(pool.begin(),pool.end(),at,[](AddressType key,const auto& entry){return key<entry.first;});
+            auto previous=next==pool.begin()?pool.end():std::prev(next);
+            const auto previousLength=previous==pool.end()?0:(next==pool.end()?mem.size():next->second)-previous->second;
+            if(previous!=pool.end()&&static_cast<std::uintmax_t>(at-previous->first)<previousLength) {
+                mem[previous->second+static_cast<std::size_t>(at-previous->first)]=stream[i];continue;
+            }
+            const auto index=next==pool.end()?mem.size():next->second;
+            mem.insert(mem.begin()+static_cast<memindextype<DataType>>(index),stream[i]);
+            for(auto entry=next;entry!=pool.end();++entry)++entry->second;
+            const bool adjacentNext=next!=pool.end()&&at!=std::numeric_limits<AddressType>::max()&&static_cast<AddressType>(at+1)==next->first;
+            if(previous!=pool.end()&&static_cast<std::uintmax_t>(at-previous->first)==previousLength) {
+                if(adjacentNext)pool.erase(next);
+            } else if(adjacentNext) {next->first=at;next->second=index;}
+            else pool.insert(next,{at,index});
+        }
+    }
 
 	template<typename AddressType, typename DataType>
 	DataType& SnapshotStorage<AddressType, DataType>::at(AddressType idx) {

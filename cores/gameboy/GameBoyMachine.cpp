@@ -631,6 +631,7 @@ public:
     }
 
     BMMQ::Space::Capture* capture = nullptr;
+    BMMQ::Space::ExecutionController* snapshotExecution=nullptr;
 
     FetchBlock fetch() override {
         if (!romLoaded_) {
@@ -658,12 +659,18 @@ public:
         cachedExecutionBlock_.clear();
         cachedExecutionBlock_.reserve(4);
         runtime_.cpu().decodeInto(fetchBlock, cachedExecutionBlock_);
+        if(snapshotExecution){const auto& entries=fetchBlock.getblockData();
+            auto bytes=entries.empty()?std::span<const uint8_t>{}:std::span<const uint8_t>(entries[0].data);
+            auto* view=snapshotExecution->begin(bytes,memoryMap_.analysisLocation(fetchBlock.getbaseAddress()),runtime_.cpu().getMemory(),runtime_.cpu().snapshotRamBlocked());
+            if(view)cachedExecutionBlock_.setSnapshot(view);
+        }
         runtime_.execute(cachedExecutionBlock_, fetchBlock);
         return runtime_.getLastFeedback();
     }
 
     BMMQ::CpuFeedback step() override {
         if (!romLoaded_) throw std::runtime_error("ROM is not loaded");
+        if(snapshotExecution)snapshotExecution->preflight();
         BMMQ::Space::Record before;
         auto registers = [this] {
             std::array<uint16_t,6> values{};
@@ -709,6 +716,7 @@ public:
     }
     BMMQ::Space::Record pendingAnalysis{};
     void finishAnalysisInstruction() {
+        if(snapshotExecution)snapshotExecution->retired(pendingAnalysis);
         if (capture) { capture->push(pendingAnalysis); capture->phase = BMMQ::Space::Kind::Inspection; }
     }
 
@@ -1246,6 +1254,15 @@ void GameBoyMachine::clearNativeTrampolines() noexcept
 {
     impl_->nativeTrampolines.clear();
     impl_->context->nativeDispatcher = {};
+}
+
+BMMQ::MemoryPool<uint16_t,uint8_t,uint16_t>& GameBoyMachine::executionMemory() {return impl_->cpu.cpu().getMemory();}
+
+bool GameBoyMachine::snapshotBoundaryOnly()const {return impl_->cpu.cpu().snapshotBoundaryOnly();}
+bool GameBoyMachine::snapshotOpcodeSupported(uint8_t code)const {return impl_->cpu.cpu().snapshotOpcodeSupported(code);}
+void GameBoyMachine::setSnapshotExecution(BMMQ::Space::ExecutionController* controller) {
+    if(controller && (!impl_->context->capture || attachedExecutorPolicy().backend()!=BMMQ::ExecutionBackend::Baseline || !impl_->nativeTrampolines.empty()))throw std::invalid_argument("snapshot execution requires captured baseline execution");
+    impl_->context->snapshotExecution=controller;impl_->memoryMap.snapshotExecution=controller;
 }
 
 void GameBoyMachine::setAnalysisCapture(BMMQ::Space::Capture* capture) {

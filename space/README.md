@@ -1,12 +1,13 @@
-# S.P.A.C.E. stages 1–2
+# S.P.A.C.E. stages 1–3
 
 S.P.A.C.E. captures Game Boy baseline execution into a ROM-bound analysis project.
 It provides a control-flow graph, current sparse block snapshots, observed
 register/memory dependencies, writer provenance, and paired exploration
-checkpoints. Guest execution still uses the original machine state.
+checkpoints. Exploration defaults to baseline execution; stage 3 adds an explicit
+snapshot execution mode with canonical write-through.
 
 This is an observation and exploration milestone. Routine-purpose inference,
-automatic exploration, snapshot-backed execution, conversion accounting,
+automatic exploration, conversion accounting,
 verification, and `.gg` generation remain future work.
 
 ## Build and try the original fixture
@@ -60,7 +61,7 @@ are separate reserved fields, both displayed as **not assessed**.
 
 ## Commands
 
-`time-space explore --rom ROM --project PROJECT [--commands FILE.jsonl]`
+`time-space explore --rom ROM --project PROJECT [--commands FILE.jsonl] [--execution baseline|snapshot]`
 
 | Command | Behavior |
 | --- | --- |
@@ -69,7 +70,8 @@ are separate reserved fields, both displayed as **not assessed**.
 | `checkpoint`, `path` | Create a new paired bundle; existing destinations are rejected. |
 | `restore`, `path` | Validate and restore a paired bundle; retain discoveries and create a new history branch. |
 | `export`, optional `path` and `html` | Save JSON, optionally a self-contained viewer; default JSON destination is `--project`. |
-| `status` | Return revision, block count, gaps, history and machine fingerprint. |
+| `execution`, `mode` | Select `baseline` or `snapshot` at the paused boundary; entering snapshot mode starts a fresh epoch. |
+| `status` | Return revision, block count, gaps, history, machine fingerprint and execution counters. |
 | `quit` | Save project and exit. EOF also saves the project. |
 
 Errors are JSON results. Batch input stops on its first failed command and exits
@@ -120,11 +122,13 @@ The emulation lane pushes fixed records into an 8,192-record SPSC queue. A worke
 constructs the analysis state; inspection on other lanes does not enter that
 queue. Callbacks do not allocate, perform file I/O, or wait for the worker.
 CPU access, fetch, device changes, DMA, mappings and boundary effects have separate
-record kinds. Snapshots are shadow state; device reads still use the actual bus.
+record kinds. Analysis snapshots are shadow state; device reads still use the actual bus.
+Execution snapshots are separate and owned by the emulation lane.
 
 Analysis has a conservative 64 MiB allocation budget and imports are limited to
 128 MiB and nesting depth 64. Exhaustion or trace overflow stops capture and adds
-an explicit gap while the emulator continues. An incomplete instruction is not
+an explicit gap while baseline emulation continues. Snapshot exploration pauses at
+the next completed instruction boundary. An incomplete instruction is not
 published as complete evidence. Checkpoints of a gapped capture still carry those
 limitations; they cannot recover observations that were never recorded.
 
@@ -132,12 +136,88 @@ No completeness claim follows from a gap-free capture: unvisited paths, unknown
 mappings, code revisions and unresolved transfers remain visible. Hardware labels
 are address-space observations, not claims about a routine's gameplay purpose.
 
+## Snapshot execution through the CLI
+
+Use the original fixture without downloading a ROM:
+
+```sh
+build-working/time-space explore --rom build-working/space-fixture.gb --project build-working/space-execution.json --execution snapshot --commands tests/fixtures/space/execution-example.jsonl
+```
+
+Use a fresh `build-working/space-execution-checkpoint` destination. The example
+captures 24 steps, holds right, checkpoints, replays eight steps, exports the
+viewer, and explicitly returns to baseline. At an interactive paused boundary:
+
+```json
+{"op":"execution","mode":"snapshot"}
+{"op":"run","count":24}
+{"op":"status"}
+{"op":"execution","mode":"baseline"}
+```
+
+WRAM, echo aliases and HRAM data reads use the active block's sparse
+`MemorySnapshot`. Unseen operands initialize from canonical RAM; later reads
+refresh the local bytes from compact latest-writer values without becoming
+writers. AF/BC/DE/HL aliases and SP/PC execute through the snapshot register file.
+Writes reach canonical RAM once, and registers publish before bus/device effects
+and hardware retirement. Device reads, instruction fetch, interrupt entry, DMA,
+stalls and timer/APU/PPU advancement stay on the authoritative machine path.
+Mixed-region spans preserve the baseline bus/interceptor contract.
+
+Execution blocks use backing/bank, entry and actual instruction bytes within the
+session's exact ROM identity. Interior entries split instruction ownership;
+rewritten RAM code creates distinct identities. Runtime suppliers survive local
+view replacement. Fetch from ROM, boot ROM, WRAM/echo or HRAM is supported; other
+code backing and unsupported opcodes pause before fetch effects. Snapshot mode
+requires the captured built-in baseline interpreter. Native mods and accelerated
+execution remain rejected. Frontend manual play stays baseline.
+
+`status.execution` reports `requestedMode`, `activeMode`, `pauseReason`, `epoch`,
+`snapshotInstructions`, `baselineInstructions`, `authoritativeBoundarySteps`,
+`snapshotReads`, `busReads` and `executionBytes`. Counters are decimal strings.
+Read counts refer to CPU memory data reads, excluding instruction fetch and
+register lanes. Instruction and boundary counters accumulate over mode switches;
+entering snapshot mode clears execution suppliers and starts a new epoch.
+
+A run that pauses returns its completed step count, `paused: true` and execution
+status. Unsupported contracts and storage exhaustion pause before the affected
+instruction; evidence loss pauses after completed effects. No automatic fallback
+occurs. Use an explicit baseline command to continue. Capture that has stopped
+cannot be restarted in the same session; a fresh session is required for fresh
+complete evidence.
+
+Runtime storage shares the 64 MiB analysis budget. Conservative reservations are
+3 MiB for supplier state and 512 KiB per execution block (including capacity for
+8,320 sparse bytes/pools and 2,048 instructions). A possible new block is reserved
+before every step, even if that step ultimately reuses a block. Budget or block
+instruction limits therefore can pause conservatively. This milestone makes no
+acceleration claim.
+
+Execution read evidence is optional in schema-1 projects. The inspector shows
+snapshot, initialization or bus source and epoch/block/write-sequence stamps.
+These execution block stamps are separate from CFG block IDs. Older captures
+remain loadable; importing projects merges evidence and never activates runtime
+snapshots.
+
+Paired checkpoint manifest version 2 includes checksummed `execution.json` with
+mode, epoch, local views, supplier values and counters. Save validates the complete
+pair before directory publication; restore stages and validates all metadata
+before changing the current session. Restore replaces execution history, starts a
+new epoch and retains prior discoveries. The requested mode must match the saved
+mode. Legacy version-1 bundles restore in baseline only; select baseline before
+loading one. Existing `SNAP` and external plugin interfaces are unchanged.
+
 ## Validation
 
 `smoke-space` checks state parity, register operands, bank/code identity, CFG
 splitting, DMA provenance, persistence/merge, restored writers and retained
 analysis, corruption rejection, queue handoff and limits. `smoke-space-cli`
 exercises input/checkpoint replay, HTML export, manual capture and mode rejection.
+`smoke-space-execution` compares independent baseline and snapshot machines after
+every tested instruction/boundary, including ordered effects, 252 supported base
+opcodes and all 256 CB operations. It also checks sparse supplier history,
+revisions, pauses and paired execution checkpoints. `smoke-snapshot` covers
+sparse writes in descending/overlapping address order and uncaptured read gaps.
 Use the full repository CTest suite and TSAN for changes to capture handoff.
 
 Visual/browser acceptance is recorded separately in the internal validation

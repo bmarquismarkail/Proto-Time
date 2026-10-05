@@ -24,6 +24,8 @@ public:
     static void write(const std::filesystem::path& path,const Json& data);
     static void validate(const Json& data);
     void startHistory() { writers_=Json::object(); values_=Json::object(); views_=Json::object(); inputPosition_=0; previous_.clear(); active_=false; }
+    void setBudget(std::shared_ptr<StateBudget> budget,bool chargeExisting=true) {if(budget&&chargeExisting&&!budget->reserve(used_))throw std::invalid_argument("analysis budget exhausted");sharedBudget_=std::move(budget);}
+    size_t chargedBytes()const noexcept {return used_;}
     bool exhausted() const noexcept {return exhausted_;}
 private:
     Json state_, writers_=Json::object(), values_=Json::object(), views_=Json::object();
@@ -32,6 +34,7 @@ private:
     std::string branch_,instance_,previous_;
     uint64_t visit_=0, revision_=0, branchCounter_=0, inputPosition_=0;
     size_t budget_,used_=0;
+    std::shared_ptr<StateBudget> sharedBudget_;
     bool active_=false,exhausted_=false;
     mutable std::map<std::string,std::shared_ptr<const BlockSnapshot>> blockSnapshots_;
     void finish(const Record& end);
