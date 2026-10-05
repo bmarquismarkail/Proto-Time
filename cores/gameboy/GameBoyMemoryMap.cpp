@@ -275,7 +275,16 @@ void GameBoyMemoryMap::writeRaw(uint16_t addr, uint8_t value) {
 void GameBoyMemoryMap::performOamDma(uint8_t sourceHighByte) {
     const auto sourceBase = static_cast<uint16_t>(static_cast<uint16_t>(sourceHighByte) << 8u);
     for (std::size_t i = 0; i < oam_.size(); ++i) {
-        oam_[i] = readRaw(static_cast<uint16_t>(sourceBase + i));
+        const auto source = static_cast<uint16_t>(sourceBase + i);
+        oam_[i] = readRaw(source);
+        if (analysisCapture && analysisCapture->onProducerLane()) {
+            BMMQ::Space::Record read; read.kind = BMMQ::Space::Kind::Dma;
+            read.address = source; read.location = analysisLocation(source); read.value = oam_[i];
+            analysisCapture->push(read);
+            auto write = read; write.kind = BMMQ::Space::Kind::Dma; write.isWrite = true;
+            write.address = static_cast<uint16_t>(0xFE00+i); write.location = analysisLocation(write.address);
+            analysisCapture->push(write);
+        }
     }
 }
 
@@ -308,30 +317,56 @@ bool GameBoyMemoryMap::handleSpecialWrite(uint16_t addr, std::span<const uint8_t
 }
 
 uint8_t GameBoyMemoryMap::read(uint16_t addr) const {
-    // Resolve echo address for reads
-    uint16_t resolved = resolveEchoAddress(addr);
-
-    // Check boot ROM first (only at 0x0000-0x00FF)
-    if (bootRomActive_ && addr < 0x100u) {
-        uint8_t result;
-        if (handleBootRomRead(addr, {&result, 1})) {
-            return result;
-        }
+    const auto resolved = resolveEchoAddress(addr);
+    const auto result = readRaw(resolved);
+    if (analysisCapture && analysisCapture->onProducerLane()) {
+        BMMQ::Space::Record record;
+        record.kind = analysisCapture->phase;
+        record.address = addr; record.location = analysisLocation(addr); record.value = result;
+        analysisCapture->push(record);
     }
+    return result;
+}
 
-    // For echo-resolved addresses, use raw read
-    return readRaw(resolved);
+uint64_t GameBoyMemoryMap::analysisLocation(uint16_t addr) const noexcept {
+    using BMMQ::Space::location;
+    addr = resolveEchoAddress(addr);
+    if (bootRomActive_ && addr < bootRom_.size()) return location(2,0,addr);
+    if (addr < 0x8000) return location(1,addr < 0x4000 ? 0 : mapper_ ? static_cast<uint16_t>(mapper_->currentRomBank()) : 0,addr & 0x3fff);
+    if (addr >= 0xA000 && addr < 0xC000) {
+        if (!cartridge_ || !cartridge_->analysisRamEnabled() || cartridge_->analysisRtcSelected()) return location(0,0,addr);
+        return location(3,cartridge_->analysisRamBank(),static_cast<uint16_t>(addr-0xA000));
+    }
+    if ((addr>=0x8000 && addr<0xA000)||(addr>=0xFE00 && addr<0xFEA0)) return location(4,0,addr);
+    if (addr==0xFF00) return location(6,0,addr);
+    if ((addr>=0xFF00 && addr<0xFF80)||addr==0xFFFF) return location(5,0,addr);
+    if (addr>=0xFEA0 && addr<0xFF00) return location(0,0,addr);
+    return location(3,0,addr);
 }
 
 void GameBoyMemoryMap::write(uint16_t addr, uint8_t value) {
     // Resolve echo address for writes
     uint16_t resolved = resolveEchoAddress(addr);
 
+    const auto beforeLocation = analysisLocation(resolved);
+    auto observe = [&] {
+        if (!analysisCapture || !analysisCapture->onProducerLane()) return;
+        BMMQ::Space::Record record;
+        record.kind = resolved < 0x8000 ? BMMQ::Space::Kind::Mapping : BMMQ::Space::Kind::Write;
+        record.isWrite = true; record.address = addr; record.location = beforeLocation;
+        record.accepted = resolved >= 0x8000 && (beforeLocation >> 32) != 0;
+        // Stored arrays are inspected directly; never execute another cartridge/bus read.
+        if (resolved >= 0xA000 && resolved < 0xC000) {
+            record.value = cartridge_ && cartridge_->metadata().mapper == CartridgeMapper::MBC2 ? static_cast<uint8_t>(value & 0x0f) : value;
+        } else record.value = resolved < 0x8000 ? value : readRaw(resolved);
+        analysisCapture->push(record);
+    };
     // Handle special writes (cartridge RAM, FF50)
     if (handleSpecialWrite(resolved, std::span<const uint8_t>(&value, 1))) {
         if (writeObserver_) {
             writeObserver_(resolved, value);
         }
+        observe();
         return;
     }
 
@@ -339,6 +374,7 @@ void GameBoyMemoryMap::write(uint16_t addr, uint8_t value) {
     if (writeObserver_) {
         writeObserver_(resolved, value);
     }
+    observe();
 }
 
 void GameBoyMemoryMap::mapBootRom(const uint8_t* data, std::size_t size) {
@@ -373,6 +409,11 @@ void GameBoyMemoryMap::clearRomWindow(uint16_t base) {
 }
 
 void GameBoyMemoryMap::setIoRegisterRaw(uint16_t address, uint8_t value) {
+    if (analysisCapture && analysisCapture->onProducerLane()) {
+        BMMQ::Space::Record record; record.kind = BMMQ::Space::Kind::Device; record.isWrite = true;
+        record.address = address; record.location = analysisLocation(address); record.value = value;
+        analysisCapture->push(record);
+    }
     if (address >= 0xFF00u && address < 0xFF80u) {
         ioRegs_[address - 0xFF00u] = value;
     } else if (address == 0xFFFFu) {

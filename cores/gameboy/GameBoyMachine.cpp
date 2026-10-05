@@ -630,6 +630,8 @@ public:
         refreshExecutionMode();
     }
 
+    BMMQ::Space::Capture* capture = nullptr;
+
     FetchBlock fetch() override {
         if (!romLoaded_) {
             throw std::runtime_error("ROM is not loaded");
@@ -661,19 +663,53 @@ public:
     }
 
     BMMQ::CpuFeedback step() override {
-        if (!romLoaded_) {
-            throw std::runtime_error("ROM is not loaded");
+        if (!romLoaded_) throw std::runtime_error("ROM is not loaded");
+        BMMQ::Space::Record before;
+        auto registers = [this] {
+            std::array<uint16_t,6> values{};
+            constexpr const char* names[]={"AF","BC","DE","HL","SP","PC"};
+            for(size_t i=0;i<values.size();++i)values[i]=requireRegisterEntry(names[i])->reg->value;
+            return values;
+        };
+        if (capture) {
+            capture->bindProducer();
+            before.kind = BMMQ::Space::Kind::Begin; before.registers = registers();
+            before.location = memoryMap_.analysisLocation(before.registers[5]);
+            before.sequence = ++capture->sequence; capture->push(before);
+            capture->phase = BMMQ::Space::Kind::Fetch;
         }
-        if (fastExecutionAllowed() && runtime_.cpu().tryExecuteTranslatedBlock()) {
-            return runtime_.getLastFeedback();
-        }
+        if (fastExecutionAllowed() && runtime_.cpu().tryExecuteTranslatedBlock()) return runtime_.getLastFeedback();
         runtime_.cpu().fetchInto(cachedFetchBlock_);
+        if (capture) capture->phase = BMMQ::Space::Kind::Read;
         const auto feedback = step(cachedFetchBlock_);
-        if (fastExecutionAllowed() &&
-            feedback.executionPath == BMMQ::ExecutionPathHint::CpuOptimizedFastPath) {
-            runtime_.cpu().populateBlockCache(cachedFetchBlock_);
+        if (capture) {
+            // End is emitted after machine device retirement by finishAnalysisInstruction().
+            pendingAnalysis = before;
+            pendingAnalysis.kind = BMMQ::Space::Kind::End;
+            pendingAnalysis.registers = registers(); pendingAnalysis.cycles = feedback.retiredCycles;
+            pendingAnalysis.location = memoryMap_.analysisLocation(pendingAnalysis.registers[5]);
+            const auto& entries = cachedFetchBlock_.getblockData();
+            if (!entries.empty()) {
+                pendingAnalysis.length = static_cast<uint8_t>(std::min<size_t>(3,entries[0].data.size()));
+                std::copy_n(entries[0].data.begin(),pendingAnalysis.length,pendingAnalysis.bytes.begin());
+                const auto pc=before.registers[5];
+                pendingAnalysis.fallthroughLocation=memoryMap_.analysisLocation(static_cast<uint16_t>(pc+pendingAnalysis.length));
+                const auto opcode=pendingAnalysis.bytes[0];
+                uint16_t target=static_cast<uint16_t>(pendingAnalysis.bytes[1]|(pendingAnalysis.bytes[2]<<8));
+                if(opcode==0x18 || opcode==0x20 || opcode==0x28 || opcode==0x30 || opcode==0x38)
+                    target=static_cast<uint16_t>(pc+pendingAnalysis.length+static_cast<int8_t>(pendingAnalysis.bytes[1]));
+                if((opcode&0xC7)==0xC7)target=opcode&0x38;
+                pendingAnalysis.targetLocation=memoryMap_.analysisLocation(target);
+            }
+            capture->phase = BMMQ::Space::Kind::Device;
         }
+        if (fastExecutionAllowed() && feedback.executionPath == BMMQ::ExecutionPathHint::CpuOptimizedFastPath)
+            runtime_.cpu().populateBlockCache(cachedFetchBlock_);
         return feedback;
+    }
+    BMMQ::Space::Record pendingAnalysis{};
+    void finishAnalysisInstruction() {
+        if (capture) { capture->push(pendingAnalysis); capture->phase = BMMQ::Space::Kind::Inspection; }
     }
 
     uint8_t read8(uint16_t address) const override {
@@ -974,6 +1010,7 @@ GameBoyMachine::~GameBoyMachine() {
 }
 
 void GameBoyMachine::loadRom(const std::vector<uint8_t>& bytes) {
+    if (impl_->context && impl_->context->capture) throw std::invalid_argument("detach S.P.A.C.E. capture before replacing the ROM");
     if (bytes.empty()) {
         throw std::runtime_error("Cannot load empty ROM");
     }
@@ -1101,6 +1138,7 @@ void GameBoyMachine::loadRomFromPath(const std::filesystem::path& path) {
 }
 
 void GameBoyMachine::loadExternalBootRom(const std::vector<uint8_t>& bytes) {
+    if (impl_->context && impl_->context->capture) throw std::invalid_argument("detach S.P.A.C.E. capture before replacing the boot ROM");
     if (bytes.size() != 0x100u) {
         throw std::invalid_argument("Game Boy boot ROM must be exactly 256 bytes");
     }
@@ -1145,6 +1183,8 @@ std::span<const BMMQ::IoRegionDescriptor> GameBoyMachine::describeIoRegions() co
 }
 
 void GameBoyMachine::attachExecutorPolicy(const BMMQ::Plugin::IExecutorPolicyPlugin& policy) {
+    if (impl_->context->capture && policy.backend() != BMMQ::ExecutionBackend::Baseline)
+        throw std::invalid_argument("S.P.A.C.E. capture requires baseline execution");
     BMMQ::Plugin::validateExecutorPolicyForRuntime(policy, *impl_->context);
     auto owned = policy.clone();
     if (!owned) {
@@ -1184,6 +1224,7 @@ bool GameBoyMachine::installNativeTrampoline(
     std::uint16_t address, std::unique_ptr<BMMQ::Modding::NativeMod> module,
     std::uint32_t hookId)
 {
+    if (impl_->context->capture) throw std::invalid_argument("native mods cannot be activated during S.P.A.C.E. capture");
     if (!module || hookId == 0u || address < 0x150u || address >= 0x4000u ||
         impl_->context->read8(address) != 0xC9u || impl_->nativeTrampolines.contains(address)) return false;
     impl_->context->nativeDispatcher = [this](std::uint16_t pc) {
@@ -1205,6 +1246,14 @@ void GameBoyMachine::clearNativeTrampolines() noexcept
 {
     impl_->nativeTrampolines.clear();
     impl_->context->nativeDispatcher = {};
+}
+
+void GameBoyMachine::setAnalysisCapture(BMMQ::Space::Capture* capture) {
+    if (capture && (attachedExecutorPolicy().backend() != BMMQ::ExecutionBackend::Baseline ||
+                    !impl_->nativeTrampolines.empty()))
+        throw std::invalid_argument("S.P.A.C.E. capture requires baseline execution without native mods");
+    impl_->context->capture = capture;
+    impl_->memoryMap.analysisCapture = capture;
 }
 
 void GameBoyMachine::step() {
@@ -1318,9 +1367,11 @@ BMMQ::InstructionRetirementDecision GameBoyMachine::onInstructionRetired(
     const auto pendingInterrupts = static_cast<uint8_t>(
         impl_->context->read8(0xFF0Fu) & impl_->context->read8(0xFFFFu) & 0x1Fu);
     if (pendingInterrupts != 0u) {
+        impl_->context->finishAnalysisInstruction();
         return BMMQ::InstructionRetirementDecision::exitSlice(
             BMMQ::ExecutionSliceExitReason::MachineBoundary);
     }
+    impl_->context->finishAnalysisInstruction();
     return BMMQ::InstructionRetirementDecision::continueSlice();
 }
 
@@ -1517,6 +1568,12 @@ std::string GameBoyMachine::stopSummary() const {
 }
 
 void GameBoyMachine::setJoypadState(uint8_t value) {
+    if (impl_->memoryMap.analysisCapture) {
+        BMMQ::Space::Record input;
+        input.kind = BMMQ::Space::Kind::Input;
+        input.value = value;
+        impl_->memoryMap.analysisCapture->push(input);
+    }
     impl_->cpu.cpu().setJoypadState(value);
     impl_->input.setLogicalButtons(value);
     impl_->lastDigitalInputMask = value;
@@ -1694,6 +1751,7 @@ std::string GameBoyMachine::deterministicStateFingerprint() const {
 }
 
 void GameBoyMachine::load_state(const std::filesystem::path& path) {
+    if (impl_->context->capture) throw std::invalid_argument("use the S.P.A.C.E. paired checkpoint restore while capture is active");
     if (!impl_->nativeTrampolines.empty()) throw std::runtime_error("Native-mod save states are not supported");
     if (!impl_->romLoaded) {
         throw std::runtime_error("Load ROM before loading Game Boy save state");

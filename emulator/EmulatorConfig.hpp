@@ -57,6 +57,7 @@ struct EmulatorConfig {
     bool debugSnapshotsEnabled = false;
     std::vector<std::filesystem::path> visualPackPaths;
     std::optional<std::filesystem::path> visualCapturePath;
+    std::optional<std::filesystem::path> spaceProjectPath;
     bool visualPackReload = false;
 };
 
@@ -101,6 +102,7 @@ struct CommandLineConfigOverrides {
     std::optional<bool> debugSnapshotsEnabled;
     std::optional<std::vector<std::filesystem::path>> visualPackPaths;
     std::optional<std::filesystem::path> visualCapturePath;
+    std::optional<std::filesystem::path> spaceProjectPath;
     std::optional<bool> visualPackReload;
 };
 

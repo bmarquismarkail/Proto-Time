@@ -1,0 +1,42 @@
+#pragma once
+#include "Capture.hpp"
+#include "Snapshots.hpp"
+#include <nlohmann/json.hpp>
+#include <filesystem>
+#include <map>
+#include <vector>
+#include "memory/MemorySnapshot/MemorySnapshot.hpp"
+namespace BMMQ::Space {
+using Json = nlohmann::json;
+class Project {
+public:
+    static constexpr size_t defaultBudget=64u*1024u*1024u;
+    explicit Project(std::string romHash, size_t budget=defaultBudget);
+    void ingest(const Record& record);
+    void gap(std::string reason);
+    Json document() const;
+    Json history() const;
+    void restoreHistory(const Json& history);
+    void merge(const Json& document);
+    void save(const std::filesystem::path& path) const;
+    static Project load(const std::filesystem::path& path, const std::string& expectedHash="");
+    static Json read(const std::filesystem::path& path);
+    static void write(const std::filesystem::path& path,const Json& data);
+    static void validate(const Json& data);
+    void startHistory() { writers_=Json::object(); values_=Json::object(); views_=Json::object(); inputPosition_=0; previous_.clear(); active_=false; }
+    bool exhausted() const noexcept {return exhausted_;}
+private:
+    Json state_, writers_=Json::object(), values_=Json::object(), views_=Json::object();
+    Record begin_{};
+    std::vector<Record> accesses_;
+    std::string branch_,instance_,previous_;
+    uint64_t visit_=0, revision_=0, branchCounter_=0, inputPosition_=0;
+    size_t budget_,used_=0;
+    bool active_=false,exhausted_=false;
+    mutable std::map<std::string,std::shared_ptr<const BlockSnapshot>> blockSnapshots_;
+    void finish(const Record& end);
+};
+std::string decimal(uint64_t v);
+uint64_t counter(const Json& v);
+void exportHtml(const Project& project,const std::filesystem::path& path);
+}

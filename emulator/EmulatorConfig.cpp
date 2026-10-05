@@ -425,6 +425,7 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     if (overrides.visualCapturePath.has_value()) {
         config.visualCapturePath = *overrides.visualCapturePath;
     }
+    if (overrides.spaceProjectPath.has_value()) config.spaceProjectPath = overrides.spaceProjectPath;
     if (overrides.visualPackReload.has_value()) {
         config.visualPackReload = *overrides.visualPackReload;
     }
@@ -457,6 +458,10 @@ void validateEmulatorConfig(const EmulatorConfig& config)
             "(ir_backend_plugin/ir_backend_id) require --cpu-mode ir");
     }
 
+    if (config.spaceProjectPath && (config.machineKind != "gameboy" || config.cpuMode != "baseline" ||
+        !config.modPaths.empty() || config.executorPluginPath || config.executorPolicyId || config.irAdapterPluginPath || config.irBackendPluginPath))
+        throw std::invalid_argument("--space-project requires Game Boy built-in baseline execution without mods or executor plugins");
+    if (config.spaceProjectPath && config.spaceProjectPath->empty()) throw std::invalid_argument("empty --space-project path");
     if (config.cpuMode != "baseline" && config.cpuMode != "block" &&
         config.cpuMode != "ir" && config.cpuMode != "native") {
         throw std::invalid_argument("Unknown CPU mode: " + config.cpuMode +
@@ -539,6 +544,9 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
                 throw std::invalid_argument("--rom requires a path");
             }
             assignRomPath(arguments.overrides, argv[++i]);
+        } else if (arg == "--space-project") {
+            if (i+1>=argc) throw std::invalid_argument("--space-project requires a path");
+            arguments.overrides.spaceProjectPath = std::filesystem::path(argv[++i]);
         } else if (arg == "--mod") {
             if (i + 1 >= argc) throw std::invalid_argument("--mod requires a directory");
             if (!arguments.overrides.modPaths.has_value())

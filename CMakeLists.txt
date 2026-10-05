@@ -947,3 +947,18 @@ if(TIME_RIVER_XMB_TELEMETRY AND UNIX)
     add_dependencies(time-smoke-river-xmb-telemetry time-river-xmb-telemetry)
     add_test(NAME smoke-river-xmb-telemetry COMMAND time-smoke-river-xmb-telemetry $<TARGET_FILE:time-river-xmb-telemetry>)
 endif()
+
+# S.P.A.C.E. is an internal analysis component; no plugin ABI changes.
+find_package(Threads REQUIRED)
+add_library(time-space-analysis STATIC space/Operands.cpp space/Project.cpp space/Session.cpp space/Viewer.cpp)
+target_link_libraries(time-space-analysis PUBLIC time-gameboy-interpreter-core nlohmann_json::nlohmann_json OpenSSL::Crypto Threads::Threads)
+add_executable(time-space space/main.cpp)
+target_link_libraries(time-space PRIVATE time-space-analysis)
+target_link_libraries(timeEmulator PRIVATE time-space-analysis)
+add_executable(time-smoke-space tests/smoke_space.cpp)
+target_link_libraries(time-smoke-space PRIVATE time-space-analysis)
+add_test(NAME smoke-space COMMAND time-smoke-space)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME smoke-space-cli COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke_space_cli.py $<TARGET_FILE:time-space> $<TARGET_FILE:timeEmulator>)
+endif()

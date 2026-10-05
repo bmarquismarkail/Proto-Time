@@ -54,6 +54,8 @@ public:
     GameBoyMachine();
     ~GameBoyMachine() override;
 
+    void setAnalysisCapture(BMMQ::Space::Capture* capture);
+
     // Machine interface
     void loadRom(const std::vector<uint8_t>& bytes) override;
     void loadRomFromPath(const std::filesystem::path& path);

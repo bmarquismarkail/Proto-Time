@@ -11,6 +11,7 @@
 //   - ROM/RAM window installation for bank switching
 
 #include <array>
+#include "space/Capture.hpp"
 #include <cstdint>
 #include <functional>
 #include <span>
@@ -29,6 +30,8 @@ public:
     ~GameBoyMemoryMap() = default;
 
     void reset();
+    BMMQ::Space::Capture* analysisCapture = nullptr;
+    [[nodiscard]] uint64_t analysisLocation(uint16_t address) const noexcept;
 
     // Read/write through the full memory map
     uint8_t read(uint16_t addr) const;

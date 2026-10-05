@@ -40,6 +40,7 @@
 #include "inst_cycle/executor/ExecutorPolicyRegistry.hpp"
 #include "machine/BackgroundTaskService.hpp"
 #include "machine/DebugSnapshotService.hpp"
+#include "space/Session.hpp"
 #include "machine/ImageDecoder.hpp"
 #include "machine/plugins/FrontendPluginLoader.hpp"
 #include "machine/plugins/AudioOutputPluginLoader.hpp"
@@ -123,6 +124,7 @@ void printUsage(std::string_view program)
               << "                     Background worker count; 0 selects the reserved-core default\n"
               << "  --background-queue-capacity <n>\n"
               << "                     Maximum queued background jobs (default: 1024)\n"
+              << "  --space-project <path>  Capture Game Boy baseline analysis to a project JSON\n"
               << "  --debug-snapshots  Enable optional background debug snapshots\n"
               << "  --visual-pack <path>\n"
               << "                     Load a visual override pack.json; repeat to load multiple packs\n"
@@ -1369,6 +1371,13 @@ int main(int argc, char** argv)
             return false;
         };
 
+        std::unique_ptr<BMMQ::Space::Session> spaceSession;
+        if (options.spaceProjectPath) {
+            auto* gb = dynamic_cast<GameBoyMachine*>(&machine);
+            if (!gb) throw std::invalid_argument("S.P.A.C.E. requires Game Boy");
+            spaceSession = std::make_unique<BMMQ::Space::Session>(*gb, launchRom, *options.spaceProjectPath);
+        }
+
         auto runEmulationLane = [&]() {
             try {
                 auto nextObservation = SteadyClock::now();
@@ -1470,8 +1479,15 @@ int main(int argc, char** argv)
                     if (frontend != nullptr && frontend->takeSaveStateRequest()) {
                         constexpr auto quickSavePath = "quicksave.ptstate";
                         try {
-                            machine.save_state(quickSavePath);
-                            std::cout << "Saved state: " << quickSavePath << '\n';
+                            if (spaceSession) {
+                                auto checkpoint = *options.spaceProjectPath;
+                                checkpoint += ".checkpoint-" + std::to_string(steps);
+                                spaceSession->checkpoint(checkpoint);
+                                std::cout << "Saved checkpoint: " << checkpoint << '\n';
+                            } else {
+                                machine.save_state(quickSavePath);
+                                std::cout << "Saved state: " << quickSavePath << '\n';
+                            }
                         } catch (const std::exception& error) {
                             std::cerr << "warning: failed to save state: " << error.what() << '\n';
                         }
@@ -1657,6 +1673,7 @@ int main(int argc, char** argv)
             std::rethrow_exception(emulationFailure);
         }
 
+        if (spaceSession) spaceSession->save(*options.spaceProjectPath);
         serviceFrontend();
         if (machine.visualOverrideService().capturing()) {
             machine.visualOverrideService().endCapture();
