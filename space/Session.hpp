@@ -1,6 +1,7 @@
 #pragma once
 #include "Project.hpp"
 #include "Execution.hpp"
+#include "Analysis.hpp"
 #include "cores/gameboy/GameBoyMachine.hpp"
 #include <thread>
 #include <mutex>
@@ -18,6 +19,11 @@ public:
     void executionMode(const std::string&);
     Json executionStatus() const;
     void step();
+    Json analyze();
+    Json query(const Json&) const;
+    void saveAnalysis(const std::filesystem::path&) const;
+    void annotate(const std::string&,const Json&);
+    Json runUntil(const Json&);
     void checkpoint(const std::filesystem::path& directory);
     void restore(const std::filesystem::path& directory);
 private:
@@ -25,6 +31,8 @@ private:
     std::vector<uint8_t> rom_;
     std::unique_ptr<Capture> capture_;
     Project project_;
+    Json pinned_;
+    size_t pinnedCharge_=0;
     std::unique_ptr<Execution> execution_;
     std::mutex mutex_;
     std::atomic<bool> stopping_{false};

@@ -3153,7 +3153,11 @@ bool LR3592_DMG::handleMemoryRead(AddressType address,std::span<DataType> value)
     if(handled){auto* map=dynamic_cast<const GB::GameBoyMemoryMap*>(&mem.backingStore());
         if(map&&map->analysisCapture&&map->analysisCapture->onProducerLane())for(size_t i=0;i<value.size();++i){
             BMMQ::Space::Record record;record.kind=map->analysisCapture->phase;record.address=static_cast<uint16_t>(address+i);
-            record.location=map->analysisLocation(record.address);record.value=value[i];map->analysisCapture->push(record);
+            record.location=map->analysisLocation(record.address);record.value=value[i];
+            auto a=normalizeAccessAddress(address);
+            record.accepted=a==0xff00||!((a>=0xfea0&&a<=0xfeff)||(dmaActive&&!isHramAddress(a))||
+                (lcdEnabled()&&((a>=0x8000&&a<=0x9fff&&currentPpuMode()==3)||(a>=0xfe00&&a<=0xfe9f&&(currentPpuMode()==2||currentPpuMode()==3)))));
+            map->analysisCapture->push(record);
         }
     }
     return handled;
@@ -3198,6 +3202,13 @@ bool LR3592_DMG::handleMemoryReadUntraced(AddressType address, std::span<DataTyp
 }
 
 bool LR3592_DMG::handleMemoryWrite(AddressType address,std::span<const DataType> value){
+    auto* writeMap=dynamic_cast<GB::GameBoyMemoryMap*>(&mem.backingStore());
+    auto* trace=writeMap?writeMap->analysisCapture:nullptr;
+    if(trace&&!trace->onProducerLane())trace=nullptr;
+    struct Scope {BMMQ::Space::Capture* trace;bool old;uint16_t address;size_t length;
+        ~Scope(){if(trace){trace->cpuWrite=old;trace->cpuAddress=address;trace->cpuLength=length;}}};
+    Scope scope{trace,trace?trace->cpuWrite:false,trace?trace->cpuAddress:uint16_t(0),trace?trace->cpuLength:0};
+    if(trace){trace->cpuWrite=trace->phase==BMMQ::Space::Kind::Read;trace->cpuAddress=normalizeAccessAddress(address);trace->cpuLength=value.size();}
     const bool handled=handleMemoryWriteUntraced(address,value);
     if(handled){auto* map=dynamic_cast<GB::GameBoyMemoryMap*>(&mem.backingStore());
         if(map&&map->analysisCapture&&map->analysisCapture->onProducerLane())for(size_t i=0;i<value.size();++i){

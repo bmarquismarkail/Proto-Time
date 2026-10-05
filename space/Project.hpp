@@ -23,7 +23,8 @@ public:
     static Json read(const std::filesystem::path& path);
     static void write(const std::filesystem::path& path,const Json& data);
     static void validate(const Json& data);
-    void startHistory() { writers_=Json::object(); values_=Json::object(); views_=Json::object(); inputPosition_=0; previous_.clear(); active_=false; }
+    void annotate(const std::string&,const Json&);
+    void startHistory() { branch_=instance_+":"+std::to_string(++branchCounter_);if(std::find(state_["sessions"].begin(),state_["sessions"].end(),instance_)==state_["sessions"].end())state_["sessions"].push_back(instance_);writers_=Json::object(); values_=Json::object(); views_=Json::object(); inputPosition_=0; previous_.clear(); previousTransfer_.clear(); active_=false; }
     void setBudget(std::shared_ptr<StateBudget> budget,bool chargeExisting=true) {if(budget&&chargeExisting&&!budget->reserve(used_))throw std::invalid_argument("analysis budget exhausted");sharedBudget_=std::move(budget);}
     size_t chargedBytes()const noexcept {return used_;}
     bool exhausted() const noexcept {return exhausted_;}
@@ -31,7 +32,7 @@ private:
     Json state_, writers_=Json::object(), values_=Json::object(), views_=Json::object();
     Record begin_{};
     std::vector<Record> accesses_;
-    std::string branch_,instance_,previous_;
+    std::string branch_,instance_,previous_,previousTransfer_;
     uint64_t visit_=0, revision_=0, branchCounter_=0, inputPosition_=0;
     size_t budget_,used_=0;
     std::shared_ptr<StateBudget> sharedBudget_;

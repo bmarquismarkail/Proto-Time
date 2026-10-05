@@ -8,6 +8,25 @@
 #include <string>
 namespace BMMQ::Space {
 enum class Kind : uint8_t { Begin, Fetch, Read, Write, Device, Dma, Mapping, End, Inspection, Gap, Input };
+inline uint32_t hardwareCategoryBit(uint64_t location,bool write) noexcept {
+    auto space=location>>32;auto a=uint16_t(location);
+    if(space==1&&write)return 1;
+    if(space==4){if(a>=0x8000&&a<=0x97ff)return 2;
+    if(a>=0x9800&&a<=0x9fff)return 4;
+    if(a>=0xfe00&&a<=0xfe9f)return 8;}
+    if(space!=5&&space!=6)return 0;
+    if(a==0xff00)return 16;
+    if(a==0xff01||a==0xff02)return 32;
+    if(a>=0xff04&&a<=0xff07)return 64;
+    if(a==0xff0f||a==0xffff)return 128;
+    if(a>=0xff10&&a<=0xff26)return 256;
+    if(a>=0xff30&&a<=0xff3f)return 512;
+    if(a==0xff46||(a>=0xff51&&a<=0xff55))return 1024;
+    if((a>=0xff40&&a<=0xff4b)||(a>=0xff68&&a<=0xff6b))return 2048;
+    if(a==0xff4f||a==0xff70||a==0xff50)return 4096;
+    return 0;
+}
+enum class AccessOrigin : uint8_t { Unknown, Cpu, Device, Dma, Boundary, Inspection };
 class StateBudget {
 public:
     explicit StateBudget(size_t maximum=64u*1024u*1024u):maximum(maximum){}
@@ -19,6 +38,7 @@ public:
 // Fixed records: callbacks never allocate, lock, perform I/O, or inspect the bus.
 struct Record {
     Kind kind{};
+    AccessOrigin origin = AccessOrigin::Unknown;
     uint16_t address = 0;
     uint8_t value = 0;
     bool accepted = true;
@@ -41,9 +61,24 @@ public:
     static uintptr_t laneToken() noexcept { static thread_local uint8_t token; return reinterpret_cast<uintptr_t>(&token); }
     void bindProducer() noexcept { uintptr_t empty=0; owner_.compare_exchange_strong(empty,laneToken()); }
     bool onProducerLane() const noexcept { auto owner=owner_.load(); return owner==0 || owner==laneToken(); }
+    // These producer-only fields distinguish direct MMIO writes from retirement updates.
+    bool cpuWrite=false;
+    uint16_t cpuAddress=0;
+    size_t cpuLength=0;
+    struct Watch {bool enabled=false,matched=false;uint16_t first=0,last=0;bool write=false;uint32_t categoryMask=0;Record record{};} watch;
     void push(Record record) noexcept {
-        if (!onProducerLane()) return;
+        if(!onProducerLane())return;
+        if(record.origin==AccessOrigin::Unknown){
+            if(record.kind==Kind::Dma)record.origin=AccessOrigin::Dma;
+            else if(record.kind==Kind::Device)record.origin=cpuWrite&&uint16_t(record.address-cpuAddress)<cpuLength?AccessOrigin::Cpu:AccessOrigin::Device;
+            else if(record.kind==Kind::Read||record.kind==Kind::Write||record.kind==Kind::Mapping)
+                record.origin=phase==Kind::Read?AccessOrigin::Cpu:phase==Kind::Inspection?AccessOrigin::Inspection:AccessOrigin::Boundary;
+            else record.origin=AccessOrigin::Inspection;
+        }
         if (stopped_.load(std::memory_order_relaxed)) return;
+        if(watch.enabled&&!watch.matched&&record.origin==AccessOrigin::Cpu&&record.accepted&&
+           (record.kind==Kind::Read||record.kind==Kind::Write||record.kind==Kind::Device||record.kind==Kind::Mapping)&&
+           record.isWrite==watch.write&&record.address>=watch.first&&record.address<=watch.last&&(!watch.categoryMask||(watch.categoryMask & hardwareCategoryBit(record.location,record.isWrite)))){watch.matched=true;watch.record=record;}
         const auto w = written_.load(std::memory_order_relaxed);
         if (w - read_.load(std::memory_order_acquire) == capacity) {
             lost_.fetch_add(1, std::memory_order_relaxed);

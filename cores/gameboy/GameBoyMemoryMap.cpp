@@ -356,7 +356,7 @@ void GameBoyMemoryMap::write(uint16_t addr, uint8_t value) {
         BMMQ::Space::Record record;
         record.kind = resolved < 0x8000 ? BMMQ::Space::Kind::Mapping : BMMQ::Space::Kind::Write;
         record.isWrite = true; record.address = addr; record.location = beforeLocation;
-        record.accepted = resolved >= 0x8000 && (beforeLocation >> 32) != 0;
+        record.accepted = resolved < 0x8000 ? cartridge_ && cartridge_->metadata().mapper != CartridgeMapper::None : (beforeLocation >> 32) != 0;
         // Stored arrays are inspected directly; never execute another cartridge/bus read.
         if (resolved >= 0xA000 && resolved < 0xC000) {
             record.value = cartridge_ && cartridge_->metadata().mapper == CartridgeMapper::MBC2 ? static_cast<uint8_t>(value & 0x0f) : value;

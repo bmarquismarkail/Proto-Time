@@ -1,4 +1,4 @@
-# S.P.A.C.E. stages 1–3
+# S.P.A.C.E. stages 1–4
 
 S.P.A.C.E. captures Game Boy baseline execution into a ROM-bound analysis project.
 It provides a control-flow graph, current sparse block snapshots, observed
@@ -6,8 +6,8 @@ register/memory dependencies, writer provenance, and paired exploration
 checkpoints. Exploration defaults to baseline execution; stage 3 adds an explicit
 snapshot execution mode with canonical write-through.
 
-This is an observation and exploration milestone. Routine-purpose inference,
-automatic exploration, conversion accounting,
+Stage 4 adds deterministic hardware-role inference and frozen queries. Richer
+gameplay-purpose inference, automatic exploration, conversion accounting,
 verification, and `.gg` generation remain future work.
 
 ## Build and try the original fixture
@@ -223,3 +223,119 @@ Use the full repository CTest suite and TSAN for changes to capture handoff.
 Visual/browser acceptance is recorded separately in the internal validation
 report. Automated HTML generation or syntax checking is not a visual acceptance
 claim.
+
+## Stage 4: analyze and query a frozen capture
+
+Generate the separate original DMG fixture variant. It waits for a fresh HBlank
+before each tile-data write and exercises audio setup, polling, shared tails,
+finite recursion, conditional calls and an interrupt handler:
+
+```sh
+python3 tests/fixtures/space/create_analysis_rom.py build-working/space-analysis-fixture.gb
+build-working/time-space explore --rom build-working/space-analysis-fixture.gb --project build-working/space-analysis.json --commands tests/fixtures/space/analysis-example.jsonl
+```
+
+The original stages 1–3 fixture remains unchanged. Both baseline and snapshot
+execution modes support the stage-4 commands. Offline analysis needs no emulator:
+
+```sh
+build-working/time-space analyze --project build-working/space-analysis.json --output build-working/space-analyzed.json
+build-working/time-space query --project build-working/space-analyzed.json --commands tests/fixtures/space/query-example.jsonl
+build-working/time-space export --project build-working/space-analyzed.json --html build-working/space-analyzed.html
+```
+
+Exploration commands:
+
+```json
+{"op":"analyze","path":"build-working/space-analyzed.json"}
+{"op":"query","type":"routines","limit":10}
+{"op":"query","type":"hardware","category":"audio.channel"}
+{"op":"run_until","event":{"category":"audio.channel","access":"write"},"count":10000}
+```
+
+`analyze` explicitly replaces the session's pinned capture and reports its identity
+and counts. The analysis runs on a background lane while exploration remains
+paused. Queries keep that identity until another `analyze`, even if the machine
+runs or restores checkpoints meanwhile. `export` with `analyzed: true` saves the
+pinned project, optionally with HTML; ordinary export saves the current capture.
+
+Query types: `summary`, `routines` (optional `id`), `blocks`, `loops`, `findings`
+(optional `role`), `hardware` (optional `category`), `dependencies` (optional
+instruction/dependency `id`), `instructions`, `transfers`, `data_transfers`, `callers`/`callees` (routine `id`),
+`predecessors`/`successors` (block `id`), and `dependency_path` (dependency `id`).
+Paths accept `direction: suppliers|consumers`, depth 2 by default, maximum 16.
+Queries default to 256 items, maximum 1,024, with `offset`/`nextOffset` pagination.
+An optional `analysisId` rejects accidental queries against another revision.
+Responses distinguish source incompleteness, pagination, depth and resource limits.
+
+`run_until` requires exactly one `instruction` identity or `event`. Instruction
+identities must exist in the pinned capture; matching checks backing, address and
+actual code bytes and stops before executing that instruction. Device/unresolved
+code backing, including operands that cross into hardware, is rejected rather
+than rereading hardware for a predicate. Hardware events
+use either a `category` or numeric `address`, and `access: read|write`, stopping
+at the completed instruction boundary. Predicates only match accepted CPU
+accesses, excluding autonomous hardware updates and DMA. Held inputs remain held.
+The default bound is 10,000 steps and the maximum is 1,000,000. Reasons are
+`target_reached`, `event_observed`, `step_limit`, `execution_pause`, or
+`evidence_loss`. Matching observes captured values; it never rereads a device.
+
+Annotations use stable instruction identities; use a routine's `entry` for a
+routine note. Link a finding only to its own instruction:
+
+```json
+{"op":"annotate","instruction":"INSTRUCTION_ID","annotation":{"kind":"correction","text":"My interpretation","finding":"FINDING_ID"}}
+```
+
+The finding is optional. Confirmation/correction retains the generated inference
+and its facts; linked notes carry the originating analysis identity. Merges retain
+notes and raw evidence, refining a transfer's later-discovered successor without
+duplicating its ID. Changed merged evidence discards derived analysis and requires
+explicit recomputation. Derived results never become runtime suppliers.
+
+The viewer has routine and role selectors, cycle highlighting, direct effects
+versus effects through callees, and clickable access/supplier evidence. Annotation
+targets include instructions and routine entries, with optional finding links.
+Loading another capture is explicit; selection/layout survive for matching IDs.
+The inspector and CLI use the same persisted analysis identities and evidence.
+
+Analysis labels describe hardware roles, not gameplay meaning. Accepted CPU
+accesses are distinct from device retirement, DMA and boundaries; legacy accesses
+without origin metadata remain unknown. Structural cycles and repetition are
+observations, not complete loop semantics or optimization contracts. Shared
+routine membership and recursion are permitted. Missing mappings/targets and
+capture gaps remain limitations.
+
+Load-only paths support the LR35902's byte register/memory load forms. Arithmetic,
+unsupported transformations, ambiguous suppliers and path limits terminate the
+chain; equal values alone never establish copying. Masked hardware results break copy
+paths, and paths longer than 64 accesses are explicitly marked truncated. Hardware categories distinguish
+tile data/maps, sprite memory, display controls, audio channels/wave RAM, input,
+timer, interrupt, DMA, serial and mapping controls. Configuration-register reads
+remain facts and do not establish configuration writes.
+CGB-only controls remain unassessed facts when captured by the DMG core.
+
+Schema-1 projects have optional `transfers`, dependency `origin`, and a versioned
+`analysis` section. Analysis identity binds ROM/core, analyzer version, source
+revision and evidence digest. Imports validate references and reject stale
+analysis. Older projects still load; ambiguous origins cannot support CPU-purpose
+findings. Mapper-control requests may be accepted access facts without acquiring
+ROM-byte write ownership.
+
+Offline analysis uses a conservative 64 MiB work budget; pinned exploration
+analysis shares the existing 64 MiB capture/execution budget. Replacement releases the old pin before building the new frozen capture.
+Source-storage preflight rejection retains the old pin; a later work-budget
+exhaustion publishes an explicitly incomplete new assessment. Transient workspace
+and retained capture storage are accounted separately.
+An exhausted assessment explicitly publishes no partial findings. Query responses
+and dependency traversals are bounded. No analysis/query command changes guest
+state or resumes execution.
+
+The CLI regression also checks viewer JavaScript syntax and canonical analysis
+hashes when Node is available. For an exported capture, run the pure check with:
+
+```sh
+node tests/smoke_space_viewer.mjs build-working/space-analyzed.html
+```
+
+This check does not inspect the rendered browser interface.

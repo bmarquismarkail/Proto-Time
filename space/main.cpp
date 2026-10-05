@@ -2,6 +2,7 @@
 #include <iostream>
 #include <fstream>
 #include <set>
+#include <future>
 namespace {
 using namespace BMMQ::Space;
 std::vector<uint8_t> readRom(const std::filesystem::path& path){
@@ -13,14 +14,19 @@ int main(int argc,char** argv){
     using namespace BMMQ::Space;
     try {
         if(argc<2){std::cout<<"time-space explore --rom ROM --project PROJECT [--commands JSONL] [--execution baseline|snapshot]\n"
+            "time-space analyze --project PROJECT --output ANALYZED\n"
+            "time-space query --project ANALYZED --commands JSONL\n"
             "time-space merge --project PROJECT --input OTHER\n"
             "time-space export --project PROJECT --html VIEWER\n";return 0;}
         std::map<std::string,std::string> args;
         for(int i=2;i<argc;i+=2){if(i+1>=argc)throw std::invalid_argument("missing option value");std::string key=argv[i];
-            if(key!="--rom"&&key!="--project"&&key!="--commands"&&key!="--input"&&key!="--html"&&key!="--execution")throw std::invalid_argument("unknown option "+key);
+            if(key!="--rom"&&key!="--project"&&key!="--commands"&&key!="--input"&&key!="--html"&&key!="--execution"&&key!="--output")throw std::invalid_argument("unknown option "+key);
             if(!args.emplace(key,argv[i+1]).second)throw std::invalid_argument("duplicate option "+key);}
         auto require=[&](std::string key){if(!args.contains(key)||args[key].empty())throw std::invalid_argument("missing "+key);return std::filesystem::path(args[key]);};
         std::string mode=argv[1];auto projectPath=require("--project");
+        if(mode=="analyze"){auto frozen=Project::read(projectPath);auto task=std::async(std::launch::async,[p=std::move(frozen)]()mutable{return analyzeProject(std::move(p));});Project::write(require("--output"),task.get());return 0;}
+        if(mode=="query"){auto frozen=Project::read(projectPath);Project::validate(frozen);std::ifstream input(require("--commands"));if(!input)throw std::runtime_error("cannot read commands");std::string line;
+            while(std::getline(input,line)){if(line.empty())continue;if(line.size()>65536)throw std::invalid_argument("command exceeds 64 KiB");auto request=Json::parse(line);std::cout<<Json({{"ok",true},{"result",queryAnalysis(frozen,request)}}).dump()<<'\n';}return 0;}
         if(mode=="export"){auto p=Project::load(projectPath);exportHtml(p,require("--html"));return 0;}
         if(mode=="merge"){auto p=Project::load(projectPath);p.merge(Project::read(require("--input")));p.save(projectPath);return 0;}
         if(mode!="explore")throw std::invalid_argument("unknown subcommand");
@@ -44,9 +50,13 @@ int main(int argc,char** argv){
                     result["fingerprint"]=machine.deterministicStateFingerprint();result["count"]=decimal(n);
                 } else if(op=="input") {auto mask=command.at("mask");if(!mask.is_number_integer()||mask<0||mask>255)throw std::invalid_argument("input mask must be 0–255");session.input(mask.get<uint8_t>());}
                 else if(op=="execution"){session.executionMode(command.at("mode").get<std::string>());result["execution"]=session.executionStatus();}
+                else if(op=="analyze"){auto analysis=session.analyze();result["analysis"]=analysis;if(command.contains("path"))session.saveAnalysis(command["path"].get<std::string>());}
+                else if(op=="query")result["result"]=session.query(command);
+                else if(op=="annotate")session.annotate(command.at("instruction").get<std::string>(),command.at("annotation"));
+                else if(op=="run_until")result["result"]=session.runUntil(command);
                 else if(op=="checkpoint")session.checkpoint(command.at("path").get<std::string>());
                 else if(op=="restore")session.restore(command.at("path").get<std::string>());
-                else if(op=="export") {auto path=command.value("path",projectPath.string());session.save(path);if(command.contains("html")){auto p=Project::load(path);exportHtml(p,command["html"].get<std::string>());}}
+                else if(op=="export") {auto path=command.value("path",projectPath.string());if(command.value("analyzed",false))session.saveAnalysis(path);else session.save(path);if(command.contains("html")){auto p=Project::load(path);exportHtml(p,command["html"].get<std::string>());}}
                 else if(op=="status"){auto d=session.document();result["revision"]=d["revision"];result["blocks"]=d["blocks"].size();result["gaps"]=d["gaps"];result["history"]=d["history"];result["execution"]=session.executionStatus();result["fingerprint"]=machine.deterministicStateFingerprint();}
                 else if(op=="quit"){session.save(projectPath);std::cout<<result.dump()<<'\n';break;}
                 else throw std::invalid_argument("unknown command "+op);

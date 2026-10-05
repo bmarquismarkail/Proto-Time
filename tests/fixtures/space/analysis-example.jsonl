@@ -1,0 +1,9 @@
+{"op":"run","count":500}
+{"op":"analyze","path":"build-working/space-analyzed.json"}
+{"op":"query","type":"summary"}
+{"op":"query","type":"routines"}
+{"op":"query","type":"hardware","category":"audio.channel"}
+{"op":"run","count":4}
+{"op":"query","type":"summary"}
+{"op":"export","analyzed":true,"path":"build-working/space-analyzed.json","html":"build-working/space-analyzed.html"}
+{"op":"quit"}

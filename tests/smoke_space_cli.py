@@ -51,7 +51,10 @@ with tempfile.TemporaryDirectory(prefix='time-space-cli-') as work:
     evidence = json.loads(bank_project.read_text())
     assert any(n['address']==0x4000 and int(n['location'])==(1<<32 | 2<<16)
                for n in evidence['instructions'].values())
-    assert any(d['kind']=='mapping' and not d['accepted'] for d in evidence['dependencies'])
+    assert any(d['kind']=='mapping' and d['accepted'] and d['origin']=='cpu' for d in evidence['dependencies'])
+    bank_analysis=root/'bank-analysis.json'
+    subprocess.run([space,'analyze','--project',str(bank_project),'--output',str(bank_analysis)],check=True)
+    assert any(f['role']=='bank.control' for f in json.loads(bank_analysis.read_text())['analysis']['findings'])
     # Write executable RAM, visit it, replace its first opcode, and revisit it.
     ram_code = bytearray(rom.read_bytes())
     program = bytes.fromhex('3e00ea00c03ec3ea01c03e67ea02c03e01ea03c0c300c03e3eea00c0c300c0')
@@ -63,6 +66,9 @@ with tempfile.TemporaryDirectory(prefix='time-space-cli-') as work:
     revisions = {n['bytes'] for n in json.loads(ram_project.read_text())['instructions'].values()
                  if n['address']==0xc000}
     assert revisions == {'00','3ec3'}, revisions
+    ram_analysis=root/'ram-analysis.json'
+    subprocess.run([space,'analyze','--project',str(ram_project),'--output',str(ram_analysis)],check=True)
+    assert {n['bytes'] for n in json.loads(ram_analysis.read_text())['instructions'].values() if n['address']==0xc000}==revisions
 print('S.P.A.C.E. CLI checkpoint replay and manual capture passed')
 
 # Stage 3: repeat the public workflow explicitly in snapshot mode, including replay.
