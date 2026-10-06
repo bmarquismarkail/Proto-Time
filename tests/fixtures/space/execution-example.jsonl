@@ -1,0 +1,11 @@
+{"op":"run","count":24}
+{"op":"input","mask":1}
+{"op":"checkpoint","path":"build-working/space-execution-checkpoint"}
+{"op":"run","count":8}
+{"op":"restore","path":"build-working/space-execution-checkpoint"}
+{"op":"run","count":8}
+{"op":"status"}
+{"op":"export","html":"build-working/space-execution-graph.html"}
+{"op":"execution","mode":"baseline"}
+{"op":"run","count":2}
+{"op":"quit"}

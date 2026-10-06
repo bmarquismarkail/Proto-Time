@@ -1,0 +1,7 @@
+{"op":"run","count":24}
+{"op":"input","mask":1}
+{"op":"checkpoint","path":"build-working/space-checkpoint"}
+{"op":"run","count":8}
+{"op":"restore","path":"build-working/space-checkpoint"}
+{"op":"export","html":"build-working/space-graph.html"}
+{"op":"quit"}

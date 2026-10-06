@@ -56,12 +56,12 @@ uint8_t GameBoyPPU::mapPaletteShade(uint8_t paletteReg, uint8_t colorIndex) noex
 uint8_t GameBoyPPU::readVram(uint16_t address) const {
     if (cpu) return cpu->read_vram(address);
     if (!memoryMap) return 0xFFu;
-    return memoryMap->read(address);
+    return memoryMap->peek(address);
 }
 
 uint8_t GameBoyPPU::readOam(uint16_t address) const {
     if (!memoryMap) return 0xFFu;
-    return memoryMap->read(address);
+    return memoryMap->peek(address);
 }
 
 GameBoyPPU::BackgroundSample GameBoyPPU::sampleBackground(int screenX, int screenY,
@@ -131,7 +131,7 @@ void GameBoyPPU::compositeSprites(BMMQ::VideoDebugFrameModel& model, int screenY
                                   std::vector<uint8_t>& bgColors) const {
     if (!memoryMap) return;
 
-    uint8_t lcdc = memoryMap->read(0xFF40);
+    uint8_t lcdc = memoryMap->peek(0xFF40);
     if ((lcdc & 0x02u) == 0u) return; // Sprites disabled
 
     bool tallSprites = (lcdc & 0x04u) != 0u;
@@ -185,8 +185,8 @@ void GameBoyPPU::compositeSprites(BMMQ::VideoDebugFrameModel& model, int screenY
         bool yFlip = (attributes & 0x40u) != 0u;
         bool behindBackground = (attributes & 0x80u) != 0u;
         uint8_t palette = (attributes & 0x10u) != 0u
-            ? memoryMap->read(0xFF49) // OBP1
-            : memoryMap->read(0xFF48); // OBP0
+            ? memoryMap->peek(0xFF49) // OBP1
+            : memoryMap->peek(0xFF48); // OBP0
 
         auto base = static_cast<uint16_t>(0xFE00u + static_cast<uint16_t>(spriteIndex) * 4u);
         int spriteY = static_cast<int>(readOam(base)) - 16;
@@ -225,12 +225,12 @@ void GameBoyPPU::renderScanline(BMMQ::VideoDebugFrameModel& model, int screenY,
     if (!memoryMap) return;
     if (screenY < 0 || screenY >= kDisplayHeight || model.width <= 0) return;
 
-    uint8_t lcdc = memoryMap->read(0xFF40);
-    const uint8_t scy = memoryMap->read(0xFF42);
-    const uint8_t scx = memoryMap->read(0xFF43);
-    const uint8_t backgroundPalette = memoryMap->read(0xFF47);
-    const uint8_t wy = memoryMap->read(0xFF4A);
-    const uint8_t wx = memoryMap->read(0xFF4B);
+    uint8_t lcdc = memoryMap->peek(0xFF40);
+    const uint8_t scy = memoryMap->peek(0xFF42);
+    const uint8_t scx = memoryMap->peek(0xFF43);
+    const uint8_t backgroundPalette = memoryMap->peek(0xFF47);
+    const uint8_t wy = memoryMap->peek(0xFF4A);
+    const uint8_t wx = memoryMap->peek(0xFF4B);
     bool lcdEnabled = (lcdc & 0x80u) != 0u;
     bool backgroundEnabled = (lcdc & 0x01u) != 0u;
 
@@ -285,7 +285,7 @@ BMMQ::VideoDebugFrameModel GameBoyPPU::buildFrameModel(const BMMQ::VideoDebugRen
 
     if (!memoryMap) return model;
 
-    uint8_t lcdc = memoryMap->read(0xFF40);
+    uint8_t lcdc = memoryMap->peek(0xFF40);
     model.displayEnabled = (lcdc & 0x80u) != 0u;
     model.inVBlank = (ly_ >= 144u);
     model.scanlineIndex = ly_;
@@ -324,7 +324,7 @@ BMMQ::RealtimeVideoSubmission GameBoyPPU::buildRealtimeFrame(const BMMQ::VideoDe
     packet.contractVersion = BMMQ::RealtimeVideoPacket::kContractVersion;
     packet.width = std::max(request.frameWidth, 1);
     packet.height = std::max(request.frameHeight, 1);
-    packet.displayEnabled = memoryMap != nullptr && (memoryMap->read(0xFF40u) & 0x80u) != 0u;
+    packet.displayEnabled = memoryMap != nullptr && (memoryMap->peek(0xFF40u) & 0x80u) != 0u;
     packet.inVBlank = ly_ >= 144u;
     packet.scanlineIndex = ly_;
 
@@ -356,7 +356,7 @@ BMMQ::RealtimeVideoSubmission GameBoyPPU::buildRealtimeFrame(const BMMQ::VideoDe
 void GameBoyPPU::step(uint32_t cpuCycles) {
     if (!memoryMap) return;
 
-    uint8_t lcdc = memoryMap->read(0xFF40);
+    uint8_t lcdc = memoryMap->peek(0xFF40);
     if ((lcdc & 0x80u) == 0u) {
         // LCD disabled resets LY.
         dotCounter_ = 0;
@@ -505,7 +505,7 @@ void GameBoyPPU::importState(const std::vector<uint8_t>& state) {
     // Clear captured scanlines for deterministic mid-frame restore
     capturedScanlines_.fill(0);
     hasCapturedScanlines_ = false;
-    lcdEnabledLastStep_ = memoryMap != nullptr && (memoryMap->read(0xFF40u) & 0x80u) != 0u;
+    lcdEnabledLastStep_ = memoryMap != nullptr && (memoryMap->peek(0xFF40u) & 0x80u) != 0u;
     if (!lcdEnabledLastStep_) {
         framePixels_.fill(paletteColor(0));
         frameColorIndices_.fill(0u);

@@ -1,0 +1,5 @@
+{"type":"summary"}
+{"type":"routines","limit":10}
+{"type":"loops"}
+{"type":"hardware","category":"audio.channel"}
+{"type":"findings","role":"input.polling"}

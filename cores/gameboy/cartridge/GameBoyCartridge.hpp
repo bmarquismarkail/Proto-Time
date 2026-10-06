@@ -200,6 +200,9 @@ public:
         return metadata_;
     }
 
+    [[nodiscard]] uint16_t analysisRamBank() const noexcept { return static_cast<uint16_t>(selectedRamBankIndex()); }
+    [[nodiscard]] bool analysisRamEnabled() const noexcept { return ramEnabled_; }
+    [[nodiscard]] bool analysisRtcSelected() const noexcept { return selectedRtcRegister_ >= 8 && selectedRtcRegister_ <= 12; }
     [[nodiscard]] bool supportsBatterySave() const noexcept
     {
         return metadata_.hasBattery;

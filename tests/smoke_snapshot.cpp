@@ -1,4 +1,5 @@
 #include <cassert>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -50,6 +51,21 @@ int main()
         threw = true;
     }
     assert(threw);
+
+    // Refresh a short low pool after a distant high pool has been added.
+    const DataType highBytes[]={0x11,0x22};
+    snapshot.write(highBytes,0x80);
+    snapshot.write(std::span<const DataType>(&overlayValue,1),0x10);
+    std::array<DataType,2> highObserved{};
+    snapshot.read(highObserved,0x80);assert(highObserved[0]==0x11&&highObserved[1]==0x22);
+    // Random overlapping and descending writes must preserve sparse fallback reads.
+    BMMQ::SnapshotStorage<AddressType,DataType> mixed(store);
+    std::array<DataType,256> expected{};expected[0x10]=baseValue;
+    uint32_t seed=0x12345678;
+    for(unsigned step=0;step<600;++step){seed=seed*1664525u+1013904223u;auto address=static_cast<AddressType>((seed>>16)%252);
+        std::array<DataType,4> bytes{static_cast<DataType>(seed),static_cast<DataType>(seed>>8),static_cast<DataType>(seed>>16),static_cast<DataType>(seed>>24)};
+        mixed.write(bytes,address);std::copy(bytes.begin(),bytes.end(),expected.begin()+address);
+        std::array<DataType,256> actual{};mixed.read(actual,0);assert(actual==expected);}
 
     BMMQ::MemoryStorage<AddressType, DataType> upperStore;
     upperStore.addMemBlock(std::make_tuple(

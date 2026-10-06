@@ -1,4 +1,5 @@
 #include "gameboy.hpp"
+#include "../../space/ExecutionContract.hpp"
 
 #include "decode/gb_opcode_decode.hpp"
 #include "GameBoyMemoryMap.hpp"
@@ -135,51 +136,29 @@ bool isHramAddress(AddressType address)
 using MemoryView = BMMQ::IMemory<AddressType, DataType, AddressType>;
 using MemoryPool = BMMQ::MemoryPool<AddressType, DataType, AddressType>;
 
-MemoryPool* getMemoryPool(MemoryView& snapshot)
+BMMQ::RegisterFile<uint16_t>& executionRegisterFile(MemoryView& view)
 {
-    auto* pool = dynamic_cast<MemoryPool*>(&snapshot);
-    assert(pool != nullptr && "Expected MemoryPool snapshot");
-    return pool;
+    if (auto* pool = dynamic_cast<MemoryPool*>(&view)) {
+        return pool->file;
+    }
+    if (auto* registers = dynamic_cast<BMMQ::Space::RegisterExecutionView*>(&view)) {
+        return registers->executionRegisters();
+    }
+    throw std::logic_error("execution view has no register contract");
 }
-
-LR3592_Register* getRegister(MemoryView& snapshot, BMMQ::RegisterId id)
+LR3592_Register* getRegister(MemoryView& view,BMMQ::RegisterId id)
 {
-    auto* pool = getMemoryPool(snapshot);
-    auto* entry = pool->file.findRegister(id);
-    assert(entry != nullptr && entry->reg != nullptr && "Register missing in snapshot");
-    return entry != nullptr ? entry->reg.get() : nullptr;
+    auto* entry=executionRegisterFile(view).findRegister(id);
+    if(!entry||!entry->reg)throw std::logic_error("missing execution register");
+    return entry->reg.get();
 }
-
-template <typename Snapshot>
-LR3592_RegisterPair* getRegisterPair(Snapshot& snapshot, BMMQ::RegisterId id)
+template<typename Snapshot,typename Id>
+LR3592_RegisterPair* getRegisterPair(Snapshot& view,Id id)
 {
-    auto* pool = dynamic_cast<MemoryPool*>(&snapshot);
-    assert(pool != nullptr && "Expected MemoryPool snapshot");
-    if (pool == nullptr) return nullptr;
-
-    auto* entry = pool->file.findRegister(id);
-    assert(entry != nullptr && entry->reg != nullptr && "Register missing in snapshot");
-    if (entry == nullptr || entry->reg == nullptr) return nullptr;
-
-    auto* regPair = dynamic_cast<LR3592_RegisterPair*>(entry->reg.get());
-    assert(regPair != nullptr && "Register entry is not LR3592_RegisterPair");
-    return regPair;
-}
-
-template <typename Snapshot>
-LR3592_RegisterPair* getRegisterPair(Snapshot& snapshot, const char* name)
-{
-    auto* pool = dynamic_cast<MemoryPool*>(&snapshot);
-    assert(pool != nullptr && "Expected MemoryPool snapshot");
-    if (pool == nullptr) return nullptr;
-
-    auto* entry = pool->file.findRegister(name);
-    assert(entry != nullptr && entry->reg != nullptr && "Register missing in snapshot");
-    if (entry == nullptr || entry->reg == nullptr) return nullptr;
-
-    auto* regPair = dynamic_cast<LR3592_RegisterPair*>(entry->reg.get());
-    assert(regPair != nullptr && "Register entry is not LR3592_RegisterPair");
-    return regPair;
+    auto* entry=executionRegisterFile(view).findRegister(id);
+    auto* pair=entry?dynamic_cast<LR3592_RegisterPair*>(entry->reg.get()):nullptr;
+    if(!pair)throw std::logic_error("missing execution register pair");
+    return pair;
 }
 
 DataType read8(MemoryView& snapshot, AddressType address)
@@ -3064,9 +3043,19 @@ void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, Addre
     auto* snapshot = block.getSnapshot();
     if (snapshot == nullptr) return;
 
-    for (const auto& step : block.getSteps()) {
-        step(*snapshot, fb);
+    auto* view=dynamic_cast<BMMQ::Space::RegisterExecutionView*>(snapshot);
+    auto* canonicalPc=pcRegister_;auto* canonicalSp=spRegister_;auto canonicalCache=cpuRegisters_;
+    if(view){pcRegister_=view->executionRegisters().findRegister("PC")->reg.get();spRegister_=view->executionRegisters().findRegister("SP")->reg.get();}
+    if(view){auto& file=view->executionRegisters();
+        cpuRegisters_.af=dynamic_cast<LR3592_RegisterPair*>(file.findRegister("AF")->reg.get());
+        cpuRegisters_.bc=dynamic_cast<LR3592_RegisterPair*>(file.findRegister("BC")->reg.get());
+        cpuRegisters_.de=dynamic_cast<LR3592_RegisterPair*>(file.findRegister("DE")->reg.get());
+        cpuRegisters_.hl=dynamic_cast<LR3592_RegisterPair*>(file.findRegister("HL")->reg.get());
+        cpuRegisters_.pc=pcRegister_;cpuRegisters_.sp=spRegister_;
     }
+    try { for (const auto& step : block.getSteps()) step(*snapshot, fb); }
+    catch(...) {if(view)view->publishRegisters();pcRegister_=canonicalPc;spRegister_=canonicalSp;cpuRegisters_=canonicalCache;throw;}
+
 
     std::size_t pcAdvance = executedByteCount;
     if (haltBugPcAdjustPending && pcAdvance > 0) {
@@ -3095,6 +3084,8 @@ void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, Addre
         }
     }
     feedback.retiredCycles = static_cast<uint32_t>(retiredCycles);
+    if(view)view->publishRegisters();
+    pcRegister_=canonicalPc;spRegister_=canonicalSp;cpuRegisters_=canonicalCache;
     retireInstruction(retiredCycles);
 }
 
@@ -3156,7 +3147,25 @@ DataType LR3592_DMG::currentPpuMode() const
     return 0;
 }
 
-bool LR3592_DMG::handleMemoryRead(AddressType address, std::span<DataType> value) const
+bool LR3592_DMG::snapshotBoundaryOnly()const {
+    auto pc=pcRegister_->value;auto pending=(readCachedRegister(hardwareRegisters_.interruptFlags)&readCachedRegister(hardwareRegisters_.ie))&kInterruptMask;
+    return stopFlag||(dmaActive&&!isHramAddress(pc))||(haltFlag&&pending==0)||(ime&&pending!=0);
+}
+bool LR3592_DMG::handleMemoryRead(AddressType address,std::span<DataType> value)const {
+    const bool handled=handleMemoryReadUntraced(address,value);
+    if(handled){auto* map=dynamic_cast<const GB::GameBoyMemoryMap*>(&mem.backingStore());
+        if(map&&map->analysisCapture&&map->analysisCapture->onProducerLane())for(size_t i=0;i<value.size();++i){
+            BMMQ::Space::Record record;record.kind=map->analysisCapture->phase;record.address=static_cast<uint16_t>(address+i);
+            record.location=map->analysisLocation(record.address);record.value=value[i];
+            auto a=normalizeAccessAddress(record.address);
+            record.accepted=a==0xff00||!((a>=0xfea0&&a<=0xfeff)||(dmaActive&&!isHramAddress(a))||
+                (lcdEnabled()&&((a>=0x8000&&a<=0x9fff&&currentPpuMode()==3)||(a>=0xfe00&&a<=0xfe9f&&(currentPpuMode()==2||currentPpuMode()==3)))));
+            map->analysisCapture->push(record);
+        }
+    }
+    return handled;
+}
+bool LR3592_DMG::handleMemoryReadUntraced(AddressType address, std::span<DataType> value) const
 {
     address = normalizeAccessAddress(address);
     if (address == 0xFF00 && !value.empty()) {
@@ -3195,7 +3204,28 @@ bool LR3592_DMG::handleMemoryRead(AddressType address, std::span<DataType> value
     return false;
 }
 
-bool LR3592_DMG::handleMemoryWrite(AddressType address, std::span<const DataType> value)
+bool LR3592_DMG::handleMemoryWrite(AddressType address,std::span<const DataType> value){
+    auto* writeMap=dynamic_cast<GB::GameBoyMemoryMap*>(&mem.backingStore());
+    auto* trace=writeMap?writeMap->analysisCapture:nullptr;
+    if(trace&&!trace->onProducerLane())trace=nullptr;
+    struct Scope {BMMQ::Space::Capture* trace;bool old;uint16_t address;size_t length;
+        ~Scope(){if(trace){trace->cpuWrite=old;trace->cpuAddress=address;trace->cpuLength=length;}}};
+    Scope scope{trace,trace?trace->cpuWrite:false,trace?trace->cpuAddress:uint16_t(0),trace?trace->cpuLength:0};
+    if(trace){trace->cpuWrite=trace->phase==BMMQ::Space::Kind::Read;trace->cpuAddress=normalizeAccessAddress(address);trace->cpuLength=value.size();}
+    const bool handled=handleMemoryWriteUntraced(address,value);
+    if(handled){auto* map=dynamic_cast<GB::GameBoyMemoryMap*>(&mem.backingStore());
+        if(map&&map->analysisCapture&&map->analysisCapture->onProducerLane())for(size_t i=0;i<value.size();++i){
+            auto a=normalizeAccessAddress(static_cast<uint16_t>(address+i));
+            const bool rejected=(a>=0xfea0&&a<=0xfeff)||(dmaActive&&!isHramAddress(a)&&a!=0xff46)||
+                (lcdEnabled()&&((a>=0x8000&&a<=0x9fff&&currentPpuMode()==3)||(a>=0xfe00&&a<=0xfe9f&&(currentPpuMode()==2||currentPpuMode()==3))));
+            // Successful hardware writes already emit their resulting value via setIoRegisterRaw.
+            if(rejected){BMMQ::Space::Record record;record.kind=BMMQ::Space::Kind::Write;record.isWrite=true;record.accepted=false;
+                record.address=static_cast<uint16_t>(address+i);record.location=map->analysisLocation(record.address);record.value=value[i];map->analysisCapture->push(record);}
+        }
+    }
+    return handled;
+}
+bool LR3592_DMG::handleMemoryWriteUntraced(AddressType address, std::span<const DataType> value)
 {
     address = normalizeAccessAddress(address);
     if (value.size() == 1 && address == 0xFF00) {

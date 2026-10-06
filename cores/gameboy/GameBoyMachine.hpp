@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include "../../space/ExecutionContract.hpp"
 #include <optional>
 #include <span>
 #include <string>
@@ -53,6 +54,12 @@ class GameBoyMachine final : public BMMQ::Machine,
 public:
     GameBoyMachine();
     ~GameBoyMachine() override;
+
+    BMMQ::MemoryPool<uint16_t,uint8_t,uint16_t>& executionMemory();
+    bool snapshotBoundaryOnly() const;
+    bool snapshotOpcodeSupported(uint8_t) const;
+    void setSnapshotExecution(BMMQ::Space::ExecutionController* controller);
+    void setAnalysisCapture(BMMQ::Space::Capture* capture);
 
     // Machine interface
     void loadRom(const std::vector<uint8_t>& bytes) override;
