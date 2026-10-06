@@ -1275,8 +1275,10 @@ void GameBoyMachine::setAnalysisCapture(BMMQ::Space::Capture* capture) {
     if (capture && (attachedExecutorPolicy().backend() != BMMQ::ExecutionBackend::Baseline ||
                     !impl_->nativeTrampolines.empty()))
         throw std::invalid_argument("S.P.A.C.E. capture requires baseline execution without native mods");
-    // Snapshot execution borrows capture state; detach it before that state can expire.
-    if (!capture) setSnapshotExecution(nullptr);
+    // Snapshot execution borrows capture state; detach before replacing its capture.
+    if (capture != impl_->context->capture) {
+        setSnapshotExecution(nullptr);
+    }
     impl_->context->capture = capture;
     impl_->memoryMap.analysisCapture = capture;
 }

@@ -51,6 +51,33 @@ int main(){try{
         for(int i=0;i<8;++i){baseline.step();detached.step();}
         check(baseline.deterministicStateFingerprint()==detached.deterministicStateFingerprint(),"execution after controller destruction changed state/cycles");
     }
+    // A direct non-null capture replacement cannot split a snapshot execution stream.
+    {
+        GB::GameBoyMachine baseline,replaced;baseline.loadRom(rom);replaced.loadRom(rom);
+        Capture original,replacement;
+        auto controller=std::make_unique<Execution>(replaced,original);
+        replaced.setAnalysisCapture(&original);replaced.setSnapshotExecution(controller.get());controller->mode("snapshot");
+        auto& map=dynamic_cast<GB::GameBoyMemoryMap&>(replaced.executionMemory().backingStore());
+        replaced.setAnalysisCapture(&original);
+        check(map.snapshotExecution==controller.get(),"same capture detached its controller");
+        for(int i=0;i<8;++i){baseline.step();replaced.step();}
+        auto originalPackets=original.pending();auto status=controller->status();
+        replaced.setAnalysisCapture(&replacement);
+        check(map.analysisCapture==&replacement&&map.snapshotExecution==nullptr,"capture replacement retained old controller");
+        for(int i=0;i<8;++i){baseline.step();replaced.step();}
+        check(controller->status()==status&&original.pending()==originalPackets,"capture replacement used the original stream");
+        check(replacement.pending()>0,"replacement capture received no execution records");
+        controller.reset();
+        auto next=std::make_unique<Execution>(replaced,replacement);
+        replaced.setSnapshotExecution(next.get());next->mode("snapshot");
+        replaced.setAnalysisCapture(&replacement);
+        check(map.snapshotExecution==next.get(),"same replacement capture detached its controller");
+        for(int i=0;i<8;++i){baseline.step();replaced.step();}
+        check(next->status()["snapshotInstructions"]=="8","replacement controller did not execute snapshots");
+        check(original.pending()==originalPackets,"new controller wrote to the old capture");
+        check(baseline.deterministicStateFingerprint()==replaced.deterministicStateFingerprint(),"capture replacement changed guest state/cycles");
+        replaced.setAnalysisCapture(nullptr);
+    }
     Pair loop(rom);for(int i=0;i<48;++i)loop.step();
     check(counter(loop.execution.status()["snapshotReads"])>0,"RAM did not execute from snapshots");
     auto history=loop.execution.state();check(history["values"]["49152"]["value"]==3,"latest writer value lost");
