@@ -24,7 +24,34 @@ struct Pair {
 };
 }
 int main(){try{
-    auto rom=spaceFixture();Pair loop(rom);for(int i=0;i<48;++i)loop.step();
+    auto rom=spaceFixture();
+    // Capture detachment clears both borrowed controller pointers, including a paused one.
+    {
+        GB::GameBoyMachine baseline,detached;baseline.loadRom(rom);detached.loadRom(rom);
+        Capture capture,replacement;
+        auto controller=std::make_unique<Execution>(detached,capture);
+        detached.setAnalysisCapture(&capture);detached.setSnapshotExecution(controller.get());controller->mode("snapshot");
+        for(int i=0;i<8;++i){baseline.step();detached.step();}
+        check(baseline.deterministicStateFingerprint()==detached.deterministicStateFingerprint(),"detach fixture state mismatch");
+        capture.stop();controller->evidenceLost();
+        auto fingerprint=detached.deterministicStateFingerprint();rejects([&]{detached.step();});
+        check(detached.deterministicStateFingerprint()==fingerprint,"paused controller changed guest state");
+        detached.setAnalysisCapture(nullptr);
+        auto& map=dynamic_cast<GB::GameBoyMemoryMap&>(detached.executionMemory().backingStore());
+        check(map.analysisCapture==nullptr&&map.snapshotExecution==nullptr,"capture detach retained memory controller");
+        auto status=controller->status();
+        rejects([&]{detached.setSnapshotExecution(controller.get());});
+        for(int i=0;i<8;++i){baseline.step();detached.step();}
+        check(controller->status()==status,"detached controller received execution callbacks");
+        detached.setAnalysisCapture(&replacement);
+        check(map.snapshotExecution==nullptr,"new capture reattached an old controller");
+        for(int i=0;i<8;++i){baseline.step();detached.step();}
+        check(controller->status()==status,"replacement capture used a stale controller");
+        detached.setAnalysisCapture(nullptr);detached.setAnalysisCapture(nullptr);controller.reset();
+        for(int i=0;i<8;++i){baseline.step();detached.step();}
+        check(baseline.deterministicStateFingerprint()==detached.deterministicStateFingerprint(),"execution after controller destruction changed state/cycles");
+    }
+    Pair loop(rom);for(int i=0;i<48;++i)loop.step();
     check(counter(loop.execution.status()["snapshotReads"])>0,"RAM did not execute from snapshots");
     auto history=loop.execution.state();check(history["values"]["49152"]["value"]==3,"latest writer value lost");
     // An unchanged write remains a writer, while a read does not replace that supplier.
