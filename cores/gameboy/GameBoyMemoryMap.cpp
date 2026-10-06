@@ -317,8 +317,7 @@ bool GameBoyMemoryMap::handleSpecialWrite(uint16_t addr, std::span<const uint8_t
 }
 
 uint8_t GameBoyMemoryMap::read(uint16_t addr) const {
-    const auto resolved = resolveEchoAddress(addr);
-    const auto result = readRaw(resolved);
+    const auto result = peek(addr);
     if (analysisCapture && analysisCapture->onProducerLane()) {
         BMMQ::Space::Record record;
         record.kind = analysisCapture->phase;
@@ -326,6 +325,10 @@ uint8_t GameBoyMemoryMap::read(uint16_t addr) const {
         analysisCapture->push(record);
     }
     return result;
+}
+
+uint8_t GameBoyMemoryMap::peek(uint16_t addr) const {
+    return readRaw(resolveEchoAddress(addr));
 }
 
 uint64_t GameBoyMemoryMap::analysisLocation(uint16_t addr) const noexcept {

@@ -1375,6 +1375,8 @@ int main(int argc, char** argv)
         if (options.spaceProjectPath) {
             auto* gb = dynamic_cast<GameBoyMachine*>(&machine);
             if (!gb) throw std::invalid_argument("S.P.A.C.E. requires Game Boy");
+            const auto loaded = gb->cartridge().romBytes();
+            launchRom.assign(loaded.begin(), loaded.end());
             spaceSession = std::make_unique<BMMQ::Space::Session>(*gb, launchRom, *options.spaceProjectPath);
         }
 

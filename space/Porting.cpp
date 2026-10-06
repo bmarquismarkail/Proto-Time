@@ -361,6 +361,12 @@ Json checkPorting(const Json &j) {
           {"liveAcceptance", passed.contains("live") ? "passed" : "not run"}};
 }
 Json mergePorting(const Json &a, const Json &b) {
+  need(a.is_object() && b.is_object() && a.contains("verification") &&
+           b.contains("verification") && a.contains("revision") && b.contains("revision"),
+       "invalid port ledger for merge");
+  auto records = ids(a.at("verification"));
+  ids(b.at("verification"));
+  const auto revision = std::max(counter(a.at("revision")), counter(b.at("revision")));
   auto x = a, y = b;
   x.erase("verification");
   y.erase("verification");
@@ -369,9 +375,8 @@ Json mergePorting(const Json &a, const Json &b) {
   need(x == y,
        "conflicting port ledger; explicitly initialize a revised ledger");
   Json out = a;
-  auto records = ids(a["verification"]);
-  for (auto &v : b["verification"]) {
-    auto id = v["id"].get<std::string>();
+  for (auto &v : b.at("verification")) {
+    auto id = v.at("id").get<std::string>();
     if (records.contains(id)) {
       auto found =
           std::find_if(out["verification"].begin(), out["verification"].end(),
@@ -383,7 +388,7 @@ Json mergePorting(const Json &a, const Json &b) {
     }
   }
   out["revision"] =
-      decimal(std::max(counter(a["revision"]), counter(b["revision"])));
+      decimal(revision);
   return out;
 }
 void attachPorting(Json &j, const Json &p) {

@@ -139,11 +139,11 @@ Json analyzeProject(Json p,size_t limit){
             auto role=descriptor.is_null()?std::string():descriptor["role"].get<std::string>();if(!role.empty())finding(d,role,"accepted-cpu-hardware-access");
             auto inst=d["instruction"].get<std::string>();if(role=="input.sampling"&&loopOf.contains(inst))++inputCounts[{d["branch"].get<std::string>(),inst}];
             if(d["access"]!="write")continue;
-            std::string cur=d["id"].get<std::string>(),sourceId;Strings seen;Json path=Json::array();
-            while(seen.insert(cur).second&&path.size()<64){path.push_back(cur);auto& item=*dependencies.at(cur);if(item["access"]=="read"&&item["location"].get<std::string>().starts_with("m:"))sourceId=cur;
+            std::string cur=d["id"].get<std::string>(),sourceId;Strings seen;Json path=Json::array();bool truncated=false;
+            while(seen.insert(cur).second){if(path.size()>=64){truncated=true;break;}path.push_back(cur);auto& item=*dependencies.at(cur);if(item["access"]=="read"&&item["location"].get<std::string>().starts_with("m:"))sourceId=cur;
                 if(!ancestry.contains(cur))break;
                 cur=ancestry[cur];}
-            if(!sourceId.empty()){Json transfer={{"id",hash(d["id"].get<std::string>()+":"+sourceId)},{"source",sourceId},{"target",d["id"]},{"path",path},{"branch",d["branch"]},{"truncated",path.size()>=64&&!seen.contains(cur)},
+            if(!sourceId.empty()){Json transfer={{"id",hash(d["id"].get<std::string>()+":"+sourceId)},{"source",sourceId},{"target",d["id"]},{"path",path},{"branch",d["branch"]},{"truncated",truncated},
                 {"limitations",Json::array({"Load-only observed path; unsupported transformations terminate provenance."})}};budget.use(transfer.dump().size()*2);a["dataTransfers"].push_back(std::move(transfer));}
         }
         for(auto& d:p["dependencies"]){auto inst=d["instruction"].get<std::string>();if(cpu(d)&&loopOf.contains(inst)&&d["access"]=="read"&&d["location"]=="m:"+decimal(location(6,0,0xff00))&&inputCounts[{d["branch"].get<std::string>(),inst}]>1){
@@ -182,7 +182,7 @@ void validateAnalysis(const Json& p){
     for(auto& b:p.at("blocks"))blocks.insert(b.at("id").get<std::string>());
     for(auto& d:p.at("dependencies")){deps.insert(d.at("id").get<std::string>());branches.insert(d.at("branch").get<std::string>());}
     for(auto& t:p.value("transfers",Json::array())){transfers.insert(t.at("id").get<std::string>());branches.insert(t.at("branch").get<std::string>());}
-    for(auto& b:p.at("boundaries"))branches.insert(b.at("branch").get<std::string>());
+    for(auto& b:p.value("boundaries",Json::array()))branches.insert(b.at("branch").get<std::string>());
     for(auto key:{"routines","loops","findings","hardwareFacts","dataTransfers","dependencyEdges"})if(!a.at(key).is_array())throw std::invalid_argument("invalid analysis collection");
     auto collect=[](const Json& list,Strings& ids){for(auto& x:list)if(!ids.insert(x.at("id").get<std::string>()).second)throw std::invalid_argument("duplicate analysis ID");};
     collect(a["routines"],routines);collect(a["loops"],loops);collect(a["findings"],findings);

@@ -1,4 +1,6 @@
 #include "space/Session.hpp"
+#include "machine/InputService.hpp"
+#include "machine/plugins/PluginManager.hpp"
 #include "inst_cycle/executor/PluginContract.hpp"
 #include "fixtures/space/Fixture.hpp"
 #include <iostream>
@@ -9,13 +11,69 @@
 using namespace BMMQ::Space;
 void check(bool ok,const char* message){if(!ok)throw std::runtime_error(message);}
 template<class F> void rejects(F f){bool rejected=false;try{f();}catch(const std::exception&){rejected=true;}check(rejected,"expected rejection");}
+namespace {
+class CapturedInput final : public BMMQ::IDigitalInputSourcePlugin {
+public:
+    BMMQ::InputPluginCapabilities capabilities() const noexcept override {return {.pollingSafe=true,.deterministic=true,.supportsDigital=true,.fixedLogicalLayout=true,.headlessSafe=true};}
+    std::string_view name() const noexcept override {return "capture-input";}
+    bool open() override {return true;}
+    void close() noexcept override {}
+    std::string_view lastError() const noexcept override {return {};}
+    std::optional<BMMQ::InputButtonMask> sampleDigitalInput() override {return 0x12;}
+};
+class CapturedPluginInput final : public BMMQ::IDigitalInputPlugin {
+public:
+    std::string_view id() const override {return "capture-plugin-input";}
+    std::optional<uint32_t> sampleDigitalInput(const BMMQ::MachineView&) override {return 0x34;}
+};
+}
 int main(){
  try {
     auto rom=spaceFixture();auto hash=digest(rom);
     const auto dir=std::filesystem::temp_directory_path()/("space-smoke-"+decimal(std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directory(dir);
+    // Both live input delivery routes and direct CLI input are recorded exactly once.
+    for(bool adapter:{false,true}){
+        GB::GameBoyMachine inputMachine;inputMachine.loadRom(rom);Session inputSession(inputMachine,rom);
+        if(adapter){check(inputMachine.inputService().attachAdapter(std::make_unique<CapturedInput>()),"input attach failed");check(inputMachine.inputService().resume(),"input resume failed");}
+        else {inputMachine.pluginManager().add(std::make_unique<CapturedPluginInput>());inputMachine.pluginManager().initialize(inputMachine.mutableView());}
+        inputMachine.serviceInput();inputMachine.setJoypadState(0x56);
+        auto inputs=inputSession.document()["inputs"];
+        check(inputs.size()==2&&inputs[0]["mask"]==(adapter?0x12:0x34)&&inputs[1]["mask"]==0x56,"live input missing/duplicated");
+        inputSession.checkpoint(dir/(adapter?"adapter-input":"plugin-input"));
+        auto manifest=Project::read(dir/(adapter?"adapter-input/manifest.json":"plugin-input/manifest.json"));
+        check(manifest["inputPosition"]=="2","checkpoint lost live input position");
+    }
+    // Internal mapped observation never emits CPU accesses, even during a CPU phase.
+    {
+        GB::GameBoyMachine observed;observed.loadRom(rom);Capture capture;observed.setAnalysisCapture(&capture);capture.phase=Kind::Read;
+        auto& map=dynamic_cast<GB::GameBoyMemoryMap&>(observed.executionMemory().backingStore());
+        auto fingerprint=observed.deterministicStateFingerprint();
+        auto value=map.peek(0x150);check(map.peek(0xe000)==map.peek(0xc000),"peek lost echo mapping");
+        (void)observed.videoStateSnapshot();(void)observed.stopSummary();(void)observed.runtimeContext().peek8(0x150);
+        check(capture.pending()==0&&observed.deterministicStateFingerprint()==fingerprint,"inspection traced or changed state");
+        check(map.read(0x150)==value&&capture.pending()==1,"CPU read no longer traced");
+        observed.setAnalysisCapture(nullptr);
+    }
+    // CPU-intercepted spans apply acceptance to each individual address.
+    {
+        LR3592_DMG cpu;GB::GameBoyMemoryMap map;cpu.attachMemory(map);Capture capture;map.analysisCapture=&capture;capture.phase=Kind::Read;
+        auto state=cpu.exportState();state.ppuDotCounter=80;cpu.importState(state);cpu.syncCachedIoRegisterWrite(0xff40,0x80);cpu.syncCachedIoRegisterWrite(0xff44,0);
+        Record discard;while(capture.pop(discard)){};
+        std::array<uint8_t,2> values{};
+        check(cpu.handleMemoryRead(0x9fff,values),"VRAM span not intercepted");Record first,second;
+        check(capture.pop(first)&&capture.pop(second)&&!first.accepted&&second.accepted,"VRAM span acceptance used base address");
+        state=cpu.exportState();state.ppuDotCounter=0;cpu.importState(state);while(capture.pop(discard)){};
+        check(cpu.handleMemoryRead(0xfe9f,values),"OAM span not intercepted");
+        check(capture.pop(first)&&capture.pop(second)&&!first.accepted&&!second.accepted,"OAM/unusable span acceptance wrong");
+        const uint8_t source=0xc0;cpu.handleMemoryWrite(0xff46,std::span(&source,1));while(capture.pop(discard)){}
+        check(cpu.handleMemoryRead(0xff7f,values),"DMA span not intercepted");
+        check(capture.pop(first)&&capture.pop(second)&&!first.accepted&&second.accepted,"DMA HRAM span acceptance used base address");
+        map.analysisCapture=nullptr;
+    }
     GB::GameBoyMachine baseline,traced;baseline.loadRom(rom);traced.loadRom(rom);
-    Session session(traced,rom);
+    auto loadedBytes=traced.cartridge().romBytes();
+    Session session(traced,std::vector<uint8_t>(loadedBytes.begin(),loadedBytes.end()));
     for(int i=0;i<24;++i){baseline.step();traced.step();session.flush();}
     check(baseline.deterministicStateFingerprint()==traced.deterministicStateFingerprint(),"capture changed guest state");
     auto doc=session.document();check(doc["gaps"].empty(),"unexpected capture gap");check(doc["blocks"].size()<doc["instructions"].size(),"no multi-instruction blocks");

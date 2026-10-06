@@ -1,5 +1,6 @@
 """End-to-end CLI fixture, paused input/checkpoints, export and config rejection."""
 import json
+import hashlib
 import subprocess
 import sys
 import tempfile
@@ -33,7 +34,9 @@ with tempfile.TemporaryDirectory(prefix='time-space-cli-') as work:
     manual = root / 'manual.json'
     subprocess.run([emulator,'--core','gameboy','--rom',str(rom),'--headless','--no-audio',
                     '--steps','24','--space-project',str(manual)], check=True, capture_output=True)
-    assert json.loads(manual.read_text())['blocks']
+    manual_data=json.loads(manual.read_text())
+    assert manual_data['blocks']
+    assert manual_data['romSha256']==hashlib.sha256(rom.read_bytes()).hexdigest()
     rejected = subprocess.run([emulator,'--core','gameboy','--rom',str(rom),'--headless',
                                '--cpu-mode','block','--space-project',str(root/'bad.json')],capture_output=True)
     assert rejected.returncode != 0 and not (root/'bad.json').exists()

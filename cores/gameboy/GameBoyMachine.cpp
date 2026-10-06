@@ -27,6 +27,17 @@
 
 namespace GB {
 
+namespace {
+void recordInput(GameBoyMemoryMap& map, uint8_t value) {
+    if (map.analysisCapture) {
+        BMMQ::Space::Record input;
+        input.kind = BMMQ::Space::Kind::Input;
+        input.value = value;
+        map.analysisCapture->push(input);
+    }
+}
+}
+
 // Expose Game Boy memory-mapped I/O descriptors.
 static constexpr std::size_t kMaxRomSize = 1024u * 1024u;
 
@@ -725,12 +736,7 @@ public:
     }
 
     uint8_t peek8(uint16_t address) const override {
-        address = resolveEchoAddress(address);
-        // For addresses that go through cartridge intercept, use read8
-        if (address < 0x8000u || (address >= 0xA000u && address < 0xC000u)) {
-            return read8(address);
-        }
-        return memoryMap_.read(address);
+        return memoryMap_.peek(address);
     }
 
     void write8(uint16_t address, uint8_t value) override {
@@ -924,7 +930,7 @@ GameBoyMachine::GameBoyMachine() : impl_(std::make_unique<Impl>()) {
     impl_->memoryMap.setWriteObserver([this](uint16_t address, uint8_t value) {
         const auto observedValue = static_cast<uint8_t>(
             ((address >= 0xFF00u && address < 0xFF80u) || address == 0xFFFFu)
-                ? impl_->memoryMap.read(address)
+                ? impl_->memoryMap.peek(address)
                 : value);
         impl_->cpu.cpu().invalidateBlockCacheForWrite(address);
         impl_->cpu.cpu().syncCachedIoRegisterWrite(address, observedValue);
@@ -1287,7 +1293,7 @@ BMMQ::InstructionRetirementDecision GameBoyMachine::onInstructionRetired(
     impl_->ppu.step(feedback.retiredCycles);
     impl_->memoryMap.setIoRegisterRaw(0xFF44u, impl_->ppu.ly());
     impl_->memoryMap.setIoRegisterRaw(0xFF41u, static_cast<uint8_t>(
-        (impl_->context->read8(0xFF41u) & 0xF8u) | (impl_->ppu.currentMode() & 0x03u)));
+        (impl_->context->peek8(0xFF41u) & 0xF8u) | (impl_->ppu.currentMode() & 0x03u)));
 
     // Advance APU by retired cycles
     impl_->apu.step(feedback.retiredCycles);
@@ -1355,7 +1361,7 @@ BMMQ::InstructionRetirementDecision GameBoyMachine::onInstructionRetired(
                 BMMQ::PluginCategory::Audio,
                 impl_->stepCounter,
                 0xFF26u,
-                impl_->context->read8(0xFF26u),
+                impl_->context->peek8(0xFF26u),
                 &feedback,
                 "apu frame mixed"
             });
@@ -1382,7 +1388,7 @@ BMMQ::InstructionRetirementDecision GameBoyMachine::onInstructionRetired(
     // Conservatively leave a multi-instruction slice whenever a device-visible
     // interrupt is pending. The next CPU entry owns the exact IME/HALT decision.
     const auto pendingInterrupts = static_cast<uint8_t>(
-        impl_->context->read8(0xFF0Fu) & impl_->context->read8(0xFFFFu) & 0x1Fu);
+        impl_->context->peek8(0xFF0Fu) & impl_->context->peek8(0xFFFFu) & 0x1Fu);
     if (pendingInterrupts != 0u) {
         impl_->context->finishAnalysisInstruction();
         return BMMQ::InstructionRetirementDecision::exitSlice(
@@ -1397,6 +1403,7 @@ void GameBoyMachine::serviceInput() {
         (void)inputService().pollActiveAdapter(impl_->inputGeneration);
         if (const auto committedInput = inputService().committedDigitalMask(); committedInput.has_value()) {
             const auto pressedMask = static_cast<uint8_t>(*committedInput & 0x00FFu);
+            recordInput(impl_->memoryMap, pressedMask);
             impl_->input.setLogicalButtons(pressedMask);
             impl_->lastDigitalInputMask = pressedMask;
             const auto joypad = impl_->input.readRegister();
@@ -1423,6 +1430,7 @@ void GameBoyMachine::serviceInput() {
 
     if (const auto sampledInput = impl_->pluginManager.sampleDigitalInput(view()); sampledInput.has_value()) {
         const auto pressedMask = static_cast<uint8_t>(*sampledInput & 0x00FFu);
+        recordInput(impl_->memoryMap, pressedMask);
         impl_->input.setLogicalButtons(pressedMask);
         impl_->lastDigitalInputMask = pressedMask;
         const auto joypad = impl_->input.readRegister();
@@ -1506,17 +1514,17 @@ std::optional<BMMQ::VideoStateView> GameBoyMachine::videoStateSnapshot() const
     const auto oam = impl_->memoryMap.oamSpan();
     state.vram.assign(vram.begin(), vram.end());
     state.oam.assign(oam.begin(), oam.end());
-    state.lcdc = impl_->memoryMap.read(0xFF40u);
-    state.stat = impl_->memoryMap.read(0xFF41u);
-    state.scy = impl_->memoryMap.read(0xFF42u);
-    state.scx = impl_->memoryMap.read(0xFF43u);
-    state.ly = impl_->memoryMap.read(0xFF44u);
-    state.lyc = impl_->memoryMap.read(0xFF45u);
-    state.bgp = impl_->memoryMap.read(0xFF47u);
-    state.obp0 = impl_->memoryMap.read(0xFF48u);
-    state.obp1 = impl_->memoryMap.read(0xFF49u);
-    state.wy = impl_->memoryMap.read(0xFF4Au);
-    state.wx = impl_->memoryMap.read(0xFF4Bu);
+    state.lcdc = impl_->memoryMap.peek(0xFF40u);
+    state.stat = impl_->memoryMap.peek(0xFF41u);
+    state.scy = impl_->memoryMap.peek(0xFF42u);
+    state.scx = impl_->memoryMap.peek(0xFF43u);
+    state.ly = impl_->memoryMap.peek(0xFF44u);
+    state.lyc = impl_->memoryMap.peek(0xFF45u);
+    state.bgp = impl_->memoryMap.peek(0xFF47u);
+    state.obp0 = impl_->memoryMap.peek(0xFF48u);
+    state.obp1 = impl_->memoryMap.peek(0xFF49u);
+    state.wy = impl_->memoryMap.peek(0xFF4Au);
+    state.wx = impl_->memoryMap.peek(0xFF4Bu);
     return state;
 }
 
@@ -1567,11 +1575,11 @@ uint16_t GameBoyMachine::readRegisterPair(std::string_view id) const {
 
 std::string GameBoyMachine::stopSummary() const {
     const auto pc = impl_->context->readRegister16(GB::RegisterId::PC);
-    const auto ly = impl_->context->read8(0xFF44);
-    const auto lcdc = impl_->context->read8(0xFF40);
-    const auto stat = impl_->context->read8(0xFF41);
-    const auto interruptFlags = impl_->context->read8(0xFF0F);
-    const auto interruptEnable = impl_->context->read8(0xFFFF);
+    const auto ly = impl_->context->peek8(0xFF44);
+    const auto lcdc = impl_->context->peek8(0xFF40);
+    const auto stat = impl_->context->peek8(0xFF41);
+    const auto interruptFlags = impl_->context->peek8(0xFF0F);
+    const auto interruptEnable = impl_->context->peek8(0xFFFF);
 
     std::ostringstream out;
     out << "PC=0x" << std::hex << std::uppercase << pc << std::dec << '\n'
@@ -1585,12 +1593,7 @@ std::string GameBoyMachine::stopSummary() const {
 }
 
 void GameBoyMachine::setJoypadState(uint8_t value) {
-    if (impl_->memoryMap.analysisCapture) {
-        BMMQ::Space::Record input;
-        input.kind = BMMQ::Space::Kind::Input;
-        input.value = value;
-        impl_->memoryMap.analysisCapture->push(input);
-    }
+    recordInput(impl_->memoryMap, value);
     impl_->cpu.cpu().setJoypadState(value);
     impl_->input.setLogicalButtons(value);
     impl_->lastDigitalInputMask = value;
@@ -1855,12 +1858,12 @@ void GameBoyMachine::load_state(const std::filesystem::path& path) {
     impl_->memoryMap.setMapper(&impl_->mapper);
     impl_->memoryMap.setCartridge(&impl_->cartridge_);
     impl_->ppu.memoryMap = &impl_->memoryMap;
-    impl_->input.writeRegister(impl_->memoryMap.read(0xFF00u));
+    impl_->input.writeRegister(impl_->memoryMap.peek(0xFF00u));
     impl_->memoryMap.setIoRegisterRaw(0xFF00u, impl_->input.readRegister());
     for (uint16_t address = 0xFF00u; address < 0xFF80u; ++address) {
-        impl_->cpu.cpu().syncCachedIoRegisterWrite(address, impl_->memoryMap.read(address));
+        impl_->cpu.cpu().syncCachedIoRegisterWrite(address, impl_->memoryMap.peek(address));
     }
-    impl_->cpu.cpu().syncCachedIoRegisterWrite(0xFFFFu, impl_->memoryMap.read(0xFFFFu));
+    impl_->cpu.cpu().syncCachedIoRegisterWrite(0xFFFFu, impl_->memoryMap.peek(0xFFFFu));
     impl_->cpu.cpu().syncCachedIoRegisterWrite(0xFF26u, impl_->apu.readRegister(0xFF26u));
     inputService().advanceGeneration(impl_->inputGeneration);
 }

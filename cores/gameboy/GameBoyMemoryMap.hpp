@@ -37,6 +37,8 @@ public:
 
     // Read/write through the full memory map
     uint8_t read(uint16_t addr) const;
+    // Internal observation: same mapped value, without a CPU capture access.
+    uint8_t peek(uint16_t addr) const;
     void write(uint16_t addr, uint8_t value);
     void read(std::span<uint8_t> stream, uint16_t address) const override;
     void write(std::span<const uint8_t> value, uint16_t address) override;

@@ -138,10 +138,13 @@ using MemoryPool = BMMQ::MemoryPool<AddressType, DataType, AddressType>;
 
 BMMQ::RegisterFile<uint16_t>& executionRegisterFile(MemoryView& view)
 {
-    if(auto* registers=dynamic_cast<BMMQ::Space::RegisterExecutionView*>(&view))return registers->executionRegisters();
-    auto* pool=dynamic_cast<MemoryPool*>(&view);
-    if(!pool)throw std::logic_error("execution view has no register contract");
-    return pool->file;
+    if (auto* pool = dynamic_cast<MemoryPool*>(&view)) {
+        return pool->file;
+    }
+    if (auto* registers = dynamic_cast<BMMQ::Space::RegisterExecutionView*>(&view)) {
+        return registers->executionRegisters();
+    }
+    throw std::logic_error("execution view has no register contract");
 }
 LR3592_Register* getRegister(MemoryView& view,BMMQ::RegisterId id)
 {
@@ -3154,7 +3157,7 @@ bool LR3592_DMG::handleMemoryRead(AddressType address,std::span<DataType> value)
         if(map&&map->analysisCapture&&map->analysisCapture->onProducerLane())for(size_t i=0;i<value.size();++i){
             BMMQ::Space::Record record;record.kind=map->analysisCapture->phase;record.address=static_cast<uint16_t>(address+i);
             record.location=map->analysisLocation(record.address);record.value=value[i];
-            auto a=normalizeAccessAddress(address);
+            auto a=normalizeAccessAddress(record.address);
             record.accepted=a==0xff00||!((a>=0xfea0&&a<=0xfeff)||(dmaActive&&!isHramAddress(a))||
                 (lcdEnabled()&&((a>=0x8000&&a<=0x9fff&&currentPpuMode()==3)||(a>=0xfe00&&a<=0xfe9f&&(currentPpuMode()==2||currentPpuMode()==3)))));
             map->analysisCapture->push(record);

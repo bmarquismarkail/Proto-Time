@@ -35,7 +35,8 @@ def build(out,systems):
         rom.write_bytes(data)
         results[system]={'rom':rom.name,'sha256':sha(data),'size':len(data)}
     sources={p.name:sha(p.read_bytes()) for p in sorted(ROOT.iterdir()) if p.is_file() and p.name in ['game.gb.asm','game.gg.asm','gameplay.gb.inc','gameplay.gg.inc','state.inc','assets.py','build.py','scenarios.json']}
-    (out/'build.json').write_text(json.dumps({'schemaVersion':1,'roms':results,'tools':{name:tool_identity(name) for name in ['wla-gb','wla-z80','wlalink']},'sources':sources,'artSha256':sha(json.dumps(TILES).encode()),'conversion':'not assessed'},indent=2))
+    used=[{'gb':'wla-gb','gg':'wla-z80'}[system] for system in systems]+['wlalink']
+    (out/'build.json').write_text(json.dumps({'schemaVersion':1,'roms':results,'tools':{name:tool_identity(name) for name in used},'sources':sources,'artSha256':sha(json.dumps(TILES).encode()),'conversion':'not assessed'},indent=2))
     return results
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('output',type=Path);p.add_argument('--system',choices=['gb','gg','both'],default='both');a=p.parse_args();build(a.output, ['gb','gg'] if a.system=='both' else [a.system])

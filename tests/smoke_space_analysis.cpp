@@ -40,7 +40,7 @@ int main(){try{
     auto rejected=doc;for(auto& d:rejected["dependencies"])if(d["location"].get<std::string>().starts_with("m:")&&(counter(Json(d["location"].get<std::string>().substr(2)))>>32)==4)d["accepted"]=false;
     rejected=analyzeProject(rejected);check(std::none_of(rejected["analysis"]["findings"].begin(),rejected["analysis"]["findings"].end(),[](auto& f){return f["role"]=="graphics.tile-data-output";}),"rejected writes inferred output");
     auto exhausted=analyzeProject(doc,1);check(exhausted["analysis"]["incomplete"]==true&&exhausted["analysis"]["routines"].empty(),"resource loss silent");
-    auto legacy=doc;legacy.erase("transfers");for(auto& d:legacy["dependencies"])d.erase("origin");legacy=analyzeProject(legacy);
+    auto legacy=doc;legacy.erase("transfers");legacy.erase("boundaries");for(auto& d:legacy["dependencies"])d.erase("origin");legacy=analyzeProject(legacy);
     check(legacy["analysis"]["findings"].empty(),"ambiguous legacy accesses inferred CPU purpose");
     baseline.executionMemory().file.findRegister("PC")->reg->value=0x260;
     auto target=instructionAt(doc,0x260);before=baseline.deterministicStateFingerprint();auto stopped=live.runUntil({{"instruction",target},{"count",10}});
@@ -62,5 +62,49 @@ int main(){try{
     auto transform=spaceFixture();const uint8_t prog[]={0x21,0,0xc0,0x7e,0xf6,0,0xe0,0x12,0xc3,0x80,1};std::copy(std::begin(prog),std::end(prog),transform.begin()+0x150);
     GB::GameBoyMachine transformed;transformed.loadRom(transform);Session ts(transformed,transform);for(int i=0;i<20;++i)ts.step();auto ta=analyzeProject(ts.document());
     check(std::none_of(ta["analysis"]["dataTransfers"].begin(),ta["analysis"]["dataTransfers"].end(),[&](auto& t){auto id=t["target"].template get<std::string>();for(auto& d:ta["dependencies"])if(d["id"]==id)return d["location"]=="m:"+decimal(location(5,0,0xff12));return false;}),"equal values crossed unsupported transformation");
+    // Load-only ancestry at and beyond the 64-access limit.
+    for(int copies:{13,14,15}){
+        auto chainRom=spaceFixture();std::vector<uint8_t> program={0xfa,0,0xc0};
+        for(int i=0;i<copies;++i){program.push_back(0x47);program.push_back(0x78);if(i==5)program.insert(program.end(),{0xea,1,0xc0,0xfa,1,0xc0});}
+        program.insert(program.end(),{0xe0,0x12,0x76});
+        std::copy(program.begin(),program.end(),chainRom.begin()+0x150);
+        GB::GameBoyMachine chainMachine;chainMachine.loadRom(chainRom);Session chain(chainMachine,chainRom);
+        for(int i=0;i<2*copies+5;++i)chain.step();
+        auto chainDoc=analyzeProject(chain.document());bool found=false;
+        for(auto& t:chainDoc["analysis"]["dataTransfers"]){
+            for(auto& d:chainDoc["dependencies"])if(d["id"]==t["target"]&&d["location"]=="m:"+decimal(location(5,0,0xff12))){
+                found=true;check(t["path"].size()==static_cast<size_t>(std::min(64,4*copies+8)),"wrong transfer path bound");
+                check(t["truncated"]==(copies==15),"transfer truncation incorrect");
+            }
+        }
+        check(found,"bounded transfer missing");
+    }
+    // Imported cyclic supplier ancestry terminates naturally, without limit truncation.
+    {
+        auto cycleRom=spaceFixture();const uint8_t program[]={0xfa,0,0xc0,0xea,0,0xc0,0xe0,0x12,0x76};
+        std::copy(std::begin(program),std::end(program),cycleRom.begin()+0x150);
+        GB::GameBoyMachine cm;cm.loadRom(cycleRom);Session cs(cm,cycleRom);for(int i=0;i<5;++i)cs.step();
+        auto cyclic=cs.document();Json writer;
+        for(auto& d:cyclic["dependencies"])if(d["location"]=="m:"+decimal(location(3,0,0xc000))&&d["access"]=="write")writer=d;
+        check(!writer.is_null(),"cycle writer missing");
+        for(auto& d:cyclic["dependencies"])if(d["location"]==writer["location"]&&d["access"]=="read")
+            d["supplier"]={{"instruction",writer["instruction"]},{"sequence",writer["sequence"]},{"branch",writer["branch"]},{"kind","cpu"}};
+        auto ca=analyzeProject(cyclic);check(!ca["analysis"]["dataTransfers"].empty(),"cycle transfers missing");
+        for(auto& t:ca["analysis"]["dataTransfers"])check(t["truncated"]==false,"cycle mislabeled as limit truncation");
+    }
+    // A write's observer readback must not satisfy a CPU-read watch.
+    for(bool snapshotMode:{false,true}){
+        auto watchRom=rom;watchRom[0x270]=0xfa;watchRom[0x271]=0x12;watchRom[0x272]=0xff;
+        GB::GameBoyMachine watched;watched.loadRom(watchRom);Session ws(watched,watchRom);
+        if(snapshotMode)ws.executionMode("snapshot");
+        watched.executionMemory().file.findRegister("PC")->reg->value=0x260;
+        auto read=ws.runUntil({{"event",{{"address",0xff12},{"access","read"}}},{"count",2}});
+        check(read["reason"]=="step_limit","MMIO write invented a CPU read");
+        auto wd=ws.document();
+        check(std::none_of(wd["dependencies"].begin(),wd["dependencies"].end(),[](auto& d){return d["kind"]=="device"&&d["access"]=="read";}),"retirement reads entered dependencies");
+        watched.executionMemory().file.findRegister("PC")->reg->value=0x270;
+        read=ws.runUntil({{"event",{{"address",0xff12},{"access","read"}}},{"count",1}});
+        check(read["reason"]=="event_observed","actual CPU read did not satisfy watch");
+    }
     std::cout<<"purpose, loops, frozen queries, suppliers and bounded exploration passed\n";
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
