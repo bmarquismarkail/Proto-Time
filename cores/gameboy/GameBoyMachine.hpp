@@ -1,4 +1,5 @@
 #pragma once
+#include "machine/plugins/debug/DebugMachine.hpp"
 // Nintendo Game Boy machine abstraction.
 // Matches the GameGearMachine architecture: thin public interface,
 // Impl pimpl struct, separate subsystem classes.
@@ -50,14 +51,28 @@ class GameBoyRuntimeContext;
 class GameBoyMachine final : public BMMQ::Machine,
                              public BMMQ::IExternalBootRomMachine,
                              public BMMQ::IRomPathAwareMachine,
-                             public BMMQ::IIrComponentAwareMachine {
+                             public BMMQ::IIrComponentAwareMachine,
+                             public BMMQ::Debug::IDebugMachineV1 {
 public:
     GameBoyMachine();
+    void connectDebugEngine(BMMQ::Debug::DebugEngine*) override;
+    std::span<const char* const> debugRegisterNames() const noexcept override;
+    std::array<uint16_t,20> debugRegisters() const override;
+    bool debugValidateRegisters(const std::array<uint16_t,20>&) const noexcept override;
+    void debugCommitRegisters(const std::array<uint16_t,20>&) noexcept override;
+    bool debugPeek(uint16_t, uint8_t&) const noexcept override;
+    bool debugWritable(uint16_t) const noexcept override;
+    void debugCommitByte(uint16_t, uint8_t) noexcept override;
+    uint64_t debugBacking(uint16_t) const noexcept override;
+    void debugEdited() noexcept override;
+
     ~GameBoyMachine() override;
 
     BMMQ::MemoryPool<uint16_t,uint8_t,uint16_t>& executionMemory();
     bool snapshotBoundaryOnly() const;
     bool snapshotOpcodeSupported(uint8_t) const;
+    uint16_t analysisFetchAddress(uint16_t,size_t)const noexcept;
+    uint16_t analysisNextFetchAddress(uint16_t,size_t)const noexcept;
     void setSnapshotExecution(BMMQ::Space::ExecutionController* controller);
     void setAnalysisCapture(BMMQ::Space::Capture* capture);
 

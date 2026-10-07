@@ -1,3 +1,6 @@
+#ifdef TIME_HAS_LINUX_CONTROLLER
+#include "machine/plugins/input/adapters/LinuxController.hpp"
+#endif
 /////////////////////////////////////////////////////////////////////////
 //
 //	2020 Emulator Project Idea Mk 2
@@ -124,7 +127,8 @@ void printUsage(std::string_view program)
               << "                     Background worker count; 0 selects the reserved-core default\n"
               << "  --background-queue-capacity <n>\n"
               << "                     Maximum queued background jobs (default: 1024)\n"
-              << "  --space-project <path>  Capture Game Boy baseline analysis to a project JSON\n"
+              << "  --input-evdev <device>  Linux controller device (absolute /dev/input/event* path)\n"
+              << "  --space-project <path>  Capture Game Boy/Game Gear baseline analysis to a project JSON\n"
               << "  --debug-snapshots  Enable optional background debug snapshots\n"
               << "  --visual-pack <path>\n"
               << "                     Load a visual override pack.json; repeat to load multiple packs\n"
@@ -817,6 +821,16 @@ int main(int argc, char** argv)
             ? BMMQ::bootstrapMachine(options)
             : BMMQ::bootstrapMachine(options, launchRom);
         auto& machine = *bootstrapped.machine;
+        if (options.linuxControllerPath) {
+#ifdef TIME_HAS_LINUX_CONTROLLER
+            auto controller = std::make_unique<BMMQ::LinuxController>(options.linuxControllerPath->string());
+            if (!machine.inputService().attachAdapter(std::move(controller)) || !machine.inputService().resume())
+                throw std::runtime_error("unable to start Linux controller input: " + machine.inputService().diagnostics().lastBackendError);
+            std::cout << "Linux controller: " << *options.linuxControllerPath << " (neutral while disconnected)\n";
+#else
+            throw std::invalid_argument("Linux controller input unavailable in this build");
+#endif
+        }
         const std::string frontendAppId = "timeEmulator-" + std::to_string(getpid());
         setenv("TIME_FRONTEND_APP_ID", frontendAppId.c_str(), 1);
         const auto& descriptor = bootstrapped.descriptor;
@@ -1373,11 +1387,11 @@ int main(int argc, char** argv)
 
         std::unique_ptr<BMMQ::Space::Session> spaceSession;
         if (options.spaceProjectPath) {
-            auto* gb = dynamic_cast<GameBoyMachine*>(&machine);
-            if (!gb) throw std::invalid_argument("S.P.A.C.E. requires Game Boy");
-            const auto loaded = gb->cartridge().romBytes();
-            launchRom.assign(loaded.begin(), loaded.end());
-            spaceSession = std::make_unique<BMMQ::Space::Session>(*gb, launchRom, *options.spaceProjectPath);
+            if(auto* gb=dynamic_cast<GameBoyMachine*>(&machine)){
+                const auto loaded=gb->cartridge().romBytes();launchRom.assign(loaded.begin(),loaded.end());
+            }else if(auto* gg=dynamic_cast<BMMQ::GameGearMachine*>(&machine))launchRom=gg->romData();
+            else throw std::invalid_argument("machine has no S.P.A.C.E. core adapter");
+            spaceSession=std::make_unique<BMMQ::Space::Session>(machine,launchRom,*options.spaceProjectPath);
         }
 
         auto runEmulationLane = [&]() {

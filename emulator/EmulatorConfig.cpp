@@ -179,6 +179,9 @@ void applyConfigValue(EmulatorConfig& config,
         } else {
             throw std::invalid_argument("Unknown config key: " + label);
         }
+    } else if (section == "input") {
+        if (key == "evdev") config.linuxControllerPath = resolveConfigPath(configDirectory, text);
+        else throw std::invalid_argument("Unknown config key: " + label);
     } else if (section == "audio") {
         if (key == "enabled") {
             config.audioEnabled = parseBool(text, label);
@@ -272,7 +275,7 @@ EmulatorConfig loadEmulatorConfig(const std::filesystem::path& path)
             }
             section = trim(std::string_view(text).substr(1, text.size() - 2));
             if (section != "emulator" && section != "video" && section != "timing" &&
-                section != "audio" && section != "visual" && section != "background") {
+                section != "audio" && section != "visual" && section != "background" && section != "input") {
                 throw std::invalid_argument("Unknown config section: " + section);
             }
             continue;
@@ -426,6 +429,7 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
         config.visualCapturePath = *overrides.visualCapturePath;
     }
     if (overrides.spaceProjectPath.has_value()) config.spaceProjectPath = overrides.spaceProjectPath;
+    if (overrides.linuxControllerPath.has_value()) config.linuxControllerPath = overrides.linuxControllerPath;
     if (overrides.visualPackReload.has_value()) {
         config.visualPackReload = *overrides.visualPackReload;
     }
@@ -458,9 +462,11 @@ void validateEmulatorConfig(const EmulatorConfig& config)
             "(ir_backend_plugin/ir_backend_id) require --cpu-mode ir");
     }
 
-    if (config.spaceProjectPath && (config.machineKind != "gameboy" || config.cpuMode != "baseline" ||
+    if (config.spaceProjectPath && ((config.machineKind != "gameboy" && config.machineKind != "gamegear") || config.cpuMode != "baseline" ||
         !config.modPaths.empty() || config.executorPluginPath || config.executorPolicyId || config.irAdapterPluginPath || config.irBackendPluginPath))
-        throw std::invalid_argument("--space-project requires Game Boy built-in baseline execution without mods or executor plugins");
+        throw std::invalid_argument("--space-project requires a supported core with built-in baseline execution without mods or executor plugins");
+    if (config.linuxControllerPath && (!config.linuxControllerPath->is_absolute() || config.linuxControllerPath->string().size() > 4096))
+        throw std::invalid_argument("--input-evdev requires an absolute controller device path");
     if (config.spaceProjectPath && config.spaceProjectPath->empty()) throw std::invalid_argument("empty --space-project path");
     if (config.cpuMode != "baseline" && config.cpuMode != "block" &&
         config.cpuMode != "ir" && config.cpuMode != "native") {
@@ -544,6 +550,9 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
                 throw std::invalid_argument("--rom requires a path");
             }
             assignRomPath(arguments.overrides, argv[++i]);
+        } else if (arg == "--input-evdev") {
+            if (i+1>=argc) throw std::invalid_argument("--input-evdev requires a device path");
+            arguments.overrides.linuxControllerPath = std::filesystem::path(argv[++i]);
         } else if (arg == "--space-project") {
             if (i+1>=argc) throw std::invalid_argument("--space-project requires a path");
             arguments.overrides.spaceProjectPath = std::filesystem::path(argv[++i]);

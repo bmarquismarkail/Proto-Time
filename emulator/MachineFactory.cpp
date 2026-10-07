@@ -1,4 +1,5 @@
 #include "emulator/MachineFactory.hpp"
+#include "TimeFeatureAdmission.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -27,6 +28,7 @@ const MachineDescriptor kGameBoyDescriptor{
     "Game Boy",
     160,
     144,
+    "gameboy",
 };
 
 const MachineDescriptor kGameGearDescriptor{
@@ -34,6 +36,7 @@ const MachineDescriptor kGameGearDescriptor{
     "Game Gear",
     160,
     144,
+    "gamegear",
 };
 
 [[noreturn]] void unreachableMachineDescriptor(MachineKind kind) noexcept
@@ -64,6 +67,11 @@ void MachineRegistry::registerProvider(MachineDescriptor descriptor, Factory fac
     }
     if (contains(descriptor.id)) {
         throw std::invalid_argument("duplicate machine provider id: " + descriptor.id);
+    }
+    const auto& family = descriptor.familyId.empty() ? descriptor.id : descriptor.familyId;
+    if (family != "gameboy" && family != "gamegear" && !FeatureAdmission::complete) {
+        throw std::invalid_argument("machine family admission closed: " + family +
+                                    "; Game Boy and Game Gear T.I.M.E. completion evidence is required");
     }
     providers_.push_back(Provider{std::move(descriptor), std::move(factory)});
 }
@@ -97,6 +105,10 @@ std::unique_ptr<Machine> MachineRegistry::create(std::string_view id) const
     auto machine = found->factory();
     if (!machine) {
         throw std::runtime_error("machine provider returned null: " + found->descriptor.id);
+    }
+    const auto& family = found->descriptor.familyId.empty() ? found->descriptor.id : found->descriptor.familyId;
+    if (machine->visualTargetId() != family) {
+        throw std::runtime_error("machine provider returned a different hardware family");
     }
     return machine;
 }

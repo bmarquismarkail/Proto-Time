@@ -30,6 +30,10 @@ public:
 
     GameBoyPPU();
     ~GameBoyPPU() = default;
+    GameBoyPPU(const GameBoyPPU&) = default;
+    GameBoyPPU& operator=(const GameBoyPPU&) = default;
+    GameBoyPPU(GameBoyPPU&&) = default;
+    GameBoyPPU& operator=(GameBoyPPU&&) = default;
 
     void reset();
 

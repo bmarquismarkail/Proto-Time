@@ -1,3 +1,4 @@
+#include "cores/gameboy/GameBoyMachine.hpp"
 #include "space/Session.hpp"
 #include "fixtures/space/Fixture.hpp"
 #include <iostream>

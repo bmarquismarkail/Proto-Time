@@ -393,6 +393,10 @@ public:
   bool handleMemoryWriteUntraced(AddressType,std::span<const DataType>);
   bool handleMemoryReadUntraced(AddressType,std::span<DataType>)const;
   bool snapshotRamBlocked() const noexcept {return dmaActive;}
+  AddressType snapshotFetchAddress(AddressType pc, std::size_t offset) const noexcept {
+    return static_cast<AddressType>(pc + offset - (haltBugPcAdjustPending && offset != 0 ? 1 : 0));
+  }
+  AddressType snapshotNextFetchAddress(AddressType pc, std::size_t offset) const noexcept;
   void setIme(bool enabled);
   void scheduleImeEnable();
   void resetDivider();

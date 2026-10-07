@@ -22,6 +22,9 @@ struct MachineDescriptor {
     std::string displayName;
     int defaultFrameWidth = 160;
     int defaultFrameHeight = 144;
+    // Stable hardware family, independent of a provider's display/alias ID.
+    // Empty preserves the existing built-in ID convention.
+    std::string familyId;
 };
 
 class MachineRegistry {

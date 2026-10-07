@@ -34,7 +34,7 @@ void GameGearMemoryMap::setVdp(GameGearVDP* vdpPtr) {
     vdp = vdpPtr;
 }
 
-uint8_t GameGearMemoryMap::readIoPort(uint8_t port) {
+uint8_t GameGearMemoryMap::readIoCanonical(uint8_t port) {
     if (port <= 0x05u) {
         return input ? input->readSystemPort(port) : 0xFFu;
     }
@@ -56,7 +56,7 @@ uint8_t GameGearMemoryMap::readIoPort(uint8_t port) {
     return 0xFFu;
 }
 
-void GameGearMemoryMap::writeIoPort(uint8_t port, uint8_t value) {
+void GameGearMemoryMap::writeIoCanonical(uint8_t port, uint8_t value) {
     if ((port >= 0x01u && port <= 0x03u) || port == 0x05u || port == 0x06u) {
         if (input) {
             input->writeSystemPort(port, value);
@@ -185,7 +185,7 @@ uint64_t GameGearMemoryMap::codeMappingGeneration() const noexcept {
     return codeMappingGeneration_;
 }
 
-uint8_t GameGearMemoryMap::read(uint16_t addr) const {
+uint8_t GameGearMemoryMap::readCanonical(uint16_t addr) const {
     // BIOS mapping: if a BIOS is loaded and the memory-control bit D3 is active (0),
     // the BIOS occupies $0000-$03FF.
     if (addr < 0x0400u && !bios_.empty() && ((memoryControl_ & kMemoryControlBiosDisabled) == 0u)) {
@@ -254,7 +254,7 @@ bool GameGearMemoryMap::peekCodeByte(uint16_t addr, uint8_t& value) const noexce
     return false;
 }
 
-void GameGearMemoryMap::write(uint16_t addr, uint8_t value) {
+void GameGearMemoryMap::writeCanonical(uint16_t addr, uint8_t value) {
     // Mapper register region: $FFFC-$FFFF
     if (cartridge != nullptr && cartridge->handlesControlWrite(addr)) {
         cartridge->write(addr, value);
@@ -343,4 +343,73 @@ void GameGearMemoryMap::importState(const std::vector<uint8_t>& state) {
     ram = nextRam;
     bios_ = std::move(nextBios);
     ++codeMappingGeneration_;
+}
+
+uint64_t GameGearMemoryMap::analysisLocation(uint16_t a,bool write) const noexcept {
+    using BMMQ::Space::location;
+    if(write&&cartridge&&cartridge->handlesControlWrite(a))return location(1,0,a);
+    if(!write&&a<0x400&&!bios_.empty()&&!(memoryControl_&kMemoryControlBiosDisabled))return location(2,0,a);
+    if(!write&&(a==0xdc||a==0xdd||a==0xff00))return location(6,0,a);
+    if(a<0xc000)if(auto* backing=dynamic_cast<const IGameGearMapperRamV1*>(cartridge)){
+        size_t offset=0;if(backing->mappedRamOffsetV1(a,offset))return location(3,uint16_t(1+offset/0x4000),uint16_t(offset&0x3fff));
+    }
+    if(!write&&a<0xc000&&cartridge&&cartridge->loaded()){
+        size_t bank=0;if(cartridge->romBankForAddress(a,bank))return location(1,uint16_t(bank),a&0x3fff);
+        // Mapping generation distinguishes unresolved cartridge RAM windows.
+        return location(0,uint16_t(codeMappingGeneration_),a);
+    }
+    if((a>=0x8000&&a<0xa000&&vdp)||(a>=0xfe00&&a<0xfea0&&vdp)||(a>=0xff40&&a<=0xff4b&&vdp))return location(4,0,a);
+    if((a>=0xff10&&a<=0xff26&&psg)||(a>=0xff30&&a<=0xff3f&&psg))return location(5,0,a);
+    if(a>=0xc000)return location(3,0,uint16_t(0xc000+(a&0x1fff)));
+    size_t bank=0;if(cartridge&&cartridge->romBankForAddress(a,bank))return location(1,uint16_t(bank),a&0x3fff);
+    return location(0,0,a);
+}
+bool GameGearMemoryMap::analysisRam(uint16_t a) const noexcept {
+    auto read=analysisLocation(a),write=analysisLocation(a,true);
+    return (read>>32)==3&&read==write;
+}
+size_t GameGearMemoryMap::analysisRamCapacity() const noexcept {
+    const auto* backing=dynamic_cast<const IGameGearMapperRamV1*>(cartridge);
+    return 65536+(backing?backing->physicalRamCapacityV1():0);
+}
+bool GameGearMemoryMap::analysisPhysicalRamByte(size_t index,uint8_t& value) const noexcept {
+    if(index<65536){
+        if(index<0xc000||index>=0xe000)return false;
+        value=ram[index-0xc000];return true;
+    }
+    const auto* backing=dynamic_cast<const IGameGearMapperRamV1*>(cartridge);
+    return backing&&backing->physicalRamByteV1(index-65536,value);
+}
+uint8_t GameGearMemoryMap::read(uint16_t a) const {
+    auto value=readCanonical(a);auto* c=analysisCapture;
+    if (debugEngine) debugEngine->access(BMMQ::Debug::Access::Read, a, value, analysisLocation(a));
+    if(c&&c->phase!=BMMQ::Space::Kind::Fetch&&c->phase!=BMMQ::Space::Kind::Inspection){
+        BMMQ::Space::Record r;r.kind=BMMQ::Space::Kind::Read;r.address=a;r.location=analysisLocation(a);r.value=value;c->push(r);
+    }
+    return value;
+}
+void GameGearMemoryMap::write(uint16_t a,uint8_t value){
+    auto before=analysisLocation(a,true);writeCanonical(a,value);auto* c=analysisCapture;
+    if (debugEngine) debugEngine->access(BMMQ::Debug::Access::Write, a, value, before);
+    if(c&&c->phase!=BMMQ::Space::Kind::Inspection){
+        BMMQ::Space::Record r;r.kind=(before>>32)==1?BMMQ::Space::Kind::Mapping:BMMQ::Space::Kind::Write;
+        r.address=a;r.location=before;r.value=value;r.isWrite=true;c->push(r);
+        if(a>=0xfffc){r.kind=BMMQ::Space::Kind::Write;r.location=BMMQ::Space::location(3,0,uint16_t(a-0x2000));c->push(r);}
+    }
+}
+uint8_t GameGearMemoryMap::readIoPort(uint8_t port){return readEffectiveIoPort(port);}
+uint8_t GameGearMemoryMap::readEffectiveIoPort(uint16_t port){
+    auto value=readIoCanonical(port);
+    if (debugEngine) debugEngine->access(BMMQ::Debug::Access::PortRead, port, value, BMMQ::Space::location(7,0,uint8_t(port)));
+    if(auto* c=analysisCapture;c&&c->phase!=BMMQ::Space::Kind::Inspection){
+        BMMQ::Space::Record r;r.kind=BMMQ::Space::Kind::Read;r.address=port;r.location=BMMQ::Space::location(7,0,uint8_t(port));r.value=value;c->push(r);
+    }return value;
+}
+void GameGearMemoryMap::writeIoPort(uint8_t port,uint8_t value){writeEffectiveIoPort(port,value);}
+void GameGearMemoryMap::writeEffectiveIoPort(uint16_t port,uint8_t value){
+    writeIoCanonical(port,value);
+    if (debugEngine) debugEngine->access(BMMQ::Debug::Access::PortWrite, port, value, BMMQ::Space::location(7,0,uint8_t(port)));
+    if(auto* c=analysisCapture;c&&c->phase!=BMMQ::Space::Kind::Inspection){
+        BMMQ::Space::Record r;r.kind=BMMQ::Space::Kind::Write;r.address=port;r.location=BMMQ::Space::location(7,0,uint8_t(port));r.value=value;r.isWrite=true;c->push(r);
+    }
 }

@@ -2,13 +2,13 @@
 #include "Project.hpp"
 #include "Execution.hpp"
 #include "Analysis.hpp"
-#include "cores/gameboy/GameBoyMachine.hpp"
+#include "CoreAdapter.hpp"
 #include <thread>
 #include <mutex>
 namespace BMMQ::Space {
 class Session {
 public:
-    Session(GB::GameBoyMachine& machine,std::span<const uint8_t> rom,const std::filesystem::path& projectPath={},std::shared_ptr<StateBudget> budget={});
+    Session(Machine& machine,std::span<const uint8_t> rom,const std::filesystem::path& projectPath={},std::shared_ptr<StateBudget> budget={});
     ~Session();
     Session(const Session&)=delete;
     Session& operator=(const Session&)=delete;
@@ -18,16 +18,19 @@ public:
     void input(uint8_t mask);
     void executionMode(const std::string&);
     Json executionStatus() const;
+    std::string fingerprint()const{return core_->fingerprint();}
     void step();
     Json analyze();
     Json query(const Json&) const;
     void saveAnalysis(const std::filesystem::path&) const;
     void annotate(const std::string&,const Json&);
     Json runUntil(const Json&);
+    Json autoExplore(const Json&);
     void checkpoint(const std::filesystem::path& directory);
     void restore(const std::filesystem::path& directory);
 private:
-    GB::GameBoyMachine& machine_;
+    Machine& machine_;
+    std::unique_ptr<CoreAdapter> core_;
     std::vector<uint8_t> rom_;
     std::unique_ptr<Capture> capture_;
     Project project_;

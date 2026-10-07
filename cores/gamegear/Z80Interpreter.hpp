@@ -6,6 +6,7 @@
 #include <functional>
 #include <optional>
 #include <vector>
+#include <array>
 
 class Z80Interpreter {
 public:
@@ -16,6 +17,10 @@ public:
 
     Z80Interpreter();
     ~Z80Interpreter();
+    Z80Interpreter(const Z80Interpreter&) = default;
+    Z80Interpreter& operator=(const Z80Interpreter&) = default;
+    Z80Interpreter(Z80Interpreter&&) = default;
+    Z80Interpreter& operator=(Z80Interpreter&&) = default;
 
     void reset();
     [[nodiscard]] uint32_t step();
@@ -23,6 +28,8 @@ public:
     // Register interface
     void setMemoryInterface(MemRead reader, MemWrite writer);
     void setIoInterface(IoRead reader, IoWrite writer);
+    void setEffectiveIoInterface(std::function<uint8_t(uint16_t)> reader,
+        std::function<void(uint16_t,uint8_t)> writer);
 
     // Install a provider for setInterruptRequestProvider that returns a
     // std::optional<uint8_t> containing the interrupt vector byte when an
@@ -39,6 +46,10 @@ public:
     // back to IM1 so interrupt handling stays in a defined state.
     void setInterruptMode(uint8_t mode) { interruptMode_ = (mode <= 2u) ? mode : 1u; }
     [[nodiscard]] std::vector<uint8_t> exportState() const;
+    // Internal architectural view for owned analysis/execution snapshots.
+    [[nodiscard]] std::array<uint16_t,20> analysisRegisters() const noexcept;
+    void setAnalysisRegisters(const std::array<uint16_t,20>& registers);
+    [[nodiscard]] bool fetchingInstructionBytes() const noexcept {return fetching_;}
     void importState(const std::vector<uint8_t>& state);
 
     // Z80 registers
@@ -77,6 +88,7 @@ public:
     }
 
 private:
+    bool fetching_=false;
     // Set by EI; becomes effective only after the instruction following
     // the `EI` instruction completes (deferred IME enable semantics).
     // When >0, it is decremented each `step()` and when it reaches 0
@@ -102,11 +114,13 @@ private:
     MemWrite memWrite;
     IoRead ioRead;
     IoWrite ioWrite;
+    std::function<uint8_t(uint16_t)> effectiveIoRead;
+    std::function<void(uint16_t,uint8_t)> effectiveIoWrite;
 
     // Internal helpers
     void requireMemoryInterface() const;
-    uint8_t readIo(uint8_t port) const;
-    void writeIo(uint8_t port, uint8_t value) const;
+    uint8_t readIo(uint16_t port) const;
+    void writeIo(uint16_t port, uint8_t value) const;
     uint8_t fetch8();
     uint8_t fetchOpcode();
     uint16_t fetch16();

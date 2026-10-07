@@ -6,10 +6,27 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <string_view>
 namespace BMMQ::Space {
 enum class Kind : uint8_t { Begin, Fetch, Read, Write, Device, Dma, Mapping, End, Inspection, Gap, Input };
-inline uint32_t hardwareCategoryBit(uint64_t location,bool write) noexcept {
+inline uint32_t hardwareCategoryBit(uint64_t location,bool write,std::string_view core="gameboy") noexcept {
     auto space=location>>32;auto a=uint16_t(location);
+    if(core=="gamegear") {
+        if(space==1&&write)return 1;
+        if(space==7){
+            if(a==6||((a&0xc0)==0x40&&write))return 256;
+            if(a<=5)return a==0?16:32;
+            if(a>=7&&a<=0x3f)return (a&1)?16:4096;
+            if((a&0xc0)==0x80)return 2048;
+            if((a&0xc0)==0x40)return 64;
+            if((a&0xfe)==0xdc)return 16;
+        }
+        if(space>=8&&space<=11)return 2048;
+        if(space==4)return 2048;
+        if(space==5)return 256;
+        if(space==6)return 16;
+        return 0;
+    }
     if(space==1&&write)return 1;
     if(space==4){if(a>=0x8000&&a<=0x97ff)return 2;
     if(a>=0x9800&&a<=0x9fff)return 4;
@@ -47,12 +64,15 @@ struct Record {
     uint64_t sequence = 0;
     uint32_t cycles = 0;
     uint64_t targetLocation = 0, fallthroughLocation = 0;
-    std::array<uint16_t,6> registers{}; // AF, BC, DE, HL, SP, PC
+    std::array<uint16_t,20> registers{}; // Core-described; GB uses first six.
     std::array<uint8_t,3> bytes{};
-    uint8_t length = 0;
+    uint32_t length = 0;
+    // Fetch payloads are fixed chunks; full instructions are assembled off-lane.
+    std::array<uint8_t,64> fetchBytes{};
+    uint8_t fetchLength=0;
     uint8_t executionSource = 0; // 0 canonical bus, 1 snapshot, 2 initialization
     uint64_t supplierSequence = 0, supplierBlock = 0, supplierEpoch = 0;
-    std::array<uint64_t,10> registerSuppliers{}, registerSupplierBlocks{}, registerSupplierEpochs{};
+    std::array<uint64_t,32> registerSuppliers{}, registerSupplierBlocks{}, registerSupplierEpochs{};
 };
 class Capture {
 public:
@@ -78,7 +98,7 @@ public:
         if (stopped_.load(std::memory_order_relaxed)) return;
         if(watch.enabled&&!watch.matched&&record.origin==AccessOrigin::Cpu&&record.accepted&&
            (record.kind==Kind::Read||record.kind==Kind::Write||record.kind==Kind::Device||record.kind==Kind::Mapping)&&
-           record.isWrite==watch.write&&record.address>=watch.first&&record.address<=watch.last&&(!watch.categoryMask||(watch.categoryMask & hardwareCategoryBit(record.location,record.isWrite)))){watch.matched=true;watch.record=record;}
+           record.isWrite==watch.write&&record.address>=watch.first&&record.address<=watch.last&&(!watch.categoryMask||(watch.categoryMask & hardwareCategoryBit(record.location,record.isWrite,core)))){watch.matched=true;watch.record=record;}
         const auto w = written_.load(std::memory_order_relaxed);
         if (w - read_.load(std::memory_order_acquire) == capacity) {
             lost_.fetch_add(1, std::memory_order_relaxed);
@@ -101,6 +121,7 @@ public:
     bool stopped() const noexcept { return stopped_.load(); }
     std::shared_ptr<StateBudget> budget=std::make_shared<StateBudget>();
     Kind phase = Kind::Inspection; // producer lane only
+    std::string_view core="gameboy";
     uint64_t sequence = 0;
 private:
     std::unique_ptr<std::array<Record,capacity>> records_;
@@ -114,7 +135,7 @@ inline uint64_t location(uint8_t space, uint16_t bank, uint16_t offset) noexcept
 }
 std::string digest(std::span<const uint8_t> bytes);
 struct OperandInfo {
-    uint16_t reads = 0, writes = 0; // A,F,B,C,D,E,H,L,SP,PC
+    uint32_t reads = 0, writes = 0; // A,F,B,C,D,E,H,L,SP,PC
     std::string text;
     std::string flow = "fallthrough";
     bool conditional = false;

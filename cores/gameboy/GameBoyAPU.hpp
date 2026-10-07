@@ -108,6 +108,10 @@ class GameBoyAPU {
 public:
     GameBoyAPU();
     ~GameBoyAPU() = default;
+    GameBoyAPU(const GameBoyAPU&) = default;
+    GameBoyAPU& operator=(const GameBoyAPU&) = default;
+    GameBoyAPU(GameBoyAPU&&) = default;
+    GameBoyAPU& operator=(GameBoyAPU&&) = default;
 
     void reset();
 

@@ -10,6 +10,7 @@
 
 #include "plugins/input/InputEngine.hpp"
 #include "plugins/input/InputPlugin.hpp"
+#include "plugins/input/InputSnapshotPluginV1.hpp"
 
 namespace BMMQ {
 
@@ -175,7 +176,7 @@ public:
         }
 
         const auto caps = adapter_->capabilities();
-        if (!isLiveCompatible(caps)) {
+        if (!isLiveCompatible(*adapter_, caps)) {
             diagnostics_.lastBackendError = "input adapter is not live-safe";
             setState(InputLifecycleState::Faulted);
             return false;
@@ -210,6 +211,22 @@ public:
             return false;
         }
 
+        if (snapshotAdapter_ != nullptr) {
+            if (generation < engine_.currentGeneration()) {
+                (void)engine_.stageDigitalSnapshot(0, generation);
+                syncDiagnostics();
+                return false;
+            }
+            const auto sample = snapshotAdapter_->sampleBoundaryV1(generation);
+            if (sample.neutralFallback) engine_.applyNeutralFallback(generation);
+            else {
+                (void)engine_.stageDigitalSnapshot(sample.digital, generation);
+                (void)engine_.stageAnalogSnapshot(sample.analog, generation);
+                (void)engine_.commitSnapshots();
+            }
+            syncDiagnostics();
+            return true;
+        }
         bool stagedAny = false;
         if (digitalAdapter_ != nullptr) {
             if (const auto sample = digitalAdapter_->sampleDigitalInput(); sample.has_value()) {
@@ -248,9 +265,11 @@ public:
     }
 
 private:
-    [[nodiscard]] static bool isLiveCompatible(const InputPluginCapabilities& caps) noexcept
+    [[nodiscard]] static bool isLiveCompatible(const IInputPlugin& adapter, const InputPluginCapabilities& caps) noexcept
     {
-        return caps.pollingSafe && caps.deterministic && !caps.nonRealtimeOnly;
+        const auto* sampled = dynamic_cast<const IInputSnapshotSourceV1*>(&adapter);
+        return caps.pollingSafe && !caps.nonRealtimeOnly &&
+            (caps.deterministic || (sampled != nullptr && sampled->boundedBoundarySamplingV1()));
     }
 
     [[nodiscard]] static bool validateCapabilities(const InputPluginCapabilities& caps) noexcept
@@ -268,7 +287,7 @@ private:
                 return false;
             }
             const auto currentCaps = adapter_->capabilities();
-            if (!currentCaps.hotSwapSafe || !caps.hotSwapSafe || !isLiveCompatible(caps)) {
+            if (!currentCaps.hotSwapSafe || !caps.hotSwapSafe || !isLiveCompatible(adapter, caps)) {
                 return false;
             }
             if (&adapter == adapter_) {
@@ -322,12 +341,14 @@ private:
 
     void cacheAdapterInterfacesLocked(IInputPlugin& adapter) noexcept
     {
+        snapshotAdapter_ = dynamic_cast<IInputSnapshotSourceV1*>(&adapter);
         digitalAdapter_ = dynamic_cast<IDigitalInputSourcePlugin*>(&adapter);
         analogAdapter_ = dynamic_cast<IAnalogInputSourcePlugin*>(&adapter);
     }
 
     void clearAdapterInterfaceCacheLocked() noexcept
     {
+        snapshotAdapter_ = nullptr;
         digitalAdapter_ = nullptr;
         analogAdapter_ = nullptr;
     }
@@ -348,6 +369,7 @@ private:
 
     InputEngine engine_{};
     IInputPlugin* adapter_ = nullptr;
+    IInputSnapshotSourceV1* snapshotAdapter_ = nullptr;
     IDigitalInputSourcePlugin* digitalAdapter_ = nullptr;
     IAnalogInputSourcePlugin* analogAdapter_ = nullptr;
     std::unique_ptr<IInputPlugin> ownedAdapter_{};

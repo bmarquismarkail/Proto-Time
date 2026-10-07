@@ -1,0 +1,688 @@
+{
+  "schemaVersion": 1,
+  "cores": [
+    "gameboy",
+    "gamegear"
+  ],
+  "hosts": [
+    "linux-x86_64",
+    "linux-aarch64"
+  ],
+  "features": [
+    {
+      "id": "acceleration.native",
+      "acceptance": "Fresh whole-block host-work design preserves per-instruction side exits and guards; both hosts meet >=10% median corpus gain and <=5% repeatable regression, or a new measured no-go is reviewed.",
+      "automated": [
+        "targeted engine/service/transport/failure regression coverage",
+        "full CTest and applicable conformance/performance gates"
+      ],
+      "live": false,
+      "references": [
+        ".internal/docs/proto-time-phase-11e-native-backend-spike.md",
+        ".internal/docs/time-acceleration-evaluation.md"
+      ],
+      "allowReviewedNoGo": true,
+      "coreAcceptance": {
+        "gameboy": "Fresh whole-block host-work design preserves per-instruction side exits and guards; both hosts meet >=10% median corpus gain and <=5% repeatable regression, or a new measured no-go is reviewed. Apply the contract to the Game Boy machine-owned execution and lifecycle paths.",
+        "gamegear": "Fresh whole-block host-work design preserves per-instruction side exits and guards; both hosts meet >=10% median corpus gain and <=5% repeatable regression, or a new measured no-go is reviewed. Apply the contract to the Game Gear machine-owned execution and lifecycle paths."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "audio",
+      "acceptance": "Prepared drain-only device output, file/dummy adapters, processors, PSG stems/events and MIDI retain bounded lifecycle and fault behavior.",
+      "automated": [
+        "targeted engine/service/transport/failure regression coverage",
+        "full CTest and applicable conformance/performance gates"
+      ],
+      "live": true,
+      "references": [
+        "docs/audio_plugin_subsystem_spec.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "Prepared drain-only device output, file/dummy adapters, processors, PSG stems/events and MIDI retain bounded lifecycle and fault behavior. Apply the contract to the Game Boy machine-owned execution and lifecycle paths.",
+        "gamegear": "Prepared drain-only device output, file/dummy adapters, processors, PSG stems/events and MIDI retain bounded lifecycle and fault behavior. Apply the contract to the Game Gear machine-owned execution and lifecycle paths."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "debugger",
+      "acceptance": "Dedicated service supports safe breakpoints/watchpoints, stepping/edits, trace files, symbols and timeline/profiling with explicit degradation.",
+      "automated": [
+        "smoke-debug-service: both-core boundary control, bank/watch rules, transactional RAM/register edits, generations, SPSC handoff, backpressure and backend fault paths",
+        "smoke-debug-transport and smoke-debug-dap-cli: bounded DAP, stale scopes and real stdio sessions",
+        "full CTest, TSAN and applicable performance gates on both hosts"
+      ],
+      "live": false,
+      "references": [
+        "docs/debugger_instrumentation_plugin_subsystem_spec.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "Dedicated service supports safe breakpoints/watchpoints, stepping/edits, trace files, symbols and timeline/profiling with explicit degradation. Apply the contract to the Game Boy machine-owned execution and lifecycle paths.",
+        "gamegear": "Dedicated service supports safe breakpoints/watchpoints, stepping/edits, trace files, symbols and timeline/profiling with explicit degradation. Apply the contract to the Game Gear machine-owned execution and lifecycle paths."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "debugger.dap",
+      "acceptance": "DAP CLI/remote/editor sessions implement pause/step/inspection/edit semantics and invalidate stale handles.",
+      "automated": [
+        "smoke-debug-transport and smoke-debug-dap-cli: both-core initialize/configure/control/inspection/edit/disconnect and malformed frames",
+        "full CTest and TSAN on both hosts"
+      ],
+      "live": true,
+      "references": [
+        "docs/debugger_instrumentation_plugin_subsystem_spec.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "DAP CLI/remote/editor sessions implement pause/step/inspection/edit semantics and invalidate stale handles. Apply the contract to the Game Boy machine-owned execution and lifecycle paths.",
+        "gamegear": "DAP CLI/remote/editor sessions implement pause/step/inspection/edit semantics and invalidate stale handles. Apply the contract to the Game Gear machine-owned execution and lifecycle paths."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "execution.ir",
+      "acceptance": "Portable and cached dispatch preserve per-instruction retirement, code/mapping guards and safe pre-effect fallback.",
+      "automated": [
+        "targeted engine/service/transport/failure regression coverage",
+        "full CTest and applicable conformance/performance gates"
+      ],
+      "live": false,
+      "references": [
+        "docs/architecture.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "Portable and cached dispatch preserve per-instruction retirement, code/mapping guards and safe pre-effect fallback. Apply the contract to the Game Boy machine-owned execution and lifecycle paths.",
+        "gamegear": "Portable and cached dispatch preserve per-instruction retirement, code/mapping guards and safe pre-effect fallback. Apply the contract to the Game Gear machine-owned execution and lifecycle paths."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "execution.replay",
+      "acceptance": "Recording and replay preserve the complete instruction identity and reproduce deterministic visible machine state.",
+      "automated": [
+        "targeted engine/service/transport/failure regression coverage",
+        "full CTest and applicable conformance/performance gates"
+      ],
+      "live": false,
+      "references": [
+        "docs/architecture.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "Recording and replay preserve the complete instruction identity and reproduce deterministic visible machine state. Apply the contract to the Game Boy machine-owned execution and lifecycle paths.",
+        "gamegear": "Recording and replay preserve the complete instruction identity and reproduce deterministic visible machine state. Apply the contract to the Game Gear machine-owned execution and lifecycle paths."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "hardware",
+      "acceptance": "All currently exposed CPU encodings, interrupt, BIOS, device, mapper and persistence paths have exact conformance evidence.",
+      "automated": [
+        "targeted engine/service/transport/failure regression coverage",
+        "full CTest and applicable conformance/performance gates",
+        "smoke-space-cartridge-ram"
+      ],
+      "live": false,
+      "references": [
+        "docs/architecture.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "All currently exposed CPU encodings, interrupt, BIOS, device, mapper and persistence paths have exact conformance evidence. DMG/CGB model, CPU, PPU/APU/input/timer/serial/DMA and exposed MBC/BIOS paths.",
+        "gamegear": "All currently exposed CPU encodings, interrupt, BIOS, device, mapper and persistence paths have exact conformance evidence. Z80 including supported prefixes/undocumented semantics, VDP/PSG/stereo/controller/serial, exposed mapper/BIOS and mode paths."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "input",
+      "acceptance": "Logical digital/analog input commits at deterministic boundaries; lifecycle, overflow, replay, neutral fallback and adapters are covered.",
+      "automated": [
+        "targeted engine/service/transport/failure regression coverage",
+        "full CTest and applicable conformance/performance gates"
+      ],
+      "live": false,
+      "references": [
+        "docs/input_plugin_subsystem_spec.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "Logical digital/analog input commits at deterministic boundaries; lifecycle, overflow, replay, neutral fallback and adapters are covered. Apply the contract to the Game Boy machine-owned execution and lifecycle paths.",
+        "gamegear": "Logical digital/analog input commits at deterministic boundaries; lifecycle, overflow, replay, neutral fallback and adapters are covered. Apply the contract to the Game Gear machine-owned execution and lifecycle paths."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "input.native",
+      "acceptance": "Linux native controller adapter commits the same logical state as SDL, with hotplug and disconnect acceptance.",
+      "automated": [
+        "smoke-linux-controller: both real core mappings, bounded worker handoff, generation and loss/lifecycle paths",
+        "smoke-input-service and smoke-emulator-config: legacy admission and explicit controller selection",
+        "full CTest and native/QEMU ARM64 checks; TSAN handoff checks; physical device acceptance remains required"
+      ],
+      "live": true,
+      "references": [
+        "docs/input_plugin_subsystem_spec.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "Linux native controller adapter commits the same logical state as SDL, with hotplug and disconnect acceptance. Apply the contract to the Game Boy machine-owned execution and lifecycle paths.",
+        "gamegear": "Linux native controller adapter commits the same logical state as SDL, with hotplug and disconnect acceptance. Apply the contract to the Game Gear machine-owned execution and lifecycle paths."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "input.netplay",
+      "acceptance": "Frame-indexed lockstep remote input commits reproducibly and detects desynchronization with controlled disconnect behavior.",
+      "automated": [
+        "smoke-netplay: both-core baseline instruction/cycle/fingerprint parity, packet bindings, reorder/history/loss gates",
+        "smoke-netplay-transport: UDP endpoint, lifecycle, disconnect and bounded handoff failures",
+        "smoke-netplay-cli: independent processes and final complete-state acknowledgment on both cores",
+        "full CTest and native/QEMU ARM64 checks; TSAN handoff checks; live network acceptance remains required"
+      ],
+      "live": true,
+      "references": [
+        "docs/input_plugin_subsystem_spec.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "Frame-indexed lockstep remote input commits reproducibly and detects desynchronization with controlled disconnect behavior. Apply the contract to the Game Boy machine-owned execution and lifecycle paths.",
+        "gamegear": "Frame-indexed lockstep remote input commits reproducibly and detects desynchronization with controlled disconnect behavior. Apply the contract to the Game Gear machine-owned execution and lifecycle paths."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "mods.state",
+      "acceptance": "Native modules and host regions save/restore/reset atomically with machine state and reject corrupt or incompatible payloads.",
+      "automated": [
+        "smoke-host-region-checkpoint: both cores, identity/layout rejection, legacy loading, full device failure rollback and stable region storage",
+        "smoke-native-mod-checkpoint: both cores, trampoline and observer cohorts, failed callback rollback, reset, stale removal and wrong-lane rejection",
+        "smoke-native-mod, smoke-gameboy-native-trampoline, smoke-gamegear-native-trampoline",
+        "full CTest, applicable TSAN and both host architectures"
+      ],
+      "live": false,
+      "references": [
+        "machine/modding/README.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "Native modules and host regions save/restore/reset atomically with machine state and reject corrupt or incompatible payloads. Apply the contract to the Game Boy machine-owned execution and lifecycle paths.",
+        "gamegear": "Native modules and host regions save/restore/reset atomically with machine state and reject corrupt or incompatible payloads. Apply the contract to the Game Gear machine-owned execution and lifecycle paths."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "observation",
+      "acceptance": "Native observation and immutable tooling views are bounded, revision-correct and lifecycle safe.",
+      "automated": [
+        "targeted engine/service/transport/failure regression coverage",
+        "full CTest and applicable conformance/performance gates"
+      ],
+      "live": false,
+      "references": [
+        "docs/native_observation.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "Native observation and immutable tooling views are bounded, revision-correct and lifecycle safe. Apply the contract to the Game Boy machine-owned execution and lifecycle paths.",
+        "gamegear": "Native observation and immutable tooling views are bounded, revision-correct and lifecycle safe. Apply the contract to the Game Gear machine-owned execution and lifecycle paths."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "port.forward",
+      "acceptance": "Reviewed inventories and replacement contracts yield a reproducible standalone Game Boy to Game Gear port verified independently.",
+      "automated": [
+        "targeted engine/service/transport/failure regression coverage",
+        "full CTest and applicable conformance/performance gates"
+      ],
+      "live": true,
+      "references": [
+        "space/README.md",
+        ".internal/docs/space-analysis-porting-design.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "Reviewed inventories and replacement contracts yield a reproducible standalone Game Boy to Game Gear port verified independently. Source ROM physical/instruction inventory and legal control model are reviewed independently of coverage.",
+        "gamegear": "Reviewed inventories and replacement contracts yield a reproducible standalone Game Boy to Game Gear port verified independently. Standalone target has reviewed hardware replacements and independent gameplay/art/animation/input/audio proof."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "port.reverse",
+      "acceptance": "Game Gear authored banked/indexed/shadow-register fixture yields a new standalone Game Boy port from captured evidence with independent graphics/audio/input/gameplay proof.",
+      "automated": [
+        "targeted engine/service/transport/failure regression coverage",
+        "full CTest and applicable conformance/performance gates"
+      ],
+      "live": true,
+      "references": [
+        "space/README.md",
+        ".internal/docs/space-analysis-porting-design.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "Game Gear authored banked/indexed/shadow-register fixture yields a new standalone Game Boy port from captured evidence with independent graphics/audio/input/gameplay proof. New standalone target from captured Game Gear analysis has reviewed register/hardware replacements and independent scenario proof.",
+        "gamegear": "Game Gear authored banked/indexed/shadow-register fixture yields a new standalone Game Boy port from captured evidence with independent graphics/audio/input/gameplay proof. Authored source fixture uses banked code, indexed/shadow registers, graphics/audio ports and input, with complete physical inventory."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "providers.dynamic",
+      "acceptance": "Versioned dynamic providers preserve module lifetime/ABI validation and cannot admit an unapproved hardware family.",
+      "automated": [
+        "targeted engine/service/transport/failure regression coverage",
+        "full CTest and applicable conformance/performance gates"
+      ],
+      "live": false,
+      "references": [
+        ".internal/docs/proto-time-plugin-architecture.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "Versioned dynamic providers preserve module lifetime/ABI validation and cannot admit an unapproved hardware family. Apply the contract to the Game Boy machine-owned execution and lifecycle paths.",
+        "gamegear": "Versioned dynamic providers preserve module lifetime/ABI validation and cannot admit an unapproved hardware family. Apply the contract to the Game Gear machine-owned execution and lifecycle paths."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "script.file",
+      "acceptance": "File automation uses service-managed snapshots and atomic staged mutations with explicit permissions and failure reporting.",
+      "automated": [
+        "smoke-scripting: owned snapshot runtimes, permissions, failure atomicity, limits, stale generations, lifecycle, prepared retirement hooks",
+        "smoke-scripting-cli: both-core file automation and transactional device-write rejection",
+        "full CTest, TSAN and all enabled runtime adapters on both host architectures; unavailable runtime remains not run"
+      ],
+      "live": false,
+      "references": [
+        "docs/scripting_plugin_subsystem_spec.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "File automation uses service-managed snapshots and atomic staged mutations with explicit permissions and failure reporting. Apply the contract to the Game Boy machine-owned execution and lifecycle paths.",
+        "gamegear": "File automation uses service-managed snapshots and atomic staged mutations with explicit permissions and failure reporting. Apply the contract to the Game Gear machine-owned execution and lifecycle paths."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "script.javascript",
+      "acceptance": "QuickJS adapter supports headless automation, paused inspection/edits and debugger helpers outside the machine lane.",
+      "automated": [
+        "smoke-scripting: owned snapshot runtimes, permissions, failure atomicity, limits, stale generations, lifecycle, prepared retirement hooks",
+        "smoke-scripting-cli: both-core file automation and transactional device-write rejection",
+        "full CTest, TSAN and all enabled runtime adapters on both host architectures; unavailable runtime remains not run"
+      ],
+      "live": false,
+      "references": [
+        "docs/scripting_plugin_subsystem_spec.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "QuickJS adapter supports headless automation, paused inspection/edits and debugger helpers outside the machine lane. Apply the contract to the Game Boy machine-owned execution and lifecycle paths.",
+        "gamegear": "QuickJS adapter supports headless automation, paused inspection/edits and debugger helpers outside the machine lane. Apply the contract to the Game Gear machine-owned execution and lifecycle paths."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "script.live",
+      "acceptance": "Live hooks execute only bounded prevalidated actions and reject unauthorized or over-budget work.",
+      "automated": [
+        "smoke-scripting: owned snapshot runtimes, permissions, failure atomicity, limits, stale generations, lifecycle, prepared retirement hooks",
+        "smoke-scripting-cli: both-core file automation and transactional device-write rejection",
+        "full CTest, TSAN and all enabled runtime adapters on both host architectures; unavailable runtime remains not run"
+      ],
+      "live": false,
+      "references": [
+        "docs/scripting_plugin_subsystem_spec.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "Live hooks execute only bounded prevalidated actions and reject unauthorized or over-budget work. Apply the contract to the Game Boy machine-owned execution and lifecycle paths.",
+        "gamegear": "Live hooks execute only bounded prevalidated actions and reject unauthorized or over-budget work. Apply the contract to the Game Gear machine-owned execution and lifecycle paths."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "script.lua",
+      "acceptance": "Lua adapter supports headless automation, paused inspection/edits and debugger helpers outside the machine lane.",
+      "automated": [
+        "smoke-scripting: owned snapshot runtimes, permissions, failure atomicity, limits, stale generations, lifecycle, prepared retirement hooks",
+        "smoke-scripting-cli: both-core file automation and transactional device-write rejection",
+        "full CTest, TSAN and all enabled runtime adapters on both host architectures; unavailable runtime remains not run"
+      ],
+      "live": false,
+      "references": [
+        "docs/scripting_plugin_subsystem_spec.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "Lua adapter supports headless automation, paused inspection/edits and debugger helpers outside the machine lane. Apply the contract to the Game Boy machine-owned execution and lifecycle paths.",
+        "gamegear": "Lua adapter supports headless automation, paused inspection/edits and debugger helpers outside the machine lane. Apply the contract to the Game Gear machine-owned execution and lifecycle paths."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "script.python",
+      "acceptance": "Python adapter supports headless automation, paused inspection/edits and debugger helpers outside the machine lane.",
+      "automated": [
+        "smoke-scripting: owned snapshot runtimes, permissions, failure atomicity, limits, stale generations, lifecycle, prepared retirement hooks",
+        "smoke-scripting-cli: both-core file automation and transactional device-write rejection",
+        "full CTest, TSAN and all enabled runtime adapters on both host architectures; unavailable runtime remains not run"
+      ],
+      "live": false,
+      "references": [
+        "docs/scripting_plugin_subsystem_spec.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "Python adapter supports headless automation, paused inspection/edits and debugger helpers outside the machine lane. Apply the contract to the Game Boy machine-owned execution and lifecycle paths.",
+        "gamegear": "Python adapter supports headless automation, paused inspection/edits and debugger helpers outside the machine lane. Apply the contract to the Game Gear machine-owned execution and lifecycle paths."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "space.analysis",
+      "acceptance": "Bank-aware CFG, hardware roles, frozen queries and viewer distinguish facts, inferred purpose, reviews and unresolved evidence.",
+      "automated": [
+        "targeted engine/service/transport/failure regression coverage",
+        "full CTest and applicable conformance/performance gates"
+      ],
+      "live": false,
+      "references": [
+        "space/README.md",
+        ".internal/docs/space-analysis-porting-design.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "Bank-aware CFG, hardware roles, frozen queries and viewer distinguish facts, inferred purpose, reviews and unresolved evidence. Use Game Boy hardware descriptors; retain observed facts and unresolved gameplay meaning.",
+        "gamegear": "Bank-aware CFG, hardware roles, frozen queries and viewer distinguish facts, inferred purpose, reviews and unresolved evidence. Use Game Gear VRAM/CRAM/VDP/PSG/stereo/input/serial/mapper/BIOS descriptors and provenance."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "space.capture",
+      "acceptance": "Real machine retirement captures complete instruction identity, register/memory/port provenance and explicit loss without changing baseline state.",
+      "automated": [
+        "targeted engine/service/transport/failure regression coverage",
+        "full CTest and applicable conformance/performance gates",
+        "smoke-space-cartridge-ram"
+      ],
+      "live": false,
+      "references": [
+        "space/README.md",
+        ".internal/docs/space-analysis-porting-design.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "Real machine retirement captures complete instruction identity, register/memory/port provenance and explicit loss without changing baseline state. Preserve LR35902 instruction/register and physical memory/device evidence; schema-1 imports.",
+        "gamegear": "Real machine retirement captures complete instruction identity, register/memory/port provenance and explicit loss without changing baseline state. Preserve all Z80 pairs/shadow/indexed/control registers, full effective ports and untruncated chunked fetch/backing identity."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "space.exploration",
+      "acceptance": "Deterministic bounded checkpoint branching prioritizes unresolved transfers/scenarios and produces reproducible stuck reports.",
+      "automated": [
+        "targeted engine/service/transport/failure regression coverage",
+        "full CTest and applicable conformance/performance gates"
+      ],
+      "live": false,
+      "references": [
+        "space/README.md",
+        ".internal/docs/space-analysis-porting-design.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "Deterministic bounded checkpoint branching prioritizes unresolved transfers/scenarios and produces reproducible stuck reports. Apply the contract to the Game Boy machine-owned execution and lifecycle paths.",
+        "gamegear": "Deterministic bounded checkpoint branching prioritizes unresolved transfers/scenarios and produces reproducible stuck reports. Apply the contract to the Game Gear machine-owned execution and lifecycle paths."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "space.snapshot",
+      "acceptance": "Every supported CPU family executes RAM/registers through sparse views with exact baseline state/effects/cycles and transactional paired restore.",
+      "automated": [
+        "targeted engine/service/transport/failure regression coverage",
+        "full CTest and applicable conformance/performance gates",
+        "smoke-space-cartridge-ram"
+      ],
+      "live": false,
+      "references": [
+        "space/README.md",
+        ".internal/docs/space-analysis-porting-design.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "Every supported CPU family executes RAM/registers through sparse views with exact baseline state/effects/cycles and transactional paired restore. RAM/HRAM/echo, DMA restrictions and canonical MMIO/retirement match baseline.",
+        "gamegear": "Every supported CPU family executes RAM/registers through sparse views with exact baseline state/effects/cycles and transactional paired restore. Sparse RAM/mirrors, banking, IX/IY/shadows/refresh, interrupt modes/HALT/deferred EI and ordered port/device effects match baseline."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "space.symbols",
+      "acceptance": "ROM-bound source/symbol imports resolve physical instruction identities and reject mismatched revisions.",
+      "automated": [
+        "targeted engine/service/transport/failure regression coverage",
+        "full CTest and applicable conformance/performance gates"
+      ],
+      "live": false,
+      "references": [
+        "space/README.md",
+        ".internal/docs/space-analysis-porting-design.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "ROM-bound source/symbol imports resolve physical instruction identities and reject mismatched revisions. Apply the contract to the Game Boy machine-owned execution and lifecycle paths.",
+        "gamegear": "ROM-bound source/symbol imports resolve physical instruction identities and reject mismatched revisions. Apply the contract to the Game Gear machine-owned execution and lifecycle paths."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "timing",
+      "acceptance": "Real machines meet the existing concurrency and end-to-end input/video scheduling gates without deterministic state changes.",
+      "automated": [
+        "targeted engine/service/transport/failure regression coverage",
+        "full CTest and applicable conformance/performance gates"
+      ],
+      "live": false,
+      "references": [
+        "docs/timing_service_blueprint.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "Real machines meet the existing concurrency and end-to-end input/video scheduling gates without deterministic state changes. Apply the contract to the Game Boy machine-owned execution and lifecycle paths.",
+        "gamegear": "Real machines meet the existing concurrency and end-to-end input/video scheduling gates without deterministic state changes. Apply the contract to the Game Gear machine-owned execution and lifecycle paths."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "video",
+      "acceptance": "All existing presenters, dumps and image capture preserve canonical frame packets and lifecycle generations.",
+      "automated": [
+        "targeted engine/service/transport/failure regression coverage",
+        "full CTest and applicable conformance/performance gates"
+      ],
+      "live": true,
+      "references": [
+        "docs/video_plugin_subsystem_spec.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "All existing presenters, dumps and image capture preserve canonical frame packets and lifecycle generations. Apply the contract to the Game Boy machine-owned execution and lifecycle paths.",
+        "gamegear": "All existing presenters, dumps and image capture preserve canonical frame packets and lifecycle generations. Apply the contract to the Game Gear machine-owned execution and lifecycle paths."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "video.debug",
+      "acceptance": "Core-specific tile/sprite/video memory inspection and overlays have independent visual acceptance.",
+      "automated": [
+        "smoke-browser-inspector",
+        "smoke-browser-cli",
+        "full CTest and applicable conformance/performance gates"
+      ],
+      "live": true,
+      "references": [
+        "docs/video_plugin_subsystem_spec.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "Core-specific tile/sprite/video memory inspection and overlays have independent visual acceptance. Inspect exposed PPU tile/map/sprite/palette memories with owned generation-aware snapshots.",
+        "gamegear": "Core-specific tile/sprite/video memory inspection and overlays have independent visual acceptance. Inspect exposed VDP VRAM/CRAM/register/sprite state with owned generation-aware snapshots."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "video.remote",
+      "acceptance": "Browser streaming and remote inspection consume owned frame packets without blocking machine stepping.",
+      "automated": [
+        "smoke-browser-inspector",
+        "smoke-browser-cli",
+        "full CTest and applicable conformance/performance gates"
+      ],
+      "live": true,
+      "references": [
+        "docs/video_plugin_subsystem_spec.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "Browser streaming and remote inspection consume owned frame packets without blocking machine stepping. Apply the contract to the Game Boy machine-owned execution and lifecycle paths.",
+        "gamegear": "Browser streaming and remote inspection consume owned frame packets without blocking machine stepping. Apply the contract to the Game Gear machine-owned execution and lifecycle paths."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "visual.authoring",
+      "acceptance": "Resource capture, matching, labels, transforms, layered/animated replacement and scripted authoring work on both cores.",
+      "automated": [
+        "targeted engine/service/transport/failure regression coverage",
+        "full CTest and applicable conformance/performance gates"
+      ],
+      "live": true,
+      "references": [
+        "docs/texture-pack/design.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "Resource capture, matching, labels, transforms, layered/animated replacement and scripted authoring work on both cores. Apply the contract to the Game Boy machine-owned execution and lifecycle paths.",
+        "gamegear": "Resource capture, matching, labels, transforms, layered/animated replacement and scripted authoring work on both cores. Apply the contract to the Game Gear machine-owned execution and lifecycle paths."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
+      "id": "visual.shader",
+      "acceptance": "GPU shaders/postprocessing stay on the presentation lane, preserve guest semantics and retain last-good assets on failure.",
+      "automated": [
+        "targeted engine/service/transport/failure regression coverage",
+        "full CTest and applicable conformance/performance gates"
+      ],
+      "live": true,
+      "references": [
+        "docs/texture-pack/design.md"
+      ],
+      "allowReviewedNoGo": false,
+      "coreAcceptance": {
+        "gameboy": "GPU shaders/postprocessing stay on the presentation lane, preserve guest semantics and retain last-good assets on failure. Apply the contract to the Game Boy machine-owned execution and lifecycle paths.",
+        "gamegear": "GPU shaders/postprocessing stay on the presentation lane, preserve guest semantics and retain last-good assets on failure. Apply the contract to the Game Gear machine-owned execution and lifecycle paths."
+      },
+      "hostCoverage": [
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    }
+  ]
+}

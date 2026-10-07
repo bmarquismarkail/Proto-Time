@@ -1,0 +1,21 @@
+# Isolated Linux ARM64 correctness runner. Pass absolute paths with -D.
+# QEMU timings are emulation measurements, not native ARM64 performance evidence.
+set(CMAKE_SYSTEM_NAME Linux)
+set(CMAKE_SYSTEM_PROCESSOR aarch64)
+foreach(required TIME_ARM64_COMPILER_PREFIX TIME_ARM64_SYSROOT TIME_ARM64_QEMU)
+    if(NOT DEFINED ${required} OR "${${required}}" STREQUAL "")
+        message(FATAL_ERROR "${required} must be supplied for the ARM64 QEMU toolchain")
+    endif()
+endforeach()
+set(CMAKE_C_COMPILER "${TIME_ARM64_COMPILER_PREFIX}gcc")
+set(CMAKE_CXX_COMPILER "${TIME_ARM64_COMPILER_PREFIX}g++")
+set(CMAKE_SYSROOT "${TIME_ARM64_SYSROOT}")
+set(CMAKE_FIND_ROOT_PATH "${TIME_ARM64_SYSROOT}")
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
+# pkg-config does not obey CMake's root-path modes; exclude host dependency tables.
+set(ENV{PKG_CONFIG_LIBDIR} "${TIME_ARM64_SYSROOT}/lib/pkgconfig:${TIME_ARM64_SYSROOT}/usr/lib/pkgconfig:${TIME_ARM64_SYSROOT}/share/pkgconfig")
+set(CMAKE_CROSSCOMPILING_EMULATOR "${TIME_ARM64_QEMU};-L;${TIME_ARM64_SYSROOT}" CACHE STRING "ARM64 user-mode executor")
+set(CMAKE_TRY_COMPILE_PLATFORM_VARIABLES TIME_ARM64_COMPILER_PREFIX TIME_ARM64_SYSROOT TIME_ARM64_QEMU)

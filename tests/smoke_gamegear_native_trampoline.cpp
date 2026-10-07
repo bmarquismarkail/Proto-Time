@@ -36,20 +36,12 @@ int main(int argc, char** argv)
     assert(machine.runtimeContext().readRegister16("PC") == 0x0103u);
     assert(machine.modHost().region(region)[0] == 1u);
 
-    bool saveRejected = false;
-    try {
-        machine.save_state(std::filesystem::temp_directory_path() / "gg-active-mod.state");
-    } catch (const std::runtime_error&) {
-        saveRejected = true;
-    }
-    assert(saveRejected);
-    bool loadRejected = false;
-    try {
-        machine.load_state(std::filesystem::temp_directory_path() / "gg-active-mod.state");
-    } catch (const std::runtime_error&) {
-        loadRejected = true;
-    }
-    assert(loadRejected);
+    const auto activePath = std::filesystem::temp_directory_path() / "gg-active-mod.state";
+    machine.save_state(activePath);
+    machine.modHost().region(region)[0] = 17;
+    machine.load_state(activePath);
+    assert(machine.modHost().region(region)[0] == 1);
+    std::filesystem::remove(activePath);
 
     machine.runtimeContext().write8(0xFFFEu, 2u); // Bank 2 replaces the expected bank in $4000.
     machine.runtimeContext().writeRegister16("PC", 0x4000u);

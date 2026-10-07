@@ -84,6 +84,8 @@ public:
     virtual const RuntimeContext& runtimeContext() const = 0;
     virtual PluginManager& pluginManager() = 0;
     virtual const PluginManager& pluginManager() const = 0;
+    // Paused/machine-lane operation; resets native instances and host regions atomically.
+    void resetModState();
     [[nodiscard]] Modding::ModHost& modHost() noexcept { return modHost_; }
     [[nodiscard]] const Modding::ModHost& modHost() const noexcept { return modHost_; }
     virtual void save_state(const std::filesystem::path&) {

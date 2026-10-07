@@ -20,3 +20,21 @@ graphify-out/
 
 # zvec-grep workspace index (generated)
 .zvec-grep/
+
+# Share the completion contract despite host-wide .internal ignores.
+!.internal/
+.internal/*
+!.internal/docs/
+.internal/docs/*
+!.internal/docs/time-feature-completion.json
+!.internal/docs/time-feature-completion.md
+
+# Share the admission CI workflow despite host-wide GitHub ignores.
+!.github/
+.github/*
+!.github/workflows/
+.github/workflows/*
+!.github/workflows/feature-completion.yml
+
+!.internal/docs/time-acceleration-evaluation.md
+!.internal/docs/space-analysis-porting-design.md

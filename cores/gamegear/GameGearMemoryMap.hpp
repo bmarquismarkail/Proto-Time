@@ -1,4 +1,5 @@
 #pragma once
+#include "machine/plugins/debug/DebugEngine.hpp"
 // Sega Game Gear memory map stub
 // References: SMS Power, Charles MacDonald
 
@@ -6,6 +7,7 @@
 #include <cstdint>
 #include <array>
 #include <vector>
+#include "space/Capture.hpp"
 
 class GameGearInput;
 class GameGearMapper;
@@ -15,10 +17,21 @@ class GameGearMemoryMap {
 public:
     GameGearMemoryMap();
     ~GameGearMemoryMap();
+    GameGearMemoryMap(const GameGearMemoryMap&) = default;
+    GameGearMemoryMap& operator=(const GameGearMemoryMap&) = default;
+    GameGearMemoryMap(GameGearMemoryMap&&) = default;
+    GameGearMemoryMap& operator=(GameGearMemoryMap&&) = default;
+    BMMQ::Debug::DebugEngine* debugEngine = nullptr;
+    void debugCommitRam(uint16_t address, uint8_t value) noexcept { ram[address & 0x1fff] = value; }
 
     void reset();
     uint8_t read(uint16_t addr) const;
     [[nodiscard]] bool peekCodeByte(uint16_t addr, uint8_t& value) const noexcept;
+    [[nodiscard]] uint64_t analysisLocation(uint16_t addr,bool write=false) const noexcept;
+    [[nodiscard]] bool analysisRam(uint16_t addr) const noexcept;
+    [[nodiscard]] std::size_t analysisRamCapacity() const noexcept;
+    [[nodiscard]] bool analysisPhysicalRamByte(std::size_t, uint8_t&) const noexcept;
+    BMMQ::Space::Capture* analysisCapture=nullptr;
     void write(uint16_t addr, uint8_t value);
 
     // ROM and RAM mapping
@@ -35,6 +48,8 @@ public:
     void setVdp(GameGearVDP* vdpPtr);
     [[nodiscard]] uint8_t readIoPort(uint8_t port);
     void writeIoPort(uint8_t port, uint8_t value);
+    [[nodiscard]] uint8_t readEffectiveIoPort(uint16_t port);
+    void writeEffectiveIoPort(uint16_t port,uint8_t value);
 
     // Debug / introspection
     [[nodiscard]] uint8_t ioControlValue() const noexcept;
@@ -44,6 +59,10 @@ public:
     void importState(const std::vector<uint8_t>& state);
 
 private:
+    uint8_t readCanonical(uint16_t addr) const;
+    void writeCanonical(uint16_t addr,uint8_t value);
+    uint8_t readIoCanonical(uint8_t port);
+    void writeIoCanonical(uint8_t port,uint8_t value);
     GameGearInput* input = nullptr;
     GameGearMapper* cartridge = nullptr;
     GameGearPSG* psg = nullptr;

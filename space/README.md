@@ -1,14 +1,15 @@
-# S.P.A.C.E. stages 1–4
+# S.P.A.C.E. on Game Boy and Game Gear
 
-S.P.A.C.E. captures Game Boy baseline execution into a ROM-bound analysis project.
+S.P.A.C.E. captures Game Boy or Game Gear baseline execution into a ROM-bound analysis project.
 It provides a control-flow graph, current sparse block snapshots, observed
 register/memory dependencies, writer provenance, and paired exploration
 checkpoints. Exploration defaults to baseline execution; stage 3 adds an explicit
 snapshot execution mode with canonical write-through.
 
-Stage 4 adds deterministic hardware-role inference and frozen queries. Richer
-gameplay-purpose inference, automatic exploration, conversion accounting,
-verification, and `.gg` generation remain future work.
+Deterministic hardware-role analysis, frozen queries, source/symbol imports,
+evidence-linked purpose claims and bounded checkpoint exploration support both
+cores. Both directions have fixture-specific standalone port proofs, separate from
+general conversion completeness.
 
 ## Build and try the original fixture
 
@@ -390,3 +391,92 @@ untraced intervals persist in optional version-1 `captureWindows` metadata;
 evidence loss remains in `gaps`. The offline viewer overlays captured instruction
 conversion and exposes full-ROM inventory and source/target contracts. Replacing
 a displayed revision remains explicit.
+
+## Two-core capture and completion program
+
+`time-space explore --core gameboy|gamegear` selects the machine family; omission
+retains Game Boy compatibility. New captures use project schema 2. Game Boy
+schema-1 projects and schema-1/2 paired checkpoints remain readable. New paired
+checkpoints use manifest schema 3 and bind core, ROM, machine, analysis history
+and execution state before publication. Cross-core restore is rejected before
+mutating the machine.
+
+Game Gear captures fixed fetch chunks, full Z80 architectural registers (including
+index/shadow registers, I/R, interrupt mode/enables, HALT and deferred EI), RAM
+mirror identities, mapper accesses and effective ports. Ports retain the full
+16-bit CPU address while their physical device identity uses the decoded low
+byte. VDP VRAM, CRAM, control registers and internal state have separate backing
+identities. Inspection reads do not become execution evidence. In snapshot mode,
+RAM/register execution retains canonical port/device and retirement behavior;
+unsupported code backing, evidence loss and exhaustion explicitly pause.
+
+Port ledgers now accept either source family and require the other existing
+family as target. This enables reverse accounting, but does not by itself prove
+a reverse standalone ROM conversion. The existing forward proof remains its own
+ROM-bound acceptance artifact.
+
+### Bounded automatic exploration
+
+Paused CLI control accepts:
+
+```json
+{"op":"auto_explore","maxSteps":10000000,"maxAttempts":128,"stagnantAttempts":16,"stepsPerAttempt":10000,"masks":[0,1,2,4,8,16,32,64,128]}
+```
+
+The controller creates a temporary paired checkpoint, restores it (or supplied
+`checkpoints`) for each branch, navigates toward known sources of unresolved
+transfers, then varies input. Missing scenario schedules take priority when
+provided as `scenarios: [{"id":"name","actions":[{"mask":1,"steps":100}]}]`.
+Limits, applied actions, selected targets, per-attempt fingerprints, new evidence,
+termination and unresolved/scenario obligations are returned in a reproducible
+report. Temporary checkpoints are removed by the controller. Reaching a limit or
+stagnation does not prove unobserved paths unreachable; completing an input
+schedule does not independently verify a gameplay obligation.
+
+### Symbols, source and gameplay-purpose claims
+
+Import ROM-matched metadata with
+`time-space symbols --project PROJECT --rom ROM --input SYMBOLS.json`.
+The import contains `schemaVersion: 1`, `core`, `romSha256`, `sources` and
+`symbols`. A source has `path`, exact text `content` and its `sha256`; a symbol
+has `name`, physical cartridge `location` as a decimal string, and optionally
+`source` and one-based `line`. The importer validates ROM identity, physical
+extent, source digests and line bounds transactionally. Text is metadata;
+importing it executes no source code.
+
+`time-space purpose --project PROJECT --input CLAIM.json` adds a separate claim
+with `instruction`, `purpose`, `status` (`inferred`, `reviewed`, or `unresolved`)
+and captured dependency IDs in `dependencies`. Reviewed claims additionally
+require `reviewer` and `rationale`. Inferred/reviewed claims require evidence.
+After explicit reanalysis, queries `type: "symbols"` and `type: "purposes"` and
+the viewer expose these metadata separately from observed hardware effects.
+Neither a label nor a reviewed meaning closes port completeness.
+
+The [versioned completion contract](../.internal/docs/time-feature-completion.md)
+tracks all remaining framework obligations and keeps third-family admission
+closed until source/build-bound automated and live evidence passes on both hosts.
+# Physical RAM snapshot identity
+
+Execution schema 3 keeps suppliers by physical storage. Work RAM/HRAM retains
+its canonical CPU address; cartridge storage uses indices starting at 65536.
+The core adapter binds those indices to bank and offset identities. Game Boy
+MBC2 mirrors share their 512-byte backing and retain the fixed upper read bits;
+RAM enable and RTC selection remain authoritative. Game Gear SRAM banks and
+Codemasters' additional 8 KiB backing have distinct identities. Compatibility
+MMIO remains on the bus even when its address overlaps a RAM mirror.
+
+Instruction ownership includes a SHA-256 digest of every fetched byte and its
+physical backing, including operands crossing banks and long Z80 prefixes.
+The identity buffer and all physical suppliers are reserved before execution.
+Captured local block views refresh from the current physical supplier and do
+not acquire writer ownership on reads. Each canonical write publishes once.
+
+Schema-1 Game Boy and schema-2 Game Gear execution readers remain available.
+New captures write schema 3 with the loaded physical RAM capacity. Restore
+validates all suppliers against a disposable restored machine, including banks
+not currently mapped, before publishing guest or execution state. Older
+snapshots may need more storage under the new conservative accounting; budget
+exhaustion remains an explicit failure. Project schema-1 compatibility is
+unchanged. `smoke-space-cartridge-ram` checks both-core instruction/effect
+parity, MBC2 mirrors, RTC/device authority, Codemasters write precedence, physical
+bank identity and coordinated/legacy restore.

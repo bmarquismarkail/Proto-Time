@@ -3151,6 +3151,11 @@ bool LR3592_DMG::snapshotBoundaryOnly()const {
     auto pc=pcRegister_->value;auto pending=(readCachedRegister(hardwareRegisters_.interruptFlags)&readCachedRegister(hardwareRegisters_.ie))&kInterruptMask;
     return stopFlag||(dmaActive&&!isHramAddress(pc))||(haltFlag&&pending==0)||(ime&&pending!=0);
 }
+AddressType LR3592_DMG::snapshotNextFetchAddress(AddressType pc,std::size_t offset)const noexcept {
+    const auto pending=(readCachedRegister(hardwareRegisters_.interruptFlags)&readCachedRegister(hardwareRegisters_.ie))&kInterruptMask;
+    const bool bug=haltBugActive||(haltFlag&&pending!=0&&!ime);
+    return static_cast<AddressType>(pc+offset-(bug&&offset!=0?1:0));
+}
 bool LR3592_DMG::handleMemoryRead(AddressType address,std::span<DataType> value)const {
     const bool handled=handleMemoryReadUntraced(address,value);
     if(handled){auto* map=dynamic_cast<const GB::GameBoyMemoryMap*>(&mem.backingStore());

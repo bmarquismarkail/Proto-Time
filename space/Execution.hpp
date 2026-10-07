@@ -1,14 +1,13 @@
 #pragma once
 #include "ExecutionContract.hpp"
 #include "Project.hpp"
-#include "cores/gameboy/GameBoyMachine.hpp"
+#include "CoreAdapter.hpp"
 #include <map>
 namespace BMMQ::Space {
-class ExecutionPaused : public std::runtime_error {public:using std::runtime_error::runtime_error;};
 class Execution final : public ExecutionController, public RegisterExecutionView,
                         public IMemory<uint16_t,uint8_t,uint16_t> {
 public:
-    Execution(GB::GameBoyMachine&,Capture&,std::shared_ptr<StateBudget> budget={});
+    Execution(Machine&,Capture&,std::shared_ptr<StateBudget> budget={});
     ~Execution();
     void mode(const std::string&);
     bool enabled() const noexcept{return snapshot_;}
@@ -28,31 +27,34 @@ public:
     size_t chargedBytes() const noexcept {return charged_;}
     void adoptBudget(std::shared_ptr<StateBudget>);
 private:
-    struct Key {uint64_t location=0;std::array<uint8_t,3> bytes{};uint8_t length=0;auto operator<=>(const Key&)const=default;};
+    struct Key {uint64_t location=0;std::array<uint8_t,3> bytes{};std::array<uint8_t,32> codeDigest{},fetchDigest{};uint32_t length=0;auto operator<=>(const Key&)const=default;};
     struct Cell {uint64_t sequence=0,block=0;uint16_t value=0;bool known=false;uint64_t epoch=0;};
     struct Block {
         MemoryStorage<uint16_t,uint8_t> backing;
         MemorySnapshot<uint16_t,uint8_t,uint16_t> snapshot{backing};
         std::vector<Key> instructions;
         uint64_t id=0,visit=0;
-        Block();
+        explicit Block(const CoreModel&);
     };
-    static constexpr size_t blockCharge=512u*1024u,baseCharge=3u*1024u*1024u;
-    static uint16_t normalize(uint16_t);
-    static bool ram(uint16_t);
+    static constexpr size_t blockCharge=1024u*1024u,baseCharge=4u*1024u*1024u;
+    size_t baseReservation()const;
+    bool snapshotAddress(uint16_t)const;
+    uint16_t normalize(uint16_t)const;
+    bool ram(uint16_t)const;
     static Json keyJson(const Key&);
-    static Key parseKey(const Json&);
+    Key parseKey(const Json&,bool legacy=false,bool verifyCanonical=true)const;
     [[noreturn]] void pause(const char*);
     void clear();
     void traceRead(uint16_t,uint8_t,uint8_t,const Cell&);
     uint16_t lane(size_t,const RegisterFile<uint16_t>&) const;
-    GB::GameBoyMachine& machine_;
+    std::unique_ptr<CoreAdapter> core_;
+    const CoreModel& model_;
     Capture& capture_;
     std::shared_ptr<StateBudget> budget_;
     MemoryPool<uint16_t,uint8_t,uint16_t>& canonical_;
-    GB::GameBoyMemoryMap& bus_;
     std::vector<Cell> values_;
-    std::array<Cell,10> registers_{};
+    std::vector<uint8_t> fetchIdentity_;
+    std::array<Cell,32> registers_{};
     std::vector<std::unique_ptr<Block>> blocks_;
     std::map<Key,std::pair<uint64_t,size_t>> owners_;
     std::unique_ptr<Block> pending_;

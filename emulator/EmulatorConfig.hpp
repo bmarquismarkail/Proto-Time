@@ -58,6 +58,7 @@ struct EmulatorConfig {
     std::vector<std::filesystem::path> visualPackPaths;
     std::optional<std::filesystem::path> visualCapturePath;
     std::optional<std::filesystem::path> spaceProjectPath;
+    std::optional<std::filesystem::path> linuxControllerPath;
     bool visualPackReload = false;
 };
 
@@ -103,6 +104,7 @@ struct CommandLineConfigOverrides {
     std::optional<std::vector<std::filesystem::path>> visualPackPaths;
     std::optional<std::filesystem::path> visualCapturePath;
     std::optional<std::filesystem::path> spaceProjectPath;
+    std::optional<std::filesystem::path> linuxControllerPath;
     std::optional<bool> visualPackReload;
 };
 
