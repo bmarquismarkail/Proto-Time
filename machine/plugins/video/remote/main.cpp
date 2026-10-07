@@ -34,7 +34,7 @@ int main(int argc,char** argv) {
         std::array<std::uint8_t,32> random;std::size_t done=0;
         while(done<random.size()){auto count=getrandom(random.data()+done,random.size()-done,0);if(count<=0)throw std::runtime_error("session token unavailable");done+=count;}
         constexpr char hex[]="0123456789abcdef";std::string token;for(auto byte:random){token+=hex[byte>>4];token+=hex[byte&15];}
-        HttpServer server(selectedPort,token,read(assets/"index.html",262144),read(assets/"inspector.css",262144),read(assets/"inspector.js",262144));
+        HttpServer server(selectedPort,token,read(assets/"index.html",262144),read(assets/"inspector.css",262144),read(assets/"inspector.js",262144),read(assets/"postprocess.js",262144));
         struct Ready {Debug::DebugService* service;std::vector<std::string> registers;std::uint32_t clock;};
         std::promise<Ready> startup;auto ready=startup.get_future();Mailbox mailbox;std::atomic<bool> failed{false};
         std::jthread machineLane([&](std::stop_token stop) {

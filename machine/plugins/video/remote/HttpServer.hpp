@@ -11,7 +11,7 @@ class HttpServer {
         std::uint32_t pending{};
         std::chrono::steady_clock::time_point deadline;
     };
-    int listener_{-1};std::uint16_t port_{};std::string token_,page_,css_,script_,host_;
+    int listener_{-1};std::uint16_t port_{};std::string token_,page_,css_,script_,host_,postprocess_;
     std::array<Client,8> clients_{};
     std::uint32_t nextId_{1};
     std::uint64_t rejected_{},disconnects_{};
@@ -19,7 +19,7 @@ class HttpServer {
     void respond(Client&,int,std::string,std::string_view="application/json");
     void parse(Client&,std::string_view,std::string_view,const std::function<bool(const Debug::Command&)>&);
 public:
-    HttpServer(std::uint16_t port,std::string token,std::string page,std::string css,std::string script);
+    HttpServer(std::uint16_t port,std::string token,std::string page,std::string css,std::string script,std::string postprocess={});
     ~HttpServer();
     HttpServer(const HttpServer&)=delete;
     std::uint16_t port()const noexcept {return port_;}

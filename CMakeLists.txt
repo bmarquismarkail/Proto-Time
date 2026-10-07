@@ -1103,3 +1103,4 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 include(tools/cmake/Browser.cmake)
+include(tools/cmake/VisualAuthoring.cmake)

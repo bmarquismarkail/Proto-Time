@@ -12,8 +12,8 @@ namespace {
 constexpr std::size_t maxHeader=8192,maxBody=4096,maxResponse=4*1024*1024;
 std::string lowercase(std::string text) {for(char& c:text)if(c>='A'&&c<='Z')c+=32;return text;}
 }
-HttpServer::HttpServer(std::uint16_t port,std::string token,std::string page,std::string css,std::string script):token_(std::move(token)),page_(std::move(page)),css_(std::move(css)),script_(std::move(script)) {
-    if(token_.size()!=64 || token_.find_first_not_of("0123456789abcdef")!=std::string::npos || page_.size()>262144 || css_.size()>262144 || script_.size()>262144)
+HttpServer::HttpServer(std::uint16_t port,std::string token,std::string page,std::string css,std::string script,std::string postprocess):token_(std::move(token)),page_(std::move(page)),css_(std::move(css)),script_(std::move(script)),postprocess_(std::move(postprocess)) {
+    if(token_.size()!=64 || token_.find_first_not_of("0123456789abcdef")!=std::string::npos || page_.size()>262144 || css_.size()>262144 || script_.size()>262144 || postprocess_.size()>262144)
         throw std::invalid_argument("HTTP static resource budget");
     listener_=socket(AF_INET,SOCK_STREAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0);
     if(listener_<0)throw std::runtime_error("HTTP socket failed");
@@ -66,6 +66,7 @@ void HttpServer::parse(Client& c,std::string_view state,std::string_view metadat
         if(path=="/")respond(c,200,page_,"text/html; charset=utf-8");
         else if(path=="/inspector.css")respond(c,200,css_,"text/css; charset=utf-8");
         else if(path=="/inspector.js")respond(c,200,script_,"text/javascript; charset=utf-8");
+        else if(path=="/postprocess.js")respond(c,200,postprocess_,"text/javascript; charset=utf-8");
         else if(path=="/api/state")respond(c,200,std::string(state));
         else if(path=="/api/meta")respond(c,200,std::string(metadata));
         else {bad(404);}return;

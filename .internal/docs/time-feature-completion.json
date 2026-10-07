@@ -646,12 +646,15 @@
       "id": "visual.authoring",
       "acceptance": "Resource capture, matching, labels, transforms, layered/animated replacement and scripted authoring work on both cores.",
       "automated": [
-        "targeted engine/service/transport/failure regression coverage",
+        "smoke-visual-authoring",
+        "smoke-visual-authoring-cli",
+        "smoke-visual-presentation",
         "full CTest and applicable conformance/performance gates"
       ],
       "live": true,
       "references": [
-        "docs/texture-pack/design.md"
+        "docs/texture-pack/design.md",
+        ".internal/docs/visual-authoring-v1.md"
       ],
       "allowReviewedNoGo": false,
       "coreAcceptance": {
@@ -667,12 +670,14 @@
       "id": "visual.shader",
       "acceptance": "GPU shaders/postprocessing stay on the presentation lane, preserve guest semantics and retain last-good assets on failure.",
       "automated": [
-        "targeted engine/service/transport/failure regression coverage",
+        "smoke-visual-presentation",
+        "smoke-browser-cli",
         "full CTest and applicable conformance/performance gates"
       ],
       "live": true,
       "references": [
-        "docs/texture-pack/design.md"
+        "docs/texture-pack/design.md",
+        ".internal/docs/visual-authoring-v1.md"
       ],
       "allowReviewedNoGo": false,
       "coreAcceptance": {

@@ -25,7 +25,7 @@ jobs:
           python tools/check_feature_completion.py "${evidence[@]}" > admission.json
           python tests/smoke_feature_completion.py
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake g++ pkg-config zlib1g-dev libssl-dev nlohmann-json3-dev libsdl2-dev libglfw3-dev libasound2-dev
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ nodejs pkg-config zlib1g-dev libssl-dev nlohmann-json3-dev libsdl2-dev libglfw3-dev libasound2-dev
       - name: Fetch verified scripting sources
         run: python tools/fetch_script_dependencies.py --output build-working/script-dependencies
       - name: Configure and build
@@ -65,18 +65,18 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install headless build dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake g++ pkg-config zlib1g-dev libssl-dev nlohmann-json3-dev
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ nodejs pkg-config zlib1g-dev libssl-dev nlohmann-json3-dev
       - name: Fetch verified scripting sources
         run: python tools/fetch_script_dependencies.py --output build-working/script-dependencies
       - name: Build handoff and lifecycle checks with TSAN
         shell: bash
         run: |
           cmake -S . -B build-tsan -DBMMQ_ENABLE_TSAN=ON -DPROTO_TIME_BUILD_SDL_FRONTEND=OFF -DPROTO_TIME_BUILD_SDL_AUDIO=OFF -DPROTO_TIME_BUILD_GLFW_FRONTEND=OFF -DPROTO_TIME_BUILD_ALSA_MIDI=OFF -DTIME_LUA_SOURCE_DIR="$PWD/build-working/script-dependencies/lua-5.4.9" -DTIME_QUICKJS_SOURCE_DIR="$PWD/build-working/script-dependencies/quickjs-2026-06-04"
-          cmake --build build-tsan --target time-smoke-space time-smoke-space-execution time-smoke-space-gamegear time-smoke-space-cartridge-ram time-smoke-space-exploration time-smoke-space-meaning time-smoke-space-analysis time-smoke-host-region-checkpoint time-smoke-native-mod-checkpoint time-smoke-debug-service time-smoke-debug-transport time-debugger time-smoke-scripting time-script time-smoke-linux-controller time-smoke-netplay time-smoke-netplay-transport time-netplay time-smoke-browser-inspector time-browser -j4
+          cmake --build build-tsan --target time-smoke-space time-smoke-space-execution time-smoke-space-gamegear time-smoke-space-cartridge-ram time-smoke-space-exploration time-smoke-space-meaning time-smoke-space-analysis time-smoke-host-region-checkpoint time-smoke-native-mod-checkpoint time-smoke-debug-service time-smoke-debug-transport time-debugger time-smoke-scripting time-script time-smoke-linux-controller time-smoke-netplay time-smoke-netplay-transport time-netplay time-smoke-browser-inspector time-browser time-smoke-visual-authoring time-visual-author -j4
       - name: Run sanitizer checks
         env:
           TSAN_OPTIONS: halt_on_error=1:exitcode=66
-        run: ctest --test-dir build-tsan -R '^smoke-(space$|space-execution$|space-gamegear$|space-cartridge-ram$|space-exploration$|space-meaning$|space-analysis$|host-region-checkpoint$|native-mod-checkpoint$|debug-service$|debug-transport$|debug-dap-cli$|scripting($|-cli$)|linux-controller$|netplay($|-transport$|-cli$)|browser($|-inspector$|-cli$))' --output-on-failure
+        run: ctest --test-dir build-tsan -R '^smoke-(space$|space-execution$|space-gamegear$|space-cartridge-ram$|space-exploration$|space-meaning$|space-analysis$|host-region-checkpoint$|native-mod-checkpoint$|debug-service$|debug-transport$|debug-dap-cli$|scripting($|-cli$)|linux-controller$|netplay($|-transport$|-cli$)|browser($|-inspector$|-cli$)|visual-(authoring($|-cli$)|presentation$))' --output-on-failure
       - name: Preserve sanitizer configuration and results
         if: always()
         uses: actions/upload-artifact@v4

@@ -5,7 +5,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND Python3_Interpreter_FOUND)
     add_executable(time-browser machine/plugins/video/remote/main.cpp)
     target_link_libraries(time-browser PRIVATE time-browser-inspector)
     add_dependencies(time-browser time-netplay-source-binding)
-    foreach(asset index.html inspector.css inspector.js)
+    foreach(asset index.html inspector.css inspector.js postprocess.js)
         configure_file(${CMAKE_CURRENT_SOURCE_DIR}/machine/plugins/video/remote/${asset}
             ${CMAKE_CURRENT_BINARY_DIR}/browser-assets/${asset} COPYONLY)
     endforeach()

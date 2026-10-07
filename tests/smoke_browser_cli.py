@@ -33,7 +33,7 @@ def verify(binary,core,directory):
         assert len(current['frame']['rgba'])==160*144*8 and len(current['semantics'])==160*144
         assert len(current['vram'])==(8192 if core=='gameboy' else 16384)
         assert len(current['sprites'])==(160 if core=='gameboy' else 64)
-        for asset,mime in (('/','text/html'),('/inspector.js','text/javascript'),('/inspector.css','text/css')):
+        for asset,mime in (('/','text/html'),('/inspector.js','text/javascript'),('/inspector.css','text/css'),('/postprocess.js','text/javascript')):
             with urllib.request.urlopen(url+asset,timeout=10) as reply:
                 assert reply.status==200 and mime in reply.headers['Content-Type']
                 assert 'frame-ancestors' in reply.headers['Content-Security-Policy'] and len(reply.read())>100
