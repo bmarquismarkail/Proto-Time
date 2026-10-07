@@ -44,6 +44,7 @@ int main()
     gameBoyRom[0x0100] = 0x00u;
     std::vector<std::uint8_t> gameGearRom(0x4000u, 0x00u);
     std::vector<std::uint8_t> bootRom(0x100u, 0x00u);
+    bootRom[0] = 0x3e; bootRom[1] = 0x66;
 
     writeBinaryFile(gameBoyRomPath, gameBoyRom);
     writeBinaryFile(gameGearRomPath, gameGearRom);
@@ -63,6 +64,8 @@ int main()
         (void)bootstrapped.machine->timingService();
         bootstrapped.machine->serviceInput();
         bootstrapped.machine->step();
+        assert(bootstrapped.machine->readRegisterPair("PC") == 2);
+        assert((bootstrapped.machine->readRegisterPair("AF") >> 8) == 0x66);
     }
 
     {

@@ -76,6 +76,15 @@ void MachineRegistry::registerProvider(MachineDescriptor descriptor, Factory fac
     providers_.push_back(Provider{std::move(descriptor), std::move(factory)});
 }
 
+void MachineRegistry::registerProviders(std::vector<std::pair<MachineDescriptor, Factory>> providers)
+{
+    auto staged = *this;
+    for (auto& [descriptor, factory] : providers) {
+        staged.registerProvider(std::move(descriptor), std::move(factory));
+    }
+    providers_.swap(staged.providers_);
+}
+
 bool MachineRegistry::contains(std::string_view id) const noexcept
 {
     return std::any_of(providers_.begin(), providers_.end(), [id](const auto& provider) {

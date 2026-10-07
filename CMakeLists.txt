@@ -173,9 +173,11 @@ add_library(time-emulator-config STATIC
 )
 add_library(time-machine-factory STATIC
     emulator/MachineFactory.cpp
+    emulator/DynamicMachineProvider.cpp
 )
 target_link_libraries(time-machine-factory
     PUBLIC
+        ${CMAKE_DL_LIBS}
         time-machine-runtime-common
         time-gameboy-interpreter-core
         time-gamegear-core
@@ -1104,3 +1106,4 @@ endif()
 
 include(tools/cmake/Browser.cmake)
 include(tools/cmake/VisualAuthoring.cmake)
+include(tools/cmake/MachineProviders.cmake)

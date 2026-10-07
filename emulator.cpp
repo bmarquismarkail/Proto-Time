@@ -77,6 +77,8 @@ void printUsage(std::string_view program)
               << "   or: " << program << " --core <gameboy|gamegear> <path> [options]\n\n"
               << "Options:\n"
               << "  --core <name>      Machine core to run: gameboy or gamegear\n"
+              << "  --machine-provider <path>\n"
+              << "                     Load versioned factories; --core selects a provider ID\n"
               << "  --config <path>    Optional INI-style emulator configuration file\n"
               << "  --rom <path>       Cartridge ROM to load\n"
               << "  --mod <directory>  Load and activate a native mod package (repeatable)\n"

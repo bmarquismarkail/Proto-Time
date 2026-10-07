@@ -1120,6 +1120,7 @@ GameGearMachine::GameGearMachine() : impl(std::make_unique<Impl>()) {
     impl->input.reset();
     impl->cpu.reset();
     impl->context.clearIrCache();
+    applyProviderBootRom();
 }
 GameGearMachine::~GameGearMachine() {
     (void)flushCartridgeSave();

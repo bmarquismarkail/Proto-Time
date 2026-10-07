@@ -39,3 +39,4 @@ graphify-out/
 !.internal/docs/time-acceleration-evaluation.md
 !.internal/docs/space-analysis-porting-design.md
 !.internal/docs/visual-authoring-v1.md
+!.internal/docs/dynamic-machine-factories-v1.md

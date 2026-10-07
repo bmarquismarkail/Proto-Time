@@ -317,12 +317,14 @@
       "id": "providers.dynamic",
       "acceptance": "Versioned dynamic providers preserve module lifetime/ABI validation and cannot admit an unapproved hardware family.",
       "automated": [
-        "targeted engine/service/transport/failure regression coverage",
+        "smoke-machine-provider",
+        "smoke-machine-provider-cli",
         "full CTest and applicable conformance/performance gates"
       ],
       "live": false,
       "references": [
-        ".internal/docs/proto-time-plugin-architecture.md"
+        ".internal/docs/proto-time-plugin-architecture.md",
+        ".internal/docs/dynamic-machine-factories-v1.md"
       ],
       "allowReviewedNoGo": false,
       "coreAcceptance": {

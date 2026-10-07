@@ -65,7 +65,9 @@ def prepare(build, output, qemu, sysroot, timeout_scale=1.0):
         # children started by guest C++ CLI tests through a host shell.
         if line.startswith('add_test('):
             arguments=list(re.finditer(r'"([^"\n]+)"',line))
-            protected=4 if arguments and arguments[0].group(1)==str(qemu) else 1
+            launcher = arguments[0].group(1) if arguments else ''
+            uses_qemu = bool(launcher) and Path(launcher).is_absolute() and Path(launcher).resolve() == qemu
+            protected=4 if uses_qemu else 1
             replacements={b['binary']:b['wrapper'] for b in bindings}
             for argument in reversed(arguments[protected:]):
                 value=argument.group(1)

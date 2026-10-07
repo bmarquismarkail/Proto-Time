@@ -1177,6 +1177,7 @@ void GameBoyMachine::loadRom(const std::vector<uint8_t>& bytes) {
     core.resetApu();
     impl_->lastAudioFrameCounter = core.audioFrameCounter();
 
+    applyProviderBootRom();
     // Emit RomLoaded event
     if (impl_->pluginManager.initialized()) {
         impl_->pluginManager.emit(view(), BMMQ::MachineEvent{

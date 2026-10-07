@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <utility>
 
 #include "machine/Machine.hpp"
 
@@ -32,6 +33,8 @@ public:
     using Factory = std::function<std::unique_ptr<Machine>()>;
 
     void registerProvider(MachineDescriptor descriptor, Factory factory);
+    // All-or-nothing registration for an externally validated module.
+    void registerProviders(std::vector<std::pair<MachineDescriptor, Factory>> providers);
     [[nodiscard]] bool contains(std::string_view id) const noexcept;
     [[nodiscard]] const MachineDescriptor& descriptor(std::string_view id) const;
     [[nodiscard]] std::unique_ptr<Machine> create(std::string_view id) const;

@@ -30,6 +30,7 @@ proof of implementation; a historical completion report is not a fresh test run.
 | Setup, optional dependencies, CLI examples, diagnostics | [Build and run](runtime.md) |
 | Ownership, execution guarantees, shared IR, frontend/audio boundaries | [Current architecture](architecture.md) |
 | Machine providers, executor policies, internal I/O, external C ABI | [Plugin decisions](../.internal/docs/proto-time-plugin-architecture.md) |
+| Dynamic factory construction and lifetime; foreign machine tables remain pending | [Dynamic factories v1](../.internal/docs/dynamic-machine-factories-v1.md) |
 | PSG voice stems/events, processing, MIDI | [PSG processor contract](../.internal/docs/psg-audio-processor-plugin-contract.md) |
 | Visual pack authoring, capture, matching, reload | [Texture-pack index](texture-pack/README.md) |
 | Manifest directories, native modules, Game Boy trampolines | [Modding contract](../machine/modding/README.md) |

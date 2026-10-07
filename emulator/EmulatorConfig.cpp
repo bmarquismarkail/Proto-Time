@@ -3,6 +3,7 @@
 #include "machine/plugins/DynamicPluginModule.hpp"
 
 #include "emulator/MachineFactory.hpp"
+#include "emulator/DynamicMachineProvider.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -113,6 +114,8 @@ void applyConfigValue(EmulatorConfig& config,
     if (section == "emulator") {
         if (key == "core") {
             config.machineKind = lowerAscii(text);
+        } else if (key == "machine_provider") {
+            config.machineProviderPath = resolveConfigPath(configDirectory, text);
         } else if (key == "rom") {
             config.romPath = resolveConfigPath(configDirectory, text);
         } else if (key == "boot_rom") {
@@ -314,6 +317,7 @@ void applyOverrides(EmulatorConfig& config, const CommandLineConfigOverrides& ov
     if (overrides.machineKind.has_value()) {
         config.machineKind = lowerAscii(*overrides.machineKind);
     }
+    if (overrides.machineProviderPath) config.machineProviderPath = overrides.machineProviderPath;
     if (overrides.romPath.has_value()) {
         config.romPath = *overrides.romPath;
     }
@@ -440,8 +444,7 @@ void validateEmulatorConfig(const EmulatorConfig& config)
     if (!config.machineKind.has_value()) {
         throw std::invalid_argument("Missing core selection. Use --core <gameboy|gamegear>.");
     }
-    const auto kind = parseMachineKind(*config.machineKind);
-    auto instance = createMachine(kind);
+    auto instance = createProvidedMachine(*config.machineKind, config.machineProviderPath);
     const auto& descriptor = instance.descriptor;
 
     if (config.irAdapterPluginPath.has_value() != config.irAdapterId.has_value()) {
@@ -462,7 +465,7 @@ void validateEmulatorConfig(const EmulatorConfig& config)
             "(ir_backend_plugin/ir_backend_id) require --cpu-mode ir");
     }
 
-    if (config.spaceProjectPath && ((config.machineKind != "gameboy" && config.machineKind != "gamegear") || config.cpuMode != "baseline" ||
+    if (config.spaceProjectPath && ((instance.descriptor.familyId != "gameboy" && instance.descriptor.familyId != "gamegear") || config.cpuMode != "baseline" ||
         !config.modPaths.empty() || config.executorPluginPath || config.executorPolicyId || config.irAdapterPluginPath || config.irBackendPluginPath))
         throw std::invalid_argument("--space-project requires a supported core with built-in baseline execution without mods or executor plugins");
     if (config.linuxControllerPath && (!config.linuxControllerPath->is_absolute() || config.linuxControllerPath->string().size() > 4096))
@@ -545,6 +548,9 @@ ParsedEmulatorArguments parseEmulatorArguments(int argc, char** argv)
                 throw std::invalid_argument("--core requires a value");
             }
             arguments.overrides.machineKind = lowerAscii(argv[++i]);
+        } else if (arg == "--machine-provider") {
+            if (i + 1 >= argc) throw std::invalid_argument("--machine-provider requires a module path");
+            arguments.overrides.machineProviderPath = std::filesystem::path(argv[++i]);
         } else if (arg == "--rom") {
             if (i + 1 >= argc) {
                 throw std::invalid_argument("--rom requires a path");
