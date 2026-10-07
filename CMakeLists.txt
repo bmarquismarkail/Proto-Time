@@ -1108,3 +1108,8 @@ endif()
 include(tools/cmake/Browser.cmake)
 include(tools/cmake/VisualAuthoring.cmake)
 include(tools/cmake/MachineProviders.cmake)
+
+# Opt-in research corpus; the smoke check validates accounting and backend parity.
+add_executable(time-measure-acceleration-corpus tests/measure_acceleration_corpus.cpp)
+target_link_libraries(time-measure-acceleration-corpus PRIVATE time-gameboy-interpreter-core time-gamegear-core)
+add_test(NAME smoke-acceleration-corpus COMMAND time-measure-acceleration-corpus --smoke)
