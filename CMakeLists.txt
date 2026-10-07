@@ -174,6 +174,7 @@ add_library(time-emulator-config STATIC
 add_library(time-machine-factory STATIC
     emulator/MachineFactory.cpp
     emulator/DynamicMachineProvider.cpp
+    emulator/ForeignMachine.cpp
 )
 target_link_libraries(time-machine-factory
     PUBLIC

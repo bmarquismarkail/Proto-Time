@@ -4,6 +4,7 @@
 
 #include "emulator/MachineFactory.hpp"
 #include "emulator/DynamicMachineProvider.hpp"
+#include "emulator/ForeignMachine.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -471,6 +472,8 @@ void validateEmulatorConfig(const EmulatorConfig& config)
     if (config.linuxControllerPath && (!config.linuxControllerPath->is_absolute() || config.linuxControllerPath->string().size() > 4096))
         throw std::invalid_argument("--input-evdev requires an absolute controller device path");
     if (config.spaceProjectPath && config.spaceProjectPath->empty()) throw std::invalid_argument("empty --space-project path");
+    if (config.spaceProjectPath && dynamic_cast<IForeignMachineRuntimeV2*>(instance.machine.get()))
+        throw std::invalid_argument("external runtime does not expose the S.P.A.C.E. capture extension");
     if (config.cpuMode != "baseline" && config.cpuMode != "block" &&
         config.cpuMode != "ir" && config.cpuMode != "native") {
         throw std::invalid_argument("Unknown CPU mode: " + config.cpuMode +

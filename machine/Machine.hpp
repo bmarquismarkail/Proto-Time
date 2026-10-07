@@ -335,6 +335,9 @@ public:
     virtual std::string stopSummary() const {
         return {};
     }
+    virtual std::string deterministicStateFingerprint() const {
+        throw std::runtime_error("deterministic fingerprint is unavailable for this machine");
+    }
     virtual void flushPendingBackgroundWork() {}
 
 protected:

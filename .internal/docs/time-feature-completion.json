@@ -319,12 +319,16 @@
       "automated": [
         "smoke-machine-provider",
         "smoke-machine-provider-cli",
-        "full CTest and applicable conformance/performance gates"
+        "full CTest and applicable conformance/performance gates",
+        "smoke-machine-runtime",
+        "smoke-machine-runtime-rejection",
+        "smoke-machine-runtime-cli"
       ],
       "live": false,
       "references": [
         ".internal/docs/proto-time-plugin-architecture.md",
-        ".internal/docs/dynamic-machine-factories-v1.md"
+        ".internal/docs/dynamic-machine-factories-v1.md",
+        ".internal/docs/dynamic-machine-runtime-v2.md"
       ],
       "allowReviewedNoGo": false,
       "coreAcceptance": {

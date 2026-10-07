@@ -1,4 +1,5 @@
 #include "DynamicMachineProvider.hpp"
+#include "ForeignMachine.hpp"
 #include "machine/plugins/abi/TimeMachineProviderAbi.h"
 #include <dlfcn.h>
 #include <algorithm>
@@ -101,6 +102,42 @@ void registerDynamicMachineProviders(MachineRegistry& registry, const std::files
     auto module = std::make_shared<Module>();
     module->handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!module->handle) throw std::runtime_error("cannot load machine provider module: " + std::string(dlerror()));
+    dlerror();
+    auto runtimeEntry = reinterpret_cast<TimeGetMachineRuntimeModuleV2>(dlsym(module->handle, TIME_MACHINE_RUNTIME_ENTRY_V2));
+    const auto* runtimeError = dlerror();
+    if (!runtimeError && runtimeEntry) {
+        const TimeMachineRuntimeModuleV2* descriptor = nullptr;
+        try { descriptor = runtimeEntry(); } catch (...) { throw std::runtime_error("machine runtime entry threw across C ABI"); }
+        if (!descriptor || descriptor->struct_size != sizeof(*descriptor) ||
+            descriptor->abi_version != TIME_MACHINE_RUNTIME_ABI_V2 || !descriptor->provider_count ||
+            descriptor->provider_count > 64 || !descriptor->providers)
+            throw std::invalid_argument("machine runtime module ABI rejected");
+        (void)bounded(descriptor->id,64);
+        std::vector<std::pair<MachineDescriptor,MachineRegistry::Factory>> staged;
+        for (std::uint32_t i=0;i<descriptor->provider_count;++i) {
+            const auto p=descriptor->providers[i];
+            if (p.struct_size!=sizeof(p) || p.abi_version!=TIME_MACHINE_RUNTIME_ABI_V2 || !p.create ||
+                p.frame_width!=160 || p.frame_height!=144 || !p.clock_hz || p.clock_hz>100000000 ||
+                p.region_count>64 || (p.region_count && !p.regions)) throw std::invalid_argument("machine runtime provider ABI rejected");
+            MachineDescriptor machine{bounded(p.id,64),bounded(p.display_name,128,false),160,144,bounded(p.family,64)};
+            // These are adapters for current families, even after future admission opens.
+            if (machine.familyId!="gameboy" && machine.familyId!="gamegear") throw std::invalid_argument("machine runtime family unavailable");
+            std::vector<std::string> labels;
+            std::vector<IoRegionDescriptor> regions;
+            for(std::uint32_t j=0;j<p.region_count;++j) {
+                const auto r=p.regions[j];
+                if(r.struct_size!=sizeof(r) || r.category>7 || r.readable>1 || r.writable>1 || !r.size ||
+                    static_cast<std::uint32_t>(r.address)+r.size>65536) throw std::invalid_argument("machine runtime region rejected");
+                labels.push_back(bounded(r.label,128,false));
+                regions.push_back({static_cast<PluginCategory>(r.category),r.address,r.size,{},r.readable!=0,r.writable!=0});
+            }
+            staged.emplace_back(machine,[module,p,machine,labels=std::move(labels),regions=std::move(regions)] {
+                return createForeignMachine(module,p,machine,labels,regions);
+            });
+        }
+        registry.registerProviders(std::move(staged));
+        return;
+    }
     dlerror();
     auto entry = reinterpret_cast<TimeGetMachineProviderModuleV1>(dlsym(module->handle, TIME_MACHINE_PROVIDER_ENTRY_V1));
     if (const auto* error = dlerror()) throw std::runtime_error("machine provider entry missing: " + std::string(error));

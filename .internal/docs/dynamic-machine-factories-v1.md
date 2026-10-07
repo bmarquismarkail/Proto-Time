@@ -2,8 +2,9 @@
 
 This is the construction and lifetime portion of the approved two-core provider
 program. It does not close `providers.dynamic`: a complete pure-C table for
-independently implemented CPU/device/runtime providers remains required by the
-selected plugin design. No additional machine family is implemented or admitted.
+independently implemented CPU/device/runtime providers is now provided separately
+by [runtime ABI version 2](dynamic-machine-runtime-v2.md). Remaining acceptance
+for the selected plugin design stays in the completion matrix. No additional machine family is implemented or admitted.
 
 `TimeMachineProviderAbi.h` is a separately versioned C interface. A shared library
 exports `time_get_machine_provider_module_v1`. It describes at most 64 factories,

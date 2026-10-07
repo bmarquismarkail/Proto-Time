@@ -146,3 +146,5 @@ results in those records describe their original runs.
 - [Browser inspection and video-memory viewers](../machine/plugins/video/remote/README.md): owned snapshots, bounded HTTP controls, core-specific pattern/palette/sprite inspection and acceptance boundaries.
 
 - [Visual authoring and GPU presentation v1](../.internal/docs/visual-authoring-v1.md) describes ROM-bound recipes, reviewed labels, staged packs and browser shader acceptance.
+
+- [Module-owned machine runtime ABI v2](../.internal/docs/dynamic-machine-runtime-v2.md): independent CPU/device callbacks, owned outputs and staged state.
