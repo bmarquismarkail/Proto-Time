@@ -56,6 +56,7 @@
 #include "machine/plugins/audio/AlsaMidiSink.hpp"
 #endif
 #include "machine/TimingService.hpp"
+#include "machine/HostPacing.hpp"
 #include "machine/modding/ModDirectoryLoader.hpp"
 #include "machine/modding/NativeMod.hpp"
 #include "cores/gameboy/GameBoyMachine.hpp"
@@ -1625,22 +1626,11 @@ int main(int argc, char** argv)
                             const auto requestedSleep =
                                 std::chrono::duration_cast<std::chrono::nanoseconds>(nextStepTime - idleNow);
                             const auto beforeSleep = SteadyClock::now();
-                            if (!timingEngine.stats().paused && timingConfig.adaptiveSleepEnabled &&
-                                requestedSleep > timingConfig.sleepSpinWindow &&
-                                timingConfig.sleepSpinWindow > std::chrono::nanoseconds::zero()) {
-                                const auto coarseWake = nextStepTime - timingConfig.sleepSpinWindow;
-                                std::this_thread::sleep_until(coarseWake);
-                                const auto spinStart = SteadyClock::now();
-                                while (!stopRequested.load(std::memory_order_acquire) &&
-                                       gStopRequested == 0 && SteadyClock::now() < nextStepTime) {
-                                    if (SteadyClock::now() - spinStart >= timingConfig.sleepSpinCap) {
-                                        break;
-                                    }
-                                    std::this_thread::yield();
-                                }
-                            } else {
-                                std::this_thread::sleep_until(nextStepTime);
-                            }
+                            BMMQ::waitForTimingWake(nextStepTime, requestedSleep,
+                                timingConfig, timingEngine.stats().paused, [&] {
+                                    return stopRequested.load(std::memory_order_acquire) ||
+                                           gStopRequested != 0;
+                                });
                             const auto afterSleep = SteadyClock::now();
                             const auto actualSleep =
                                 std::chrono::duration_cast<std::chrono::nanoseconds>(afterSleep - beforeSleep);

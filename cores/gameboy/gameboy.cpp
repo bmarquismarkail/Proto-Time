@@ -3045,7 +3045,11 @@ void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, Addre
     auto* snapshot = block.getSnapshot();
     if (snapshot == nullptr) return;
 
-    auto* view=dynamic_cast<BMMQ::Space::RegisterExecutionView*>(snapshot);
+    // decodeInto binds ordinary execution to this concrete memory pool. Only
+    // alternate snapshots can supply sparse execution registers; avoid a failed
+    // cross-cast through the memory hierarchy on every baseline instruction.
+    auto* view = snapshot == &mem ? nullptr
+        : dynamic_cast<BMMQ::Space::RegisterExecutionView*>(snapshot);
     auto* canonicalPc=pcRegister_;auto* canonicalSp=spRegister_;auto canonicalCache=cpuRegisters_;
     if(view){pcRegister_=view->executionRegisters().findRegister("PC")->reg.get();spRegister_=view->executionRegisters().findRegister("SP")->reg.get();}
     if(view){auto& file=view->executionRegisters();

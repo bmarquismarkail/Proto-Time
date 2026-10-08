@@ -13,11 +13,15 @@
 #include <string_view>
 #include <thread>
 #include <vector>
+#if defined(__linux__)
+#include <time.h>
+#endif
 
 #include "cores/gameboy/GameBoyMachine.hpp"
 #include "cores/gameboy/GameBoyInput.hpp"
 #include "machine/InputService.hpp"
 #include "machine/TimingService.hpp"
+#include "machine/HostPacing.hpp"
 #include "machine/VideoService.hpp"
 #include "machine/plugins/IoPlugin.hpp"
 #include "machine/plugins/video/VideoPlugin.hpp"
@@ -37,12 +41,23 @@ constexpr double kFirstVBlankCycles = 65'664.0;
 constexpr double kFrameCycles = 70'224.0;
 constexpr std::int64_t kLatencyLimitNs = 16'000'000;
 constexpr std::int64_t kInputInjectionDelayNs = 5'000'000;
+constexpr auto kRenderPollInterval = std::chrono::microseconds(250);
 constexpr std::uint32_t kLightestPixel = 0xFFE0F8D0u;
 constexpr std::uint32_t kDarkestPixel = 0xFF081820u;
 
 [[nodiscard]] std::int64_t clockNs(Clock::time_point value) noexcept
 {
     return std::chrono::duration_cast<Nanoseconds>(value.time_since_epoch()).count();
+}
+
+[[nodiscard]] std::int64_t threadCpuNs() noexcept
+{
+#if defined(__linux__)
+    timespec value{};
+    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &value) == 0)
+        return value.tv_sec * 1'000'000'000LL + value.tv_nsec;
+#endif
+    return 0;
 }
 
 struct PresentedFrame {
@@ -271,6 +286,41 @@ private:
     std::vector<std::int64_t> publishedAtNs_{};
 };
 
+// Match the production scheduler's bounded runSlice path. Timing is charged
+// after each canonical CPU/device retirement, even within a host dispatch batch.
+class TimingRetirementSink final : public BMMQ::InstructionRetirementSink {
+public:
+    TimingRetirementSink(BMMQ::TimingEngine& timing, const BMMQ::TimingConfig& config,
+                         double& wakeCycles, std::size_t& instructions,
+                         std::size_t& completedSlices)
+        : timing_(timing), config_(config), wakeCycles_(wakeCycles),
+          instructions_(instructions), completedSlices_(completedSlices) {}
+
+    BMMQ::InstructionRetirementDecision retireInstruction(
+        const BMMQ::CpuFeedback& feedback, const BMMQ::ExecutionSliceProgress&) override
+    {
+        ++instructions_;
+        const auto retired = static_cast<double>(feedback.retiredCycles);
+        const auto charged = std::max(config_.minInstructionCycles, retired);
+        wakeCycles_ += charged;
+        timing_.charge(retired);
+        sliceComplete = timing_.recordExecutionSliceCycles(charged).executionSliceComplete;
+        if (sliceComplete) ++completedSlices_;
+        if (sliceComplete || !timing_.canExecute() || wakeCycles_ >= config_.maxCyclesPerWake)
+            return BMMQ::InstructionRetirementDecision::exitSlice();
+        return BMMQ::InstructionRetirementDecision::continueSlice();
+    }
+
+    bool sliceComplete = false;
+
+private:
+    BMMQ::TimingEngine& timing_;
+    const BMMQ::TimingConfig& config_;
+    double& wakeCycles_;
+    std::size_t& instructions_;
+    std::size_t& completedSlices_;
+};
+
 } // namespace
 
 int main()
@@ -285,6 +335,10 @@ int main()
 
     GB::GameBoyMachine machine;
     machine.loadRom(inputResponseRom());
+    if (machine.attachedExecutorPolicy().backend() != BMMQ::ExecutionBackend::Baseline) {
+        std::cerr << "scheduling gate requires baseline execution\n";
+        return 1;
+    }
     auto input = std::make_unique<TimingHeadlessInput>();
     auto* inputView = input.get();
     if (!machine.inputService().attachAdapter(std::move(input)) ||
@@ -313,10 +367,18 @@ int main()
     timing.start(startedAt);
     std::atomic<bool> emulationDone{false};
     std::atomic<bool> timedOut{false};
-    std::atomic<std::size_t> schedulerUpdates{0u};
-    std::atomic<std::size_t> schedulerExecutedInstructions{0u};
-    std::atomic<std::size_t> schedulerCompletedSlices{0u};
-    std::atomic<std::size_t> schedulerIdleWaits{0u};
+    // Lane-owned counters are read only after join. Per-instruction atomics
+    // otherwise compete with the render lane's nearby completion flag.
+    std::size_t schedulerUpdates = 0u;
+    std::size_t schedulerExecutedInstructions = 0u;
+    std::size_t schedulerCompletedSlices = 0u;
+    std::size_t schedulerIdleWaits = 0u;
+    std::size_t renderIdleWaits = 0u;
+    std::int64_t updateGapHighWaterNs = 0;
+    std::int64_t executionBatchHighWaterNs = 0;
+    std::int64_t longestBatchCpuNs = 0;
+    std::int64_t sleepOvershootHighWaterNs = 0;
+    double discardedCatchUpCycles = 0.0;
     std::vector<InputTransition> inputTransitions;
     inputTransitions.reserve(kTargetInputTransitions);
 
@@ -356,7 +418,15 @@ int main()
                     nextInputAtNs = presented.presentCompletedAtNs + kInputInjectionDelayNs;
                 }
             } else {
-                std::this_thread::yield();
+                // Pace idle polling as the production frontend does. yield()
+                // leaves this lane runnable and burns a core between frames.
+                const auto pollAt = Clock::now() + kRenderPollInterval;
+                const auto wakeAt = nextInputAtNs != 0
+                    ? std::min(pollAt, Clock::time_point(
+                          std::chrono::duration_cast<Clock::duration>(Nanoseconds(nextInputAtNs))))
+                    : pollAt;
+                ++renderIdleWaits;
+                std::this_thread::sleep_until(wakeAt);
             }
         }
     });
@@ -364,14 +434,22 @@ int main()
     std::thread emulationLane([&]() {
         const auto deadline = startedAt + std::chrono::seconds(2);
         std::uint64_t servicedInputRevision = 0u;
+        auto lastUpdate = startedAt;
         while (bridgeView->published() < kTargetFrames && !bridgeView->failed()) {
             const auto now = Clock::now();
+            const auto cpuStarted = threadCpuNs();
             if (kEnforceWallClockThresholds && now >= deadline) {
                 timedOut.store(true, std::memory_order_release);
                 break;
             }
+            updateGapHighWaterNs = std::max(updateGapHighWaterNs, clockNs(now) - clockNs(lastUpdate));
+            const auto beforeUpdateBudget = timing.stats().cycleBudget;
+            const auto elapsedSeconds = std::chrono::duration<double>(now - lastUpdate).count();
             timing.update(now);
-            schedulerUpdates.fetch_add(1u, std::memory_order_relaxed);
+            discardedCatchUpCycles += std::max(0.0, beforeUpdateBudget +
+                elapsedSeconds * timing.stats().effectiveClockHz - timing.stats().cycleBudget);
+            lastUpdate = now;
+            ++schedulerUpdates;
             const auto inputRevision = inputView->revision();
             if (inputRevision != servicedInputRevision) {
                 machine.serviceInput();
@@ -379,32 +457,37 @@ int main()
             }
             std::uint32_t slices = 0u;
             double wakeCycles = 0.0;
-            bool sliceActive = false;
             while (timing.canExecute() &&
                    slices < timingConfig.maxExecutionSlicesPerWake &&
                    wakeCycles < timingConfig.maxCyclesPerWake) {
-                if (!sliceActive) {
-                    timing.beginExecutionSlice();
-                    sliceActive = true;
-                    ++slices;
-                }
-                machine.step();
-                schedulerExecutedInstructions.fetch_add(1u, std::memory_order_relaxed);
-                const auto retired = static_cast<double>(
-                    machine.runtimeContext().getLastFeedback().retiredCycles);
-                const auto charged = std::max(timingConfig.minInstructionCycles, retired);
-                wakeCycles += charged;
-                timing.charge(retired);
-                if (timing.recordExecutionSliceCycles(charged).executionSliceComplete) {
-                    schedulerCompletedSlices.fetch_add(1u, std::memory_order_relaxed);
-                    sliceActive = false;
-                }
+                timing.beginExecutionSlice();
+                ++slices;
+                TimingRetirementSink sink(timing, timingConfig, wakeCycles,
+                                          schedulerExecutedInstructions, schedulerCompletedSlices);
+                do {
+                    const auto result = machine.runSlice({
+                        .maxInstructions = 256u,
+                        .maxCycles = static_cast<std::uint64_t>(
+                            std::max(1.0, timingConfig.maxCyclesPerWake - wakeCycles)),
+                        .stopOnSegmentBoundary = false,
+                    }, &sink);
+                    if (result.progress.retiredInstructions == 0u) break;
+                } while (timing.canExecute() && !sink.sliceComplete &&
+                         wakeCycles < timingConfig.maxCyclesPerWake);
             }
             const auto idleNow = Clock::now();
+            const auto cpuCompleted = threadCpuNs();
+            if (const auto wallNs = clockNs(idleNow) - clockNs(now);
+                wallNs > executionBatchHighWaterNs) {
+                executionBatchHighWaterNs = wallNs;
+                longestBatchCpuNs = cpuCompleted - cpuStarted;
+            }
             const auto wake = timing.nextBatchWakeTime(idleNow);
             if (wake > idleNow) {
-                schedulerIdleWaits.fetch_add(1u, std::memory_order_relaxed);
-                std::this_thread::sleep_until(wake);
+                ++schedulerIdleWaits;
+                BMMQ::waitForTimingWake(wake, std::chrono::duration_cast<Nanoseconds>(wake - idleNow),
+                    timingConfig, timing.stats().paused, [] { return false; });
+                sleepOvershootHighWaterNs = std::max(sleepOvershootHighWaterNs, clockNs(Clock::now()) - clockNs(wake));
             }
 
         }
@@ -462,15 +545,16 @@ int main()
         presentationDurations.size() == kTargetFrames &&
         inputTransitions.size() == kTargetInputTransitions &&
         inputResponseLatencies.size() == kTargetInputTransitions &&
-        schedulerUpdates.load(std::memory_order_relaxed) > 0u &&
-        schedulerExecutedInstructions.load(std::memory_order_relaxed) > 0u &&
+        schedulerUpdates > 0u &&
+        schedulerExecutedInstructions > 0u &&
+        renderIdleWaits > 0u &&
         timingStats.executionSlicesEntered > 0u &&
         // Idle-waits proves the emulation thread throttled once the guest caught
         // up to wall-clock. Under TSAN the guest runs several times slower than
         // wall-clock, so it never catches up and never idles — a wall-clock-relative
         // property that cannot hold under the sanitizer. Waive it when wall-clock
         // thresholds are disabled; every other structural check stays active.
-        (!kEnforceWallClockThresholds || schedulerIdleWaits.load(std::memory_order_relaxed) > 0u) &&
+        (!kEnforceWallClockThresholds || schedulerIdleWaits > 0u) &&
         diagnostics.overwriteRealtimeFrameCount == 0u &&
         diagnostics.staleEpochDropCount == 0u;
     const bool latencyPass = !kEnforceWallClockThresholds ||
@@ -483,28 +567,32 @@ int main()
               << " frames_presented=" << presentations.size()
               << " overwrites=" << diagnostics.overwriteRealtimeFrameCount
               << " stale_epoch_drops=" << diagnostics.staleEpochDropCount
-              << " scheduler_updates=" << schedulerUpdates.load(std::memory_order_relaxed)
-              << " executed_instructions=" << schedulerExecutedInstructions.load(std::memory_order_relaxed)
+              << " scheduler_updates=" << schedulerUpdates
+              << " executed_instructions=" << schedulerExecutedInstructions
               << " execution_slices_entered=" << timingStats.executionSlicesEntered
-              << " execution_slices=" << schedulerCompletedSlices.load(std::memory_order_relaxed)
-              << " idle_waits=" << schedulerIdleWaits.load(std::memory_order_relaxed)
+              << " execution_slices=" << schedulerCompletedSlices
+              << " idle_waits=" << schedulerIdleWaits
+              << " render_idle_waits=" << renderIdleWaits
               << " input_transitions=" << inputTransitions.size()
               << " input_responses=" << inputResponseLatencies.size() << '\n';
-    std::cout << "gate headless_frame_residence_p99 observed_ns=" << transportP99
-              << " limit_ns=" << kLatencyLimitNs
-              << " enforced=" << (kEnforceWallClockThresholds ? "true" : "false")
-              << " result=" << ((structuralPass && latencyPass) ? "pass" : "FAIL") << '\n';
-    std::cout << "gate headless_presentation_p99 observed_ns=" << presentationP99
-              << " limit_ns=" << kLatencyLimitNs
-              << " enforced=" << (kEnforceWallClockThresholds ? "true" : "false")
-              << " result=" << ((structuralPass && latencyPass) ? "pass" : "FAIL") << '\n';
-    std::cout << "gate headless_scheduling_to_present_p99 observed_ns=" << schedulingP99
-              << " limit_ns=" << kLatencyLimitNs
-              << " enforced=" << (kEnforceWallClockThresholds ? "true" : "false")
-              << " result=" << ((structuralPass && latencyPass) ? "pass" : "FAIL") << '\n';
-    std::cout << "gate headless_input_to_frame_response_p99 observed_ns=" << inputResponseP99
-              << " limit_ns=" << kLatencyLimitNs
-              << " enforced=" << (kEnforceWallClockThresholds ? "true" : "false")
-              << " result=" << ((structuralPass && latencyPass) ? "pass" : "FAIL") << '\n';
+    std::cout << "scheduler diagnostics catch_up_clamps=" << timingStats.catchUpClampCount
+              << " discarded_catch_up_ns=" << static_cast<std::int64_t>(
+                     discardedCatchUpCycles / kGameBoyClockHz * 1'000'000'000.0)
+              << " update_gap_max_ns=" << updateGapHighWaterNs
+              << " execution_batch_max_ns=" << executionBatchHighWaterNs
+              << " longest_batch_cpu_ns=" << longestBatchCpuNs
+              << " sleep_overshoot_max_ns=" << sleepOvershootHighWaterNs << '\n';
+    const auto printGate = [&](std::string_view name, std::int64_t observedNs) {
+        const bool pass = structuralPass &&
+            (!kEnforceWallClockThresholds || observedNs < kLatencyLimitNs);
+        std::cout << "gate " << name << " observed_ns=" << observedNs
+                  << " limit_ns=" << kLatencyLimitNs
+                  << " enforced=" << (kEnforceWallClockThresholds ? "true" : "false")
+                  << " result=" << (pass ? "pass" : "FAIL") << '\n';
+    };
+    printGate("headless_frame_residence_p99", transportP99);
+    printGate("headless_presentation_p99", presentationP99);
+    printGate("headless_scheduling_to_present_p99", schedulingP99);
+    printGate("headless_input_to_frame_response_p99", inputResponseP99);
     return structuralPass && latencyPass ? 0 : 1;
 }
