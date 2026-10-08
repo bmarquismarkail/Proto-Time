@@ -172,6 +172,38 @@ template <class Core> void ram(const CompiledBlock &code) {
   baseline.runSlice({.maxInstructions = 1});
   native.runSlice({.maxInstructions = 1});
   equivalent(baseline, native);
+
+  // Writable code must retain full guards even when no observer is attached.
+  prepare(native, code);
+  auto registers = native.debugRegisters();
+  registers[0] = 0;
+  registers[3] = 0xc001;
+  native.debugCommitRegisters(registers);
+  auto unobserved = native.bindResearchBlock(code);
+  require(!unobserved.hasLowRomCode(), "RAM incorrectly classified as ROM");
+  result = native.runResearchBlock(unobserved,
+      {.maxInstructions = 6, .stopOnSegmentBoundary = false});
+  require(result.progress.retiredInstructions == 1,
+          "unobserved RAM rewrite did not side-exit");
+}
+template <class Core> void guestMappingWrite(const CompiledBlock &code) {
+  Core baseline, native;
+  prepare(baseline, code);
+  prepare(native, code);
+  for (auto *machine : {&baseline, &native}) {
+    auto registers = machine->debugRegisters();
+    registers[0] = 0x0200;
+    registers[3] = gb<Core> ? 0x2000 : 0xfffe;
+    machine->debugCommitRegisters(registers);
+  }
+  auto bound = native.bindResearchBlock(code);
+  require(bound.hasLowRomCode(), "ROM classification missing");
+  const auto result = native.runResearchBlock(bound,
+      {.maxInstructions = 6, .stopOnSegmentBoundary = false});
+  require(result.progress.retiredInstructions == 1,
+          "guest mapping write bypassed ROM continuation guard");
+  baseline.runSlice({.maxInstructions = 1, .stopOnSegmentBoundary = false});
+  equivalent(baseline, native);
 }
 template <class Core> void bank(const CompiledBlock &code) {
   Core baseline, native;
@@ -380,6 +412,8 @@ int main() try {
   ram<GB::GameBoyMachine>(emittedGameBoyRamCode());
   std::cout << "Game Gear RAM\n" << std::flush;
   ram<GameGearMachine>(emittedGameGearRamCode());
+  guestMappingWrite<GB::GameBoyMachine>(emittedGameBoyRam());
+  guestMappingWrite<GameGearMachine>(emittedGameGearRam());
   std::cout << "Game Boy bank\n" << std::flush;
   bank<GB::GameBoyMachine>(emittedGameBoyBank());
   std::cout << "Game Gear bank\n" << std::flush;

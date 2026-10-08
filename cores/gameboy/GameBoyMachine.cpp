@@ -1315,13 +1315,21 @@ BMMQ::ExecutionSliceResult GameBoyMachine::runResearchBlock(BMMQ::IR::Research::
     auto& cpu=impl_->cpu.cpu();
     const auto abi=cpu.irExecutionAbi();
     WholeBlockAbiHost host(abi);
+    // Validate every byte at entry. Only immutable ROM/BIOS can reuse that
+    // result within this invocation; arbitrary retirement observers retain
+    // full checks, and writable code is re-read before every instruction.
+    const bool reuseCodeGuard = !observer && binding.hasLowRomCode();
     return BMMQ::IR::Research::executeMachineBlock(binding,host,budget,observer,
         [&](const BMMQ::IR::Block& block,size_t index) {
             if(!impl_->romLoaded || impl_->bootEntryPending || !binding.matches(impl_->researchOwner,observationGeneration()) ||
                attachedExecutorPolicy().backend()!=BMMQ::ExecutionBackend::Baseline || impl_->context->capture ||
                impl_->context->snapshotExecution || impl_->memoryMap.debugEngine || !impl_->nativeTrampolines.empty() ||
                cpu.pcRegister_->value!=block.instructions[index].address ||
-               cpu.irGuardFailure(block)!=IRExecution::GuardFailure::None)return false;
+               (index == 0 || !reuseCodeGuard
+                    ? cpu.irGuardFailure(block)
+                    : IRExecution::validateContinuationGuards(block,
+                        cpu.researchMappingGeneration(), cpu.irExecutionState()))
+                    !=IRExecution::GuardFailure::None)return false;
             cpu.feedback.pcBefore=block.instructions[index].address;
             cpu.feedback.isControlFlow=block.instructions[index].controlFlow;
             cpu.feedback.segmentBoundaryHint=block.instructions[index].controlFlow || block.instructions[index].interruptSensitive;

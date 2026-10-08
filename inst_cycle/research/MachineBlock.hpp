@@ -13,8 +13,18 @@ class BoundBlock {
 public:
   BoundBlock(CompiledBlock code, Owner owner, std::uint64_t generation)
       : code_(std::move(code)), owner_(std::move(owner)),
-        generation_(generation) {}
+        generation_(generation) {
+    // A range fact, not a generic immutability claim. Both admitted cores map
+    // only ROM/BIOS below $8000; their mapping guards protect those windows.
+    for (const auto &guard : code_.block().guards)
+      if (guard.kind == GuardKind::CodeBytes) {
+        lowRomCode_ = !guard.bytes.empty() && guard.subject < 0x8000 &&
+                      guard.bytes.size() <= 0x8000 - guard.subject;
+        break;
+      }
+  }
   const CompiledBlock &code() const noexcept { return code_; }
+  bool hasLowRomCode() const noexcept { return lowRomCode_; }
   bool matches(const Owner &owner, std::uint64_t generation) const noexcept {
     return !faulted_ && owner_ == owner && generation_ == generation;
   }
@@ -25,6 +35,7 @@ private:
   Owner owner_;
   std::uint64_t generation_;
   bool faulted_ = false;
+  bool lowRomCode_ = false;
 };
 // Core validators re-lower the copied code and require exact canonical IR. The
 // emitted entry remains paired with those instructions; only mapping guards are

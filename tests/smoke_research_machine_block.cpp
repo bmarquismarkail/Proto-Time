@@ -84,6 +84,34 @@ template <class Core> void check(const CompiledBlock &code) {
                   code.block().instructions.size(),
               "whole block retirement");
     }
+    // No observer uses the ROM continuation fast path. Check every possible
+    // retirement boundary, including partial invocations, against baseline.
+    for (std::size_t limit = 1; limit <= code.block().instructions.size(); ++limit) {
+      for (auto *machine : {&baseline, &native}) {
+        auto state = machine->debugRegisters();
+        state[5] = code.block().guestStart;
+        machine->debugCommitRegisters(state);
+      }
+      const ExecutionBudget budget{.maxInstructions = limit,
+                                   .stopOnSegmentBoundary = false};
+      const auto expected = baseline.runSlice(budget);
+      const auto actual = native.runResearchBlock(bound, budget);
+      require(actual.progress.retiredInstructions == limit &&
+                  actual.progress.retiredCycles == expected.progress.retiredCycles,
+              "unobserved retirement accounting");
+      const auto &a = actual.lastFeedback;
+      const auto &e = expected.lastFeedback;
+      require(a.pcBefore == e.pcBefore && a.pcAfter == e.pcAfter &&
+                  a.retiredCycles == e.retiredCycles && a.isControlFlow == e.isControlFlow &&
+                  a.segmentBoundaryHint == e.segmentBoundaryHint,
+              "unobserved retirement feedback");
+      require(baseline.debugRegisters() == native.debugRegisters() &&
+                  baseline.deterministicStateFingerprint() == native.deterministicStateFingerprint(),
+              "unobserved ROM continuation mismatch");
+    }
+    auto start = native.debugRegisters();
+    start[5] = code.block().guestStart;
+    native.debugCommitRegisters(start);
     const auto before = native.deterministicStateFingerprint();
     auto zero = native.runResearchBlock(bound, {.maxInstructions = 0});
     require(zero.progress.retiredInstructions == 0, "zero budget");

@@ -29,8 +29,10 @@ core/host. Do not expand opcode/backend coverage until the design review passes.
 A newly reviewed no-go can close this research row only after the new baseline
 and backend evaluation. Record the reviewer, reason, measured failures or benefit,
 and source/build-bound artifacts. Missing ARM64 runners, failing ordinary
-features and unavailable testing cannot be replaced with a no-go. No decision
-has been made by this document; all four core/host evaluations remain pending.
+features and unavailable testing cannot be replaced with a no-go. The user has
+approved continued whole-block development as **go**. Performance acceptance for
+all four core/host evaluations remains pending; that approval does not replace
+the correctness, latency, representative-corpus or native-host requirements.
 
 ## Reproducible baseline corpus
 
@@ -64,8 +66,9 @@ baseline-versus-emitted comparisons for synthetic compute-heavy, RAM-heavy, and
 mixed device-access patterns with per-retirement correctness checks, separate
 timing, coverage accounting and comparison to the fastest validated existing
 backend per case. See the pilot document for the exact procedure and evidence;
-these patterns do not establish representative game coverage. Latency evidence
-and reviewed decisions remain pending. The user deferred native ARM64 performance;
+these patterns do not establish representative game coverage. Performance
+acceptance remains pending; the development go approval is recorded above. The
+user deferred native ARM64 performance;
 QEMU continues to supply correctness evidence only. This deferral does not close
 the research requirement or open admission.
 
@@ -79,3 +82,9 @@ result. The full CTest run passed 183/184 checks; the existing headless scheduli
 latency gate also failed on an isolated rerun. The pilot document records the raw
 artifact path, exact procedure, host/build binding and validation limits. Neither
 a passing acceleration result nor a reviewed no-go is established.
+
+The [ROM continuation optimization](time-whole-block-pilot.md#approved-design-rom-continuation-optimization-2026-10-08)
+records the subsequent source/build-bound evaluation. Paired process diagnostics
+improved over the previous emitted path, while the standard corpus still found
+6.05–14.44% regressions against the fastest validated existing paths. These
+measurements do not meet the performance acceptance threshold or change admission.

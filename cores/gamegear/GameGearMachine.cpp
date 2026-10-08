@@ -379,8 +379,8 @@ public:
     const IInvalidationCapability* invalidationCapability() const override { return this; }
 
     IR::InterpreterHost& researchHost() noexcept {return irHost_;}
-    bool researchGuards(const IR::Block& block) const noexcept {
-        return !cpu_.hasInstructionFetchObserver() && guardsMatch(block);
+    bool researchGuards(const IR::Block& block, bool checkCodeBytes = true) const noexcept {
+        return !cpu_.hasInstructionFetchObserver() && guardsMatch(block, checkCodeBytes);
     }
     CpuFeedback researchRetire(const IR::GuestInstruction& i,const IR::InterpreterResult& r) {
         lastFeedback_.pcAfter=cpu_.PC;
@@ -483,7 +483,7 @@ private:
         return guardsMatch(*entry.block);
     }
 
-    bool guardsMatch(const IR::Block& block) const noexcept
+    bool guardsMatch(const IR::Block& block, bool checkCodeBytes = true) const noexcept
     {
         for (const auto& guard : block.guards) {
             switch (guard.kind) {
@@ -500,6 +500,7 @@ private:
                 }
                 break;
             case IR::GuardKind::CodeBytes:
+                if (!checkCodeBytes) break;
                 for (std::size_t index = 0u; index < guard.bytes.size(); ++index) {
                     std::uint8_t byte = 0u;
                     const auto address = static_cast<std::uint16_t>(guard.subject + index);
@@ -1381,12 +1382,15 @@ ExecutionSliceResult GameGearMachine::runResearchBlock(IR::Research::BoundBlock&
     if(impl->capture || impl->snapshotExecution || impl->mem.debugEngine || !impl->nativeTrampolines.empty() ||
        attachedExecutorPolicy().backend()!=ExecutionBackend::Baseline)
         throw std::invalid_argument("whole-block research requires exclusive baseline execution");
+    // Below $8000 neither SRAM nor mirrored RAM is mapped. Entry checks all
+    // bytes; continuation still checks mapping, CPU state and owner lifetime.
+    const bool reuseCodeGuard = !observer && binding.hasLowRomCode();
     return IR::Research::executeMachineBlock(binding,impl->context.researchHost(),budget,observer,
         [&](const IR::Block& block,size_t index) {
             if(!impl->romLoaded || !binding.matches(impl->researchOwner,observationGeneration()) ||
                impl->capture || impl->snapshotExecution || impl->mem.debugEngine || !impl->nativeTrampolines.empty() ||
                attachedExecutorPolicy().backend()!=ExecutionBackend::Baseline || impl->cpu.PC!=block.instructions[index].address ||
-               !impl->context.researchGuards(block))return false;
+               !impl->context.researchGuards(block, index == 0 || !reuseCodeGuard))return false;
             impl->context.researchBegin(impl->cpu.PC);return true;
         },
         [&](const IR::GuestInstruction& i,const IR::InterpreterResult& r){return impl->context.researchRetire(i,r);},

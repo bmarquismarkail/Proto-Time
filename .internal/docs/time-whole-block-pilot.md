@@ -62,8 +62,10 @@ QEMU throughput.
 The separate internal `MachineBlock` binding validates the architecture and
 canonical CPU lowering, then binds immutable artifact metadata to one machine
 identity and its lifecycle generation. Mapping guards are rebound at construction
-on the paused control lane. Each instruction checks PC, code bytes, mapping,
-execution state and helper ABI before mutation. Execution uses the real CPU
+on the paused control lane. Each instruction checks PC, mapping, execution state
+and helper ABI before mutation. Code bytes are checked at each invocation entry;
+the ROM-only continuation optimization described below retains full per-instruction
+byte checks for writable code and retirement observers. Execution uses the real CPU
 helpers and the existing machine device-retirement path. No new production
 policy is selected; this API requires an exclusive baseline machine without
 capture, debugger or native trampolines.
@@ -218,3 +220,106 @@ The barrier records successful kernel transmission, not peer receipt or a new
 wire-level acknowledgment. It is outside guest execution; packet format and
 frame determinism are unchanged. Transport tests cover monotonic publication
 and reset on reconnect; the two-process CLI verifies final publication.
+
+### Approved design: ROM continuation optimization, 2026-10-08
+
+The user approved continued acceleration development as go and deferred native
+ARM64 performance. Performance acceptance remains pending. The earlier scheduling
+failure above was repaired separately in `32e3b796`; see
+[scheduling latency repair](scheduling-latency-repair.md).
+
+Sampling the original emitted compute path for 20 million instructions showed
+that Game Gear cartridge reads (40.67% self samples), code peeks (13.45%) and
+scalar/byte guard handling (5.97%) dominated execution. Game Boy's larger costs
+included hardware retirement and rendering, alongside code reads and guard checks.
+The raw profiles, original executable, harness and bindings are retained under
+`build-working/completion-validation/acceleration-optimization/`.
+
+Bindings now record whether the entire validated code-byte guard lies below
+`$8000`. Both current cores map ROM/BIOS in that range. With no retirement
+observer, an invocation checks all bytes before its first instruction, then uses
+scalar continuation guards. Each instruction still checks PC, mapping, CPU state,
+helper ABI, owner/lifecycle generation and execution exclusivity; hardware advances
+and retirement publishes exactly once. No validation is reused across invocations.
+RAM, mirrors, Game Gear cartridge-RAM windows and blocks spanning `$8000` retain
+full byte checks. Retirement observers also retain full checks because they can
+perform arbitrary control-lane actions. Fetch inspection remains free of device
+side effects. The external IR ABI, existing CPU interfaces, emitted opcode set and
+default baseline policy are unchanged.
+
+Additional differential checks cover all 104 unobserved instruction-budget
+cutoffs across compute/RAM fixtures and four initial states on both cores. They
+compare registers, full machine fingerprints, cycles and retirement feedback.
+Unobserved self-modifying RAM must exit after the modifying instruction. A guest
+mapper write from a ROM block must also exit before the following instruction.
+Existing observed per-retirement and lifecycle/interrupt tests remain in place.
+
+Two separate measurements are retained:
+
+- `paired-diagnostic.json`: 36 alternating before/after process runs, three pairs
+  per case, each with 4,096 warmup and 20 million measured instructions. ROM load,
+  binding, process startup and shutdown are included. Instruction, cycle and
+  coverage accounting agree across each pair. This diagnostic isolates the change
+  against the retained original executable; it does not establish acceptance or
+  independently compare complete state at its 20-million-instruction endpoint.
+- `after.json`: the standard nine-repetition, 216-sample real-core corpus report,
+  with all six per-retirement correctness records passing (73,728 candidate
+  retirement comparisons), both conditional paths covered, and all warmup/timed
+  register, fingerprint and cycle endpoints matching. It independently selects
+  the fastest validated existing path in each case.
+
+| Core | Pattern | Paired diagnostic median gain vs previous emitted | Optimized emitted ms / 100k instructions | Fastest existing path (ms) | Optimized slowdown vs fastest |
+| --- | --- | ---: | ---: | --- | ---: |
+| Game Boy | compute-heavy | 10.49% | 69.419 | cached-block (60.657) | 14.44% |
+| Game Boy | ram-heavy | 5.97% | 89.017 | cached-block (83.942) | 6.05% |
+| Game Boy | mixed-devices | 8.87% | 83.824 | portable-ir (78.064) | 7.38% |
+| Game Gear | compute-heavy | 48.69% | 16.315 | baseline (14.526) | 12.31% |
+| Game Gear | ram-heavy | 38.25% | 17.987 | baseline (16.392) | 9.73% |
+| Game Gear | mixed-devices | 33.00% | 18.385 | baseline (17.314) | 6.18% |
+
+All 18 before/after diagnostic pairs improved. Separate-run absolute Game Boy
+medians shifted substantially alongside comparator medians, so the first
+`before.json` and intermediate `after-guards.json` are retained without treating
+their absolute differences as an isolated optimization result. The paired
+process diagnostic and the final within-run comparator results above have
+separate scopes. The intermediate run used an extra internal CPU parameter;
+the final code instead reuses the existing continuation validator and preserves
+that CPU interface.
+
+The final corpus run used the Intel Core i7-8650U, GCC 16.2.1,
+`RelWithDebInfo` (`-O2 -g -DNDEBUG`), and recorded powersave governors. Its tested
+source digest is
+`f63ccad5ef2c98497123c07a6a832847126094a1b31fc3173d7a5ed68bd9ec54`,
+before this documentation update. `tested-source.tar.gz` and
+`tested-source-binding.json` preserve that exact source; the reports bind executable,
+generated source, effective CMake cache and host configuration. These remain
+synthetic segmented fixtures. The optimized path is still slower than the fastest
+existing backend in every case, so the required performance acceptance threshold
+has not been met. Native ARM64 performance, representative-game measurements and
+final acceptance remain outstanding; no admission change is made.
+
+Reproduce the standard report with the command in the corpus section, changing
+`--output` to the optimization artifact directory. The retained
+`profile-harness.cpp` and `compare-profile-backends.py` document the separate
+whole-process diagnostic. `profile-before-binding.json` identifies the original
+commit/executable and sampling commands. Rebuilding that executable requires the
+original checkout, not the optimized sources.
+
+Final validation built the full native tree and ran all 184 discovered CTest
+checks: **183 passed; the baseline `perf_headless_scheduling_video` gate failed**.
+Scheduling-to-present p99 was 17.538 ms and input-response p99 was 16.075 ms,
+against unchanged 16 ms limits. Ten isolated runs of the same unchanged fixture
+passed five times and failed five times; these diagnostic reruns do not replace
+the failed full-suite result. The fixture explicitly selects baseline execution,
+so it does not exercise the new ROM continuation path. No cause is assigned to
+this recurrence and no scheduling limit or test behavior is changed here.
+`full-ctest.log` and `latency-isolated.json` preserve the results and diagnostics.
+
+The four focused whole-block/model, real-machine, boundary and corpus smoke
+checks passed under native ThreadSanitizer (194.45 s; both cores and tests were
+instrumented) and ARM64 QEMU user mode (178.52 s). Their build logs, effective
+flags/cache bindings and test logs are retained in the same artifact directory.
+QEMU supplies correctness evidence only. Native ARM64 performance and live
+presentation/audio were not rerun by this optimization increment. The failing
+baseline latency gate and the remaining performance requirements keep acceptance
+pending. Changes remain available for review without an admission update.
