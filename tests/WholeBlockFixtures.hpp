@@ -9,8 +9,15 @@ CompiledBlock emittedGameGearCompute();
 CompiledBlock emittedGameBoyRam();
 CompiledBlock emittedGameGearRam();
 CompiledBlock emittedControl();
+CompiledBlock emittedGameBoyRamCode();
+CompiledBlock emittedGameGearRamCode();
+CompiledBlock emittedGameBoyBank();
+CompiledBlock emittedGameGearBank();
+CompiledBlock emittedGameBoyBankBoundary();
+CompiledBlock emittedGameGearBankBoundary();
 
-inline BlockPtr fixture(bool gameBoy, bool ram) {
+inline BlockPtr fixture(bool gameBoy, bool ram,
+                        std::optional<std::uint16_t> start = std::nullopt) {
   const std::vector<std::vector<std::uint8_t>> bytes =
       ram ? std::vector<std::vector<std::uint8_t>>{{0x77}, {0x34}, {0x7e},
                                                    {0x35}, {0x86}, {0x18, 0xf9}}
@@ -18,7 +25,7 @@ inline BlockPtr fixture(bool gameBoy, bool ram) {
                                                    {0x81},       {0x0d}, {0xaf},
                                                    {0x18, 0xf7}};
   std::vector<SourceInstruction> source;
-  std::uint64_t pc = gameBoy ? 0x100 : 0;
+  std::uint64_t pc = start.value_or(gameBoy ? 0x100 : 0);
   for (const auto &b : bytes) {
     SourceInstruction i{.address = pc,
                         .length = static_cast<std::uint8_t>(b.size())};

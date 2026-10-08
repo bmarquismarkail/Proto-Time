@@ -1179,6 +1179,7 @@ void GameGearMachine::loadRom(const std::vector<uint8_t>& bytes) {
     impl->researchFaulted=false;
     impl->mem.reset();
     impl->vdp.reset();
+    impl->interruptRequested = false;
     impl->psg.reset();
     impl->input.reset();
     impl->romLoaded = true;

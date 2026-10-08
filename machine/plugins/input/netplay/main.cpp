@@ -83,11 +83,16 @@ int main(int argc,char** argv) {
         // The next frame's packet acknowledges the final complete state. No
         // instruction of that frame executes and its input is never published.
         if(!service.submitLocal(0)) throw std::runtime_error("unable to acknowledge final state");
-        while(!service.acknowledged()) {
+        // The remote final packet may already be waiting when submitLocal only
+        // enqueues ours. Do not close the worker before it publishes that packet.
+        while(true) {
+            const auto acknowledged=service.acknowledged();
+            if(acknowledged && transport.hasTransmittedFrame(frames)) break;
             if(service.engine().fault()!=Fault::None) throw std::runtime_error("final state acknowledgment failed");
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
         const auto stats=transport.diagnostics();
+        report["finalFrameTransmitted"]=transport.hasTransmittedFrame(frames);
         report["transport"]={{"sent",stats.sent},{"received",stats.received},{"retransmitted",stats.retransmitted}};
         report["finalFingerprint"]=hex(service.before());report["status"]="passed";service.disconnect();
         std::cout<<report.dump()<<'\n';return 0;

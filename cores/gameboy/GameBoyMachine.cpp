@@ -1150,6 +1150,9 @@ void GameBoyMachine::loadRom(const std::vector<uint8_t>& bytes) {
     core.setStopFlag(false);
     core.clearHaltFlag();
     core.resetDivider();
+    // Reset may leave the CPU's already-zero cache unchanged; initialize the
+    // newly reset backing register as well so checkpoints preserve one value.
+    impl_->memoryMap.setIoRegisterRaw(0xFF04u, 0x00u);
     core.setJoypadState(0x00u);
 
     // Set CPU registers per Pan Docs

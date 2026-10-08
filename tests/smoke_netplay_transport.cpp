@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <iostream>
+#include <source_location>
 using namespace BMMQ::Netplay;
 namespace {
 struct Socket {
@@ -26,9 +27,9 @@ struct Socket {
         assert(sendto(fd,data.data(),data.size(),0,reinterpret_cast<const sockaddr*>(&address),sizeof(address))==ssize_t(data.size()));
     }
 };
-template<class F> void await(F condition) {
+template<class F> void await(F condition, std::source_location site=std::source_location::current()) {
     const auto until=std::chrono::steady_clock::now()+std::chrono::seconds(10);
-    while(!condition()){assert(std::chrono::steady_clock::now()<until);std::this_thread::sleep_for(std::chrono::milliseconds(1));}
+    while(!condition()){if(std::chrono::steady_clock::now()>=until)std::cerr<<"transport wait timeout at line "<<site.line()<<std::endl;assert(std::chrono::steady_clock::now()<until);std::this_thread::sleep_for(std::chrono::milliseconds(1));}
 }
 Packet packet() {
     Packet p;p.binding.core=Core::GameBoy;p.binding.generation=1;p.binding.session[0]=1;p.binding.rom[0]=2;p.binding.configuration[0]=3;p.before[0]=4;p.input=0x10;return p;
@@ -39,18 +40,22 @@ int main() {
     RemoteTransport first,second;
     assert(first.start({.localPort=firstPort,.peerPort=secondPort}));
     assert(second.start({.localPort=secondPort,.peerPort=firstPort}));
+    assert(!first.hasTransmittedFrame(0));
     const auto original=packet();assert(first.send(original));
     std::optional<Packet> got;await([&]{got=second.receive();return got.has_value();});assert(*got==original);
+    await([&]{return first.hasTransmittedFrame(0);});
     await([&]{return first.diagnostics().retransmitted>0;});
     assert(!second.receive() && second.fault()==Fault::None); // Duplicate coalescing before handoff.
     // Concurrent producer/worker/consumer handoff exercises more than one ring turn.
     for(unsigned n=1;n<130;++n) {
         auto p=original;p.frame=n;assert(first.send(p));
         await([&]{got=second.receive();return got.has_value();});assert(*got==p);
+        await([&]{return first.hasTransmittedFrame(n);});
     }
-    first.stop();second.stop();assert(first.fault()==Fault::Disconnected);
+    assert(!first.hasTransmittedFrame(130));
+    first.stop();assert(!first.hasTransmittedFrame(0));second.stop();assert(first.fault()==Fault::Disconnected);
     // Reopen starts a new empty transport generation; no preceding packets survive.
-    assert(first.start({.localPort=firstPort,.peerPort=secondPort}));assert(!first.receive());first.stop();
+    assert(first.start({.localPort=firstPort,.peerPort=secondPort}));assert(!first.receive());assert(!first.hasTransmittedFrame(0));first.stop();
     {Socket trusted,other;RemoteTransport target;assert(target.start({.peerPort=trusted.port}));
      auto wire=encode(original);other.send(target.localPort(),wire);
      await([&]{return target.diagnostics().rejectedEndpoints==1;});assert(target.fault()==Fault::None);

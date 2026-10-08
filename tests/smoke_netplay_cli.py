@@ -29,6 +29,7 @@ def main():
                 assert reports[0]['finalFingerprint']==reports[1]['finalFingerprint']
                 assert reports[0]['frames']==reports[1]['frames']
                 assert reports[0]['configurationSha256']==reports[1]['configurationSha256']
+                assert all(r['finalFrameTransmitted'] for r in reports)
                 assert all(r['status']=='passed' and r['transport']['received']>=3 for r in reports)
             finally:
                 for child in children:

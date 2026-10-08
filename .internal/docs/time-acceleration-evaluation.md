@@ -1,6 +1,7 @@
 # T.I.M.E. acceleration reevaluation, version 1
 
-Kind: current research acceptance contract. Status: **not run**.
+Kind: current research acceptance contract. Status: **partial research evidence;
+acceptance pending**.
 
 This completion program reopens native research for the existing Game Boy and
 Game Gear families. It does not reverse the earlier backend's expansion no-go,
@@ -50,11 +51,31 @@ and host/governor details. For ARM64, pass the cross-build directory and
 `--launcher /tmp/time-arm64-sdk/root/usr/bin/qemu-aarch64-static -L
 /tmp/time-arm64-sdk/root/usr/aarch64-linux-gnu` after the other arguments.
 Launcher measurements are explicitly labeled emulated throughput; they cannot
-satisfy native ARM64 performance acceptance. Whole-block emission, expanded
-corpus, latency evidence, and reviewed go/no-go decisions remain pending.
+satisfy native ARM64 performance acceptance. Representative game coverage,
+latency evidence, and reviewed go/no-go decisions remain pending.
 
 The [whole-block emission pilot](time-whole-block-pilot.md) adds a separately
 versioned internal research contract and build-time native code emission for
 both selected host compilers. Its IR-model differential tests and dispatch
-measurements are preliminary research evidence; real-core integration,
-representative-corpus comparisons, and reviewed decisions remain pending.
+measurements are preliminary research evidence. Real-core integration was
+reviewed in `7b8eb12`; per-instruction RAM/mapping/interrupt/checkpoint boundary
+coverage now supplements it. The real-core `whole-block-corpus` experiment adds
+baseline-versus-emitted comparisons for synthetic compute-heavy, RAM-heavy, and
+mixed device-access patterns with per-retirement correctness checks, separate
+timing, coverage accounting and comparison to the fastest validated existing
+backend per case. See the pilot document for the exact procedure and evidence;
+these patterns do not establish representative game coverage. Latency evidence
+and reviewed decisions remain pending. The user deferred native ARM64 performance;
+QEMU continues to supply correctness evidence only. This deferral does not close
+the research requirement or open admission.
+
+The 2026-10-08 x86-64 real-core pattern run passed all recorded per-retirement and
+timed endpoint comparisons and produced 216 raw timing samples. Emitted Game Boy
+execution took 13.04–20.05% less time than baseline, but 18.47–30.81% more time than
+the fastest validated existing path. Emitted Game Gear execution took
+69.87–117.13% more time than its baseline comparator. These are synthetic,
+segmented AOT measurements on one host, not the representative-game acceptance
+result. The full CTest run passed 183/184 checks; the existing headless scheduling
+latency gate also failed on an isolated rerun. The pilot document records the raw
+artifact path, exact procedure, host/build binding and validation limits. Neither
+a passing acceleration result nor a reviewed no-go is established.

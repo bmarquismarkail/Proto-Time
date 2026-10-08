@@ -21,12 +21,19 @@ struct RemoteTransport::Impl {
     std::atomic<bool> stopping{true};
     std::atomic<Fault> failure{Fault::Disconnected};
     std::atomic<std::uint64_t> received{0}, sent{0}, retransmitted{0}, endpoints{0}, malformed{0}, overflows{0};
+    std::atomic<std::uint64_t> publishedFrame{0};
+    std::atomic<bool> publishedAny{false};
     void fail(Fault f) noexcept {
         Fault expected=Fault::None; failure.compare_exchange_strong(expected,f);
     }
-    void transmit(const WirePacket& wire, bool retry) noexcept {
+    void transmit(const WirePacket& wire, std::uint64_t frame, bool retry) noexcept {
         const auto result=sendto(socket,wire.data(),wire.size(),MSG_DONTWAIT|MSG_NOSIGNAL,reinterpret_cast<const sockaddr*>(&peer),sizeof(peer));
-        if(result==ssize_t(wire.size())) { ++sent; if(retry) ++retransmitted; }
+        if(result==ssize_t(wire.size())) {
+            ++sent; if(retry) ++retransmitted;
+            const auto previous=publishedFrame.load(std::memory_order_relaxed);
+            if(!publishedAny.load(std::memory_order_relaxed) || frame>previous) publishedFrame.store(frame,std::memory_order_release);
+            publishedAny.store(true,std::memory_order_release);
+        }
         else if(result<0 && errno!=EAGAIN && errno!=EWOULDBLOCK && errno!=EINTR) fail(Fault::Disconnected);
     }
     void run() noexcept {
@@ -42,7 +49,7 @@ struct RemoteTransport::Impl {
                     const auto wire=encode(*packet);
                     auto& entry=cache[packet->frame%cache.size()];
                     if(entry.valid && packet->frame<entry.frame) continue;
-                    entry={wire,packet->frame,true}; transmit(wire,false);
+                    entry={wire,packet->frame,true}; transmit(wire,packet->frame,false);
                 } catch(...) { fail(Fault::InvalidPacket); break; }
             }
             pollfd fds[2]{{wake,POLLIN,0},{socket,POLLIN,0}};
@@ -76,7 +83,7 @@ struct RemoteTransport::Impl {
             if(now>=retryAt) {
                 // Bounded replay of unacknowledged/history packets tolerates loss
                 // and reordering. The engine validates duplicate identity.
-                for(const auto& entry:cache) if(entry.valid) transmit(entry.wire,true);
+                for(const auto& entry:cache) if(entry.valid) transmit(entry.wire,entry.frame,true);
                 retryAt=now+std::chrono::milliseconds(100);
             }
         }
@@ -99,6 +106,8 @@ bool RemoteTransport::start(const RemoteTransportConfig& config) {
     p.wake=eventfd(0,EFD_CLOEXEC|EFD_NONBLOCK);
     if(p.wake<0) { ::close(p.socket);p.socket=-1;p.port=0;return false; }
     p.incoming.resetQuiescent();p.outgoing.resetQuiescent();p.timeout=config.disconnectTimeout;
+    p.publishedFrame.store(0,std::memory_order_relaxed);
+    p.publishedAny.store(false,std::memory_order_relaxed);
     p.stopping.store(false);p.failure.store(Fault::None);
     try { p.worker=std::thread([&p]{p.run();}); }
     catch(...) { stop();return false; }
@@ -119,6 +128,10 @@ bool RemoteTransport::send(const Packet& packet)noexcept {
     return true;
 }
 std::optional<Packet> RemoteTransport::receive()noexcept{return impl_->incoming.pop();}
+bool RemoteTransport::hasTransmittedFrame(std::uint64_t frame)const noexcept {
+    if(impl_->failure.load()!=Fault::None || !impl_->publishedAny.load(std::memory_order_acquire)) return false;
+    return impl_->publishedFrame.load(std::memory_order_acquire)>=frame;
+}
 Fault RemoteTransport::fault()const noexcept{return impl_->failure.load(std::memory_order_acquire);}
 RemoteTransportDiagnostics RemoteTransport::diagnostics()const noexcept {
     const auto& p=*impl_;return {p.received.load(),p.sent.load(),p.retransmitted.load(),p.endpoints.load(),p.malformed.load(),p.overflows.load(),p.failure.load()};

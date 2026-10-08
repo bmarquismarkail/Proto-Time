@@ -2909,17 +2909,19 @@ void LR3592_DMG::populateBlockCache(BMMQ::fetchBlock<AddressType, DataType>& fet
 
 void LR3592_DMG::invalidateBlockCacheForWrite(AddressType address, std::size_t size)
 {
-    if (!blockCacheEnabled_) {
-        return;
-    }
-
     address = normalizeAccessAddress(address);
     if (size == 0u) {
         return;
     }
 
     if (address < 0x8000u || address == 0xFF50u) {
+        // Mapping identity guards also protect baseline-owned research blocks.
+        // Disabling cached dispatch must not freeze their generation.
         invalidateAllBlockCache();
+        return;
+    }
+
+    if (!blockCacheEnabled_) {
         return;
     }
 

@@ -1137,3 +1137,14 @@ add_executable(time-smoke-research-machine-block tests/smoke_research_machine_bl
 target_link_libraries(time-smoke-research-machine-block PRIVATE time-research-whole-blocks time-gameboy-interpreter-core time-gamegear-core)
 add_test(NAME smoke-research-machine-block COMMAND time-smoke-research-machine-block)
 set_tests_properties(smoke-research-machine-block PROPERTIES TIMEOUT 120)
+add_executable(time-smoke-research-machine-boundaries tests/smoke_research_machine_boundaries.cpp)
+target_link_libraries(time-smoke-research-machine-boundaries PRIVATE time-research-whole-blocks time-gameboy-interpreter-core time-gamegear-core)
+add_test(NAME smoke-research-machine-boundaries COMMAND time-smoke-research-machine-boundaries)
+set_tests_properties(smoke-research-machine-boundaries PROPERTIES TIMEOUT 120)
+
+add_executable(time-measure-whole-block-corpus tests/measure_whole_block_corpus.cpp)
+target_link_libraries(time-measure-whole-block-corpus PRIVATE time-research-whole-blocks time-gameboy-interpreter-core time-gamegear-core)
+add_test(NAME smoke-whole-block-corpus COMMAND time-measure-whole-block-corpus --smoke)
+set_tests_properties(smoke-whole-block-corpus PROPERTIES TIMEOUT 120)
+add_test(NAME smoke-acceleration-report-tool
+    COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/test_measure_acceleration.py)

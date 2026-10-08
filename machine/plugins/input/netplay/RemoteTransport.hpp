@@ -28,6 +28,9 @@ public:
     void stop() noexcept;
     [[nodiscard]] std::uint16_t localPort() const noexcept;
     [[nodiscard]] bool send(const Packet&) noexcept; // Exactly one machine producer.
+    // Worker publication barrier for a monotonic frame stream. Enqueueing is
+    // not transmission; a paused control caller must check this before close.
+    [[nodiscard]] bool hasTransmittedFrame(std::uint64_t) const noexcept;
     [[nodiscard]] std::optional<Packet> receive() noexcept; // Same machine consumer.
     [[nodiscard]] Fault fault() const noexcept;
     [[nodiscard]] RemoteTransportDiagnostics diagnostics() const noexcept;
