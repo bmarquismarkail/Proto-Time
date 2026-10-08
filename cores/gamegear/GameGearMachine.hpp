@@ -2,6 +2,7 @@
 #ifndef GAMEGEAR_MACHINE_HPP
 #define GAMEGEAR_MACHINE_HPP
 #include "machine/plugins/debug/DebugMachine.hpp"
+#include "inst_cycle/research/MachineBlock.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -39,6 +40,8 @@ class GameGearMachine final : public Machine,
                               public Debug::IDebugMachineV1 {
 public:
     GameGearMachine();
+    IR::Research::BoundBlock bindResearchBlock(const IR::Research::CompiledBlock&);
+    BMMQ::ExecutionSliceResult runResearchBlock(IR::Research::BoundBlock&, const BMMQ::ExecutionBudget&, BMMQ::InstructionRetirementSink* = nullptr);
     void connectDebugEngine(BMMQ::Debug::DebugEngine*) override;
     bool debugPortBus() const noexcept override { return true; }
     std::span<const char* const> debugRegisterNames() const noexcept override;

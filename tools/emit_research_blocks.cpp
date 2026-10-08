@@ -10,10 +10,14 @@ int main(int argc, char **argv) try {
   // Construct all output before publication, so invalid lowering emits no
   // partially usable translation unit. Never executed on the machine lane.
   auto source =
-      emitWholeBlock(*fixture(true, false), "emittedGameBoyCompute") +
-      emitWholeBlock(*fixture(false, false), "emittedGameGearCompute") +
-      emitWholeBlock(*fixture(true, true), "emittedGameBoyRam") +
-      emitWholeBlock(*fixture(false, true), "emittedGameGearRam") +
+      emitWholeBlock(*fixture(true, false), "emittedGameBoyCompute",
+                     GB::IRExecution::GameBoyCoreAdapter::kArchitectureId) +
+      emitWholeBlock(*fixture(false, false), "emittedGameGearCompute",
+                     BMMQ::GameGearIR::kArchitectureId) +
+      emitWholeBlock(*fixture(true, true), "emittedGameBoyRam",
+                     GB::IRExecution::GameBoyCoreAdapter::kArchitectureId) +
+      emitWholeBlock(*fixture(false, true), "emittedGameGearRam",
+                     BMMQ::GameGearIR::kArchitectureId) +
       emitWholeBlock(*controlFixture(), "emittedControl");
   std::ofstream file(argv[1], std::ios::binary | std::ios::trunc);
   file << source;

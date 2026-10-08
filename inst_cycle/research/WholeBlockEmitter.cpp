@@ -30,7 +30,7 @@ std::string operand(const Operand &op) {
   return op.kind == OperandKind::Value ? "v" + std::to_string(op.payload)
                                        : number(op.payload & mask(op.type));
 }
-void metadata(std::ostream &s, const Block &b, const std::string &id) {
+void metadata(std::ostream &s, const Block &b, const std::string &id, std::uint32_t architecture) {
   s << "CompiledBlock " << id << "(){ auto b=std::make_shared<Block>();\n"
     << "b->guestStart=" << number(b.guestStart)
     << ";b->guestEnd=" << number(b.guestEnd) << ";\n"
@@ -68,10 +68,10 @@ void metadata(std::ostream &s, const Block &b, const std::string &id) {
     }
     s << "b->instructions.push_back(std::move(i));}\n";
   }
-  s << "return CompiledBlock(std::move(b),&" << id << "_entry);}\n";
+  s << "return CompiledBlock(std::move(b),&" << id << "_entry," << architecture << ");}\n";
 }
 } // namespace
-std::string emitWholeBlock(const Block &block, const std::string &id) {
+std::string emitWholeBlock(const Block &block, const std::string &id, std::uint32_t architecture) {
   if (id.empty() || id.size() > 96 || id.rfind("emitted", 0) != 0 ||
       !std::isalpha(static_cast<unsigned char>(id[0])))
     throw std::invalid_argument("invalid emitted identifier");
@@ -222,7 +222,7 @@ std::string emitWholeBlock(const Block &block, const std::string &id) {
     s << "if(!c.retire(" << index << ",r))return;}\n";
   }
   s << "}\n";
-  metadata(s, block, id);
+  metadata(s, block, id, architecture);
   s << "}\n";
   return s.str();
 }

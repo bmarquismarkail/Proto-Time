@@ -1,5 +1,6 @@
 #pragma once
 #include "machine/plugins/debug/DebugMachine.hpp"
+#include "inst_cycle/research/MachineBlock.hpp"
 // Nintendo Game Boy machine abstraction.
 // Matches the GameGearMachine architecture: thin public interface,
 // Impl pimpl struct, separate subsystem classes.
@@ -55,6 +56,8 @@ class GameBoyMachine final : public BMMQ::Machine,
                              public BMMQ::Debug::IDebugMachineV1 {
 public:
     GameBoyMachine();
+    BMMQ::IR::Research::BoundBlock bindResearchBlock(const BMMQ::IR::Research::CompiledBlock&);
+    BMMQ::ExecutionSliceResult runResearchBlock(BMMQ::IR::Research::BoundBlock&, const BMMQ::ExecutionBudget&, BMMQ::InstructionRetirementSink* = nullptr);
     void connectDebugEngine(BMMQ::Debug::DebugEngine*) override;
     std::span<const char* const> debugRegisterNames() const noexcept override;
     std::array<uint16_t,20> debugRegisters() const override;
@@ -308,6 +311,8 @@ private:
         BMMQ::PluginManager pluginManager;
         BMMQ::BackgroundTaskService* backgroundTaskService = nullptr;
         std::optional<GB::CartridgeSaveManager::SaveSnapshot> pendingSaveSnapshot;
+        BMMQ::IR::Research::Owner researchOwner=std::make_shared<const BMMQ::IR::Research::OwnerIdentity>();
+        bool researchFaulted=false;
         bool romLoaded = false;
         uint32_t romHash = 0u;
         std::optional<std::filesystem::path> pendingRomSourcePath;

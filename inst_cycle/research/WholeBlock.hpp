@@ -119,14 +119,16 @@ private:
 class CompiledBlock {
 public:
   using Entry = void (*)(Invocation &);
-  CompiledBlock(BlockPtr block, Entry entry)
+  CompiledBlock(BlockPtr block, Entry entry,
+                std::uint32_t architecture = kAnyArchitecture)
       : block_(block ? std::make_shared<const Block>(*block) : nullptr),
-        entry_(entry) {
+        entry_(entry), architecture_(architecture) {
     if (!block_ || !entry_ || !validate(*block_))
       throw std::invalid_argument("invalid emitted block");
   }
   const Block &block() const noexcept { return *block_; }
   Entry entry() const noexcept { return entry_; }
+  std::uint32_t architectureId() const noexcept { return architecture_; }
   Progress execute(
       InterpreterHost &host, Hooks hooks, std::uint64_t instructions,
       std::uint64_t cycles = std::numeric_limits<std::uint64_t>::max()) const {
@@ -145,5 +147,6 @@ public:
 private:
   BlockPtr block_;
   Entry entry_;
+  std::uint32_t architecture_;
 };
 } // namespace BMMQ::IR::Research

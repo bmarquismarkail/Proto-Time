@@ -1131,3 +1131,9 @@ add_executable(time-smoke-research-whole-block tests/smoke_research_whole_block.
 target_link_libraries(time-smoke-research-whole-block PRIVATE time-research-whole-blocks time-research-whole-block-emitter time-gameboy-interpreter-core time-gamegear-core)
 add_test(NAME smoke-research-whole-block COMMAND time-smoke-research-whole-block)
 set_tests_properties(smoke-research-whole-block PROPERTIES TIMEOUT 60)
+
+target_sources(time-machine-runtime-common PRIVATE inst_cycle/research/MachineBlock.cpp)
+add_executable(time-smoke-research-machine-block tests/smoke_research_machine_block.cpp)
+target_link_libraries(time-smoke-research-machine-block PRIVATE time-research-whole-blocks time-gameboy-interpreter-core time-gamegear-core)
+add_test(NAME smoke-research-machine-block COMMAND time-smoke-research-machine-block)
+set_tests_properties(smoke-research-machine-block PROPERTIES TIMEOUT 120)

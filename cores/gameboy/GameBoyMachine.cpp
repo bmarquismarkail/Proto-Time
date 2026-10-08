@@ -29,6 +29,18 @@
 namespace GB {
 
 namespace {
+class WholeBlockAbiHost final : public BMMQ::IR::InterpreterHost {
+    IRExecution::ExecutionAbiV1 abi_;
+public:
+    explicit WholeBlockAbiHost(IRExecution::ExecutionAbiV1 abi):abi_(abi) {}
+    uint64_t readRegister(uint32_t id,BMMQ::IR::ValueType) override {return abi_.readRegister(abi_.opaque,static_cast<IRExecution::Register>(id));}
+    void writeRegister(uint32_t id,BMMQ::IR::ValueType,uint64_t value) override {abi_.writeRegister(abi_.opaque,static_cast<IRExecution::Register>(id),value);}
+    uint64_t loadMemory(uint64_t address,BMMQ::IR::ValueType,BMMQ::IR::MemoryClass) override {return abi_.readMemory8(abi_.opaque,static_cast<uint16_t>(address));}
+    void storeMemory(uint64_t address,BMMQ::IR::ValueType,BMMQ::IR::MemoryClass,uint64_t value) override {abi_.writeMemory8(abi_.opaque,static_cast<uint16_t>(address),static_cast<uint8_t>(value));}
+    uint64_t callHelper(uint32_t id,BMMQ::IR::ValueType,std::span<const uint64_t> arguments) override {return abi_.callHelper(abi_.opaque,static_cast<IRExecution::Helper>(id),arguments.data(),arguments.size());}
+    void setProgramCounter(uint64_t address) override {abi_.writeRegister(abi_.opaque,IRExecution::Register::PC,address);}
+};
+
 void recordInput(GameBoyMemoryMap& map, uint8_t value) {
     if (map.analysisCapture) {
         BMMQ::Space::Record input;
@@ -1106,6 +1118,7 @@ void GameBoyMachine::loadRom(const std::vector<uint8_t>& bytes) {
     impl_->pendingRomSourcePath.reset();
 
     advanceObservationGeneration();
+    impl_->researchFaulted=false;
     // Reset subsystems
     impl_->memoryMap.reset();
     impl_->ppu.reset();
@@ -1279,9 +1292,56 @@ const BMMQ::Plugin::IExecutorPolicyPlugin& GameBoyMachine::attachedExecutorPolic
     return *impl_->activePolicy;
 }
 
+BMMQ::IR::Research::BoundBlock GameBoyMachine::bindResearchBlock(const BMMQ::IR::Research::CompiledBlock& code) {
+    if(!impl_->romLoaded || impl_->researchFaulted || impl_->context->capture || impl_->context->snapshotExecution ||
+       impl_->memoryMap.debugEngine || !impl_->nativeTrampolines.empty() || impl_->bootEntryPending ||
+       attachedExecutorPolicy().backend()!=BMMQ::ExecutionBackend::Baseline)
+        throw std::invalid_argument("whole-block research requires an exclusive healthy baseline machine");
+    IRExecution::GameBoyCoreAdapter adapter;
+    auto binding=BMMQ::IR::Research::bindMachineBlock(code,adapter,impl_->researchOwner,observationGeneration(),impl_->cpu.cpu().researchMappingGeneration());
+    if(impl_->cpu.cpu().irGuardFailure(binding.code().block())!=IRExecution::GuardFailure::None)
+        throw std::invalid_argument("whole-block research guards rejected the machine");
+    return binding;
+}
+BMMQ::ExecutionSliceResult GameBoyMachine::runResearchBlock(BMMQ::IR::Research::BoundBlock& binding,
+        const BMMQ::ExecutionBudget& budget,BMMQ::InstructionRetirementSink* observer) {
+    if(impl_->researchFaulted)throw std::runtime_error("research fault requires ROM reload or checkpoint restore");
+    if(impl_->context->capture || impl_->context->snapshotExecution || impl_->memoryMap.debugEngine ||
+       !impl_->nativeTrampolines.empty() || attachedExecutorPolicy().backend()!=BMMQ::ExecutionBackend::Baseline)
+        throw std::invalid_argument("whole-block research requires exclusive baseline execution");
+    auto& cpu=impl_->cpu.cpu();
+    const auto abi=cpu.irExecutionAbi();
+    WholeBlockAbiHost host(abi);
+    return BMMQ::IR::Research::executeMachineBlock(binding,host,budget,observer,
+        [&](const BMMQ::IR::Block& block,size_t index) {
+            if(!impl_->romLoaded || impl_->bootEntryPending || !binding.matches(impl_->researchOwner,observationGeneration()) ||
+               attachedExecutorPolicy().backend()!=BMMQ::ExecutionBackend::Baseline || impl_->context->capture ||
+               impl_->context->snapshotExecution || impl_->memoryMap.debugEngine || !impl_->nativeTrampolines.empty() ||
+               cpu.pcRegister_->value!=block.instructions[index].address ||
+               cpu.irGuardFailure(block)!=IRExecution::GuardFailure::None)return false;
+            cpu.feedback.pcBefore=block.instructions[index].address;
+            cpu.feedback.isControlFlow=block.instructions[index].controlFlow;
+            cpu.feedback.segmentBoundaryHint=block.instructions[index].controlFlow || block.instructions[index].interruptSensitive;
+            cpu.feedback.retiredCycles=0;
+            return true;
+        },
+        [&](const BMMQ::IR::GuestInstruction& i,const BMMQ::IR::InterpreterResult& r) {
+            cpu.feedback.isControlFlow=i.controlFlow || r.branchTaken;
+            cpu.feedback.segmentBoundaryHint=i.controlFlow || i.interruptSensitive || r.exitRequested;
+            cpu.feedback.retiredCycles=r.cycleCondition?i.cyclesTaken:i.cyclesNotTaken;
+            abi.retireCpuCycles(abi.opaque,cpu.feedback.retiredCycles);
+            cpu.feedback.pcAfter=cpu.pcRegister_->value;
+            cpu.feedback.executionPath=BMMQ::ExecutionPathHint::NativeIr;
+            return cpu.feedback;
+        },
+        [&](const BMMQ::CpuFeedback& f,const BMMQ::ExecutionSliceProgress& p){return onInstructionRetired(f,p);},
+        [&]{impl_->researchFaulted=true;});
+}
+
 BMMQ::ExecutionSliceResult GameBoyMachine::runSlice(
     const BMMQ::ExecutionBudget& budget,
     BMMQ::InstructionRetirementSink* observer) {
+    if(impl_->researchFaulted)throw std::runtime_error("research fault requires ROM reload or checkpoint restore");
     if (impl_->memoryMap.debugEngine && (!impl_->memoryMap.debugEngine->active() || budget.maxInstructions != 1))
         throw std::invalid_argument("attached debugger owns instruction control");
     if (impl_->bootEntryPending) {
@@ -1936,6 +1996,7 @@ void GameBoyMachine::load_state(const std::filesystem::path& path) {
     static_assert(std::is_nothrow_move_assignable_v<decltype(nextInput)>);
     nextNativeState.commit();
     advanceObservationGeneration();
+    impl_->researchFaulted=false;
     // Commit staged state into the live machine only after all imports succeeded.
     impl_->mapper = std::move(nextMapper);
     impl_->cartridge_ = std::move(nextCartridge);

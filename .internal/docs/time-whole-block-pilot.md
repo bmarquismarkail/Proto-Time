@@ -1,6 +1,7 @@
 # Whole-block emission pilot, version 1
 
-Status: implemented research prototype, design review pending. This pilot does
+Status: initial emission pilot reviewed in commit `20b9329`; real-machine
+integration implemented, review pending. This pilot does
 not close `acceleration.native` or admit another family.
 
 The existing IR ABI executes one indexed instruction. This experiment adds a
@@ -28,8 +29,9 @@ binding. After executing an instruction, the emitted function calls `retire`
 exactly once. The owner advances hardware and publishes ordered effects before
 the next guard. Observer stops, control transfers, interrupts, and budgets end
 execution at that boundary. Cycle budgets are soft per-instruction limits.
-Exceptions propagate without retry; a future machine owner must fault a session
-that fails after mutation. There is no implicit interpreter fallback.
+Exceptions propagate without retry. Both machine owners fault the research
+session on an execution exception; baseline execution then rejects until ROM
+reload or a validated checkpoint restore. There is no implicit interpreter fallback.
 
 The first artifact set uses current Game Boy and Game Gear lowering for register
 compute and RAM-access blocks, plus a shared conditional-transfer fixture.
@@ -57,12 +59,24 @@ real hardware, presentation, audio, and game corpus behavior. It cannot justify 
 go or a reviewed no-go. Native ARM64 timing is still required independently of
 QEMU throughput.
 
-The next integration must bind artifacts to each real machine's ROM and
-execution generation, reuse authoritative CPU helpers and device retirement,
-preserve per-instruction feedback/effect order, validate RAM/mapping/lifecycle
-invalidation, and compare every instruction against baseline before measuring
-the representative corpus against each core/host's fastest validated backend.
-No machine execution mode is enabled by this prototype.
+The separate internal `MachineBlock` binding validates the architecture and
+canonical CPU lowering, then binds immutable artifact metadata to one machine
+identity and its lifecycle generation. Mapping guards are rebound at construction
+on the paused control lane. Each instruction checks PC, code bytes, mapping,
+execution state and helper ABI before mutation. Execution uses the real CPU
+helpers and the existing machine device-retirement path. No new production
+policy is selected; this API requires an exclusive baseline machine without
+capture, debugger or native trampolines.
+
+`smoke-research-machine-block` compares both real cores against baseline after
+every instruction in compute and RAM fixtures with boundary initial values.
+It compares complete architectural registers, cycles, PC feedback and complete
+machine fingerprints, and checks zero budgets, foreign owners, stale reload
+bindings, callback failure recovery and rejected policies. These fixtures do not
+establish complete opcode, mapper, BIOS or interrupt coverage. Representative
+real-machine timings, RAM-code invalidation, checkpoint lifecycle and device
+scenario expansion remain necessary before an acceleration decision. No go or
+no-go is recorded by this increment.
 
 Use `python3 tools/measure_acceleration.py --build build-working --experiment
 whole-block-model --output build-working/completion-validation/whole-block-pilot/

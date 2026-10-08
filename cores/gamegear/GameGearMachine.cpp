@@ -378,6 +378,19 @@ public:
     const ITranslationCapability* translationCapability() const override { return this; }
     const IInvalidationCapability* invalidationCapability() const override { return this; }
 
+    IR::InterpreterHost& researchHost() noexcept {return irHost_;}
+    bool researchGuards(const IR::Block& block) const noexcept {
+        return !cpu_.hasInstructionFetchObserver() && guardsMatch(block);
+    }
+    CpuFeedback researchRetire(const IR::GuestInstruction& i,const IR::InterpreterResult& r) {
+        lastFeedback_.pcAfter=cpu_.PC;
+        lastFeedback_.retiredCycles=r.cycleCondition?i.cyclesTaken:i.cyclesNotTaken;
+        // Preserve this core's current baseline feedback convention for JR.
+        lastFeedback_.isControlFlow=false;lastFeedback_.segmentBoundaryHint=false;
+        lastFeedback_.executionPath=ExecutionPathHint::NativeIr;
+        return lastFeedback_;
+    }
+    void researchBegin(uint16_t pc) noexcept {lastFeedback_.pcBefore=pc;}
     void clearIrCache() noexcept {
         clearIrSession();
         irCache_.clear();
@@ -879,6 +892,9 @@ public:
 };
 }
 struct GameGearMachine::Impl {
+    IR::Research::Owner researchOwner=std::make_shared<const IR::Research::OwnerIdentity>();
+    bool researchFaulted=false;
+
     void flushCartridgeSaveOnSchedule()
     {
         if (!cart) {
@@ -1160,6 +1176,7 @@ void GameGearMachine::loadRom(const std::vector<uint8_t>& bytes) {
     }
     impl->pendingRomSourcePath.reset();
     advanceObservationGeneration();
+    impl->researchFaulted=false;
     impl->mem.reset();
     impl->vdp.reset();
     impl->psg.reset();
@@ -1327,6 +1344,7 @@ void GameGearMachine::load_state(const std::filesystem::path& path) {
     static_assert(std::is_nothrow_move_assignable_v<decltype(nextCpu)>);
     nextNativeState.commit();
     advanceObservationGeneration();
+    impl->researchFaulted=false;
     impl->cart = std::move(nextCart);
     impl->mem = std::move(nextMem);
     impl->vdp = std::move(nextVdp);
@@ -1347,9 +1365,38 @@ void GameGearMachine::load_state(const std::filesystem::path& path) {
     inputService().advanceGeneration(impl->inputGeneration);
 }
 
+IR::Research::BoundBlock GameGearMachine::bindResearchBlock(const IR::Research::CompiledBlock& code) {
+    if(!impl->romLoaded || impl->researchFaulted || impl->capture || impl->snapshotExecution || impl->mem.debugEngine ||
+       !impl->nativeTrampolines.empty() || attachedExecutorPolicy().backend()!=ExecutionBackend::Baseline)
+        throw std::invalid_argument("whole-block research requires an exclusive healthy baseline machine");
+    GameGearIR::CoreAdapter adapter;
+    auto binding=IR::Research::bindMachineBlock(code,adapter,impl->researchOwner,observationGeneration(),impl->mem.codeMappingGeneration());
+    if(!impl->context.researchGuards(binding.code().block()))throw std::invalid_argument("whole-block research guards rejected the machine");
+    return binding;
+}
+ExecutionSliceResult GameGearMachine::runResearchBlock(IR::Research::BoundBlock& binding,
+        const ExecutionBudget& budget,InstructionRetirementSink* observer) {
+    if(impl->researchFaulted)throw std::runtime_error("research fault requires ROM reload or checkpoint restore");
+    if(impl->capture || impl->snapshotExecution || impl->mem.debugEngine || !impl->nativeTrampolines.empty() ||
+       attachedExecutorPolicy().backend()!=ExecutionBackend::Baseline)
+        throw std::invalid_argument("whole-block research requires exclusive baseline execution");
+    return IR::Research::executeMachineBlock(binding,impl->context.researchHost(),budget,observer,
+        [&](const IR::Block& block,size_t index) {
+            if(!impl->romLoaded || !binding.matches(impl->researchOwner,observationGeneration()) ||
+               impl->capture || impl->snapshotExecution || impl->mem.debugEngine || !impl->nativeTrampolines.empty() ||
+               attachedExecutorPolicy().backend()!=ExecutionBackend::Baseline || impl->cpu.PC!=block.instructions[index].address ||
+               !impl->context.researchGuards(block))return false;
+            impl->context.researchBegin(impl->cpu.PC);return true;
+        },
+        [&](const IR::GuestInstruction& i,const IR::InterpreterResult& r){return impl->context.researchRetire(i,r);},
+        [&](const CpuFeedback& f,const ExecutionSliceProgress& p){return onInstructionRetired(f,p);},
+        [&]{impl->researchFaulted=true;});
+}
+
 ExecutionSliceResult GameGearMachine::runSlice(
     const ExecutionBudget& budget,
     InstructionRetirementSink* observer) {
+    if(impl->researchFaulted)throw std::runtime_error("research fault requires ROM reload or checkpoint restore");
     if (impl->mem.debugEngine && (!impl->mem.debugEngine->active() || budget.maxInstructions != 1))
         throw std::invalid_argument("attached debugger owns instruction control");
     if (!impl->romLoaded) {

@@ -33,8 +33,10 @@ using DataType = uint8_t;
 using LR3592_Register = BMMQ::CPU_Register<AddressType>;
 using LR3592_RegisterPair = BMMQ::CPU_RegisterPair<AddressType>;
 using LR3592_RegisterFile = BMMQ::RegisterFile<AddressType>;
+namespace GB { class GameBoyMachine; }
 
 class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
+  friend class GB::GameBoyMachine;
   using Opcode = BMMQ::Opcode<AddressType, DataType, AddressType>;
   using OpcodeTable = std::array<std::optional<Opcode>, 256>;
 
@@ -359,6 +361,7 @@ public:
   [[nodiscard]] bool detailedIrTimingEnabled() const noexcept { return detailedIrTimingEnabled_; }
   [[nodiscard]] bool blockCacheEnabled() const noexcept;
   [[nodiscard]] BMMQ::ThreadedBlockCacheStats blockCacheStats() const;
+  [[nodiscard]] std::uint64_t researchMappingGeneration() const noexcept { return blockCache_.mappingGeneration(); }
 
 private:
   bool tryFastExecuteBytes(std::span<const DataType> data);
