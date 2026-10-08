@@ -42,3 +42,5 @@ graphify-out/
 !.internal/docs/dynamic-machine-factories-v1.md
 
 !.internal/docs/dynamic-machine-runtime-v2.md
+
+!.internal/docs/time-whole-block-pilot.md

@@ -52,3 +52,9 @@ and host/governor details. For ARM64, pass the cross-build directory and
 Launcher measurements are explicitly labeled emulated throughput; they cannot
 satisfy native ARM64 performance acceptance. Whole-block emission, expanded
 corpus, latency evidence, and reviewed go/no-go decisions remain pending.
+
+The [whole-block emission pilot](time-whole-block-pilot.md) adds a separately
+versioned internal research contract and build-time native code emission for
+both selected host compilers. Its IR-model differential tests and dispatch
+measurements are preliminary research evidence; real-core integration,
+representative-corpus comparisons, and reviewed decisions remain pending.

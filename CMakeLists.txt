@@ -1113,3 +1113,21 @@ include(tools/cmake/MachineProviders.cmake)
 add_executable(time-measure-acceleration-corpus tests/measure_acceleration_corpus.cpp)
 target_link_libraries(time-measure-acceleration-corpus PRIVATE time-gameboy-interpreter-core time-gamegear-core)
 add_test(NAME smoke-acceleration-corpus COMMAND time-measure-acceleration-corpus --smoke)
+
+# Whole-block emission pilot. Compilation uses the selected host compiler and
+# runs outside execution; no production policy or external IR ABI is changed.
+add_library(time-research-whole-block-emitter STATIC inst_cycle/research/WholeBlockEmitter.cpp)
+target_include_directories(time-research-whole-block-emitter PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+add_executable(time-emit-research-blocks tools/emit_research_blocks.cpp)
+target_link_libraries(time-emit-research-blocks PRIVATE time-research-whole-block-emitter time-gameboy-interpreter-core time-gamegear-core)
+set(TIME_RESEARCH_BLOCK_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/research-whole-blocks.cpp)
+add_custom_command(OUTPUT ${TIME_RESEARCH_BLOCK_SOURCE}
+    COMMAND time-emit-research-blocks ${TIME_RESEARCH_BLOCK_SOURCE}
+    DEPENDS time-emit-research-blocks
+    VERBATIM)
+add_library(time-research-whole-blocks STATIC ${TIME_RESEARCH_BLOCK_SOURCE})
+target_include_directories(time-research-whole-blocks PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+add_executable(time-smoke-research-whole-block tests/smoke_research_whole_block.cpp)
+target_link_libraries(time-smoke-research-whole-block PRIVATE time-research-whole-blocks time-research-whole-block-emitter time-gameboy-interpreter-core time-gamegear-core)
+add_test(NAME smoke-research-whole-block COMMAND time-smoke-research-whole-block)
+set_tests_properties(smoke-research-whole-block PROPERTIES TIMEOUT 60)

@@ -65,7 +65,9 @@ includes current prospective extensions and closes admission to new machine
 families until source/build-bound acceptance passes on Linux x86-64 and ARM64.
 Its [new acceleration evaluation](../.internal/docs/time-acceleration-evaluation.md)
 reopens research for both existing cores; the old backend remains frozen and
-baseline execution remains the default.
+baseline execution remains the default. The [whole-block emission pilot](../.internal/docs/time-whole-block-pilot.md)
+provides an isolated native-code experiment; real-core integration and reviewed
+performance decisions remain pending.
 
 ## Execution and concurrency records
 
