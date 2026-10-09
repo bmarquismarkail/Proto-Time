@@ -14,8 +14,17 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def validate_rom_corpus(report):
-    root = pathlib.Path(__file__).resolve().parents[1]
+def source_digest(root):
+    files = subprocess.check_output(['git', 'ls-files', '-co', '--exclude-standard', '-z'], cwd=root).split(b'\0')
+    source = hashlib.sha256()
+    for name in sorted(set(files)):
+        if name and (root / name.decode()).is_file():
+            source.update(name + b'\0' + bytes.fromhex(digest(root / name.decode())))
+    return source.hexdigest()
+
+
+def validate_rom_corpus(report, root=None):
+    root = root or pathlib.Path(__file__).resolve().parents[1]
     contract_path = root / 'tests/fixtures/acceleration/rom-corpus.json'
     contract = json.loads(contract_path.read_text())
     if (report.get('schema') != 'proto-time-whole-block-roms-v1' or
@@ -145,9 +154,9 @@ def validate_rom_corpus(report):
         'fastest validated existing backend per case; no latency/native ARM64 admission decision')
 
 
-def summarize(samples, experiment):
+def summarize(samples, experiment, root=None):
     if experiment == 'whole-block-roms':
-        validate_rom_corpus(samples)
+        validate_rom_corpus(samples, root=root)
     grouped = {}
     for sample in samples['samples']:
         if experiment != 'whole-block-model':
@@ -235,18 +244,8 @@ def main():
         parser.error('--smoke is not supported for whole-block-model measurements')
     binary = args.build.resolve() / binaries[args.experiment]
     cache = args.build.resolve() / 'CMakeCache.txt'
-    def source_digest():
-        files = subprocess.check_output(['git', 'ls-files', '-co', '--exclude-standard', '-z'], cwd=root).split(b'\0')
-        source = hashlib.sha256()
-        for name in sorted(set(files)):
-            if not name:
-                continue
-            path = root / name.decode()
-            if path.is_file():
-                source.update(name + b'\0' + bytes.fromhex(digest(path)))
-        return source.hexdigest()
     # Snapshot bindings before execution and reject concurrent edits afterwards.
-    source_hash = source_digest()
+    source_hash = source_digest(root)
     def build_bindings():
         result = {'binarySha256': digest(binary), 'cmakeCacheSha256': digest(cache)}
         if args.experiment != 'core-baselines':
@@ -269,7 +268,7 @@ def main():
             raise RuntimeError('compiled ROM corpus differs from build manifest')
     if bindings != build_bindings():
         raise RuntimeError('build changed during measurement')
-    if source_hash != source_digest():
+    if source_hash != source_digest(root):
         raise RuntimeError('source changed during measurement')
     samples['summaries'] = summarize(samples, args.experiment)
     governors = {str(p): p.read_text().strip() for p in

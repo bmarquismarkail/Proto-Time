@@ -1148,6 +1148,8 @@ add_test(NAME smoke-whole-block-corpus COMMAND time-measure-whole-block-corpus -
 set_tests_properties(smoke-whole-block-corpus PROPERTIES TIMEOUT 120)
 add_test(NAME smoke-acceleration-report-tool
     COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/test_measure_acceleration.py)
+add_test(NAME smoke-x86-acceleration-acceptance-tool
+    COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/test_x86_acceleration_acceptance.py)
 
 # Repository-owned standalone game corpus. ROMs and emitted blocks are generated
 # together with the host WLA toolchain, also for QEMU cross builds. Missing tools

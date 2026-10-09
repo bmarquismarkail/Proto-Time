@@ -140,6 +140,37 @@ template <class Core> void check(const CompiledBlock &code) {
   machine.attachExecutorPolicy(policy);
   rejects([&] { machine.bindResearchBlock(code); });
 }
+void scalarGuards(const CompiledBlock &code) {
+  auto owned = std::make_shared<IR::Block>(code.block());
+  // Include nonzero, partially masked state: the summary must preserve exact
+  // guard semantics rather than assuming every admitted state is zero.
+  for (auto &guard : owned->guards)
+    if (guard.kind == IR::GuardKind::ExecutionState) {
+      guard.mask = 0x55;
+      guard.expected = 0x11;
+    }
+  const CompiledBlock modified(owned, code.entry(), code.architectureId());
+  BoundBlock bound(modified, std::make_shared<OwnerIdentity>(), 1);
+  for (unsigned state = 0; state < 256; ++state)
+    for (auto mapping : {owned->mappingGeneration, owned->mappingGeneration + 1})
+      for (unsigned abi : {0u, 1u, 2u}) {
+        const auto full = GB::IRExecution::validateContinuationGuards(*owned, mapping, state);
+        require(bound.scalarGuardsMatch(mapping, state, abi) ==
+                    (full == GB::IRExecution::GuardFailure::None && abi == 1),
+                "scalar guard summary changed masked guard semantics");
+      }
+  // A malformed internal binding must never gain eligibility through a summary.
+  auto duplicate = std::make_shared<IR::Block>(*owned);
+  duplicate->guards.push_back(duplicate->guards.front());
+  // Exact duplicate records are rejected by the generic IR validator already.
+  // A second guard of the same kind with a different expectation reaches the
+  // summary construction, and must still be ineligible.
+  duplicate->guards.back().expected ^= 1;
+  BoundBlock bad(CompiledBlock(duplicate, code.entry(), code.architectureId()),
+                 std::make_shared<OwnerIdentity>(), 1);
+  require(!bad.scalarGuardsMatch(owned->mappingGeneration, 0x11, 1),
+          "duplicate guard acquired scalar eligibility");
+}
 int main() try {
   GB::GameBoyMachine gb;
   gb.loadRom(rom(emittedGameBoyCompute()));
@@ -151,6 +182,8 @@ int main() try {
   check<GB::GameBoyMachine>(emittedGameBoyRam());
   check<GameGearMachine>(emittedGameGearCompute());
   check<GameGearMachine>(emittedGameGearRam());
+  scalarGuards(emittedGameBoyCompute());
+  scalarGuards(emittedGameGearCompute());
   std::cout << "real-core whole-block differential checks passed\n";
 } catch (const std::exception &e) {
   std::cerr << e.what() << '\n';

@@ -71,6 +71,8 @@ performance acceptance remain pending. Its
 [standalone game corpus](../.internal/docs/time-representative-rom-corpus.md)
 replays both authored Collect and Exit revisions and ports with ROM-bound input,
 bank-aware execution accounting and differential evidence.
+The [native x86-64 acceptance procedure](../.internal/docs/time-x86-acceleration-acceptance.md)
+collects and evaluates source/build-bound throughput and repeated latency evidence.
 
 ## Execution and concurrency records
 

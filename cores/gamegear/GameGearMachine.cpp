@@ -1394,7 +1394,11 @@ ExecutionSliceResult GameGearMachine::runResearchBlock(IR::Research::BoundBlock&
             if(!impl->romLoaded || !binding.matches(impl->researchOwner,observationGeneration()) ||
                impl->capture || impl->snapshotExecution || impl->mem.debugEngine || !impl->nativeTrampolines.empty() ||
                attachedExecutorPolicy().backend()!=ExecutionBackend::Baseline || impl->cpu.PC!=block.instructions[index].address ||
-               !impl->context.researchGuards(block, index == 0 || !reuseCodeGuard))return false;
+               (index == 0 || !reuseCodeGuard
+                    ? !impl->context.researchGuards(block)
+                    : impl->cpu.hasInstructionFetchObserver() ||
+                      !binding.scalarGuardsMatch(impl->mem.codeMappingGeneration(),
+                          impl->context.researchExecutionState(), GameGearIR::kHelperAbiVersion)))return false;
             impl->context.researchBegin(impl->cpu.PC);return true;
         },
         [&](const IR::GuestInstruction& i,const IR::InterpreterResult& r){return impl->context.researchRetire(i,r);},

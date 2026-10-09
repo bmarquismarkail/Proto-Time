@@ -36,6 +36,11 @@ the correctness, latency, representative-corpus or native-host requirements.
 
 ## Reproducible baseline corpus
 
+The [native x86-64 acceptance procedure](time-x86-acceleration-acceptance.md)
+collects the full baseline, synthetic and authored-ROM measurements, repeated
+existing performance gates and full CTest evidence. It evaluates thresholds
+without opening admission or substituting for deferred native ARM64 measurements.
+
 The [standalone game corpus](time-representative-rom-corpus.md) adds the separate
 `whole-block-roms` experiment: both Collect and Exit revisions and their ports,
 ROM-bound scenarios, bank-aware native coverage and sampled retirement checks.

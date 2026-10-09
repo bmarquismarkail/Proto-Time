@@ -1330,10 +1330,9 @@ BMMQ::ExecutionSliceResult GameBoyMachine::runResearchBlock(BMMQ::IR::Research::
                impl_->context->snapshotExecution || impl_->memoryMap.debugEngine || !impl_->nativeTrampolines.empty() ||
                cpu.pcRegister_->value!=block.instructions[index].address ||
                (index == 0 || !reuseCodeGuard
-                    ? cpu.irGuardFailure(block)
-                    : IRExecution::validateContinuationGuards(block,
-                        cpu.researchMappingGeneration(), cpu.irExecutionState()))
-                    !=IRExecution::GuardFailure::None)return false;
+                    ? cpu.irGuardFailure(block) != IRExecution::GuardFailure::None
+                    : !binding.scalarGuardsMatch(cpu.researchMappingGeneration(),
+                        cpu.irExecutionState(), IRExecution::kAbiVersion)))return false;
             cpu.feedback.pcBefore=block.instructions[index].address;
             cpu.feedback.isControlFlow=block.instructions[index].controlFlow;
             cpu.feedback.segmentBoundaryHint=block.instructions[index].controlFlow || block.instructions[index].interruptSensitive;
