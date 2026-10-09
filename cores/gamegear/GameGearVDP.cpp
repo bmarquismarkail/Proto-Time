@@ -132,6 +132,7 @@ void GameGearVDP::recomputeIrqAsserted() noexcept {
 }
 
 void GameGearVDP::step(uint32_t cpuCycles) {
+    AnalysisTransition trace(*this);
     const bool displayOn = displayEnabled();
     pendingCycles_ += cpuCycles;
     while (pendingCycles_ >= kCyclesPerScanline) {
@@ -247,11 +248,33 @@ void GameGearVDP::writeRegister(uint16_t address, uint8_t value) {
     writeCompatRegister(static_cast<std::size_t>(address - 0xFF40u), value);
 }
 
+std::array<uint8_t,43> GameGearVDP::analysisState()const noexcept{
+    std::array<uint8_t,43> state{};std::copy(registers_.begin(),registers_.end(),state.begin());
+    size_t n=11;auto byte=[&](uint8_t v){state[n++]=v;};
+    auto word=[&](uint32_t v,unsigned count){while(count--){byte(uint8_t(v));v>>=8;}};
+    word(pendingCycles_,4);word(scanline_,2);byte(lastReadyScanline_);byte(hCounter_);byte(latchedHCounter_);byte(hCounterLatched_);
+    byte(scanlineReadyPending_);byte(vblankPending_);byte(frameInterruptPending_);byte(lineInterruptPending_);byte(irqAsserted_);
+    byte(spriteOverflowPending_);byte(spriteCollisionPending_);byte(lastStatusScanline_);byte(statusScanlineConsumed_);
+    word(dataAddress_,2);byte(commandLow_);byte(readBuffer_);byte(lineCounter_);byte(verticalScrollLatch_);
+    byte(uint8_t(accessMode_));byte(commandLatchPending_);byte(smsMode_);return state;
+}
+void GameGearVDP::traceByte(uint8_t space,uint16_t offset,uint8_t value,bool write)noexcept{
+    auto* c=analysisCapture_;if(!c||c->phase==BMMQ::Space::Kind::Inspection)return;
+    BMMQ::Space::Record r;r.kind=write?BMMQ::Space::Kind::Write:BMMQ::Space::Kind::Read;
+    r.origin=c->phase==BMMQ::Space::Kind::Read?BMMQ::Space::AccessOrigin::Cpu:BMMQ::Space::AccessOrigin::Device;
+    r.address=offset;r.location=BMMQ::Space::location(space,0,offset);r.value=value;r.isWrite=write;c->push(r);
+}
+void GameGearVDP::traceState(const std::array<uint8_t,43>& before)noexcept{
+    const auto after=analysisState();for(size_t i=0;i<after.size();++i)if(after[i]!=before[i])traceByte(i<11?10:11,uint16_t(i<11?i:i-11),after[i],true);
+}
 uint8_t GameGearVDP::readDataPort() {
+    AnalysisTransition trace(*this);
     // Reading data port clears the command latch (see Charles MacDonald VDP docs)
     commandLatchPending_ = false;
     // VRAM reads are buffered: return buffer, then load buffer from VRAM at current address
+    traceByte(11,22,readBuffer_,false);
     const auto value = readBuffer_;
+    traceByte(8,dataAddress_ & 0x3FFFu,vram_[dataAddress_ & 0x3FFFu],false);
     readBuffer_ = vram_[static_cast<std::size_t>(dataAddress_ & 0x3FFFu)];
     // VDP address auto-increments and wraps at 0x3FFF
     dataAddress_ = static_cast<uint16_t>((dataAddress_ + 1u) & 0x3FFFu);
@@ -259,6 +282,7 @@ uint8_t GameGearVDP::readDataPort() {
 }
 
 uint8_t GameGearVDP::readControlPort() {
+    AnalysisTransition trace(*this);
     // Reading control port clears the command latch and status/IRQ flags
     commandLatchPending_ = false;
     // Use the V counter value when evaluating status so the scanline
@@ -290,6 +314,7 @@ uint8_t GameGearVDP::readControlPort() {
 }
 
 void GameGearVDP::writeDataPort(uint8_t value) {
+    AnalysisTransition trace(*this);
     // Writing data port clears the command latch
     commandLatchPending_ = false;
     // VRAM writes update the read buffer (see Charles MacDonald VDP docs)
@@ -300,12 +325,14 @@ void GameGearVDP::writeDataPort(uint8_t value) {
         if (smsMode_) {
             // SMS CRAM: single-byte entries (32 total)
             cram_[cramIndex] = static_cast<uint8_t>(value & 0x3Fu);
+            traceByte(9,uint16_t(cramIndex),cram_[cramIndex],true);
             // Update decoded cache for this entry
             updateDecodedCramEntry(cramIndex % decodedCram_.size());
             dataAddress_ = static_cast<uint16_t>((dataAddress_ + 1u) & 0x3FFFu);
             return;
         }
         cram_[cramIndex] = value;
+        traceByte(9,uint16_t(cramIndex),value,true);
         const auto colorIdx = static_cast<std::size_t>(cramIndex / 2u);
         if (colorIdx < decodedCram_.size()) {
             updateDecodedCramEntry(colorIdx);
@@ -314,10 +341,12 @@ void GameGearVDP::writeDataPort(uint8_t value) {
         return;
     }
     vram_[static_cast<std::size_t>(dataAddress_ & 0x3FFFu)] = value;
+    traceByte(8,dataAddress_ & 0x3FFFu,value,true);
     dataAddress_ = static_cast<uint16_t>((dataAddress_ + 1u) & 0x3FFFu);
 }
 
 void GameGearVDP::writeControlPort(uint8_t value) {
+    AnalysisTransition trace(*this);
     // Two-byte command latch: first write latches, second write executes
     if (!commandLatchPending_) {
         commandLow_ = value;
@@ -332,12 +361,15 @@ void GameGearVDP::writeControlPort(uint8_t value) {
     dataAddress_ &= 0x3FFFu; // VDP address wraps at 0x3FFF
     accessMode_ = static_cast<AccessMode>(command);
     if (command == 0x02u) {
-        writeCompatRegister(static_cast<std::size_t>(value & 0x0Fu), commandLow_);
+        const auto reg=static_cast<size_t>(value & 0x0fu);
+        writeCompatRegister(reg,commandLow_);
+        if(reg<registers_.size()){traceByte(10,uint16_t(reg),registers_[reg],true);trace.before[reg]=registers_[reg];}
         return;
     }
 
     if (accessMode_ == AccessMode::VramRead && !vram_.empty()) {
-        readBuffer_ = vram_[static_cast<std::size_t>(dataAddress_ & 0x3FFFu)];
+        traceByte(8,dataAddress_ & 0x3FFFu,vram_[dataAddress_ & 0x3FFFu],false);
+    readBuffer_ = vram_[static_cast<std::size_t>(dataAddress_ & 0x3FFFu)];
         dataAddress_ = static_cast<uint16_t>((dataAddress_ + 1u) & 0x3FFFu);
     }
 }

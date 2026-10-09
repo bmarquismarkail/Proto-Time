@@ -1,9 +1,11 @@
 # Proto-Time Scripting Plugin Subsystem Specification
 
 > **Status: Target design reference.**
-> This describes a proposed behavioral-extension subsystem, not an available
-> general scripting runtime. Native mods and declarative visual-pack effects
-> have separate [current guides](README.md#current-guides-and-contracts).
+> The [scripting implementation guide](../machine/plugins/script/README.md)
+> describes the available owned-snapshot runtimes and prepared live actions.
+> This target reference also includes obligations that remain open; it is not
+> proof of complete host or live acceptance. Native mods and declarative visual
+> packs have separate [current guides](README.md#current-guides-and-contracts).
 
 This document defines the target architecture for the Proto-Time scripting plugin subsystem.
 
@@ -35,7 +37,10 @@ This subsystem does not assume that arbitrary scripts are safe to run during mac
 
 ## Current Repository Anchor
 
-The current repository does not yet expose a dedicated scripting plugin family. That makes this a forward-looking specification.
+The dedicated scripting family now provides engine/service, versioned capability
+roles, paused automation and prepared retirement hooks. Use its current guide
+for supported bindings and restrictions; this specification remains the full
+target contract.
 
 Relevant existing anchors:
 

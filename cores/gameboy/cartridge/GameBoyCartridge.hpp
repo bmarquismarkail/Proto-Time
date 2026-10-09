@@ -203,6 +203,20 @@ public:
     [[nodiscard]] uint16_t analysisRamBank() const noexcept { return static_cast<uint16_t>(selectedRamBankIndex()); }
     [[nodiscard]] bool analysisRamEnabled() const noexcept { return ramEnabled_; }
     [[nodiscard]] bool analysisRtcSelected() const noexcept { return selectedRtcRegister_ >= 8 && selectedRtcRegister_ <= 12; }
+    [[nodiscard]] std::size_t analysisRamCapacity() const noexcept { return externalRam_.size(); }
+    [[nodiscard]] bool analysisRamOffset(uint16_t address, std::size_t& offset) const noexcept {
+        if (address < 0xa000 || address >= 0xc000 || metadata_.mapper == CartridgeMapper::None ||
+            !ramEnabled_ || analysisRtcSelected() || externalRam_.empty()) return false;
+        const auto size = ramBankSize();
+        offset = selectedRamBankIndex() * size + (address - 0xa000u) % size;
+        return offset < externalRam_.size();
+    }
+    [[nodiscard]] bool analysisRamByte(std::size_t offset, uint8_t& value) const noexcept {
+        if (offset >= externalRam_.size()) return false;
+        value = metadata_.mapper == CartridgeMapper::MBC2
+            ? static_cast<uint8_t>(0xf0 | (externalRam_[offset] & 0x0f)) : externalRam_[offset];
+        return true;
+    }
     [[nodiscard]] bool supportsBatterySave() const noexcept
     {
         return metadata_.hasBattery;

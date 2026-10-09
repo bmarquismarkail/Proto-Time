@@ -16,6 +16,7 @@ struct AudioProcessorConfigSpec {
 
 struct EmulatorConfig {
     std::optional<std::string> machineKind;
+    std::optional<std::filesystem::path> machineProviderPath;
     std::filesystem::path romPath;
     std::vector<std::filesystem::path> modPaths;
     std::optional<std::filesystem::path> bootRomPath;
@@ -58,11 +59,13 @@ struct EmulatorConfig {
     std::vector<std::filesystem::path> visualPackPaths;
     std::optional<std::filesystem::path> visualCapturePath;
     std::optional<std::filesystem::path> spaceProjectPath;
+    std::optional<std::filesystem::path> linuxControllerPath;
     bool visualPackReload = false;
 };
 
 struct CommandLineConfigOverrides {
     std::optional<std::string> machineKind;
+    std::optional<std::filesystem::path> machineProviderPath;
     std::optional<std::filesystem::path> romPath;
     std::optional<std::vector<std::filesystem::path>> modPaths;
     std::optional<std::filesystem::path> bootRomPath;
@@ -103,6 +106,7 @@ struct CommandLineConfigOverrides {
     std::optional<std::vector<std::filesystem::path>> visualPackPaths;
     std::optional<std::filesystem::path> visualCapturePath;
     std::optional<std::filesystem::path> spaceProjectPath;
+    std::optional<std::filesystem::path> linuxControllerPath;
     std::optional<bool> visualPackReload;
 };
 

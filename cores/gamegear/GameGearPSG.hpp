@@ -12,6 +12,10 @@ class GameGearPSG {
 public:
     GameGearPSG();
     ~GameGearPSG();
+    GameGearPSG(const GameGearPSG&) = default;
+    GameGearPSG& operator=(const GameGearPSG&) = default;
+    GameGearPSG(GameGearPSG&&) = default;
+    GameGearPSG& operator=(GameGearPSG&&) = default;
 
     void reset();
     void step(uint32_t cpuCycles);

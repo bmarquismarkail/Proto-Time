@@ -6,10 +6,12 @@
 #include <cstdint>
 #include <vector>
 #include "machine/VideoDebugModel.hpp"
+#include "space/Capture.hpp"
 #include "machine/plugins/IoPlugin.hpp"
 
 class GameGearVDP {
 public:
+    void setAnalysisCapture(BMMQ::Space::Capture* c) noexcept {analysisCapture_=c;}
     // ...existing public API...
 
     // --- Test/Debug: Expose internal state for testing ---
@@ -30,6 +32,10 @@ public:
 public:
     GameGearVDP();
     ~GameGearVDP();
+    GameGearVDP(const GameGearVDP&) = default;
+    GameGearVDP& operator=(const GameGearVDP&) = default;
+    GameGearVDP(GameGearVDP&&) = default;
+    GameGearVDP& operator=(GameGearVDP&&) = default;
 
     void reset();
     void setSmsMode(bool enabled) noexcept;
@@ -120,6 +126,17 @@ private:
     void recomputeIrqAsserted() noexcept;
 
 
+    BMMQ::Space::Capture* analysisCapture_=nullptr;
+    std::array<uint8_t,43> analysisState()const noexcept;
+    void traceState(const std::array<uint8_t,43>& before)noexcept;
+    void traceByte(uint8_t space,uint16_t offset,uint8_t value,bool write)noexcept;
+    struct AnalysisTransition {
+        GameGearVDP& vdp;
+        BMMQ::Space::Capture* capture;
+        std::array<uint8_t,43> before;
+        explicit AnalysisTransition(GameGearVDP& v):vdp(v),capture(v.analysisCapture_){if(capture)before=v.analysisState();}
+        ~AnalysisTransition(){if(capture&&capture==vdp.analysisCapture_)vdp.traceState(before);}
+    };
     std::array<uint8_t, kVramSize> vram_{};
     std::array<uint8_t, 0x00A0> oam_{};
     std::array<uint8_t, 0x000B> registers_{};

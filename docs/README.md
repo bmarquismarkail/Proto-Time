@@ -23,11 +23,14 @@ proof of implementation; a historical completion report is not a fresh test run.
 
 ## Current guides and contracts
 
+- [Scripting engine/service and paused automation](../machine/plugins/script/README.md)
+
 | Subject | Canonical reading |
 | --- | --- |
 | Setup, optional dependencies, CLI examples, diagnostics | [Build and run](runtime.md) |
 | Ownership, execution guarantees, shared IR, frontend/audio boundaries | [Current architecture](architecture.md) |
 | Machine providers, executor policies, internal I/O, external C ABI | [Plugin decisions](../.internal/docs/proto-time-plugin-architecture.md) |
+| Dynamic factory construction and lifetime; foreign machine tables remain pending | [Dynamic factories v1](../.internal/docs/dynamic-machine-factories-v1.md) |
 | PSG voice stems/events, processing, MIDI | [PSG processor contract](../.internal/docs/psg-audio-processor-plugin-contract.md) |
 | Visual pack authoring, capture, matching, reload | [Texture-pack index](texture-pack/README.md) |
 | Manifest directories, native modules, Game Boy trampolines | [Modding contract](../machine/modding/README.md) |
@@ -48,11 +51,28 @@ specifications belong under `.internal/docs/`, following repository guidance.
 | [Input spec](input_plugin_subsystem_spec.md) | Target logical-input and lifecycle contract; verify proposed APIs and overflow policies against implementation. |
 | [Video spec](video_plugin_subsystem_spec.md) | Target video contract. Current realtime delivery uses a latest-frame mailbox; an older FIFO sketch is not its exact implementation. |
 | [Debugger/instrumentation spec](debugger_instrumentation_plugin_subsystem_spec.md) | Target observation/control design, not a feature-completeness claim. |
+| [Dedicated debugger runtime](../machine/plugins/debug/README.md) | Machine-lane engine/service, bounded DAP stdio and explicit capability limits. |
 | [Scripting spec](scripting_plugin_subsystem_spec.md) | Target behavioral-extension design, not a claim that a general scripting runtime ships. |
 | [Timing blueprint](timing_service_blueprint.md) | Extraction rationale and target policy surface. Its sample loop predates the current local `TimingEngine` hot path. |
 | [Timing jitter brief](timing_jitter_fix_brief.md) | Earlier implementation brief; use current code and success gates for present state. |
 | [Visual override design](texture-pack/design.md) | Original vision; the author workflow and HD guide define supported authoring behavior. |
 | [SDL migration](../.internal/docs/proto-time-sdl-subsystem-migration-plan.md) | Delivered migration record with pre-migration analysis and illustrative proposals; current architecture describes the retained boundary. |
+
+## Two-core completion program
+
+The approved [two-core completion contract](../.internal/docs/time-feature-completion.md)
+includes current prospective extensions and closes admission to new machine
+families until source/build-bound acceptance passes on Linux x86-64 and ARM64.
+Its [new acceleration evaluation](../.internal/docs/time-acceleration-evaluation.md)
+reopens research for both existing cores; the old backend remains frozen and
+baseline execution remains the default. The [whole-block emission pilot](../.internal/docs/time-whole-block-pilot.md)
+provides an isolated native-code experiment; real-core integration and reviewed
+performance acceptance remain pending. Its
+[standalone game corpus](../.internal/docs/time-representative-rom-corpus.md)
+replays both authored Collect and Exit revisions and ports with ROM-bound input,
+bank-aware execution accounting and differential evidence.
+The [native x86-64 acceptance procedure](../.internal/docs/time-x86-acceleration-acceptance.md)
+collects and evaluates source/build-bound throughput and repeated latency evidence.
 
 ## Execution and concurrency records
 
@@ -127,3 +147,11 @@ results in those records describe their original runs.
   and cannot override source or maintained contracts. Agent customization files
   such as `.github/agents/sega-8bit-systems.agent.md` describe tool roles, not
   additional product requirements.
+
+- [Input adapters and frame lockstep](../machine/plugins/input/README.md): Linux native controller boundary snapshots and deterministic remote input implementation/validation boundaries.
+
+- [Browser inspection and video-memory viewers](../machine/plugins/video/remote/README.md): owned snapshots, bounded HTTP controls, core-specific pattern/palette/sprite inspection and acceptance boundaries.
+
+- [Visual authoring and GPU presentation v1](../.internal/docs/visual-authoring-v1.md) describes ROM-bound recipes, reviewed labels, staged packs and browser shader acceptance.
+
+- [Module-owned machine runtime ABI v2](../.internal/docs/dynamic-machine-runtime-v2.md): independent CPU/device callbacks, owned outputs and staged state.

@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "emulator/EmulatorConfig.hpp"
+#include "cores/gameboy/GameBoyMachine.hpp"
 
 #define CHECK_TRUE(expr) \
     do { \
@@ -67,11 +68,23 @@ int main()
 {
     const auto tempDir = makeTempDir();
     const auto configPath = tempDir / "proto-time.ini";
+    {
+        auto parsed = parseArgs({"timeEmulator", "--core", "gamegear", "--rom", "test.gg", "--input-evdev", "/dev/input/event7"});
+        auto config = BMMQ::resolveEmulatorConfig(parsed);
+        CHECK_TRUE(config.linuxControllerPath == "/dev/input/event7");
+        CHECK_TRUE(throwsInvalidArgumentContaining("requires a device path", [] { (void)parseArgs({"timeEmulator", "--input-evdev"}); }));
+        CHECK_TRUE(throwsInvalidArgumentContaining("absolute controller", [] {
+            (void)BMMQ::resolveEmulatorConfig(parseArgs({"timeEmulator", "--core", "gameboy", "--rom", "test.gb", "--input-evdev", "relative"}));
+        }));
+        writeTextFile(configPath, "[emulator]\ncore=gameboy\nrom=test.gb\n[input]\nevdev=/dev/input/event8\n");
+        CHECK_TRUE(BMMQ::loadEmulatorConfig(configPath).linuxControllerPath == "/dev/input/event8");
+    }
 
     {
         BMMQ::EmulatorConfig defaults;
         CHECK_TRUE(!defaults.machineKind.has_value());
         CHECK_TRUE(defaults.romPath.empty());
+        CHECK_TRUE(!defaults.linuxControllerPath);
         CHECK_TRUE(!defaults.bootRomPath.has_value());
         CHECK_TRUE(!defaults.pluginPath.has_value());
         CHECK_TRUE(!defaults.executorPluginPath.has_value());
@@ -333,7 +346,11 @@ int main()
         config.machineKind = std::string("gameboy");
         config.romPath = "game.gb";
         config.cpuMode = "native";
-        BMMQ::validateEmulatorConfig(config);
+        GB::GameBoyMachine probe;
+        if(probe.nativeIrSupported())BMMQ::validateEmulatorConfig(config);
+        else CHECK_TRUE(throwsInvalidArgumentContaining("unsupported by core 'gameboy'", [&] {
+            BMMQ::validateEmulatorConfig(config);
+        }));
     }
 
     {

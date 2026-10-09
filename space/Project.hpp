@@ -1,5 +1,6 @@
 #pragma once
 #include "Capture.hpp"
+#include "CoreModel.hpp"
 #include "Snapshots.hpp"
 #include <nlohmann/json.hpp>
 #include <filesystem>
@@ -11,7 +12,7 @@ using Json = nlohmann::json;
 class Project {
 public:
     static constexpr size_t defaultBudget=64u*1024u*1024u;
-    explicit Project(std::string romHash, size_t budget=defaultBudget);
+    explicit Project(std::string romHash, size_t budget=defaultBudget,std::string core="gameboy");
     void ingest(const Record& record);
     void gap(std::string reason);
     Json document() const;
@@ -32,6 +33,9 @@ private:
     Json state_, writers_=Json::object(), values_=Json::object(), views_=Json::object();
     Record begin_{};
     std::vector<Record> accesses_;
+    const CoreModel* model_;
+    std::vector<uint8_t> fetchedBytes_;
+    Json fetchedBackings_=Json::array();
     std::string branch_,instance_,previous_,previousTransfer_;
     uint64_t visit_=0, revision_=0, branchCounter_=0, inputPosition_=0;
     size_t budget_,used_=0;

@@ -57,6 +57,11 @@ public:
     using starting_address_t = AddressType;
     using ending_address_t = AddressType;
     virtual ~MemoryStorage() = default;
+    MemoryStorage() = default;
+    MemoryStorage(const MemoryStorage&) = default;
+    MemoryStorage& operator=(const MemoryStorage&) = default;
+    MemoryStorage(MemoryStorage&&) = default;
+    MemoryStorage& operator=(MemoryStorage&&) = default;
     void addMemBlock(std::tuple<AddressType, AddressType, memAccess> memBlock);
     void addReadOnlyMem(std::pair<AddressType, AddressType> romBlock);
     void addWriteOnlyMem(std::pair<AddressType, AddressType> womBlock);

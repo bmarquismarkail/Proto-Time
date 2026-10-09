@@ -16,6 +16,10 @@ class GameBoyInput {
 public:
     GameBoyInput() = default;
     ~GameBoyInput() = default;
+    GameBoyInput(const GameBoyInput&) = default;
+    GameBoyInput& operator=(const GameBoyInput&) = default;
+    GameBoyInput(GameBoyInput&&) = default;
+    GameBoyInput& operator=(GameBoyInput&&) = default;
 
     void reset();
 

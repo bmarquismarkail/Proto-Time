@@ -1,4 +1,5 @@
 #include "Project.hpp"
+#include "Meaning.hpp"
 #include "Analysis.hpp"
 #include "Porting.hpp"
 #include <fstream>
@@ -17,18 +18,13 @@ uint64_t counter(const Json& j){
 }
 namespace {
 std::string hashText(const std::string& text){return digest(std::span(reinterpret_cast<const uint8_t*>(text.data()),text.size()));}
-std::string bytesHex(const Record& r){constexpr char hex[]="0123456789abcdef";std::string s;for(size_t i=0;i<r.length;++i){s+=hex[r.bytes[i]>>4];s+=hex[r.bytes[i]&15];}return s;}
+std::string bytesHex(std::span<const uint8_t> bytes){constexpr char hex[]="0123456789abcdef";std::string s;for(auto b:bytes){s+=hex[b>>4];s+=hex[b&15];}return s;}
 std::string loc(uint64_t n){return decimal(n);}
 Json origin(const std::string& branch,uint64_t seq,const std::string& instruction,std::string kind){return {{"branch",branch},{"sequence",decimal(seq)},{"instruction",instruction},{"kind",kind}};}
-uint16_t regValue(const Record& r,int lane){
-    if(lane<8){int pair=lane/2;return lane%2?uint16_t(r.registers[pair]&255):uint16_t(r.registers[pair]>>8);}
-    return r.registers[lane-4];
 }
-constexpr const char* regs[]={"A","F","B","C","D","E","H","L","SP","PC"};
-}
-Project::Project(std::string hash,size_t budget):budget_(budget){
+Project::Project(std::string hash,size_t budget,std::string core):model_(&coreModel(core)),budget_(budget){
     instance_=hashText(hash+decimal(std::chrono::steady_clock::now().time_since_epoch().count()));branch_=instance_+":0";
-    state_={{"schemaVersion",1},{"core","gameboy"},{"romSha256",hash},{"instructions",Json::object()},
+    state_={{"schemaVersion",2},{"core",core},{"romSha256",hash},{"instructions",Json::object()},
       {"edges",Json::array()},{"dependencies",Json::array()},{"gaps",Json::array()},{"annotations",Json::object()},
       {"transfers",Json::array()},{"inputs",Json::array()},{"boundaries",Json::array()},{"sessions",Json::array({instance_})}};
 }
@@ -42,26 +38,37 @@ void Project::ingest(const Record& r){
         if(512>budget_-std::min(budget_,used_)||(sharedBudget_&&!sharedBudget_->reserve(512))){gap("analysis budget exhausted; capture stopped");exhausted_=true;return;}
         used_+=512;state_["inputs"].push_back({{"branch",branch_},{"sequence",decimal(visit_)},{"position",decimal(++inputPosition_)},{"mask",r.value}});++revision_;return;
     }
-    if(r.kind==Kind::Begin){if(active_)gap("incomplete instruction capture");begin_=r;accesses_.clear();active_=true;return;}
+    if(r.kind==Kind::Begin){if(active_)gap("incomplete instruction capture");begin_=r;accesses_.clear();fetchedBytes_.clear();fetchedBackings_=Json::array();active_=true;return;}
     if(r.kind==Kind::End){if(active_)finish(r);active_=false;return;}
     if(!active_ && (r.kind==Kind::Device || r.kind==Kind::Dma || r.kind==Kind::Write || r.kind==Kind::Mapping)) {
         begin_=Record{};accesses_={r};Record boundary;boundary.kind=Kind::End;finish(boundary);return;
     }
-    if(active_){if(accesses_.size()>=2048){gap("instruction access limit");return;}accesses_.push_back(r);}
+    if(active_&&r.kind==Kind::Fetch&&r.fetchLength){
+        if(r.fetchLength>r.fetchBytes.size()||fetchedBytes_.size()+r.fetchLength>model_->maximumInstructionLength){gap("instruction fetch limit");return;}
+        if(!fetchedBackings_.empty()&&counter(fetchedBackings_.back()["location"])+fetchedBackings_.back()["length"].get<size_t>()==r.location)
+            fetchedBackings_.back()["length"]=fetchedBackings_.back()["length"].get<size_t>()+r.fetchLength;
+        else fetchedBackings_.push_back({{"offset",fetchedBytes_.size()},{"location",decimal(r.location)},{"length",r.fetchLength}});
+        fetchedBytes_.insert(fetchedBytes_.end(),r.fetchBytes.begin(),r.fetchBytes.begin()+r.fetchLength);
+    }
+    if(active_){if(accesses_.size()>=2048){gap("instruction access limit; capture stopped");exhausted_=true;return;}accesses_.push_back(r);}
 }
 void Project::finish(const Record& end){
     // A conservative allocation charge includes node/map/string overhead, not just payload bytes.
-    size_t charge=3072+accesses_.size()*768;
+    if(model_->id=="gamegear"&&fetchedBytes_.size()!=end.length){gap("incomplete instruction fetch evidence; capture stopped");exhausted_=true;return;}
+    auto instructionBytes=model_->id=="gamegear"?std::span<const uint8_t>(fetchedBytes_):std::span(end.bytes.data(),std::min<uint32_t>(3,end.length));
+    const bool fullFetch=model_->id=="gamegear"||(!fetchedBytes_.empty()&&fetchedBytes_.size()==end.length);
+    size_t charge=3072+accesses_.size()*768+instructionBytes.size()*4;
     if(charge>budget_-std::min(budget_,used_)||(sharedBudget_&&!sharedBudget_->reserve(charge))){gap("analysis budget exhausted; capture stopped");exhausted_=true;return;}
     used_+=charge;++visit_;++revision_;state_.erase("analysis");
     std::string id;
-    auto info=decode(std::span(end.bytes.data(),end.length),begin_.registers[5],end.registers[5],static_cast<uint8_t>(begin_.registers[0]));
+    auto info=decodeCore(model_->id,instructionBytes,begin_.registers[5],end.registers[5],static_cast<uint8_t>(begin_.registers[0]));
     if(end.length){
-        id=hashText(loc(begin_.location)+":"+bytesHex(end));
+        id=hashText(loc(begin_.location)+":"+bytesHex(instructionBytes)+(fullFetch?":"+fetchedBackings_.dump():""));
         auto& n=state_["instructions"][id];
         if(n.is_null()) n={{"id",id},{"location",loc(begin_.location)},{"address",begin_.registers[5]},
-           {"bytes",bytesHex(end)},{"length",end.length},{"text",info.text},{"flow",info.flow},
+           {"bytes",bytesHex(instructionBytes)},{"length",end.length},{"text",info.text},{"flow",info.flow},
            {"conditional",info.conditional},{"captures",Json::object()},{"registers",Json::object()},{"hardware",Json::array()}};
+        if(fullFetch)n["fetchBackings"]=fetchedBackings_;
         n["lastVisit"]={{"branch",branch_},{"sequence",decimal(visit_)}};
         n["lastCycles"]=decimal(end.cycles);
         if(info.conditional)n["lastOutcome"]=info.taken?"taken":"not taken";
@@ -79,10 +86,10 @@ void Project::finish(const Record& end){
             if(info.conditional||info.flow=="call") {
                 uint16_t fall=uint16_t(begin_.registers[5]+end.length);
                 auto base=begin_.location&~uint64_t(65535);
-                if(fall<0x4000 && (begin_.location>>32)==1)base=location(1,0,0);
+                if(model_->id=="gameboy"&&fall<0x4000 && (begin_.location>>32)==1)base=location(1,0,0);
                 edge(id,end.fallthroughLocation?end.fallthroughLocation:base|(fall<0x8000?uint64_t(fall&0x3fff):uint64_t(fall)),"fallthrough");
             }
-            if(info.direct){auto base=begin_.location&~uint64_t(65535);if(info.target<0x4000)base=location(1,0,0);edge(id,end.targetLocation?end.targetLocation:base|(info.target&0x3fff),"target");}
+            if(info.direct){auto base=begin_.location&~uint64_t(65535);if(model_->id=="gameboy"&&info.target<0x4000)base=location(1,0,0);edge(id,end.targetLocation?end.targetLocation:base|(info.target&0x3fff),"target");}
         }
         if(!previousTransfer_.empty())for(auto it=state_["transfers"].rbegin();it!=state_["transfers"].rend();++it)if((*it)["id"]==previousTransfer_){(*it)["nextInstruction"]=id;break;}
         previousTransfer_=instance_+":"+decimal(++branchCounter_);
@@ -114,27 +121,28 @@ void Project::finish(const Record& end){
                     if(std::find(n["hardware"].begin(),n["hardware"].end(),label)==n["hardware"].end())n["hardware"].push_back(label);}}
         }
     };
-    if(end.length){for(int lane=0;lane<10;++lane){auto key="r:"+std::string(regs[lane]);
-        if(info.reads&(1<<lane)){dep(key,regValue(begin_,lane),"read",true,"cpu");
+    if(end.length){for(size_t lane=0;lane<model_->lanes.size();++lane){auto key="r:"+std::string(model_->lanes[lane].name);
+        if(info.reads&(1<<lane)){dep(key,model_->lane(begin_,lane),"read",true,"cpu");
             if(end.executionSource){auto& d=state_["dependencies"].back();d["executionSource"]="snapshot";d["executionSupplier"]={{"sequence",decimal(end.registerSuppliers[lane])},{"block",decimal(end.registerSupplierBlocks[lane])},{"epoch",decimal(end.registerSupplierEpochs[lane])}};}}
-        if(info.writes&(1<<lane))dep(key,regValue(end,lane),"write",true,"cpu");
-        state_["instructions"][id]["registers"][regs[lane]]=regValue(end,lane);
-        views_[id]["registers"][regs[lane]]=regValue(end,lane);
+        if((info.writes&(1u<<lane))||model_->lane(begin_,lane)!=model_->lane(end,lane))dep(key,model_->lane(end,lane),"write",true,"cpu");
+        state_["instructions"][id]["registers"][model_->lanes[lane].name]=model_->lane(end,lane);
+        views_[id]["registers"][model_->lanes[lane].name]=model_->lane(end,lane);
         views_[id]["lastVisit"]={{"branch",branch_},{"sequence",decimal(visit_)}};
     }}
     for(const auto& a:accesses_){
         if(a.kind==Kind::Fetch||a.kind==Kind::Inspection)continue;
         dep("m:"+loc(a.location),a.value,a.isWrite?"write":"read",a.accepted,
-            (a.kind==Kind::Device || ((a.location>>32)==5) || ((a.location>>32)==6))?"device":a.kind==Kind::Dma?"dma":a.kind==Kind::Mapping?"mapping":end.length?"cpu":"boundary");
+            (a.origin==AccessOrigin::Device || a.kind==Kind::Device || ((a.location>>32)==5) || ((a.location>>32)==6))?"device":a.kind==Kind::Dma?"dma":a.kind==Kind::Mapping?"mapping":end.length?"cpu":"boundary");
         constexpr const char* origins[]={"unknown","cpu","device","dma","boundary","inspection"};
         state_["dependencies"].back()["origin"]=origins[static_cast<unsigned>(a.origin)];
+        if((a.location>>32)==7)state_["dependencies"].back()["effectivePort"]=a.address;
         if(a.kind==Kind::Read){auto& d=state_["dependencies"].back();d["executionSource"]=a.executionSource==1?"snapshot":a.executionSource==2?"initialization":"bus";
             if(a.executionSource)d["executionSupplier"]={{"sequence",decimal(a.supplierSequence)},{"block",decimal(a.supplierBlock)},{"epoch",decimal(a.supplierEpoch)}};}
     }
     if(!end.length){ // register mutations caused by interrupt entry, not a fabricated instruction
         state_["boundaries"].push_back({{"branch",branch_},{"sequence",decimal(visit_)},{"cycles",decimal(end.cycles)},
-            {"kind",end.cycles==0?"device-update":begin_.registers==end.registers?"stall":"interrupt"},{"before",begin_.registers},{"after",end.registers}});
-        for(int lane=0;lane<10;++lane)if(regValue(begin_,lane)!=regValue(end,lane))dep("r:"+std::string(regs[lane]),regValue(end,lane),"write",true,"boundary");
+            {"kind",end.cycles==0?"device-update":begin_.registers==end.registers?"stall":"interrupt"},{"before",std::vector<uint16_t>(begin_.registers.begin(),begin_.registers.begin()+model_->pairs.size())},{"after",std::vector<uint16_t>(end.registers.begin(),end.registers.begin()+model_->pairs.size())}});
+        for(size_t lane=0;lane<model_->lanes.size();++lane)if(model_->lane(begin_,lane)!=model_->lane(end,lane))dep("r:"+std::string(model_->lanes[lane].name),model_->lane(end,lane),"write",true,"boundary");
     }
 }
 Json Project::history()const{return {{"branch",branch_},{"visit",decimal(visit_)},{"inputPosition",decimal(inputPosition_)},{"writers",writers_},{"values",values_},{"views",views_}};}
@@ -211,14 +219,15 @@ void Project::write(const std::filesystem::path& p,const Json& j){
     f<<j.dump(2);f.close();if(!f)throw std::runtime_error("project write failed");std::filesystem::rename(temp,p);
 }
 void Project::validate(const Json& j){
-    if(j.at("schemaVersion")!=1||j.at("core")!="gameboy")throw std::invalid_argument("unsupported project schema/core");
+    if((j.at("schemaVersion")!=1&&j.at("schemaVersion")!=2)||(j.at("schemaVersion")==1&&j.at("core")!="gameboy"))throw std::invalid_argument("unsupported project schema/core");
+    const auto& model=coreModel(j.at("core").get<std::string>());
     auto hash=j.at("romSha256").get<std::string>();if(hash.size()!=64||hash.find_first_not_of("0123456789abcdef")!=std::string::npos)throw std::invalid_argument("invalid ROM digest");
     if(!j.at("instructions").is_object()||!j.at("edges").is_array()||!j.at("dependencies").is_array()||!j.at("annotations").is_object()||!j.at("gaps").is_array())throw std::invalid_argument("invalid project collections");
     counter(j.at("revision"));
     if(!j.at("inputs").is_array()||!j.at("sessions").is_array()||!j.at("history").is_object())throw std::invalid_argument("invalid project history collections");
-    auto checkKey=[](const std::string& key) {
-        if(key.rfind("m:",0)==0){auto address=counter(Json(key.substr(2)));if((address>>32)>6)throw std::invalid_argument("invalid address space");}
-        else if(key.rfind("r:",0)==0){bool found=false;for(auto name:regs)found=found||key=="r:"+std::string(name);if(!found)throw std::invalid_argument("invalid register");}
+    auto checkKey=[&](const std::string& key) {
+        if(key.rfind("m:",0)==0){auto address=counter(Json(key.substr(2)));if((address>>32)>(model.id=="gamegear"?11:6))throw std::invalid_argument("invalid address space");}
+        else if(key.rfind("r:",0)==0){bool found=false;for(auto lane:model.lanes)found=found||key=="r:"+std::string(lane.name);if(!found)throw std::invalid_argument("invalid register");}
         else throw std::invalid_argument("invalid state location");
     };
     auto bounded=[](const Json& value,unsigned maximum) {
@@ -231,7 +240,7 @@ void Project::validate(const Json& j){
     };
     auto checkRegisters=[&](const Json& registers) {
         if(!registers.is_object())throw std::invalid_argument("invalid registers");
-        for(auto it=registers.begin();it!=registers.end();++it){checkKey("r:"+it.key());bounded(it.value(),it.key()=="SP"||it.key()=="PC"?65535u:255u);}
+        for(auto it=registers.begin();it!=registers.end();++it){checkKey("r:"+it.key());unsigned maximum=65535;for(size_t i=0;i<model.lanes.size();++i)if(it.key()==model.lanes[i].name)maximum=model.laneMaximum(i);bounded(it.value(),maximum);}
     };
     auto& h=j.at("history");counter(h.at("visit"));h.at("branch").get<std::string>();
     if(h.contains("inputPosition"))counter(h["inputPosition"]);
@@ -247,8 +256,22 @@ void Project::validate(const Json& j){
     }}
 
     for(auto it=j["instructions"].begin();it!=j["instructions"].end();++it){auto& n=it.value();auto bytes=n.at("bytes").get<std::string>();
-        bounded(n.at("length"),3);bounded(n.at("address"),65535);unsigned len=n.at("length").get<unsigned>();unsigned addr=n.at("address").get<unsigned>();
-        if(addr>65535||len<1||len>3||bytes.size()!=2*len||bytes.find_first_not_of("0123456789abcdef")!=std::string::npos||n.at("id")!=it.key())throw std::invalid_argument("invalid instruction");
+        bounded(n.at("length"),model.maximumInstructionLength);bounded(n.at("address"),65535);unsigned len=n.at("length").get<unsigned>();unsigned addr=n.at("address").get<unsigned>();
+        if(addr>65535||len<1||len>model.maximumInstructionLength||bytes.size()!=2*len||bytes.find_first_not_of("0123456789abcdef")!=std::string::npos||n.at("id")!=it.key())throw std::invalid_argument("invalid instruction");
+        if(model.id=="gamegear"||n.contains("fetchBackings")){
+            const auto& backings=n.at("fetchBackings");
+            if(!backings.is_array()||backings.empty()||backings.size()>len)throw std::invalid_argument("invalid fetch backing runs");
+            uint32_t next=0;uint64_t previous=0;uint32_t previousLength=0;
+            for(auto& run:backings){
+                bounded(run.at("offset"),len);bounded(run.at("length"),len);
+                auto offset=run.at("offset").get<uint32_t>(),length=run.at("length").get<uint32_t>();auto backing=counter(run.at("location"));
+                if(offset!=next||!length||length>len-next||(backing>>32)>(model.id=="gamegear"?11u:6u))throw std::invalid_argument("invalid fetch backing extent");
+                if(next&&backing==previous+previousLength)throw std::invalid_argument("noncanonical fetch backing runs");
+                if(!next&&run.at("location")!=n.at("location"))throw std::invalid_argument("fetch backing origin mismatch");
+                next+=length;previous=backing;previousLength=length;
+            }
+            if(next!=len||it.key()!=hashText(n.at("location").get<std::string>()+":"+bytes+":"+backings.dump()))throw std::invalid_argument("instruction identity mismatch");
+        }
         if(n.at("flow").get<std::string>().empty()||!n.at("registers").is_object()||!n.at("hardware").is_array())throw std::invalid_argument("invalid instruction metadata");
         n.at("text").get<std::string>();n.at("conditional").get<bool>();counter(n.at("location"));checkCaptures(n.at("captures"));checkRegisters(n.at("registers"));
     }
@@ -267,7 +290,7 @@ void Project::validate(const Json& j){
     if(j.contains("boundaries")){if(!j["boundaries"].is_array())throw std::invalid_argument("invalid boundaries");
         for(auto& boundary:j["boundaries"]){counter(boundary.at("sequence"));counter(boundary.at("cycles"));boundary.at("branch").get<std::string>();
             auto kind=boundary.at("kind").get<std::string>();if(kind!="stall"&&kind!="interrupt"&&kind!="device-update")throw std::invalid_argument("invalid boundary kind");
-            for(auto key:{"before","after"}){if(!boundary.at(key).is_array()||boundary[key].size()!=6)throw std::invalid_argument("invalid boundary registers");for(auto& value:boundary[key])bounded(value,65535);}}}
+            for(auto key:{"before","after"}){if(!boundary.at(key).is_array()||boundary[key].size()!=model.pairs.size())throw std::invalid_argument("invalid boundary registers");for(auto& value:boundary[key])bounded(value,65535);}}}
     if(j.contains("blocks")){
         if(!j["blocks"].is_array()||!j.at("graphEdges").is_array())throw std::invalid_argument("invalid graph collections");
         std::set<std::string> blocks;
@@ -295,7 +318,7 @@ void Project::validate(const Json& j){
             auto inst=t.at("instruction").get<std::string>();if(!inst.empty()&&!j["instructions"].contains(inst))throw std::invalid_argument("invalid transfer instruction");
             if(t.contains("nextInstruction")&&!j["instructions"].contains(t["nextInstruction"].get<std::string>()))throw std::invalid_argument("invalid next instruction");
             t.at("branch").get<std::string>();counter(t.at("sequence"));t.at("taken").get<bool>();t.at("root").get<bool>();
-            for(auto key:{"targetLocation","fallthroughLocation"})if((counter(t.at(key))>>32)>6)throw std::invalid_argument("invalid transfer location");
+            for(auto key:{"targetLocation","fallthroughLocation"})if((counter(t.at(key))>>32)>(model.id=="gamegear"?11:6))throw std::invalid_argument("invalid transfer location");
             auto f=t.at("flow").get<std::string>();if(f!="fallthrough"&&f!="branch"&&f!="call"&&f!="return"&&f!="indirect"&&f!="halt"&&f!="stop"&&f!="interrupt")throw std::invalid_argument("invalid transfer flow");
         }
     }
@@ -304,20 +327,25 @@ void Project::validate(const Json& j){
         for(auto& o:c["intentionalOmissions"]){if(counter(o.at("toStep"))<=counter(o.at("fromStep")))throw std::invalid_argument("invalid intentional omission");o.at("reason").get<std::string>();if(!windows.contains(o.at("captureId").get<std::string>()))throw std::invalid_argument("unknown omission capture identity");}}
     if(j.contains("analysis"))validateAnalysis(j);
     validatePorting(j);
+    validateMeaning(j);
     if(j.contains("porting")&&j.dump().size()>defaultBudget/2)throw std::invalid_argument("port accounting exceeds analysis state budget");
     if(j.dump().size()>defaultBudget*2)throw std::invalid_argument("project budget exceeded");
 }
 Project Project::load(const std::filesystem::path& path,const std::string& expected){
     auto j=read(path);validate(j);auto hash=j["romSha256"].get<std::string>();if(!expected.empty()&&hash!=expected)throw std::invalid_argument("project ROM mismatch");
-    Project p(hash);p.state_=j;p.state_.erase("blocks");p.state_.erase("graphEdges");p.revision_=counter(j["revision"]);
+    Project p(hash,defaultBudget,j["core"].get<std::string>());p.state_=j;p.state_.erase("blocks");p.state_.erase("graphEdges");p.revision_=counter(j["revision"]);
     p.views_=j.at("history").at("views");p.writers_=j["history"]["writers"];p.values_=j["history"]["values"];
     p.branch_=j["history"]["branch"].get<std::string>();p.visit_=counter(j["history"]["visit"]);p.inputPosition_=j["history"].contains("inputPosition")?counter(j["history"]["inputPosition"]):0;
     p.used_=j.dump().size(); // imported history is analysis only; never resumes execution
     return p;
 }
 void Project::merge(const Json& j){
-    validate(j);if(j["romSha256"]!=state_["romSha256"])throw std::invalid_argument("project ROM mismatch");
+    validate(j);if(j["core"]!=state_["core"]||j["romSha256"]!=state_["romSha256"])throw std::invalid_argument("project ROM mismatch");
     auto next=state_;
+    for(auto key:{"symbolImports","purposeClaims"})if(j.contains(key))for(auto it=j[key].begin();it!=j[key].end();++it){
+        if(next.contains(key)&&next[key].contains(it.key())&&next[key][it.key()]!=it.value())throw std::invalid_argument("conflicting meaning metadata");
+        next[key][it.key()]=it.value();
+    }
     if(!next.contains("transfers"))next["transfers"]=Json::array();
     std::map<std::string,size_t> transferIndex;
     for(size_t i=0;i<next["transfers"].size();++i)transferIndex[next["transfers"][i]["id"].get<std::string>()]=i;

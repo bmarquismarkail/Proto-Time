@@ -1,6 +1,8 @@
 
 #ifndef GAMEGEAR_MACHINE_HPP
 #define GAMEGEAR_MACHINE_HPP
+#include "machine/plugins/debug/DebugMachine.hpp"
+#include "inst_cycle/research/MachineBlock.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -11,6 +13,7 @@
 #include <vector>
 #include "machine/Machine.hpp"
 #include "machine/modding/NativeMod.hpp"
+#include "space/ExecutionContract.hpp"
 
 namespace BMMQ {
 
@@ -33,9 +36,37 @@ struct GameGearIrStats {
 class GameGearMachine final : public Machine,
                               public IRomPathAwareMachine,
                               public IExternalBootRomMachine,
-                              public IIrComponentAwareMachine {
+                              public IIrComponentAwareMachine,
+                              public Debug::IDebugMachineV1 {
 public:
     GameGearMachine();
+    IR::Research::BoundBlock bindResearchBlock(const IR::Research::CompiledBlock&);
+    BMMQ::ExecutionSliceResult runResearchBlock(IR::Research::BoundBlock&, const BMMQ::ExecutionBudget&, BMMQ::InstructionRetirementSink* = nullptr);
+    IR::Research::MachineBlockState researchBlockState() const;
+    void connectDebugEngine(BMMQ::Debug::DebugEngine*) override;
+    bool debugPortBus() const noexcept override { return true; }
+    std::span<const char* const> debugRegisterNames() const noexcept override;
+    std::array<uint16_t,20> debugRegisters() const override;
+    bool debugValidateRegisters(const std::array<uint16_t,20>&) const noexcept override;
+    void debugCommitRegisters(const std::array<uint16_t,20>&) noexcept override;
+    bool debugPeek(uint16_t, uint8_t&) const noexcept override;
+    bool debugWritable(uint16_t) const noexcept override;
+    void debugCommitByte(uint16_t, uint8_t) noexcept override;
+    uint64_t debugBacking(uint16_t) const noexcept override;
+    void debugEdited() noexcept override;
+
+    MemoryPool<uint16_t,uint8_t,uint16_t>& executionMemory();
+    uint64_t analysisLocation(uint16_t,bool write=false)const;
+    uint8_t analysisRead(uint16_t)const;
+    bool analysisRam(uint16_t)const;
+    size_t analysisRamCapacity()const noexcept;
+    bool analysisPhysicalRamByte(size_t,uint8_t&)const noexcept;
+    bool snapshotBoundaryOnly()const;
+    std::span<const uint8_t> snapshotInstruction();
+    std::string deterministicStateFingerprint()const;
+    void setAnalysisCapture(Space::Capture*);
+    void setSnapshotExecution(Space::ExecutionController*);
+    void setAnalysisInput(uint8_t);
     ~GameGearMachine() override;
 
     void loadRom(const std::vector<uint8_t>& bytes) override;

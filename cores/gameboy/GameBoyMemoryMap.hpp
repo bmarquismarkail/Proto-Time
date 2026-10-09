@@ -1,4 +1,5 @@
 #pragma once
+#include "machine/plugins/debug/DebugEngine.hpp"
 // Game Boy memory map abstraction.
 // References: Pan Docs (https://gbdev.io/pandocs/)
 //
@@ -29,6 +30,12 @@ class GameBoyMemoryMap final : public BMMQ::MemoryStorage<uint16_t, uint8_t> {
 public:
     GameBoyMemoryMap();
     ~GameBoyMemoryMap() = default;
+    GameBoyMemoryMap(const GameBoyMemoryMap&) = default;
+    GameBoyMemoryMap& operator=(const GameBoyMemoryMap&) = default;
+    GameBoyMemoryMap(GameBoyMemoryMap&&) = default;
+    GameBoyMemoryMap& operator=(GameBoyMemoryMap&&) = default;
+    BMMQ::Debug::DebugEngine* debugEngine = nullptr;
+    void debugCommitRam(uint16_t address, uint8_t value) noexcept;
 
     void reset();
     BMMQ::Space::ExecutionController* snapshotExecution=nullptr;

@@ -1,21 +1,21 @@
+#include "cores/gameboy/GameBoyMachine.hpp"
+#include "cores/gamegear/GameGearMachine.hpp"
+#include "space/CoreAdapter.hpp"
 #include "space/Porting.hpp"
 #include "space/Session.hpp"
 #include <fstream>
 #include <iostream>
 using namespace BMMQ::Space;
 namespace {
-uint8_t ram(GB::GameBoyMachine &m, uint16_t address) {
-  uint8_t b = 0;
-  m.executionMemory().read(&b, address, 1);
-  return b;
-}
-uint16_t commit(GB::GameBoyMachine &m) {
+uint8_t ram(BMMQ::Machine &m,uint16_t address){return m.runtimeContext().peek8(address);}
+uint16_t commit(BMMQ::Machine &m) {
   return uint16_t(ram(m, 0xc010) | (ram(m, 0xc011) << 8));
 }
-void input(GB::GameBoyMachine &m, uint8_t mask) {
+void input(BMMQ::Machine &m, uint8_t mask) {
   m.inputService().publishDigitalSnapshot(mask,
                                           m.inputService().currentGeneration());
-  m.setJoypadState(mask);
+  if(auto* gb=dynamic_cast<GB::GameBoyMachine*>(&m))gb->setJoypadState(mask);
+  else dynamic_cast<BMMQ::GameGearMachine&>(m).setAnalysisInput(mask);
 }
 } // namespace
 // Fixture-only deterministic driver: no model exploration or guessed entry
@@ -25,9 +25,9 @@ int main(int argc, char **argv) {
                  {"windows", Json::array()},
                  {"intentionalOmissions", Json::array()}};
   try {
-    if (argc != 5)
+    if (argc != 5&&argc!=6)
       throw std::invalid_argument(
-          "usage: time-space-port-capture ROM SCENARIOS WINDOWS OUTPUT_DIR");
+          "usage: time-space-port-capture ROM SCENARIOS WINDOWS OUTPUT_DIR [gameboy|gamegear]");
     std::filesystem::path out = argv[4];
     std::filesystem::create_directories(out);
     std::ifstream file(argv[1], std::ios::binary);
@@ -38,7 +38,10 @@ int main(int argc, char **argv) {
     if (!scenarios.is_array() || !windows.is_array() || windows.empty() ||
         windows.size() > 16)
       throw std::invalid_argument("fixture capture bounds");
-    GB::GameBoyMachine traced, plain;
+    const auto core=argc==6?std::string(argv[5]):std::string("gameboy");(void)coreModel(core);
+    auto create=[&]() -> std::unique_ptr<BMMQ::Machine> {if(core=="gamegear")return std::make_unique<BMMQ::GameGearMachine>();return std::make_unique<GB::GameBoyMachine>();};
+    auto tracedOwner=create(),plainOwner=create();auto& traced=*tracedOwner;auto& plain=*plainOwner;
+    auto tracedCore=makeCoreAdapter(traced),plainCore=makeCoreAdapter(plain);
     traced.loadRom(rom);
     plain.loadRom(rom);
     auto budget = std::make_shared<StateBudget>();
@@ -48,7 +51,7 @@ int main(int argc, char **argv) {
         throw std::invalid_argument("capture budget maximum");
       budget->maximum = n;
     }
-    Project aggregate(digest(rom));
+    Project aggregate(digest(rom),Project::defaultBudget,core);
     aggregate.setBudget(budget);
     uint64_t steps = 0, omitted = 0, totalFrames = 0;
     size_t wi = 0;
@@ -107,7 +110,7 @@ int main(int argc, char **argv) {
       uint16_t pc = spec.at("pc").get<uint16_t>();
       auto bank = spec.value("bank", 0u);
       auto skipped = wait([&]() {
-        return traced.executionMemory().file.findRegister("PC")->reg->value ==
+        return tracedCore->memory().file.findRegister("PC")->reg->value ==
                    pc &&
                (pc < 0x4000 || ram(traced, 0xc012) == bank);
       });
@@ -119,13 +122,13 @@ int main(int argc, char **argv) {
                         "on next window"}});
       auto ledgerPath =
           std::filesystem::path(argv[1]).parent_path() / "ledger.json";
-      if (std::filesystem::exists(ledgerPath)) {
-        auto before = traced.deterministicStateFingerprint();
-        auto offline = Project(digest(rom)).document();
+      if (std::filesystem::exists(ledgerPath)&&Project::read(ledgerPath).at("source").at("core")==core) {
+        auto before = tracedCore->fingerprint();
+        auto offline = Project(digest(rom),Project::defaultBudget,core).document();
         attachPorting(offline, Project::read(ledgerPath));
         (void)checkPorting(offline);
         (void)queryPorting(offline, {{"type", "inventory"}, {"limit", 1}});
-        if (before != traced.deterministicStateFingerprint())
+        if (before != tracedCore->fingerprint())
           throw std::runtime_error(
               "offline accounting/query changed guest fingerprint or cycles");
         report["accountingFingerprintParity"] = "passed";
@@ -139,8 +142,8 @@ int main(int argc, char **argv) {
           plain.step();
           ++steps;
           sampleTick();
-          if (traced.deterministicStateFingerprint() !=
-              plain.deterministicStateFingerprint())
+          if (tracedCore->fingerprint() !=
+              plainCore->fingerprint())
             throw std::runtime_error(
                 "capture-on/off state/cycle parity failed");
         }
@@ -156,7 +159,7 @@ int main(int argc, char **argv) {
            {"startStep", decimal(start)},
            {"count", count},
            {"waitSteps", decimal(skipped)},
-           {"fingerprint", traced.deterministicStateFingerprint()},
+           {"fingerprint", tracedCore->fingerprint()},
            {"parity", "passed"},
            {"history",
             "fresh initialization; no suppliers from prior window"}});
@@ -205,8 +208,8 @@ int main(int argc, char **argv) {
                {"victory", 0xc022}})
         s[name] = ram(traced, address);
       states.push_back(s);
-      if (traced.deterministicStateFingerprint() !=
-          plain.deterministicStateFingerprint())
+      if (tracedCore->fingerprint() !=
+          plainCore->fingerprint())
         throw std::runtime_error("scenario parity failed");
     }
     if (wi != windows.size())
@@ -242,7 +245,7 @@ int main(int argc, char **argv) {
     return 0;
   } catch (const std::exception &e) {
     report["error"] = e.what();
-    if (argc == 5)
+    if (argc == 5 || argc == 6)
       Project::write(std::filesystem::path(argv[4]) / "capture-report.json",
                      report);
     std::cerr << report.dump() << '\n';

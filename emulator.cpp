@@ -1,3 +1,6 @@
+#ifdef TIME_HAS_LINUX_CONTROLLER
+#include "machine/plugins/input/adapters/LinuxController.hpp"
+#endif
 /////////////////////////////////////////////////////////////////////////
 //
 //	2020 Emulator Project Idea Mk 2
@@ -53,6 +56,7 @@
 #include "machine/plugins/audio/AlsaMidiSink.hpp"
 #endif
 #include "machine/TimingService.hpp"
+#include "machine/HostPacing.hpp"
 #include "machine/modding/ModDirectoryLoader.hpp"
 #include "machine/modding/NativeMod.hpp"
 #include "cores/gameboy/GameBoyMachine.hpp"
@@ -74,6 +78,8 @@ void printUsage(std::string_view program)
               << "   or: " << program << " --core <gameboy|gamegear> <path> [options]\n\n"
               << "Options:\n"
               << "  --core <name>      Machine core to run: gameboy or gamegear\n"
+              << "  --machine-provider <path>\n"
+              << "                     Load versioned factories; --core selects a provider ID\n"
               << "  --config <path>    Optional INI-style emulator configuration file\n"
               << "  --rom <path>       Cartridge ROM to load\n"
               << "  --mod <directory>  Load and activate a native mod package (repeatable)\n"
@@ -124,7 +130,8 @@ void printUsage(std::string_view program)
               << "                     Background worker count; 0 selects the reserved-core default\n"
               << "  --background-queue-capacity <n>\n"
               << "                     Maximum queued background jobs (default: 1024)\n"
-              << "  --space-project <path>  Capture Game Boy baseline analysis to a project JSON\n"
+              << "  --input-evdev <device>  Linux controller device (absolute /dev/input/event* path)\n"
+              << "  --space-project <path>  Capture Game Boy/Game Gear baseline analysis to a project JSON\n"
               << "  --debug-snapshots  Enable optional background debug snapshots\n"
               << "  --visual-pack <path>\n"
               << "                     Load a visual override pack.json; repeat to load multiple packs\n"
@@ -817,6 +824,16 @@ int main(int argc, char** argv)
             ? BMMQ::bootstrapMachine(options)
             : BMMQ::bootstrapMachine(options, launchRom);
         auto& machine = *bootstrapped.machine;
+        if (options.linuxControllerPath) {
+#ifdef TIME_HAS_LINUX_CONTROLLER
+            auto controller = std::make_unique<BMMQ::LinuxController>(options.linuxControllerPath->string());
+            if (!machine.inputService().attachAdapter(std::move(controller)) || !machine.inputService().resume())
+                throw std::runtime_error("unable to start Linux controller input: " + machine.inputService().diagnostics().lastBackendError);
+            std::cout << "Linux controller: " << *options.linuxControllerPath << " (neutral while disconnected)\n";
+#else
+            throw std::invalid_argument("Linux controller input unavailable in this build");
+#endif
+        }
         const std::string frontendAppId = "timeEmulator-" + std::to_string(getpid());
         setenv("TIME_FRONTEND_APP_ID", frontendAppId.c_str(), 1);
         const auto& descriptor = bootstrapped.descriptor;
@@ -1373,11 +1390,11 @@ int main(int argc, char** argv)
 
         std::unique_ptr<BMMQ::Space::Session> spaceSession;
         if (options.spaceProjectPath) {
-            auto* gb = dynamic_cast<GameBoyMachine*>(&machine);
-            if (!gb) throw std::invalid_argument("S.P.A.C.E. requires Game Boy");
-            const auto loaded = gb->cartridge().romBytes();
-            launchRom.assign(loaded.begin(), loaded.end());
-            spaceSession = std::make_unique<BMMQ::Space::Session>(*gb, launchRom, *options.spaceProjectPath);
+            if(auto* gb=dynamic_cast<GameBoyMachine*>(&machine)){
+                const auto loaded=gb->cartridge().romBytes();launchRom.assign(loaded.begin(),loaded.end());
+            }else if(auto* gg=dynamic_cast<BMMQ::GameGearMachine*>(&machine))launchRom=gg->romData();
+            else throw std::invalid_argument("machine has no S.P.A.C.E. core adapter");
+            spaceSession=std::make_unique<BMMQ::Space::Session>(machine,launchRom,*options.spaceProjectPath);
         }
 
         auto runEmulationLane = [&]() {
@@ -1609,22 +1626,11 @@ int main(int argc, char** argv)
                             const auto requestedSleep =
                                 std::chrono::duration_cast<std::chrono::nanoseconds>(nextStepTime - idleNow);
                             const auto beforeSleep = SteadyClock::now();
-                            if (!timingEngine.stats().paused && timingConfig.adaptiveSleepEnabled &&
-                                requestedSleep > timingConfig.sleepSpinWindow &&
-                                timingConfig.sleepSpinWindow > std::chrono::nanoseconds::zero()) {
-                                const auto coarseWake = nextStepTime - timingConfig.sleepSpinWindow;
-                                std::this_thread::sleep_until(coarseWake);
-                                const auto spinStart = SteadyClock::now();
-                                while (!stopRequested.load(std::memory_order_acquire) &&
-                                       gStopRequested == 0 && SteadyClock::now() < nextStepTime) {
-                                    if (SteadyClock::now() - spinStart >= timingConfig.sleepSpinCap) {
-                                        break;
-                                    }
-                                    std::this_thread::yield();
-                                }
-                            } else {
-                                std::this_thread::sleep_until(nextStepTime);
-                            }
+                            BMMQ::waitForTimingWake(nextStepTime, requestedSleep,
+                                timingConfig, timingEngine.stats().paused, [&] {
+                                    return stopRequested.load(std::memory_order_acquire) ||
+                                           gStopRequested != 0;
+                                });
                             const auto afterSleep = SteadyClock::now();
                             const auto actualSleep =
                                 std::chrono::duration_cast<std::chrono::nanoseconds>(afterSleep - beforeSleep);

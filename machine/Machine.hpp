@@ -57,6 +57,21 @@ public:
 
 class Machine {
 public:
+    // Declare first so provider code remains loaded through derived/member destruction.
+    // Factories install ownership before publishing a machine; execution never edits it.
+    void retainProviderLifetime(std::shared_ptr<const void> lifetime) {
+        if (!lifetime) throw std::invalid_argument("empty provider lifetime");
+        providerLifetimes_.push_back(std::move(lifetime));
+    }
+    // Construction-only default, validated by the provider host before installation.
+    void setProviderBootRom(std::vector<std::uint8_t> bytes) {
+        if (bytes.empty() || bytes.size() > 32768) throw std::invalid_argument("provider BIOS budget rejected");
+        providerBootRom_ = std::move(bytes);
+    }
+private:
+    std::vector<std::shared_ptr<const void>> providerLifetimes_;
+    std::vector<std::uint8_t> providerBootRom_;
+public:
     virtual ~Machine() = default;
     [[nodiscard]] std::uint64_t observationGeneration() const noexcept { return observationGeneration_; }
 protected:
@@ -84,6 +99,8 @@ public:
     virtual const RuntimeContext& runtimeContext() const = 0;
     virtual PluginManager& pluginManager() = 0;
     virtual const PluginManager& pluginManager() const = 0;
+    // Paused/machine-lane operation; resets native instances and host regions atomically.
+    void resetModState();
     [[nodiscard]] Modding::ModHost& modHost() noexcept { return modHost_; }
     [[nodiscard]] const Modding::ModHost& modHost() const noexcept { return modHost_; }
     virtual void save_state(const std::filesystem::path&) {
@@ -318,9 +335,19 @@ public:
     virtual std::string stopSummary() const {
         return {};
     }
+    virtual std::string deterministicStateFingerprint() const {
+        throw std::runtime_error("deterministic fingerprint is unavailable for this machine");
+    }
     virtual void flushPendingBackgroundWork() {}
 
 protected:
+    void applyProviderBootRom() {
+        if (!providerBootRom_.empty()) {
+            auto* boot = dynamic_cast<IExternalBootRomMachine*>(this);
+            if (!boot) throw std::runtime_error("provider BIOS capability changed");
+            boot->loadExternalBootRom(providerBootRom_);
+        }
+    }
     virtual InstructionRetirementDecision onInstructionRetired(
         const CpuFeedback&,
         const ExecutionSliceProgress&)

@@ -22,7 +22,24 @@ endif()
 find_package(ZLIB REQUIRED)
 find_package(nlohmann_json 3.2 REQUIRED)
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
-find_package(Python3 COMPONENTS Interpreter QUIET)
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+set(TIME_COMPLETION_EVIDENCE "" CACHE FILEPATH "Reviewed two-core acceptance evidence (missing evidence keeps admission closed)")
+set(TIME_COMPLETION_ARGS --summary --root ${CMAKE_CURRENT_SOURCE_DIR}
+    --header ${CMAKE_CURRENT_BINARY_DIR}/generated/TimeFeatureAdmission.hpp)
+if(TIME_COMPLETION_EVIDENCE)
+    list(APPEND TIME_COMPLETION_ARGS --evidence ${TIME_COMPLETION_EVIDENCE})
+endif()
+execute_process(COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_feature_completion.py
+    ${TIME_COMPLETION_ARGS} RESULT_VARIABLE TIME_COMPLETION_RESULT OUTPUT_QUIET)
+if(NOT TIME_COMPLETION_RESULT EQUAL 0)
+    message(FATAL_ERROR "Invalid T.I.M.E. completion contract/evidence; run tools/check_feature_completion.py for diagnostics")
+endif()
+include_directories(${CMAKE_CURRENT_BINARY_DIR}/generated)
+add_custom_target(time-check-feature-completion
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_feature_completion.py
+        ${TIME_COMPLETION_ARGS}
+    VERBATIM)
 if (PROTO_TIME_BUILD_ALSA_MIDI)
     find_package(ALSA QUIET)
 endif()
@@ -70,6 +87,7 @@ add_library(time-machine-runtime-common STATIC
     machine/PngDecode.cpp
     machine/ImageDecoder.cpp
     machine/DebugSnapshotService.cpp
+    machine/plugins/debug/DebugService.cpp
     machine/SaveState.cpp
     machine/modding/ModHost.cpp
     machine/modding/PokeredSymbols.cpp
@@ -77,10 +95,13 @@ add_library(time-machine-runtime-common STATIC
     machine/modding/PokemonSpeciesRegistry.cpp
 )
 set_target_properties(time-machine-runtime-common PROPERTIES POSITION_INDEPENDENT_CODE ON)
+add_dependencies(time-machine-runtime-common time-check-feature-completion)
 target_link_libraries(time-machine-runtime-common PUBLIC ZLIB::ZLIB time-simd-pixel-ops)
 target_link_libraries(time-machine-runtime-common PRIVATE nlohmann_json::nlohmann_json OpenSSL::Crypto)
+add_library(time-space-core-contract STATIC space/CoreModel.cpp space/Operands.cpp)
+target_link_libraries(time-space-core-contract PUBLIC OpenSSL::Crypto)
 add_library(time-native-mod-loader STATIC machine/modding/NativeMod.cpp)
-target_link_libraries(time-native-mod-loader PUBLIC time-machine-runtime-common ${CMAKE_DL_LIBS})
+target_link_libraries(time-native-mod-loader PUBLIC time-machine-runtime-common ${CMAKE_DL_LIBS} PRIVATE OpenSSL::Crypto)
 
 add_library(time-gameboy-interpreter-core
 	cores/gameboy/decode/gb_decoder.cpp
@@ -97,7 +118,7 @@ add_library(time-gameboy-interpreter-core
     cores/gameboy/dma_controller.cpp
     cores/gameboy/vram_manager.cpp
 )
-target_link_libraries(time-gameboy-interpreter-core PUBLIC time-native-mod-loader)
+target_link_libraries(time-gameboy-interpreter-core PUBLIC time-native-mod-loader time-space-core-contract)
 
 # Sega Game Gear core (WIP)
 add_library(time-gamegear-core STATIC
@@ -112,7 +133,7 @@ add_library(time-gamegear-core STATIC
     cores/gamegear/GameGearMemoryMap.cpp
 )
 set_target_properties(time-gamegear-core PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_link_libraries(time-gamegear-core PUBLIC time-machine-runtime-common time-native-mod-loader)
+target_link_libraries(time-gamegear-core PUBLIC time-machine-runtime-common time-native-mod-loader time-space-core-contract)
 if (BMMQ_PROFILE_VDP_RENDER)
     target_compile_definitions(time-gamegear-core PRIVATE BMMQ_PROFILE_VDP_RENDER=1)
     if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
@@ -152,9 +173,12 @@ add_library(time-emulator-config STATIC
 )
 add_library(time-machine-factory STATIC
     emulator/MachineFactory.cpp
+    emulator/DynamicMachineProvider.cpp
+    emulator/ForeignMachine.cpp
 )
 target_link_libraries(time-machine-factory
     PUBLIC
+        ${CMAKE_DL_LIBS}
         time-machine-runtime-common
         time-gameboy-interpreter-core
         time-gamegear-core
@@ -693,9 +717,14 @@ if (TARGET time-sdl-frontend-plugin)
 endif()
 
 if (UNIX AND NOT APPLE)
+    set(time_dependency_reader_args)
+    if(CMAKE_CROSSCOMPILING)
+        list(APPEND time_dependency_reader_args "-DREADELF=${CMAKE_READELF}")
+    endif()
     add_test(NAME smoke-time-emulator-no-sdl-dependency
         COMMAND ${CMAKE_COMMAND}
             -DEXECUTABLE=$<TARGET_FILE:timeEmulator>
+            ${time_dependency_reader_args}
             -P ${CMAKE_SOURCE_DIR}/tests/check_no_sdl_dependency.cmake)
 endif()
 
@@ -834,6 +863,10 @@ add_executable(time-smoke-input-state-roundtrip tests/smoke_input_state_roundtri
 target_link_libraries(time-smoke-input-state-roundtrip time-gameboy-interpreter-core)
 add_test(NAME smoke-input-state-roundtrip COMMAND time-smoke-input-state-roundtrip)
 
+add_executable(time-smoke-host-region-checkpoint tests/smoke_host_region_checkpoint.cpp)
+target_link_libraries(time-smoke-host-region-checkpoint time-space-analysis)
+add_test(NAME smoke-host-region-checkpoint COMMAND time-smoke-host-region-checkpoint)
+
 add_executable(time-smoke-modding tests/smoke_modding.cpp)
 target_link_libraries(time-smoke-modding time-machine-runtime-common)
 add_test(NAME smoke-modding COMMAND time-smoke-modding)
@@ -849,6 +882,13 @@ target_link_libraries(time-smoke-gamegear-native-trampoline time-gamegear-core t
 add_dependencies(time-smoke-gamegear-native-trampoline time-test-native-mod)
 add_test(NAME smoke-gamegear-native-trampoline COMMAND time-smoke-gamegear-native-trampoline
     $<TARGET_FILE:time-test-native-mod>)
+add_library(time-test-transaction-native-mod MODULE tests/fixtures/test_native_mod.c)
+target_compile_definitions(time-test-transaction-native-mod PRIVATE MOD_TEST_TRANSACTION_FAILURE=1 MOD_TEST_OBSERVER=1)
+add_executable(time-smoke-native-mod-checkpoint tests/smoke_native_mod_checkpoint.cpp)
+target_link_libraries(time-smoke-native-mod-checkpoint time-gameboy-interpreter-core time-gamegear-core)
+add_dependencies(time-smoke-native-mod-checkpoint time-test-transaction-native-mod)
+add_test(NAME smoke-native-mod-checkpoint COMMAND time-smoke-native-mod-checkpoint
+    $<TARGET_FILE:time-test-transaction-native-mod>)
 add_library(time-test-bad-native-mod MODULE tests/fixtures/test_native_mod.c)
 target_compile_definitions(time-test-bad-native-mod PRIVATE MOD_TEST_ABI=999)
 add_library(time-test-short-native-mod MODULE tests/fixtures/test_native_mod.c)
@@ -949,9 +989,11 @@ if(TIME_RIVER_XMB_TELEMETRY AND UNIX)
 endif()
 
 # S.P.A.C.E. is an internal analysis component; no plugin ABI changes.
+add_test(NAME smoke-feature-completion COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke_feature_completion.py)
 find_package(Threads REQUIRED)
-add_library(time-space-analysis STATIC space/Porting.cpp space/Execution.cpp space/Analysis.cpp space/Operands.cpp space/Project.cpp space/Session.cpp space/Viewer.cpp)
-target_link_libraries(time-space-analysis PUBLIC time-gameboy-interpreter-core nlohmann_json::nlohmann_json OpenSSL::Crypto Threads::Threads)
+add_library(time-space-analysis STATIC space/Porting.cpp space/Execution.cpp space/Analysis.cpp space/CoreAdapter.cpp space/Project.cpp space/Session.cpp space/Exploration.cpp space/Meaning.cpp space/Viewer.cpp)
+target_link_libraries(time-space-analysis PUBLIC time-gameboy-interpreter-core time-gamegear-core nlohmann_json::nlohmann_json OpenSSL::Crypto Threads::Threads)
 add_executable(time-space space/main.cpp)
 target_link_libraries(time-space PRIVATE time-space-analysis)
 target_link_libraries(timeEmulator PRIVATE time-space-analysis)
@@ -965,6 +1007,18 @@ endif()
 add_executable(time-smoke-space-execution tests/smoke_space_execution.cpp)
 target_link_libraries(time-smoke-space-execution PRIVATE time-space-analysis)
 add_test(NAME smoke-space-execution COMMAND time-smoke-space-execution)
+add_executable(time-smoke-space-gamegear tests/smoke_space_gamegear.cpp)
+target_link_libraries(time-smoke-space-gamegear PRIVATE time-space-analysis)
+add_test(NAME smoke-space-gamegear COMMAND time-smoke-space-gamegear)
+add_executable(time-smoke-space-cartridge-ram tests/smoke_space_cartridge_ram.cpp)
+target_link_libraries(time-smoke-space-cartridge-ram PRIVATE time-space-analysis)
+add_test(NAME smoke-space-cartridge-ram COMMAND time-smoke-space-cartridge-ram)
+add_executable(time-smoke-space-exploration tests/smoke_space_exploration.cpp)
+target_link_libraries(time-smoke-space-exploration PRIVATE time-space-analysis)
+add_test(NAME smoke-space-exploration COMMAND time-smoke-space-exploration)
+add_executable(time-smoke-space-meaning tests/smoke_space_meaning.cpp)
+target_link_libraries(time-smoke-space-meaning PRIVATE time-space-analysis)
+add_test(NAME smoke-space-meaning COMMAND time-smoke-space-meaning)
 
 add_executable(time-smoke-space-analysis tests/smoke_space_analysis.cpp)
 target_link_libraries(time-smoke-space-analysis PRIVATE time-space-analysis)
@@ -990,4 +1044,147 @@ if(Python3_Interpreter_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke_space_port_proof.py $<TARGET_FILE:time-space>
         $<TARGET_FILE:time-space-port-capture> $<TARGET_FILE:time-space-port-state>)
     set_tests_properties(smoke-space-port-proof PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
+    add_test(NAME smoke-space-port-reverse-proof COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke_space_port_proof.py $<TARGET_FILE:time-space>
+        $<TARGET_FILE:time-space-port-capture> $<TARGET_FILE:time-space-port-state> gamegear)
+    set_tests_properties(smoke-space-port-reverse-proof PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
+endif()
+
+# Dedicated machine-lane debugger with an owned DAP transport boundary.
+add_library(time-debug-dap STATIC machine/plugins/debug/adapters/DapAdapter.cpp)
+target_link_libraries(time-debug-dap PUBLIC time-space-analysis)
+add_executable(time-debugger machine/plugins/debug/main.cpp)
+target_link_libraries(time-debugger PRIVATE time-debug-dap Threads::Threads)
+add_executable(time-smoke-debug-service tests/smoke_debug_service.cpp)
+target_link_libraries(time-smoke-debug-service PRIVATE time-gameboy-interpreter-core time-gamegear-core Threads::Threads)
+add_test(NAME smoke-debug-service COMMAND time-smoke-debug-service)
+add_executable(time-smoke-debug-transport tests/smoke_debug_transport.cpp)
+target_link_libraries(time-smoke-debug-transport PRIVATE time-debug-dap)
+add_test(NAME smoke-debug-transport COMMAND time-smoke-debug-transport)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME smoke-debug-dap-cli COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke_debug_dap_cli.py $<TARGET_FILE:time-debugger>)
+    set_tests_properties(smoke-debug-dap-cli PROPERTIES TIMEOUT 60)
+endif()
+
+include(tools/cmake/Scripting.cmake)
+
+# Native host event collection is separate from machine-boundary input sampling.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_library(time-linux-controller STATIC machine/plugins/input/adapters/LinuxController.cpp)
+    target_include_directories(time-linux-controller PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(time-linux-controller PUBLIC Threads::Threads)
+    target_link_libraries(timeEmulator PRIVATE time-linux-controller)
+    target_compile_definitions(timeEmulator PRIVATE TIME_HAS_LINUX_CONTROLLER=1)
+    add_executable(time-smoke-linux-controller tests/smoke_linux_controller.cpp)
+    target_link_libraries(time-smoke-linux-controller PRIVATE time-linux-controller time-gameboy-interpreter-core time-gamegear-core)
+    add_test(NAME smoke-linux-controller COMMAND time-smoke-linux-controller)
+    set_tests_properties(smoke-linux-controller PROPERTIES TIMEOUT 60)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_library(time-frame-lockstep STATIC machine/plugins/input/netplay/LockstepEngine.cpp
+        machine/plugins/input/netplay/LockstepService.cpp machine/plugins/input/netplay/RemoteTransport.cpp)
+    target_link_libraries(time-frame-lockstep PUBLIC time-space-analysis Threads::Threads)
+    add_custom_target(time-netplay-source-binding
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_feature_completion.py
+            --source-header ${CMAKE_CURRENT_BINARY_DIR}/generated/time_netplay_source.hpp --summary
+        BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/generated/time_netplay_source.hpp
+        VERBATIM)
+    add_executable(time-netplay machine/plugins/input/netplay/main.cpp)
+    target_link_libraries(time-netplay PRIVATE time-frame-lockstep)
+    add_dependencies(time-netplay time-netplay-source-binding)
+    add_executable(time-smoke-netplay tests/smoke_netplay.cpp)
+    target_link_libraries(time-smoke-netplay PRIVATE time-frame-lockstep)
+    add_test(NAME smoke-netplay COMMAND time-smoke-netplay)
+    add_executable(time-smoke-netplay-transport tests/smoke_netplay_transport.cpp)
+    target_link_libraries(time-smoke-netplay-transport PRIVATE time-frame-lockstep)
+    add_test(NAME smoke-netplay-transport COMMAND time-smoke-netplay-transport)
+    add_test(NAME smoke-netplay-cli COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke_netplay_cli.py $<TARGET_FILE:time-netplay>)
+    set_tests_properties(smoke-netplay smoke-netplay-transport PROPERTIES TIMEOUT 60)
+    set_tests_properties(smoke-netplay-cli PROPERTIES TIMEOUT 300)
+endif()
+
+include(tools/cmake/Browser.cmake)
+include(tools/cmake/VisualAuthoring.cmake)
+include(tools/cmake/MachineProviders.cmake)
+
+# Opt-in research corpus; the smoke check validates accounting and backend parity.
+add_executable(time-measure-acceleration-corpus tests/measure_acceleration_corpus.cpp)
+target_link_libraries(time-measure-acceleration-corpus PRIVATE time-gameboy-interpreter-core time-gamegear-core)
+add_test(NAME smoke-acceleration-corpus COMMAND time-measure-acceleration-corpus --smoke)
+
+# Whole-block emission pilot. Compilation uses the selected host compiler and
+# runs outside execution; no production policy or external IR ABI is changed.
+add_library(time-research-whole-block-emitter STATIC inst_cycle/research/WholeBlockEmitter.cpp)
+target_include_directories(time-research-whole-block-emitter PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+add_executable(time-emit-research-blocks tools/emit_research_blocks.cpp)
+target_link_libraries(time-emit-research-blocks PRIVATE time-research-whole-block-emitter time-gameboy-interpreter-core time-gamegear-core)
+set(TIME_RESEARCH_BLOCK_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/research-whole-blocks.cpp)
+add_custom_command(OUTPUT ${TIME_RESEARCH_BLOCK_SOURCE}
+    COMMAND time-emit-research-blocks ${TIME_RESEARCH_BLOCK_SOURCE}
+    DEPENDS time-emit-research-blocks
+    VERBATIM)
+add_library(time-research-whole-blocks STATIC ${TIME_RESEARCH_BLOCK_SOURCE})
+target_include_directories(time-research-whole-blocks PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+add_executable(time-smoke-research-whole-block tests/smoke_research_whole_block.cpp)
+target_link_libraries(time-smoke-research-whole-block PRIVATE time-research-whole-blocks time-research-whole-block-emitter time-gameboy-interpreter-core time-gamegear-core)
+add_test(NAME smoke-research-whole-block COMMAND time-smoke-research-whole-block)
+set_tests_properties(smoke-research-whole-block PROPERTIES TIMEOUT 60)
+
+target_sources(time-machine-runtime-common PRIVATE inst_cycle/research/MachineBlock.cpp)
+add_executable(time-smoke-research-machine-block tests/smoke_research_machine_block.cpp)
+target_link_libraries(time-smoke-research-machine-block PRIVATE time-research-whole-blocks time-gameboy-interpreter-core time-gamegear-core)
+add_test(NAME smoke-research-machine-block COMMAND time-smoke-research-machine-block)
+set_tests_properties(smoke-research-machine-block PROPERTIES TIMEOUT 120)
+add_executable(time-smoke-research-machine-boundaries tests/smoke_research_machine_boundaries.cpp)
+target_link_libraries(time-smoke-research-machine-boundaries PRIVATE time-research-whole-blocks time-gameboy-interpreter-core time-gamegear-core)
+add_test(NAME smoke-research-machine-boundaries COMMAND time-smoke-research-machine-boundaries)
+set_tests_properties(smoke-research-machine-boundaries PROPERTIES TIMEOUT 120)
+
+add_executable(time-measure-whole-block-corpus tests/measure_whole_block_corpus.cpp)
+target_link_libraries(time-measure-whole-block-corpus PRIVATE time-research-whole-blocks time-gameboy-interpreter-core time-gamegear-core)
+add_test(NAME smoke-whole-block-corpus COMMAND time-measure-whole-block-corpus --smoke)
+set_tests_properties(smoke-whole-block-corpus PROPERTIES TIMEOUT 120)
+add_test(NAME smoke-acceleration-report-tool
+    COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/test_measure_acceleration.py)
+add_test(NAME smoke-x86-acceleration-acceptance-tool
+    COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/test_x86_acceleration_acceptance.py)
+
+# Repository-owned standalone game corpus. ROMs and emitted blocks are generated
+# together with the host WLA toolchain, also for QEMU cross builds. Missing tools
+# remain a failing/not-run check; they never publish passing ROM evidence.
+find_program(TIME_WLA_GB wla-gb)
+find_program(TIME_WLA_Z80 wla-z80)
+find_program(TIME_WLALINK wlalink)
+if(TIME_WLA_GB AND TIME_WLA_Z80 AND TIME_WLALINK)
+    set(TIME_ROM_CORPUS_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/acceleration-roms)
+    set(TIME_ROM_CORPUS_MANIFEST ${TIME_ROM_CORPUS_DIRECTORY}/rom-corpus.json)
+    set(TIME_ROM_CORPUS_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/research-rom-blocks.cpp)
+    set(TIME_ROM_CORPUS_INPUTS tools/build_acceleration_roms.py tests/fixtures/acceleration/rom-corpus.json)
+    foreach(fixture port-game port-reverse-game)
+        foreach(input build.py ledger.py assets.py state.inc game.gb.asm game.gg.asm gameplay.gb.inc gameplay.gg.inc scenarios.json)
+            list(APPEND TIME_ROM_CORPUS_INPUTS tests/fixtures/space/${fixture}/${input})
+        endforeach()
+    endforeach()
+    add_custom_command(OUTPUT ${TIME_ROM_CORPUS_MANIFEST}
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/build_acceleration_roms.py ${TIME_ROM_CORPUS_DIRECTORY}
+        DEPENDS ${TIME_ROM_CORPUS_INPUTS}
+        VERBATIM)
+    add_executable(time-emit-research-rom-blocks tools/emit_research_rom_blocks.cpp)
+    target_link_libraries(time-emit-research-rom-blocks PRIVATE time-research-whole-block-emitter time-gameboy-interpreter-core time-gamegear-core)
+    add_custom_command(OUTPUT ${TIME_ROM_CORPUS_SOURCE}
+        COMMAND time-emit-research-rom-blocks ${TIME_ROM_CORPUS_MANIFEST} ${TIME_ROM_CORPUS_SOURCE}
+        DEPENDS time-emit-research-rom-blocks ${TIME_ROM_CORPUS_MANIFEST}
+        VERBATIM)
+    add_library(time-research-rom-blocks STATIC ${TIME_ROM_CORPUS_SOURCE})
+    target_include_directories(time-research-rom-blocks PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+    add_executable(time-measure-whole-block-roms tests/measure_whole_block_roms.cpp)
+    target_link_libraries(time-measure-whole-block-roms PRIVATE time-research-rom-blocks time-gameboy-interpreter-core time-gamegear-core)
+    add_test(NAME smoke-whole-block-roms COMMAND time-measure-whole-block-roms --smoke)
+    set_tests_properties(smoke-whole-block-roms PROPERTIES TIMEOUT 600)
+else()
+    message(WARNING "Standalone ROM acceleration corpus not run: WLA-GB, WLA-Z80 and WLA-Link are required")
+    add_test(NAME smoke-whole-block-roms COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/build_acceleration_roms.py --check-tools)
 endif()

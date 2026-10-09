@@ -56,6 +56,7 @@ void Z80Interpreter::setMemoryInterface(MemRead reader, MemWrite writer) {
 }
 
 void Z80Interpreter::setIoInterface(IoRead reader, IoWrite writer) {
+    effectiveIoRead={};effectiveIoWrite={};
     ioRead = std::move(reader);
     ioWrite = std::move(writer);
 }
@@ -74,13 +75,18 @@ void Z80Interpreter::setInstructionFetchObserver(std::function<void(uint16_t)> o
     instructionFetchObserver_ = std::move(observer);
 }
 
-uint8_t Z80Interpreter::readIo(uint8_t port) const {
-    return ioRead ? ioRead(port) : 0xFFu;
+void Z80Interpreter::setEffectiveIoInterface(std::function<uint8_t(uint16_t)> reader,
+        std::function<void(uint16_t,uint8_t)> writer){
+    effectiveIoRead=std::move(reader);effectiveIoWrite=std::move(writer);
+}
+uint8_t Z80Interpreter::readIo(uint16_t port) const {
+    return effectiveIoRead?effectiveIoRead(port):ioRead ? ioRead(uint8_t(port)) : 0xFFu;
 }
 
-void Z80Interpreter::writeIo(uint8_t port, uint8_t value) const {
+void Z80Interpreter::writeIo(uint16_t port, uint8_t value) const {
+    if(effectiveIoWrite){effectiveIoWrite(port,value);return;}
     if (ioWrite) {
-        ioWrite(port, value);
+        ioWrite(uint8_t(port), value);
     }
 }
 
@@ -103,9 +109,24 @@ void Z80Interpreter::incRefresh() noexcept {
 
 uint8_t Z80Interpreter::fetch8() {
     requireMemoryInterface();
-    const uint8_t val = memRead(PC);
+    fetching_=true;
+    uint8_t val;
+    try { val = memRead(PC); } catch(...) {fetching_=false;throw;}
+    fetching_=false;
     PC = static_cast<uint16_t>(PC + 1u);
     return val;
+}
+
+std::array<uint16_t,20> Z80Interpreter::analysisRegisters() const noexcept {
+    return {AF,BC,DE,HL,SP,PC,IX,IY,AF_,BC_,DE_,HL_,I,R,
+        uint16_t(IFF1),uint16_t(IFF2),uint16_t(IME),interruptMode_,uint16_t(halted_),uint16_t(imeEnableDelay_)};
+}
+void Z80Interpreter::setAnalysisRegisters(const std::array<uint16_t,20>& r) {
+    if(r[12]>255||r[13]>255||r[14]>1||r[15]>1||r[16]>1||r[17]>2||r[18]>1||r[19]>2)
+        throw std::invalid_argument("invalid Z80 architectural snapshot");
+    AF=r[0];BC=r[1];DE=r[2];HL=r[3];SP=r[4];PC=r[5];IX=r[6];IY=r[7];
+    AF_=r[8];BC_=r[9];DE_=r[10];HL_=r[11];I=r[12];R=r[13];
+    IFF1=r[14];IFF2=r[15];IME=r[16];interruptMode_=r[17];halted_=r[18];imeEnableDelay_=r[19];
 }
 
 uint8_t Z80Interpreter::fetchOpcode() {
@@ -328,7 +349,7 @@ uint32_t Z80Interpreter::executeEdOpcode(uint8_t opcode) {
 
     if (x == 1u) {
         if (z == 0u) { // IN r,(C), with y==6 discarding the value
-            const uint8_t value = readIo(lo(BC));
+            const uint8_t value = readIo(BC);
             uint8_t flags = static_cast<uint8_t>((regF() & kFlagC) | sz35(value));
             if (parityEven(value)) flags = static_cast<uint8_t>(flags | kFlagPV);
             setRegF(flags);
@@ -336,7 +357,7 @@ uint32_t Z80Interpreter::executeEdOpcode(uint8_t opcode) {
             return 12u;
         }
         if (z == 1u) { // OUT (C),r, with y==6 writing zero
-            writeIo(lo(BC), y == 6u ? 0u : readReg8(y));
+            writeIo(BC, y == 6u ? 0u : readReg8(y));
             return 12u;
         }
         if (z == 2u) { // SBC/ADC HL,ss
@@ -474,7 +495,7 @@ uint32_t Z80Interpreter::executeEdOpcode(uint8_t opcode) {
         return 16u;
     };
     auto blockIn = [&](int direction, bool repeat) -> uint32_t {
-        memWrite(HL, readIo(lo(BC)));
+        memWrite(HL, readIo(BC));
         HL = static_cast<uint16_t>(HL + direction);
         const uint8_t b = static_cast<uint8_t>(hi(BC) - 1u);
         BC = word(lo(BC), b);
@@ -491,7 +512,7 @@ uint32_t Z80Interpreter::executeEdOpcode(uint8_t opcode) {
         HL = static_cast<uint16_t>(HL + direction);
         const uint8_t b = static_cast<uint8_t>(hi(BC) - 1u);
         BC = word(lo(BC), b);
-        writeIo(lo(BC), value);
+        writeIo(BC, value);
         uint8_t flags = static_cast<uint8_t>(sz35(b) | kFlagN);
         setRegF(flags);
         if (repeat && b != 0u) {
@@ -831,9 +852,9 @@ uint32_t Z80Interpreter::executeOpcode(uint8_t opcode) {
     case 0xC9: PC = pop16(); return 10u;
     case 0xCB: return executeCbOpcode(fetchOpcode(), false, 0u, nullptr);
     case 0xCD: { const uint16_t a = fetch16(); push16(PC); PC = a; return 17u; }
-    case 0xD3: { const uint8_t p = fetch8(); writeIo(p, regA()); return 11u; }
+    case 0xD3: { const uint8_t p = fetch8(); writeIo(uint16_t((uint16_t(regA())<<8)|p), regA()); return 11u; }
     case 0xD9: std::swap(BC, BC_); std::swap(DE, DE_); std::swap(HL, HL_); return 4u;
-    case 0xDB: setRegA(readIo(fetch8())); return 11u;
+    case 0xDB: {const auto p=fetch8();setRegA(readIo(uint16_t((uint16_t(regA())<<8)|p)));return 11u;}
     case 0xDD: case 0xFD: {
         uint8_t lastPrefix = opcode;
         uint32_t strayPrefixCycles = 0u;

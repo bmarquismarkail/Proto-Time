@@ -47,7 +47,19 @@ static int32_t invoke(void* context, struct TimeModCallV1* call) {
         return s->host->read_region(s->host->context, (uint32_t)call->argument, 0, &value, 1);
     return 0;
 }
-static int32_t reset(void* context) { ((struct State*)context)->counter = 0; return 1; }
+static int32_t reset(void* context) {
+#ifdef MOD_TEST_TRANSACTION_FAILURE
+    struct State* s = context;
+    if (s->counter == 253) {
+        uint32_t id = 0; uint8_t value = 99;
+        if (s->host->find_region(s->host->context, "pool", &id))
+            s->host->write_region(s->host->context, id, 0, &value, 1);
+        s->counter = 0;
+        return 0;
+    }
+#endif
+    ((struct State*)context)->counter = 0; return 1;
+}
 static int32_t save(void* context, uint8_t* output, uint32_t size) {
     if (size != 1) return 0;
     *output = ((struct State*)context)->counter;
@@ -56,6 +68,15 @@ static int32_t save(void* context, uint8_t* output, uint32_t size) {
 static int32_t restore(void* context, const uint8_t* input, uint32_t size) {
     if (size != 1) return 0;
     ((struct State*)context)->counter = *input;
+#ifdef MOD_TEST_TRANSACTION_FAILURE
+    if (*input == 254) {
+        struct State* s = context;
+        uint32_t id = 0; uint8_t value = 99;
+        if (s->host->find_region(s->host->context, "pool", &id))
+            s->host->write_region(s->host->context, id, 0, &value, 1);
+        return 0;
+    }
+#endif
     return 1;
 }
 #ifndef MOD_TEST_ABI

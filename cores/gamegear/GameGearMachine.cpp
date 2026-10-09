@@ -1,4 +1,6 @@
+#include <type_traits>
 #include "GameGearMachine.hpp"
+#include "space/CoreModel.hpp"
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -287,10 +289,14 @@ public:
         return step();
     }
 
+    bool analysisEnabled=false;
+    std::function<void()> analysisBegin;
+    std::function<void()> analysisCpuComplete;
     CpuFeedback step() override {
         if (!romLoaded_) {
             return lastFeedback_;
         }
+        if(analysisEnabled&&analysisBegin)analysisBegin();
         lastFeedback_.pcBefore = cpu_.PC;
         if (!cpu_.hasInstructionFetchObserver() &&
             (activePolicy_->backend() == ExecutionBackend::PortableIr ||
@@ -299,6 +305,7 @@ public:
             return lastFeedback_;
         }
         const auto retiredCycles = cpu_.step();
+        if(analysisEnabled&&analysisCpuComplete)analysisCpuComplete();
         lastFeedback_.pcAfter = cpu_.PC;
         lastFeedback_.retiredCycles = retiredCycles;
         lastFeedback_.segmentBoundaryHint = false;
@@ -371,6 +378,20 @@ public:
     const ITranslationCapability* translationCapability() const override { return this; }
     const IInvalidationCapability* invalidationCapability() const override { return this; }
 
+    IR::InterpreterHost& researchHost() noexcept {return irHost_;}
+    uint64_t researchExecutionState() const noexcept {return executionState();}
+    bool researchGuards(const IR::Block& block, bool checkCodeBytes = true) const noexcept {
+        return !cpu_.hasInstructionFetchObserver() && guardsMatch(block, checkCodeBytes);
+    }
+    CpuFeedback researchRetire(const IR::GuestInstruction& i,const IR::InterpreterResult& r) {
+        lastFeedback_.pcAfter=cpu_.PC;
+        lastFeedback_.retiredCycles=r.cycleCondition?i.cyclesTaken:i.cyclesNotTaken;
+        // Preserve this core's current baseline feedback convention for JR.
+        lastFeedback_.isControlFlow=false;lastFeedback_.segmentBoundaryHint=false;
+        lastFeedback_.executionPath=ExecutionPathHint::NativeIr;
+        return lastFeedback_;
+    }
+    void researchBegin(uint16_t pc) noexcept {lastFeedback_.pcBefore=pc;}
     void clearIrCache() noexcept {
         clearIrSession();
         irCache_.clear();
@@ -463,7 +484,7 @@ private:
         return guardsMatch(*entry.block);
     }
 
-    bool guardsMatch(const IR::Block& block) const noexcept
+    bool guardsMatch(const IR::Block& block, bool checkCodeBytes = true) const noexcept
     {
         for (const auto& guard : block.guards) {
             switch (guard.kind) {
@@ -480,6 +501,7 @@ private:
                 }
                 break;
             case IR::GuardKind::CodeBytes:
+                if (!checkCodeBytes) break;
                 for (std::size_t index = 0u; index < guard.bytes.size(); ++index) {
                     std::uint8_t byte = 0u;
                     const auto address = static_cast<std::uint16_t>(guard.subject + index);
@@ -861,7 +883,20 @@ private:
 };
 }
 
+namespace {
+class AnalysisPool final:public MemoryPool<uint16_t,uint8_t,uint16_t> {
+public:
+    GameGearMemoryMap& bus;
+    Space::ExecutionController* execution=nullptr;
+    explicit AnalysisPool(GameGearMemoryMap& m):bus(m){for(auto name:Space::coreModel("gamegear").pairs)file.addRegister(name);}
+    void read(std::span<uint8_t> bytes,uint16_t address)override{for(size_t i=0;i<bytes.size();++i)bytes[i]=bus.read(uint16_t(address+i));}
+    void write(std::span<const uint8_t> bytes,uint16_t address)override{for(size_t i=0;i<bytes.size();++i){auto a=uint16_t(address+i);bus.write(a,bytes[i]);if(execution)execution->canonicalWrite(a,bytes[i]);}}
+};
+}
 struct GameGearMachine::Impl {
+    IR::Research::Owner researchOwner=std::make_shared<const IR::Research::OwnerIdentity>();
+    bool researchFaulted=false;
+
     void flushCartridgeSaveOnSchedule()
     {
         if (!cart) {
@@ -905,6 +940,26 @@ struct GameGearMachine::Impl {
     GameGearInput input;
     std::unique_ptr<GameGearMapper> cart;
     GameGearMemoryMap mem;
+    AnalysisPool analysisPool{mem};
+    Space::Capture* capture=nullptr;
+    Space::ExecutionController* snapshotExecution=nullptr;
+    IMemory<uint16_t,uint8_t,uint16_t>* snapshotMemory=nullptr;
+    Space::Record fetchChunk{};
+    uint32_t fetched=0;
+    std::array<uint8_t,65539> instructionBuffer{};
+    size_t instructionLength=0;
+    std::array<uint8_t,11> beforeVdp{};
+    void syncRegisters(RegisterFile<uint16_t>& file){
+        const auto values=cpu.analysisRegisters();auto& model=Space::coreModel("gamegear");
+        for(size_t i=0;i<model.pairs.size();++i)file.findRegister(model.pairs[i])->reg->value=values[i];
+    }
+    void syncExecutionRegisters(){
+        if(!capture)return;
+        syncRegisters(analysisPool.file);
+        if(snapshotMemory)if(auto* view=dynamic_cast<Space::RegisterExecutionView*>(snapshotExecution))syncRegisters(view->executionRegisters());
+    }
+    void flushFetch(){if(capture&&fetchChunk.fetchLength){capture->push(fetchChunk);fetchChunk={};}}
+
     PluginManager pluginManager;
     GameGearSaveManager saveManager;
     BMMQ::BackgroundTaskService* backgroundTaskService = nullptr;
@@ -937,6 +992,9 @@ std::span<const IoRegionDescriptor> GameGearMachine::describeIoRegions() const {
 }
 
 void GameGearMachine::attachExecutorPolicy(const Plugin::IExecutorPolicyPlugin& policy) {
+    if (impl->mem.debugEngine && policy.backend() != ExecutionBackend::Baseline)
+        throw std::invalid_argument("debugger requires baseline execution");
+    if(impl->capture&&policy.backend()!=ExecutionBackend::Baseline)throw std::invalid_argument("S.P.A.C.E. requires baseline execution");
     if (policy.backend() == ExecutionBackend::NativeExperimental) {
         throw std::runtime_error("Game Gear does not support the selected execution backend");
     }
@@ -959,6 +1017,28 @@ uint16_t GameGearMachine::readRegisterPair(std::string_view name) const {
     return impl->context.readRegister16(name);
 }
 
+void GameGearMachine::connectDebugEngine(Debug::DebugEngine* engine) {
+    if (engine && (impl->mem.debugEngine || impl->capture ||
+        attachedExecutorPolicy().backend() != ExecutionBackend::Baseline))
+        throw std::invalid_argument("debugger requires exclusive baseline execution without capture");
+    impl->mem.debugEngine = engine;
+}
+std::span<const char* const> GameGearMachine::debugRegisterNames() const noexcept { return Space::coreModel("gamegear").pairs; }
+std::array<uint16_t,20> GameGearMachine::debugRegisters() const { return impl->cpu.analysisRegisters(); }
+bool GameGearMachine::debugValidateRegisters(const std::array<uint16_t,20>& r) const noexcept {
+    return r[12] <= 255 && r[13] <= 255 && r[14] <= 1 && r[15] <= 1 && r[16] <= 1 && r[17] <= 2 && r[18] <= 1 && r[19] <= 2;
+}
+void GameGearMachine::debugCommitRegisters(const std::array<uint16_t,20>& registers) noexcept {
+    impl->cpu.setAnalysisRegisters(registers); impl->context.clearIrCache();
+}
+bool GameGearMachine::debugPeek(uint16_t address, uint8_t& value) const noexcept { return impl->mem.peekCodeByte(address, value); }
+bool GameGearMachine::debugWritable(uint16_t address) const noexcept {
+    return address >= 0xc000 && address < 0xfffc && impl->mem.analysisRam(address);
+}
+void GameGearMachine::debugCommitByte(uint16_t address, uint8_t value) noexcept { impl->mem.debugCommitRam(address, value); impl->context.clearIrCache(); }
+uint64_t GameGearMachine::debugBacking(uint16_t address) const noexcept { return impl->mem.analysisLocation(address); }
+void GameGearMachine::debugEdited() noexcept { advanceObservationGeneration(); }
+
 GameGearMachine::GameGearMachine() : impl(std::make_unique<Impl>()) {
     videoService().setVisualDebugAdapter(visualDebugAdapter());
     (void)audioService().configureEngine({
@@ -970,13 +1050,35 @@ GameGearMachine::GameGearMachine() : impl(std::make_unique<Impl>()) {
     });
     // Wire up CPU memory interface to memory map
     impl->cpu.setMemoryInterface(
-        [this](uint16_t addr) { return impl->mem.read(addr); },
-        [this](uint16_t addr, uint8_t val) { impl->mem.write(addr, val); }
+        [this](uint16_t addr) {
+            if(!impl->capture)return impl->mem.read(addr);
+            if(impl->cpu.fetchingInstructionBytes()){
+                auto* c=impl->capture;auto phase=c?c->phase:Space::Kind::Inspection;
+                if(c)c->phase=Space::Kind::Fetch;
+                auto value=impl->mem.read(addr);if(c)c->phase=phase;
+                if(c){auto location=impl->mem.analysisLocation(addr);
+                    if(impl->fetchChunk.fetchLength&&(impl->fetchChunk.fetchLength==64||location!=impl->fetchChunk.location+impl->fetchChunk.fetchLength))impl->flushFetch();
+                    if(!impl->fetchChunk.fetchLength){impl->fetchChunk.kind=Space::Kind::Fetch;impl->fetchChunk.location=location;impl->fetchChunk.address=addr;}
+                    impl->fetchChunk.fetchBytes[impl->fetchChunk.fetchLength++]=value;if(impl->fetched<impl->instructionBuffer.size())impl->instructionBuffer[impl->fetched]=value;++impl->fetched;}
+                return value;
+            }
+            impl->syncExecutionRegisters();
+            if(impl->snapshotMemory){uint8_t value=0;impl->snapshotMemory->read(std::span(&value,1),addr);return value;}
+            return impl->mem.read(addr);
+        },
+        [this](uint16_t addr, uint8_t val) {
+            if(!impl->capture){impl->mem.write(addr,val);return;}
+            impl->syncExecutionRegisters();
+            if(impl->snapshotMemory)impl->snapshotMemory->write(std::span(&val,1),addr);
+            else impl->analysisPool.write(std::span(&val,1),addr);
+        }
     );
-    impl->cpu.setIoInterface(
-        [this](uint8_t port) { return impl->mem.readIoPort(port); },
-        [this](uint8_t port, uint8_t value) {
-            impl->mem.writeIoPort(port, value);
+    impl->cpu.setEffectiveIoInterface(
+        [this](uint16_t port) { impl->syncExecutionRegisters(); return impl->mem.readEffectiveIoPort(port); },
+        [this](uint16_t effectivePort, uint8_t value) {
+            impl->syncExecutionRegisters();
+            impl->mem.writeEffectiveIoPort(effectivePort, value);
+            const auto port=uint8_t(effectivePort);
             if (impl->pluginManager.size() == 0u) return;
             const auto emit = [this, port, value](MachineEventType type, PluginCategory category,
                                                   const char* detail) {
@@ -1012,11 +1114,31 @@ GameGearMachine::GameGearMachine() : impl(std::make_unique<Impl>()) {
         impl->interruptRequested = false;
         return std::nullopt;
     });
+    impl->context.analysisBegin=[this]{
+        if(!impl->capture)return;
+        auto* c=impl->capture;c->bindProducer();
+        if(!c->onProducerLane())throw std::logic_error("Game Gear capture producer lane changed");
+        impl->snapshotMemory=nullptr;impl->fetched=0;impl->fetchChunk={};impl->instructionLength=0;
+        impl->syncRegisters(impl->analysisPool.file);
+        if(impl->snapshotExecution)impl->snapshotExecution->preflight();
+        Space::Record before;before.kind=Space::Kind::Begin;before.registers=impl->cpu.analysisRegisters();before.location=impl->mem.analysisLocation(impl->cpu.PC);c->push(before);c->phase=Space::Kind::Read;
+        if(impl->snapshotExecution&&impl->snapshotExecution->enabled()&&!snapshotBoundaryOnly()){
+            auto bytes=snapshotInstruction();
+            impl->snapshotMemory=impl->snapshotExecution->begin(bytes,before.location,impl->analysisPool,false);
+            if(auto* view=dynamic_cast<Space::RegisterExecutionView*>(impl->snapshotExecution);impl->snapshotMemory&&view){
+                auto values=before.registers;const auto& model=Space::coreModel("gamegear");
+                for(size_t i=0;i<model.pairs.size();++i)values[i]=view->executionRegisters().findRegister(model.pairs[i])->reg->value;
+                impl->cpu.setAnalysisRegisters(values);
+            }
+        }
+    };
+    impl->context.analysisCpuComplete=[this]{if(impl->capture){impl->flushFetch();impl->syncExecutionRegisters();impl->capture->phase=Space::Kind::End;}};
     Plugin::validateExecutorPolicyStartup(impl->defaultPolicy);
     impl->vdp.reset();
     impl->input.reset();
     impl->cpu.reset();
     impl->context.clearIrCache();
+    applyProviderBootRom();
 }
 GameGearMachine::~GameGearMachine() {
     (void)flushCartridgeSave();
@@ -1026,6 +1148,7 @@ GameGearMachine::~GameGearMachine() {
 }
 
 void GameGearMachine::loadRom(const std::vector<uint8_t>& bytes) {
+    if(impl->capture)throw std::invalid_argument("detach S.P.A.C.E. capture before replacing ROM");
     if (bytes.empty()) {
         throw std::runtime_error("Cannot load empty ROM");
     }
@@ -1033,7 +1156,11 @@ void GameGearMachine::loadRom(const std::vector<uint8_t>& bytes) {
         throw std::runtime_error("ROM too large");
     }
     (void)flushCartridgeSave();
+    // Validate every reset callback before detaching hooks or changing ROM state.
+    auto nativeReset = BMMQ::Modding::NativeMod::prepareReset(modHost());
+    nativeReset.commit();
     clearNativeTrampolines();
+    modHost().reset();
     // Create an appropriate mapper for the ROM and bind it into the
     // memory map. The factory returns a mapper with the ROM already
     // loaded.
@@ -1050,8 +1177,11 @@ void GameGearMachine::loadRom(const std::vector<uint8_t>& bytes) {
         impl->saveManager.clearBinding();
     }
     impl->pendingRomSourcePath.reset();
+    advanceObservationGeneration();
+    impl->researchFaulted=false;
     impl->mem.reset();
     impl->vdp.reset();
+    impl->interruptRequested = false;
     impl->psg.reset();
     impl->input.reset();
     impl->romLoaded = true;
@@ -1086,6 +1216,7 @@ void GameGearMachine::setRomSourcePath(const std::optional<std::filesystem::path
 }
 
 void GameGearMachine::loadExternalBootRom(const std::vector<uint8_t>& bytes) {
+    if(impl->capture)throw std::invalid_argument("detach S.P.A.C.E. capture before replacing BIOS");
     impl->mem.mapBios(bytes.data(), bytes.size());
 }
 
@@ -1106,9 +1237,6 @@ const PluginManager& GameGearMachine::pluginManager() const {
 }
 
 void GameGearMachine::save_state(const std::filesystem::path& path) {
-    if (!impl->nativeTrampolines.empty()) {
-        throw std::runtime_error("Cannot save Game Gear state while native mod hooks are active");
-    }
     if (!impl->romLoaded || !impl->cart) {
         throw std::runtime_error("Cannot save Game Gear state before ROM is loaded");
     }
@@ -1132,13 +1260,13 @@ void GameGearMachine::save_state(const std::filesystem::path& path) {
     state.chunks.push_back(makeChunk("gg.psg", impl->psg.exportState()));
     state.chunks.push_back(makeChunk("gg.input", impl->input.exportState()));
     state.chunks.push_back(makeChunk("gg.mapper", impl->cart->exportState()));
+    state.chunks.push_back(makeChunk("time.host-regions", modHost().exportState()));
+    state.chunks.push_back(makeChunk("time.native-mods", BMMQ::Modding::NativeMod::saveCohort(modHost())));
     SaveStateReader::write(state, path);
 }
 
 void GameGearMachine::load_state(const std::filesystem::path& path) {
-    if (!impl->nativeTrampolines.empty()) {
-        throw std::runtime_error("Cannot load Game Gear state while native mod hooks are active");
-    }
+    if(impl->capture)throw std::invalid_argument("use paired S.P.A.C.E. restore while capture is active");
     if (!impl->romLoaded || !impl->cart) {
         throw std::runtime_error("Load ROM before loading Game Gear save state");
     }
@@ -1148,6 +1276,19 @@ void GameGearMachine::load_state(const std::filesystem::path& path) {
     if (state.header.core_id != BMMQ::kCoreId_GameGear) {
         throw std::invalid_argument("save state is not a Game Gear state");
     }
+
+    std::optional<std::span<const std::uint8_t>> hostState, nativeState;
+    for (const auto& chunk : state.chunks) {
+        if (chunk.name == "time.host-regions") {
+            if (hostState) throw std::invalid_argument("duplicate host-region state");
+            hostState = chunk.data;
+        }
+        if (chunk.name == "time.native-mods") {
+            if (nativeState) throw std::invalid_argument("duplicate native cohort state");
+            nativeState = chunk.data;
+        }
+    }
+    auto nextNativeState = BMMQ::Modding::NativeMod::prepareCohort(modHost(), nativeState, hostState);
 
     const auto& meta = requireChunk(state, "gg.machine").data;
     std::size_t pos = 0;
@@ -1198,6 +1339,15 @@ void GameGearMachine::load_state(const std::filesystem::path& path) {
     nextInput.importState(requireChunk(state, "gg.input").data);
     nextCpu.importState(requireChunk(state, "gg.cpu").data);
 
+    // Publication must not allocate after coordinated host/module state commits.
+    static_assert(std::is_nothrow_move_assignable_v<decltype(nextMem)>);
+    static_assert(std::is_nothrow_move_assignable_v<decltype(nextVdp)>);
+    static_assert(std::is_nothrow_move_assignable_v<decltype(nextPsg)>);
+    static_assert(std::is_nothrow_move_assignable_v<decltype(nextInput)>);
+    static_assert(std::is_nothrow_move_assignable_v<decltype(nextCpu)>);
+    nextNativeState.commit();
+    advanceObservationGeneration();
+    impl->researchFaulted=false;
     impl->cart = std::move(nextCart);
     impl->mem = std::move(nextMem);
     impl->vdp = std::move(nextVdp);
@@ -1218,15 +1368,56 @@ void GameGearMachine::load_state(const std::filesystem::path& path) {
     inputService().advanceGeneration(impl->inputGeneration);
 }
 
+IR::Research::BoundBlock GameGearMachine::bindResearchBlock(const IR::Research::CompiledBlock& code) {
+    if(!impl->romLoaded || impl->researchFaulted || impl->capture || impl->snapshotExecution || impl->mem.debugEngine ||
+       !impl->nativeTrampolines.empty() || attachedExecutorPolicy().backend()!=ExecutionBackend::Baseline)
+        throw std::invalid_argument("whole-block research requires an exclusive healthy baseline machine");
+    GameGearIR::CoreAdapter adapter;
+    auto binding=IR::Research::bindMachineBlock(code,adapter,impl->researchOwner,observationGeneration(),impl->mem.codeMappingGeneration());
+    if(!impl->context.researchGuards(binding.code().block()))throw std::invalid_argument("whole-block research guards rejected the machine");
+    return binding;
+}
+IR::Research::MachineBlockState GameGearMachine::researchBlockState() const {
+    return {impl->mem.codeMappingGeneration(), impl->context.researchExecutionState()};
+}
+ExecutionSliceResult GameGearMachine::runResearchBlock(IR::Research::BoundBlock& binding,
+        const ExecutionBudget& budget,InstructionRetirementSink* observer) {
+    if(impl->researchFaulted)throw std::runtime_error("research fault requires ROM reload or checkpoint restore");
+    if(impl->capture || impl->snapshotExecution || impl->mem.debugEngine || !impl->nativeTrampolines.empty() ||
+       attachedExecutorPolicy().backend()!=ExecutionBackend::Baseline)
+        throw std::invalid_argument("whole-block research requires exclusive baseline execution");
+    // Below $8000 neither SRAM nor mirrored RAM is mapped. Entry checks all
+    // bytes; continuation still checks mapping, CPU state and owner lifetime.
+    const bool reuseCodeGuard = !observer && binding.hasLowRomCode();
+    return IR::Research::executeMachineBlock(binding,impl->context.researchHost(),budget,observer,
+        [&](const IR::Block& block,size_t index) {
+            if(!impl->romLoaded || !binding.matches(impl->researchOwner,observationGeneration()) ||
+               impl->capture || impl->snapshotExecution || impl->mem.debugEngine || !impl->nativeTrampolines.empty() ||
+               attachedExecutorPolicy().backend()!=ExecutionBackend::Baseline || impl->cpu.PC!=block.instructions[index].address ||
+               (index == 0 || !reuseCodeGuard
+                    ? !impl->context.researchGuards(block)
+                    : impl->cpu.hasInstructionFetchObserver() ||
+                      !binding.scalarGuardsMatch(impl->mem.codeMappingGeneration(),
+                          impl->context.researchExecutionState(), GameGearIR::kHelperAbiVersion)))return false;
+            impl->context.researchBegin(impl->cpu.PC);return true;
+        },
+        [&](const IR::GuestInstruction& i,const IR::InterpreterResult& r){return impl->context.researchRetire(i,r);},
+        [&](const CpuFeedback& f,const ExecutionSliceProgress& p){return onInstructionRetired(f,p);},
+        [&]{impl->researchFaulted=true;});
+}
+
 ExecutionSliceResult GameGearMachine::runSlice(
     const ExecutionBudget& budget,
     InstructionRetirementSink* observer) {
+    if(impl->researchFaulted)throw std::runtime_error("research fault requires ROM reload or checkpoint restore");
+    if (impl->mem.debugEngine && (!impl->mem.debugEngine->active() || budget.maxInstructions != 1))
+        throw std::invalid_argument("attached debugger owns instruction control");
     if (!impl->romLoaded) {
         ExecutionSliceResult result;
         result.exitReason = ExecutionSliceExitReason::MachineBoundary;
         return result;
     }
-    return Machine::runSlice(budget, observer);
+    try {return Machine::runSlice(budget, observer);}catch(...){if(impl->capture)impl->capture->phase=Space::Kind::Inspection;impl->snapshotMemory=nullptr;throw;}
 }
 
 void GameGearMachine::step() {
@@ -1287,6 +1478,13 @@ InstructionRetirementDecision GameGearMachine::onInstructionRetired(
                 "psg frame mixed"
             });
         }
+    }
+    if(impl->capture){
+        auto* c=impl->capture;
+        Space::Record end;end.kind=Space::Kind::End;end.registers=impl->cpu.analysisRegisters();end.cycles=feedback.retiredCycles;end.length=impl->fetched;end.location=impl->mem.analysisLocation(impl->cpu.PC);
+        end.fallthroughLocation=impl->mem.analysisLocation(uint16_t(feedback.pcBefore+impl->fetched));
+        if(impl->fetched&&impl->fetched<=impl->instructionBuffer.size()){auto target=Space::z80DirectTarget(std::span(impl->instructionBuffer.data(),impl->fetched),feedback.pcBefore);if(target.direct)end.targetLocation=impl->mem.analysisLocation(target.address);}
+        impl->syncExecutionRegisters();if(impl->snapshotExecution)impl->snapshotExecution->retired(end);c->push(end);c->phase=Space::Kind::Inspection;impl->snapshotMemory=nullptr;
     }
     if (impl->interruptRequested || impl->vdp.isIrqAsserted()) {
         return InstructionRetirementDecision::exitSlice(
@@ -1482,14 +1680,16 @@ void GameGearMachine::setBackgroundTaskService(BMMQ::BackgroundTaskService* serv
 bool GameGearMachine::installNativeTrampoline(
     std::uint16_t address, std::uint8_t romBank,
     std::unique_ptr<Modding::NativeMod> module, std::uint32_t hookId) {
+    if(impl->capture)throw std::invalid_argument("native mods cannot be activated during S.P.A.C.E. capture");
     std::size_t mappedBank = 0u;
     std::uint8_t opcode = 0u;
-    if (!module || hookId == 0u || address >= 0xC000u ||
+    if (!module || !module->attachedTo(modHost()) || hookId == 0u || address >= 0xC000u ||
         !impl->cart || !impl->cart->romBankForAddress(address, mappedBank) ||
         mappedBank != romBank || !impl->mem.peekCodeByte(address, opcode) ||
         opcode != 0xC9u || impl->nativeTrampolines.contains(address)) {
         return false;
     }
+    module->setExecutionBinding("gamegear:" + std::to_string(romBank) + ":" + std::to_string(address) + ":" + std::to_string(hookId));
     impl->nativeTrampolines.emplace(address, Impl::NativeTrampoline{
         mappedBank, hookId, std::move(module)});
     impl->cpu.setInstructionFetchObserver([this](std::uint16_t pc) {
@@ -1546,3 +1746,57 @@ void GameGearMachine::setIrComponents(
 }
 
 } // namespace BMMQ
+
+namespace BMMQ {
+MemoryPool<uint16_t,uint8_t,uint16_t>& GameGearMachine::executionMemory(){impl->syncRegisters(impl->analysisPool.file);return impl->analysisPool;}
+uint64_t GameGearMachine::analysisLocation(uint16_t a,bool w)const{return impl->mem.analysisLocation(a,w);}
+uint8_t GameGearMachine::analysisRead(uint16_t a)const{
+    auto* c=impl->capture;auto phase=c?c->phase:Space::Kind::Inspection;if(c)c->phase=Space::Kind::Inspection;
+    auto value=impl->mem.read(a);if(c)c->phase=phase;return value;
+}
+bool GameGearMachine::analysisRam(uint16_t a)const{return impl->mem.analysisRam(a);}
+size_t GameGearMachine::analysisRamCapacity()const noexcept{return impl->mem.analysisRamCapacity();}
+bool GameGearMachine::analysisPhysicalRamByte(size_t a,uint8_t& v)const noexcept{return impl->mem.analysisPhysicalRamByte(a,v);}
+bool GameGearMachine::snapshotBoundaryOnly()const{return impl->cpu.halted()||(impl->cpu.IME&&impl->cpu.IFF1&&impl->vdp.isIrqAsserted());}
+void GameGearMachine::setAnalysisCapture(Space::Capture* c){
+    if (c && impl->mem.debugEngine) throw std::invalid_argument("detach debugger before capture");
+    if(c&&(attachedExecutorPolicy().backend()!=ExecutionBackend::Baseline||Modding::NativeMod::hasCohort(modHost())))throw std::invalid_argument("S.P.A.C.E. requires baseline execution without native mods");
+    if(c!=impl->capture)setSnapshotExecution(nullptr);
+    impl->capture=c;impl->context.analysisEnabled=c!=nullptr;impl->mem.analysisCapture=c;impl->vdp.setAnalysisCapture(c);
+    if(c)c->core="gamegear";
+}
+void GameGearMachine::setSnapshotExecution(Space::ExecutionController* e){
+    if(e&&!impl->capture)throw std::invalid_argument("snapshot execution requires attached capture");
+    impl->snapshotExecution=e;impl->analysisPool.execution=e;impl->snapshotMemory=nullptr;
+}
+void GameGearMachine::setAnalysisInput(uint8_t mask){
+    impl->input.setLogicalButtons(mask);impl->lastDigitalInputMask=mask;
+    if(impl->capture){Space::Record r;r.kind=Space::Kind::Input;r.value=mask;impl->capture->push(r);}
+}
+std::span<const uint8_t> GameGearMachine::snapshotInstruction(){
+    auto& bytes=impl->instructionBuffer;size_t n=0;auto pc=impl->cpu.PC;
+    auto next=[&](){uint8_t b;if(n>=bytes.size()||!impl->mem.peekCodeByte(uint16_t(pc+n),b))throw Space::ExecutionPaused("unsupported instruction backing; explicit baseline required");bytes[n++]=b;return b;};
+    // Scan prefixes once: repeated prefixes may wrap the entire address space.
+    uint8_t opcode=next();
+    while((opcode==0xdd||opcode==0xfd)&&n<65536)opcode=next();
+    size_t needed=Space::z80InstructionLength(std::span(bytes.data(),n));
+    if(!needed){next();needed=Space::z80InstructionLength(std::span(bytes.data(),n));}
+    if(!needed)throw Space::ExecutionPaused("incomplete instruction identity");
+    while(n<needed)next();
+    impl->instructionLength=n;return std::span(bytes.data(),n);
+}
+}
+
+namespace BMMQ {
+std::string GameGearMachine::deterministicStateFingerprint()const{
+    std::vector<uint8_t> bytes;
+    auto append=[&](const std::vector<uint8_t>& state){auto n=uint64_t(state.size());for(unsigned i=0;i<8;++i)bytes.push_back(uint8_t(n>>(8*i)));bytes.insert(bytes.end(),state.begin(),state.end());};
+    append(serializeMachineMeta(impl->stepCounter,impl->lastAudioFrameCounter,impl->interruptRequested,impl->lastDigitalInputMask,0));
+    append(impl->cpu.exportState());append(impl->mem.exportState());append(impl->vdp.exportState());append(impl->psg.exportState());append(impl->input.exportState());
+    if(impl->cart)append(impl->cart->exportState());
+    if(modHost().hasRegions())append(modHost().exportState());
+    const auto native = Modding::NativeMod::saveCohort(modHost());
+    if(native.size()>8)append(native);
+    return Space::digest(bytes);
+}
+}
