@@ -67,7 +67,10 @@ Its [new acceleration evaluation](../.internal/docs/time-acceleration-evaluation
 reopens research for both existing cores; the old backend remains frozen and
 baseline execution remains the default. The [whole-block emission pilot](../.internal/docs/time-whole-block-pilot.md)
 provides an isolated native-code experiment; real-core integration and reviewed
-performance decisions remain pending.
+performance acceptance remain pending. Its
+[standalone game corpus](../.internal/docs/time-representative-rom-corpus.md)
+replays both authored Collect and Exit revisions and ports with ROM-bound input,
+bank-aware execution accounting and differential evidence.
 
 ## Execution and concurrency records
 

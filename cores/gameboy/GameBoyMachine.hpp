@@ -58,6 +58,7 @@ public:
     GameBoyMachine();
     BMMQ::IR::Research::BoundBlock bindResearchBlock(const BMMQ::IR::Research::CompiledBlock&);
     BMMQ::ExecutionSliceResult runResearchBlock(BMMQ::IR::Research::BoundBlock&, const BMMQ::ExecutionBudget&, BMMQ::InstructionRetirementSink* = nullptr);
+    BMMQ::IR::Research::MachineBlockState researchBlockState() const;
     void connectDebugEngine(BMMQ::Debug::DebugEngine*) override;
     std::span<const char* const> debugRegisterNames() const noexcept override;
     std::array<uint16_t,20> debugRegisters() const override;

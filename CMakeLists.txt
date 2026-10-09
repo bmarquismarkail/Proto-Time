@@ -1148,3 +1148,41 @@ add_test(NAME smoke-whole-block-corpus COMMAND time-measure-whole-block-corpus -
 set_tests_properties(smoke-whole-block-corpus PROPERTIES TIMEOUT 120)
 add_test(NAME smoke-acceleration-report-tool
     COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/test_measure_acceleration.py)
+
+# Repository-owned standalone game corpus. ROMs and emitted blocks are generated
+# together with the host WLA toolchain, also for QEMU cross builds. Missing tools
+# remain a failing/not-run check; they never publish passing ROM evidence.
+find_program(TIME_WLA_GB wla-gb)
+find_program(TIME_WLA_Z80 wla-z80)
+find_program(TIME_WLALINK wlalink)
+if(TIME_WLA_GB AND TIME_WLA_Z80 AND TIME_WLALINK)
+    set(TIME_ROM_CORPUS_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/acceleration-roms)
+    set(TIME_ROM_CORPUS_MANIFEST ${TIME_ROM_CORPUS_DIRECTORY}/rom-corpus.json)
+    set(TIME_ROM_CORPUS_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/research-rom-blocks.cpp)
+    set(TIME_ROM_CORPUS_INPUTS tools/build_acceleration_roms.py tests/fixtures/acceleration/rom-corpus.json)
+    foreach(fixture port-game port-reverse-game)
+        foreach(input build.py ledger.py assets.py state.inc game.gb.asm game.gg.asm gameplay.gb.inc gameplay.gg.inc scenarios.json)
+            list(APPEND TIME_ROM_CORPUS_INPUTS tests/fixtures/space/${fixture}/${input})
+        endforeach()
+    endforeach()
+    add_custom_command(OUTPUT ${TIME_ROM_CORPUS_MANIFEST}
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/build_acceleration_roms.py ${TIME_ROM_CORPUS_DIRECTORY}
+        DEPENDS ${TIME_ROM_CORPUS_INPUTS}
+        VERBATIM)
+    add_executable(time-emit-research-rom-blocks tools/emit_research_rom_blocks.cpp)
+    target_link_libraries(time-emit-research-rom-blocks PRIVATE time-research-whole-block-emitter time-gameboy-interpreter-core time-gamegear-core)
+    add_custom_command(OUTPUT ${TIME_ROM_CORPUS_SOURCE}
+        COMMAND time-emit-research-rom-blocks ${TIME_ROM_CORPUS_MANIFEST} ${TIME_ROM_CORPUS_SOURCE}
+        DEPENDS time-emit-research-rom-blocks ${TIME_ROM_CORPUS_MANIFEST}
+        VERBATIM)
+    add_library(time-research-rom-blocks STATIC ${TIME_ROM_CORPUS_SOURCE})
+    target_include_directories(time-research-rom-blocks PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+    add_executable(time-measure-whole-block-roms tests/measure_whole_block_roms.cpp)
+    target_link_libraries(time-measure-whole-block-roms PRIVATE time-research-rom-blocks time-gameboy-interpreter-core time-gamegear-core)
+    add_test(NAME smoke-whole-block-roms COMMAND time-measure-whole-block-roms --smoke)
+    set_tests_properties(smoke-whole-block-roms PROPERTIES TIMEOUT 600)
+else()
+    message(WARNING "Standalone ROM acceleration corpus not run: WLA-GB, WLA-Z80 and WLA-Link are required")
+    add_test(NAME smoke-whole-block-roms COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/build_acceleration_roms.py --check-tools)
+endif()

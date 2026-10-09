@@ -17,7 +17,7 @@ def length(data,a):
     elif op<0x40:
         if op&7==0 and op>=0x10:suffix=2
         elif op&15==1:suffix=3
-        elif op&15==2 and op>=0x20:suffix=3
+        elif op&15 in (2,10) and op>=0x20:suffix=3
         elif op&7==6:suffix=2+int(indexed and (op>>3)&7==6)
         elif indexed and (op>>3)&7==6 and op&7 in (4,5):suffix=2
     elif op<0xc0:

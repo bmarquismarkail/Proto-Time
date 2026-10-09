@@ -36,6 +36,12 @@ the correctness, latency, representative-corpus or native-host requirements.
 
 ## Reproducible baseline corpus
 
+The [standalone game corpus](time-representative-rom-corpus.md) adds the separate
+`whole-block-roms` experiment: both Collect and Exit revisions and their ports,
+ROM-bound scenarios, bank-aware native coverage and sampled retirement checks.
+This expands authored-game coverage; it does not broaden production policy or
+close performance, latency or native ARM64 acceptance.
+
 `time-measure-acceleration-corpus` compares baseline, cached-block policy, and
 portable IR for compute, canonical RAM, and device-access loops on both cores.
 Each sample warms the same machine for 4,096 instructions before measuring

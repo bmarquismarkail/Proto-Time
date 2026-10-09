@@ -1306,6 +1306,10 @@ BMMQ::IR::Research::BoundBlock GameBoyMachine::bindResearchBlock(const BMMQ::IR:
         throw std::invalid_argument("whole-block research guards rejected the machine");
     return binding;
 }
+BMMQ::IR::Research::MachineBlockState GameBoyMachine::researchBlockState() const {
+    const auto& cpu = impl_->cpu.cpu();
+    return {cpu.researchMappingGeneration(), cpu.irExecutionState()};
+}
 BMMQ::ExecutionSliceResult GameBoyMachine::runResearchBlock(BMMQ::IR::Research::BoundBlock& binding,
         const BMMQ::ExecutionBudget& budget,BMMQ::InstructionRetirementSink* observer) {
     if(impl_->researchFaulted)throw std::runtime_error("research fault requires ROM reload or checkpoint restore");

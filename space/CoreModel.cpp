@@ -30,7 +30,7 @@ size_t z80InstructionLength(std::span<const uint8_t> bytes){
     else if(op<0x40){
         if((op&7)==0&&op>=0x10)suffix=2;
         else if((op&15)==1)suffix=3;
-        else if((op&15)==2&&op>=0x20)suffix=3;
+        else if(((op&15)==2||(op&15)==10)&&op>=0x20)suffix=3;
         else if((op&7)==6)suffix=2+unsigned(indexed&&((op>>3)&7)==6);
         else if(indexed&&((op>>3)&7)==6&&((op&7)==4||(op&7)==5))suffix=2;
     }else if(op<0xc0){if(indexed&&op!=0x76&&((op&7)==6||(op<0x80&&((op>>3)&7)==6)))suffix=2;}

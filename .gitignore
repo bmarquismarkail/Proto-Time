@@ -44,4 +44,5 @@ graphify-out/
 !.internal/docs/dynamic-machine-runtime-v2.md
 
 !.internal/docs/time-whole-block-pilot.md
+!.internal/docs/time-representative-rom-corpus.md
 !.internal/docs/scheduling-latency-repair.md

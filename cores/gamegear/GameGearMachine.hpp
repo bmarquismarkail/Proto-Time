@@ -42,6 +42,7 @@ public:
     GameGearMachine();
     IR::Research::BoundBlock bindResearchBlock(const IR::Research::CompiledBlock&);
     BMMQ::ExecutionSliceResult runResearchBlock(IR::Research::BoundBlock&, const BMMQ::ExecutionBudget&, BMMQ::InstructionRetirementSink* = nullptr);
+    IR::Research::MachineBlockState researchBlockState() const;
     void connectDebugEngine(BMMQ::Debug::DebugEngine*) override;
     bool debugPortBus() const noexcept override { return true; }
     std::span<const char* const> debugRegisterNames() const noexcept override;

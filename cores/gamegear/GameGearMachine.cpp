@@ -379,6 +379,7 @@ public:
     const IInvalidationCapability* invalidationCapability() const override { return this; }
 
     IR::InterpreterHost& researchHost() noexcept {return irHost_;}
+    uint64_t researchExecutionState() const noexcept {return executionState();}
     bool researchGuards(const IR::Block& block, bool checkCodeBytes = true) const noexcept {
         return !cpu_.hasInstructionFetchObserver() && guardsMatch(block, checkCodeBytes);
     }
@@ -1375,6 +1376,9 @@ IR::Research::BoundBlock GameGearMachine::bindResearchBlock(const IR::Research::
     auto binding=IR::Research::bindMachineBlock(code,adapter,impl->researchOwner,observationGeneration(),impl->mem.codeMappingGeneration());
     if(!impl->context.researchGuards(binding.code().block()))throw std::invalid_argument("whole-block research guards rejected the machine");
     return binding;
+}
+IR::Research::MachineBlockState GameGearMachine::researchBlockState() const {
+    return {impl->mem.codeMappingGeneration(), impl->context.researchExecutionState()};
 }
 ExecutionSliceResult GameGearMachine::runResearchBlock(IR::Research::BoundBlock& binding,
         const ExecutionBudget& budget,InstructionRetirementSink* observer) {

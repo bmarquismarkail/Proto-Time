@@ -36,6 +36,23 @@ struct Pair {
 std::vector<uint8_t> rom(std::span<const uint8_t> code){std::vector<uint8_t> r(32768,0);std::copy(code.begin(),code.end(),r.begin()+0x200);return r;}
 }
 int main(){try{
+    // Absolute loads consume both address bytes, with any ignored/index prefix
+    // bytes retained in the instruction identity. Verify the real snapshot and
+    // capture paths as well as the shared decoder; state parity alone previously
+    // missed a truncated pre-execution identity for 2A/3A.
+    for(auto prefix:std::vector<std::vector<uint8_t>>{{},{0xdd},{0xfd},{0xdd,0xfd}})
+        for(auto op:{uint8_t(0x2a),uint8_t(0x3a)}){
+            auto bytes=prefix;bytes.insert(bytes.end(),{op,0x10,0xc0});
+            require(z80InstructionLength(bytes)==bytes.size(),"absolute load encoded length");
+            const auto image=rom(bytes);GameGearMachine machine;machine.loadRom(image);
+            machine.runtimeContext().writeRegister16("PC",0x200);
+            const auto fetched=machine.snapshotInstruction();
+            require(std::vector<uint8_t>(fetched.begin(),fetched.end())==bytes,"absolute load snapshot identity");
+            Session session(machine,image);session.executionMode("snapshot");session.step();
+            const auto captured=session.document();
+            require(captured["instructions"].size()==1&&captured["instructions"].begin().value()["length"]==bytes.size(),
+                "absolute load captured length");
+        }
     // All base, CB, ED, DD, FD, DD-CB and FD-CB byte families. No NDEBUG assertions.
     for(unsigned family=0;family<7;++family)for(unsigned op=0;op<256;++op){
         std::vector<uint8_t> code;

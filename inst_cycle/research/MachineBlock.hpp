@@ -7,6 +7,13 @@ inline constexpr std::uint32_t kMachineBlockBindingVersion = 1;
 struct OwnerIdentity final {};
 using Owner = std::shared_ptr<const OwnerIdentity>;
 
+// Internal, read on the paused machine lane. Research harnesses use this to
+// account for CPU side exits and mapping changes without masking guard failures.
+struct MachineBlockState {
+  std::uint64_t mappingGeneration = 0;
+  std::uint64_t executionState = 0;
+};
+
 // Contains no CPU pointers or borrowed execution state. Construct on the paused
 // control lane; execute and fault on the single machine lane only.
 class BoundBlock {
