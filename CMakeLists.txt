@@ -1181,6 +1181,21 @@ if(TIME_WLA_GB AND TIME_WLA_Z80 AND TIME_WLALINK)
     target_include_directories(time-research-rom-blocks PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     add_executable(time-measure-whole-block-roms tests/measure_whole_block_roms.cpp)
     target_link_libraries(time-measure-whole-block-roms PRIVATE time-research-rom-blocks time-gameboy-interpreter-core time-gamegear-core)
+    set(TIME_EXPANDED_ROM_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/acceleration-expanded-roms)
+    set(TIME_EXPANDED_ROM_MANIFEST ${TIME_EXPANDED_ROM_DIRECTORY}/rom-corpus.json)
+    set(TIME_EXPANDED_ROM_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/research-expanded-rom-blocks.cpp)
+    add_custom_command(OUTPUT ${TIME_EXPANDED_ROM_MANIFEST}
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/build_acceleration_roms.py ${TIME_EXPANDED_ROM_DIRECTORY} --expanded
+        DEPENDS ${TIME_ROM_CORPUS_INPUTS} VERBATIM)
+    add_custom_command(OUTPUT ${TIME_EXPANDED_ROM_SOURCE}
+        COMMAND time-emit-research-rom-blocks ${TIME_EXPANDED_ROM_MANIFEST} ${TIME_EXPANDED_ROM_SOURCE} --expanded
+        DEPENDS time-emit-research-rom-blocks ${TIME_EXPANDED_ROM_MANIFEST} VERBATIM)
+    add_library(time-research-expanded-rom-blocks STATIC ${TIME_EXPANDED_ROM_SOURCE})
+    target_include_directories(time-research-expanded-rom-blocks PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+    add_executable(time-measure-acceleration-experiments tests/measure_acceleration_experiments.cpp)
+    target_link_libraries(time-measure-acceleration-experiments PRIVATE time-research-expanded-rom-blocks time-research-rom-blocks time-gameboy-interpreter-core time-gamegear-core)
+    # Full factorial screening is intentionally explicit, not part of every CTest.
+    # A small dedicated regression below exercises the same research helpers.
     add_test(NAME smoke-whole-block-roms COMMAND time-measure-whole-block-roms --smoke)
     set_tests_properties(smoke-whole-block-roms PROPERTIES TIMEOUT 600)
 else()
@@ -1188,3 +1203,36 @@ else()
     add_test(NAME smoke-whole-block-roms COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/build_acceleration_roms.py --check-tools)
 endif()
+
+add_executable(time-measure-acceleration-synthetic-experiments tests/measure_acceleration_synthetic_experiments.cpp)
+target_link_libraries(time-measure-acceleration-synthetic-experiments PRIVATE time-research-whole-blocks time-gameboy-interpreter-core time-gamegear-core)
+add_test(NAME smoke-acceleration-direct-synthetic COMMAND time-measure-acceleration-synthetic-experiments --smoke)
+set_tests_properties(smoke-acceleration-direct-synthetic PROPERTIES TIMEOUT 120)
+
+add_executable(time-emit-research-extended-blocks tools/emit_research_extended_blocks.cpp)
+target_link_libraries(time-emit-research-extended-blocks PRIVATE time-research-whole-block-emitter time-gameboy-interpreter-core time-gamegear-core)
+set(TIME_EXTENDED_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/research-extended-fixtures.cpp)
+add_custom_command(OUTPUT ${TIME_EXTENDED_SOURCE}
+    COMMAND time-emit-research-extended-blocks ${TIME_EXTENDED_SOURCE}
+    DEPENDS time-emit-research-extended-blocks VERBATIM)
+add_executable(time-smoke-acceleration-extended tests/smoke_acceleration_extended.cpp ${TIME_EXTENDED_SOURCE})
+target_link_libraries(time-smoke-acceleration-extended PRIVATE time-gameboy-interpreter-core time-gamegear-core)
+add_test(NAME smoke-acceleration-extended COMMAND time-smoke-acceleration-extended)
+set_tests_properties(smoke-acceleration-extended PROPERTIES TIMEOUT 120)
+add_test(NAME smoke-acceleration-experiments-report COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_acceleration_experiments.py)
+
+# Diagnostic objects override archive machine/factory objects in this executable.
+# Clocks and phase counters are compiled only here, never into throughput cores.
+if(TARGET time-research-expanded-rom-blocks)
+    add_executable(time-diagnose-acceleration-experiments
+        tests/measure_acceleration_experiments.cpp
+        cores/gameboy/GameBoyMachine.cpp cores/gamegear/GameGearMachine.cpp
+        inst_cycle/research/MachineBlock.cpp
+        ${TIME_RESEARCH_BLOCK_SOURCE} ${TIME_ROM_CORPUS_SOURCE} ${TIME_EXPANDED_ROM_SOURCE})
+    target_compile_definitions(time-diagnose-acceleration-experiments PRIVATE TIME_RESEARCH_PHASES=1)
+    target_link_libraries(time-diagnose-acceleration-experiments PRIVATE time-gameboy-interpreter-core time-gamegear-core)
+endif()
+add_executable(time-smoke-research-remap tests/smoke_research_remap.cpp)
+target_link_libraries(time-smoke-research-remap PRIVATE time-research-whole-blocks time-gameboy-interpreter-core time-gamegear-core)
+add_test(NAME smoke-research-remap COMMAND time-smoke-research-remap)
+add_test(NAME smoke-acceleration-criteria-v2 COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_acceleration_criteria_v2.py)

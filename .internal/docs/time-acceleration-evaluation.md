@@ -1,4 +1,4 @@
-# T.I.M.E. acceleration reevaluation, version 1
+# T.I.M.E. acceleration reevaluation, version 2
 
 Kind: current research acceptance contract. Status: **partial research evidence;
 acceptance pending**.
@@ -21,10 +21,33 @@ protection, complete register/cycle/effect correctness and the existing latency
 gates. A trampoline that merely returns to the interpreter is not whole-block
 host work.
 
-A go requires exact differential correctness, all existing latency gates, at
-least 10% median representative-corpus improvement, and no repeatable individual
-case regression above 5%. Publish the samples and reviewed decision for each
-core/host. Do not expand opcode/backend coverage until the design review passes.
+Criteria v2 replace the mandatory 10% gameplay gain with measured active benefit
+and representative non-regression. Ten percent remains an optimization target.
+The versioned numerical contract is `tools/acceleration-criteria-v2.json`; the
+paired evaluator is `tools/acceleration_criteria_v2.py` and native collector is
+`tools/measure_x86_acceptance_v2.py`.
+
+Competitive opt-in qualification requires exact differential correctness, all
+existing latency gates/full CTest, no individual ROM or active case with a
+repeatable regression above 5%, and a 95% paired confidence lower bound at least
+-5% for every case. Compute-heavy and mixed-device must each show a positive
+confidence lower bound and at least eight of nine positive pairs on each core in
+two independent preregistered confirmation sessions. RAM-heavy remains a mandatory
+non-regression case. Neutral gameplay can qualify for opt-in review. Default
+eligibility additionally requires a positive equally weighted representative
+confidence lower bound and independent sustained-active ROM diversity evidence;
+that additional diversity is currently not run, so default promotion stays closed.
+No evaluator enables a backend or changes family admission.
+
+Nine repetitions rotate backend and variant order. Confidence uses 10,000 seeded
+percentile bootstrap resamples of paired log time ratios; aggregate resampling
+preserves whole-round case pairing. Preserve the old ratio-of-medians metric and
+its median-or-majority regression rejection. Intervals overlapping the allowed
+margin are inconclusive. A single preregistered 27-repeat follow-up may resolve
+an inconclusive result; no repeat-until-pass collection is allowed. Hash these
+rules and this authority with source/build/ROM evidence. V1 history remains v1.
+Native ARM64 performance is still user-deferred. Both cores/hosts and explicit
+review remain required by the broader completion contract.
 
 A newly reviewed no-go can close this research row only after the new baseline
 and backend evaluation. Record the reviewer, reason, measured failures or benefit,
@@ -37,7 +60,7 @@ the correctness, latency, representative-corpus or native-host requirements.
 ## Reproducible baseline corpus
 
 The [native x86-64 acceptance procedure](time-x86-acceleration-acceptance.md)
-collects the full baseline, synthetic and authored-ROM measurements, repeated
+collects source-bound active and authored-ROM measurements, repeated
 existing performance gates and full CTest evidence. It evaluates thresholds
 without opening admission or substituting for deferred native ARM64 measurements.
 

@@ -1372,16 +1372,29 @@ IR::Research::BoundBlock GameGearMachine::bindResearchBlock(const IR::Research::
     if(!impl->romLoaded || impl->researchFaulted || impl->capture || impl->snapshotExecution || impl->mem.debugEngine ||
        !impl->nativeTrampolines.empty() || attachedExecutorPolicy().backend()!=ExecutionBackend::Baseline)
         throw std::invalid_argument("whole-block research requires an exclusive healthy baseline machine");
-    GameGearIR::CoreAdapter adapter;
+    GameGearIR::CoreAdapter adapter(true);
     auto binding=IR::Research::bindMachineBlock(code,adapter,impl->researchOwner,observationGeneration(),impl->mem.codeMappingGeneration());
-    if(!impl->context.researchGuards(binding.code().block()))throw std::invalid_argument("whole-block research guards rejected the machine");
+    if(impl->cpu.hasInstructionFetchObserver() || !binding.guardsMatch(impl->mem.codeMappingGeneration(), impl->context.researchExecutionState(), GameGearIR::kHelperAbiVersion, [&](uint16_t a,uint8_t& b){return impl->mem.peekCodeByte(a,b);}))throw std::invalid_argument("whole-block research guards rejected the machine");
     return binding;
 }
+IR::Research::BoundBlock GameGearMachine::rebindResearchBlock(const IR::Research::BoundBlock& prior) { return rebindResearchBlock(prior, false); }
+IR::Research::BoundBlock GameGearMachine::rebindResearchBlock(const IR::Research::BoundBlock& prior, bool copyMetadata) {
+    if(!impl->romLoaded || impl->researchFaulted || impl->capture || impl->snapshotExecution || impl->mem.debugEngine ||
+       !impl->nativeTrampolines.empty() || attachedExecutorPolicy().backend()!=ExecutionBackend::Baseline)
+        throw std::invalid_argument("whole-block rebind requires exclusive baseline execution");
+    auto binding=copyMetadata ? prior.remapCopied(impl->researchOwner,observationGeneration(),impl->mem.codeMappingGeneration()) : prior.remap(impl->researchOwner,observationGeneration(),impl->mem.codeMappingGeneration());
+    if(impl->cpu.hasInstructionFetchObserver() || !binding.guardsMatch(impl->mem.codeMappingGeneration(), impl->context.researchExecutionState(), GameGearIR::kHelperAbiVersion, [&](uint16_t a,uint8_t& b){return impl->mem.peekCodeByte(a,b);}))
+        throw std::invalid_argument("whole-block rebind live guards rejected");
+    return binding;
+}
+
 IR::Research::MachineBlockState GameGearMachine::researchBlockState() const {
     return {impl->mem.codeMappingGeneration(), impl->context.researchExecutionState()};
 }
 ExecutionSliceResult GameGearMachine::runResearchBlock(IR::Research::BoundBlock& binding,
-        const ExecutionBudget& budget,InstructionRetirementSink* observer) {
+        const ExecutionBudget& budget,InstructionRetirementSink* observer) { return runResearchBlock(binding, budget, observer, false); }
+ExecutionSliceResult GameGearMachine::runResearchBlock(IR::Research::BoundBlock& binding,
+        const ExecutionBudget& budget,InstructionRetirementSink* observer, bool directRegisters) {
     if(impl->researchFaulted)throw std::runtime_error("research fault requires ROM reload or checkpoint restore");
     if(impl->capture || impl->snapshotExecution || impl->mem.debugEngine || !impl->nativeTrampolines.empty() ||
        attachedExecutorPolicy().backend()!=ExecutionBackend::Baseline)
@@ -1389,21 +1402,22 @@ ExecutionSliceResult GameGearMachine::runResearchBlock(IR::Research::BoundBlock&
     // Below $8000 neither SRAM nor mirrored RAM is mapped. Entry checks all
     // bytes; continuation still checks mapping, CPU state and owner lifetime.
     const bool reuseCodeGuard = !observer && binding.hasLowRomCode();
+    IR::Research::DirectRegisters registers{{&impl->cpu.AF, &impl->cpu.BC, &impl->cpu.DE,
+        &impl->cpu.HL, &impl->cpu.SP, &impl->cpu.PC}, 0xff};
     return IR::Research::executeMachineBlock(binding,impl->context.researchHost(),budget,observer,
         [&](const IR::Block& block,size_t index) {
+            TIME_RESEARCH_SCOPE(guardPhase, index == 0 || !reuseCodeGuard ? IR::Research::Phase::EntryGuard : IR::Research::Phase::ContinuationGuard);
             if(!impl->romLoaded || !binding.matches(impl->researchOwner,observationGeneration()) ||
                impl->capture || impl->snapshotExecution || impl->mem.debugEngine || !impl->nativeTrampolines.empty() ||
                attachedExecutorPolicy().backend()!=ExecutionBackend::Baseline || impl->cpu.PC!=block.instructions[index].address ||
-               (index == 0 || !reuseCodeGuard
-                    ? !impl->context.researchGuards(block)
-                    : impl->cpu.hasInstructionFetchObserver() ||
-                      !binding.scalarGuardsMatch(impl->mem.codeMappingGeneration(),
-                          impl->context.researchExecutionState(), GameGearIR::kHelperAbiVersion)))return false;
+               (impl->cpu.hasInstructionFetchObserver() ||
+                !binding.guardsMatch(impl->mem.codeMappingGeneration(), impl->context.researchExecutionState(), GameGearIR::kHelperAbiVersion,
+                   [&](uint16_t a,uint8_t& b){return impl->mem.peekCodeByte(a,b);}, index == 0 || !reuseCodeGuard)))return false;
             impl->context.researchBegin(impl->cpu.PC);return true;
         },
-        [&](const IR::GuestInstruction& i,const IR::InterpreterResult& r){return impl->context.researchRetire(i,r);},
+        [&](const IR::GuestInstruction& i,const IR::InterpreterResult& r){TIME_RESEARCH_SCOPE(cpuPhase, IR::Research::Phase::CpuRetirement);return impl->context.researchRetire(i,r);},
         [&](const CpuFeedback& f,const ExecutionSliceProgress& p){return onInstructionRetired(f,p);},
-        [&]{impl->researchFaulted=true;});
+        [&]{impl->researchFaulted=true;}, directRegisters ? &registers : nullptr);
 }
 
 ExecutionSliceResult GameGearMachine::runSlice(
@@ -1428,6 +1442,7 @@ InstructionRetirementDecision GameGearMachine::onInstructionRetired(
     const CpuFeedback& feedback,
     const ExecutionSliceProgress&)
 {
+    TIME_RESEARCH_SCOPE(machinePhase, BMMQ::IR::Research::Phase::MachineRetirement);
     ++impl->stepCounter;
     impl->vdp.step(feedback.retiredCycles);
     impl->psg.step(feedback.retiredCycles);

@@ -5,7 +5,8 @@
 #include <iostream>
 
 int main(int argc, char **argv) try {
-  if (argc != 3)
+  const bool expanded = argc == 4 && std::string(argv[3]) == "--expanded";
+  if (argc != 3 && !expanded)
     throw std::invalid_argument("usage: time-emit-research-rom-blocks MANIFEST OUTPUT.cpp");
   using namespace BMMQ::IR::Research;
   std::ifstream input(argv[1]);
@@ -14,7 +15,7 @@ int main(int argc, char **argv) try {
   if (manifest.at("schema") != "proto-time-rom-corpus-build-v1")
     throw std::invalid_argument("ROM corpus schema mismatch");
   std::string source = "#include \"tests/WholeBlockRomCorpus.hpp\"\n";
-  std::string factory = "namespace BMMQ::IR::Research {\nstd::vector<CompiledBlock> emittedRomCorpus(unsigned c) { switch(c) {\n";
+  std::string factory = "namespace BMMQ::IR::Research {\nstd::vector<CompiledBlock> " + std::string(expanded ? "emittedExpandedRomCorpus" : "emittedRomCorpus") + "(unsigned c) { switch(c) {\n";
   unsigned caseIndex = 0;
   for (const auto &record : manifest.at("cases")) {
     const bool gb = record.at("core") == "gameboy";
@@ -29,8 +30,8 @@ int main(int argc, char **argv) try {
             std::span(instruction.bytes.data(), instruction.length)) != instruction.length)
           throw std::invalid_argument("ROM Z80 inventory disagrees with canonical instruction length");
       if (!segment.emitted) continue;
-      const auto name = "emittedRom" + std::to_string(caseIndex) + "Block" + std::to_string(index++);
-      source += emitWholeBlock(*lowerCorpusSegment(gb, segment), name,
+      const auto name = std::string(expanded ? "emittedExpandedRom" : "emittedRom") + std::to_string(caseIndex) + "Block" + std::to_string(index++);
+      source += emitWholeBlock(*lowerCorpusSegment(gb, segment, expanded), name,
           gb ? GB::IRExecution::GameBoyCoreAdapter::kArchitectureId : BMMQ::GameGearIR::kArchitectureId);
       factory += name + "(),";
     }
@@ -38,7 +39,7 @@ int main(int argc, char **argv) try {
     ++caseIndex;
   }
   source += factory + "default: throw std::invalid_argument(\"unknown ROM corpus case\"); } }\n";
-  source += "const nlohmann::json& romCorpusManifest() { static const auto data = nlohmann::json::parse(R\"romdata(" +
+  source += "const nlohmann::json& " + std::string(expanded ? "expandedRomCorpusManifest" : "romCorpusManifest") + "() { static const auto data = nlohmann::json::parse(R\"romdata(" +
       manifest.dump() + ")romdata\"); return data; } }\n";
   std::ofstream output(argv[2], std::ios::binary | std::ios::trunc);
   output << source;

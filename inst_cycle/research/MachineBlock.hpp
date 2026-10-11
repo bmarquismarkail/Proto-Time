@@ -4,7 +4,7 @@
 #include <array>
 
 namespace BMMQ::IR::Research {
-inline constexpr std::uint32_t kMachineBlockBindingVersion = 1;
+inline constexpr std::uint32_t kMachineBlockBindingVersion = 2;
 struct OwnerIdentity final {};
 using Owner = std::shared_ptr<const OwnerIdentity>;
 
@@ -44,6 +44,7 @@ public:
         stateExpected_ = guard.expected & guard.mask;
         break;
       case GuardKind::CodeBytes:
+        if (guard.bytes.empty() || guard.subject > 0xffff || guard.bytes.size() > 0x10000 - guard.subject) scalarValid_ = false;
         lowRomCode_ = !guard.bytes.empty() && guard.subject < 0x8000 &&
                       guard.bytes.size() <= 0x8000 - guard.subject;
         break;
@@ -60,15 +61,38 @@ public:
     return scalarValid_ && mapping == mapping_ && helperAbi == helperAbi_ &&
            (state & stateMask_) == stateExpected_;
   }
+  // Artifact mapping metadata describes its lowering context. Live mapping is
+  // binding-owned, so all research guard evaluation uses this single contract.
+  template<class Peek>
+  bool guardsMatch(std::uint64_t mapping, std::uint64_t state,
+                   std::uint64_t helperAbi, Peek peek, bool checkBytes = true) const {
+    if (!scalarGuardsMatch(mapping, state, helperAbi)) return false;
+    if (checkBytes) for (const auto& guard : code_.block().guards) {
+      if (guard.kind != GuardKind::CodeBytes) continue;
+      for (std::size_t n = 0; n < guard.bytes.size(); ++n) {
+        std::uint8_t byte = 0;
+        if (!peek(static_cast<std::uint16_t>(guard.subject + n), byte) || byte != guard.bytes[n]) return false;
+      }
+    }
+    return true;
+  }
   bool matches(const Owner &owner, std::uint64_t generation) const noexcept {
     return !faulted_ && owner_ == owner && generation_ == generation;
   }
   void fault() noexcept { faulted_ = true; }
+  // Reuse canonical validation only for a previously validated, healthy binding.
+  // The owning core must check all live code bytes after changing the mapping.
+  BoundBlock remap(const Owner& owner, std::uint64_t generation, std::uint64_t mapping) const;
+  // Diagnostic control retaining the earlier double-copy prototype.
+  BoundBlock remapCopied(const Owner& owner, std::uint64_t generation, std::uint64_t mapping) const;
+
 
 private:
   CompiledBlock code_;
   Owner owner_;
   std::uint64_t generation_;
+  friend BoundBlock bindMachineBlock(const CompiledBlock&, IIrCoreAdapter&, const Owner&, std::uint64_t, std::uint64_t);
+  bool canonical_ = false;
   bool faulted_ = false;
   bool lowRomCode_ = false;
   bool scalarValid_ = false;
@@ -76,7 +100,7 @@ private:
 };
 // Core validators re-lower the copied code and require exact canonical IR. The
 // emitted entry remains paired with those instructions; only mapping guards are
-// rebound to the actual machine. Unknown/cross-core architecture is rejected.
+// represented by binding-owned live mapping. Unknown/cross-core architecture is rejected.
 BoundBlock bindMachineBlock(const CompiledBlock &, IIrCoreAdapter &,
                             const Owner &, std::uint64_t generation,
                             std::uint64_t mapping);
@@ -85,7 +109,7 @@ template <class Check, class CpuRetire, class MachineRetire, class Fault>
 ExecutionSliceResult executeMachineBlock(
     BoundBlock &binding, InterpreterHost &host, const ExecutionBudget &budget,
     InstructionRetirementSink *observer, Check check, CpuRetire cpuRetire,
-    MachineRetire machineRetire, Fault fault) {
+    MachineRetire machineRetire, Fault fault, DirectRegisters* registers = nullptr) {
   struct State {
     Check &check;
     CpuRetire &cpuRetire;
@@ -135,7 +159,7 @@ ExecutionSliceResult executeMachineBlock(
   try {
     const auto progress =
         binding.code().execute(host, {&state, &State::before, &State::retire},
-                               budget.maxInstructions, budget.maxCycles);
+                               budget.maxInstructions, budget.maxCycles, registers);
     if (progress.exit == Exit::InstructionBudget)
       state.slice.exitReason = ExecutionSliceExitReason::InstructionBudget;
     if (progress.exit == Exit::CycleBudget)

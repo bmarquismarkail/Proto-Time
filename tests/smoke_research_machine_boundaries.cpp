@@ -38,6 +38,8 @@ struct TemporaryState {
     std::filesystem::remove(path, ec);
   }
 };
+bool directMode=false;
+template<class Core>ExecutionSliceResult runResearch(Core& machine,BoundBlock& binding,const ExecutionBudget& budget,InstructionRetirementSink* observer=nullptr){return machine.runResearchBlock(binding,budget,observer,directMode);}
 template <class Core>
 constexpr bool gb = std::is_same_v<Core, GB::GameBoyMachine>;
 template <class Core> std::vector<uint8_t> rom(const CompiledBlock &code) {
@@ -123,7 +125,7 @@ template <class Core> struct Compare final : InstructionRetirementSink {
 template <class Core>
 void rejectedWithoutMutation(Core &machine, BoundBlock &bound) {
   const auto before = machine.deterministicStateFingerprint();
-  const auto result = machine.runResearchBlock(
+  const auto result = runResearch(machine,
       bound, {.maxInstructions = 16, .stopOnSegmentBoundary = false});
   require(result.progress.retiredInstructions == 0 &&
               result.progress.retiredCycles == 0,
@@ -140,7 +142,7 @@ template <class Core> void ram(const CompiledBlock &code) {
   auto bound = native.bindResearchBlock(code);
   Compare<Core> compare(baseline, native);
   for (unsigned n = 0; n < 16; ++n) {
-    auto result = native.runResearchBlock(
+    auto result = runResearch(native,
         bound, {.maxInstructions = 6, .stopOnSegmentBoundary = false},
         &compare);
     require(result.progress.retiredInstructions == 6,
@@ -163,12 +165,13 @@ template <class Core> void ram(const CompiledBlock &code) {
   }
   auto self = native.bindResearchBlock(code);
   Compare<Core> selfCompare(baseline, native);
-  auto result = native.runResearchBlock(
+  auto result = runResearch(native,
       self, {.maxInstructions = 6, .stopOnSegmentBoundary = false},
       &selfCompare);
   require(result.progress.retiredInstructions == 1 && selfCompare.count == 1,
           "self-modifying code did not side-exit");
   rejectedWithoutMutation(native, self);
+  rejects([&]{native.rebindResearchBlock(self);});
   baseline.runSlice({.maxInstructions = 1});
   native.runSlice({.maxInstructions = 1});
   equivalent(baseline, native);
@@ -181,7 +184,7 @@ template <class Core> void ram(const CompiledBlock &code) {
   native.debugCommitRegisters(registers);
   auto unobserved = native.bindResearchBlock(code);
   require(!unobserved.hasLowRomCode(), "RAM incorrectly classified as ROM");
-  result = native.runResearchBlock(unobserved,
+  result = runResearch(native, unobserved,
       {.maxInstructions = 6, .stopOnSegmentBoundary = false});
   require(result.progress.retiredInstructions == 1,
           "unobserved RAM rewrite did not side-exit");
@@ -198,7 +201,7 @@ template <class Core> void guestMappingWrite(const CompiledBlock &code) {
   }
   auto bound = native.bindResearchBlock(code);
   require(bound.hasLowRomCode(), "ROM classification missing");
-  const auto result = native.runResearchBlock(bound,
+  const auto result = runResearch(native, bound,
       {.maxInstructions = 6, .stopOnSegmentBoundary = false});
   require(result.progress.retiredInstructions == 1,
           "guest mapping write bypassed ROM continuation guard");
@@ -211,7 +214,7 @@ template <class Core> void bank(const CompiledBlock &code) {
   prepare(native, code);
   auto bound = native.bindResearchBlock(code);
   Compare<Core> compare(baseline, native);
-  auto full = native.runResearchBlock(
+  auto full = runResearch(native,
       bound, {.maxInstructions = 7, .stopOnSegmentBoundary = false}, &compare);
   require(full.progress.retiredInstructions == 7,
           "bank block did not complete");
@@ -219,18 +222,39 @@ template <class Core> void bank(const CompiledBlock &code) {
   native.save_state(state.path);
   native.runtimeContext().write8(gb<Core> ? 0x2000 : 0xfffe, 2);
   rejectedWithoutMutation(native, bound);
+  if (bound.hasLowRomCode()) {
+    auto reused=native.rebindResearchBlock(bound);
+    require(&reused.code().block()==&bound.code().block(),"remap copied immutable artifact");
+    auto copied=native.rebindResearchBlock(bound,true);
+    require(&copied.code().block()!=&bound.code().block(),"copy control shares metadata");
+    require(runResearch(native,reused,{.maxInstructions=0}).progress.retiredInstructions==0,"rebind zero budget");
+    require(runResearch(native,reused,{.maxInstructions=1}).progress.retiredInstructions==1,"rebind execution");
+    pc(native,code.block().guestStart);
+    Core sibling;prepare(sibling,code);
+    rejects([&]{sibling.rebindResearchBlock(reused);});
+  } else rejects([&]{native.rebindResearchBlock(bound);});
   auto rebound =
       native.bindResearchBlock(code); // Same bytes, different physical backing.
-  require(native.runResearchBlock(rebound, {.maxInstructions = 1})
+  require(runResearch(native, rebound, {.maxInstructions = 1})
                   .progress.retiredInstructions == 1,
           "new bank binding rejected");
   native.load_state(state.path);
+  rejects([&]{native.rebindResearchBlock(bound);});
   rejectedWithoutMutation(native, bound);
   rejectedWithoutMutation(native, rebound);
   auto restored = native.bindResearchBlock(code);
-  require(native.runResearchBlock(restored, {.maxInstructions = 1})
+  require(runResearch(native, restored, {.maxInstructions = 1})
                   .progress.retiredInstructions == 1,
           "restored bank binding rejected");
+}
+template<class Core> void rebindChangedCode(const CompiledBlock& code) {
+  if(code.block().guestStart<0x4000 || !code.block().guards.back().bytes.size())return;
+  Core machine;auto bytes=rom<Core>(code);
+  bytes[0x8000+(code.block().guestStart&0x3fff)]^=0xff;
+  machine.loadRom(bytes);pc(machine,code.block().guestStart);
+  auto bound=machine.bindResearchBlock(code);
+  machine.runtimeContext().write8(gb<Core>?0x2000:0xfffe,2);
+  rejects([&]{machine.rebindResearchBlock(bound);});
 }
 struct Throwing final : InstructionRetirementSink {
   InstructionRetirementDecision
@@ -247,7 +271,7 @@ template <class Core> void bios(const CompiledBlock &code) {
   pc(machine, code.block().guestStart); // Keep PC and RAM bytes identical.
   rejectedWithoutMutation(machine, bound);
   auto fresh = machine.bindResearchBlock(code);
-  require(machine.runResearchBlock(fresh, {.maxInstructions = 1})
+  require(runResearch(machine, fresh, {.maxInstructions = 1})
                   .progress.retiredInstructions == 1,
           "BIOS mapping rebinding failed");
 }
@@ -261,7 +285,7 @@ template <class Core> void transitions(const CompiledBlock &code) {
     for (auto *m : {&baseline, &native})
       m->runtimeContext().write8(gb<Core> ? 0x2000 : 0xfffe, 2);
   };
-  auto result = native.runResearchBlock(
+  auto result = runResearch(native,
       bound, {.maxInstructions = 7, .stopOnSegmentBoundary = false}, &compare);
   require(result.progress.retiredInstructions == 1 && compare.count == 1,
           "mapping transition did not stop at retirement");
@@ -276,7 +300,7 @@ template <class Core> void transitions(const CompiledBlock &code) {
     baseline.load_state(checkpoint.path);
     native.load_state(checkpoint.path);
   };
-  result = native.runResearchBlock(
+  result = runResearch(native,
       previous, {.maxInstructions = 7, .stopOnSegmentBoundary = false},
       &restore);
   require(result.progress.retiredInstructions == 1 && restore.count == 1,
@@ -285,7 +309,7 @@ template <class Core> void transitions(const CompiledBlock &code) {
   rejectedWithoutMutation(native, previous);
   auto fresh = native.bindResearchBlock(code);
   Compare<Core> budget(baseline, native);
-  result = native.runResearchBlock(
+  result = runResearch(native,
       fresh,
       {.maxInstructions = 7, .maxCycles = 1, .stopOnSegmentBoundary = false},
       &budget);
@@ -313,7 +337,7 @@ template <class Core> void checkpoint(const CompiledBlock &code) {
   rejects([&] { native.load_state(corrupt.path); });
   require(before == native.deterministicStateFingerprint(),
           "corrupt restore mutated state");
-  require(native.runResearchBlock(bound, {.maxInstructions = 1})
+  require(runResearch(native, bound, {.maxInstructions = 1})
                   .progress.retiredInstructions == 1,
           "rejected restore invalidated binding");
   native.load_state(valid.path);
@@ -323,7 +347,7 @@ template <class Core> void checkpoint(const CompiledBlock &code) {
   auto fresh = native.bindResearchBlock(code);
   Throwing throwing;
   rejects([&] {
-    native.runResearchBlock(fresh, {.maxInstructions = 1}, &throwing);
+    runResearch(native, fresh, {.maxInstructions = 1}, &throwing);
   });
   rejects([&] { native.runSlice({.maxInstructions = 1}); });
   rejects([&] { native.load_state(corrupt.path); });
@@ -331,7 +355,7 @@ template <class Core> void checkpoint(const CompiledBlock &code) {
   native.load_state(valid.path);
   rejectedWithoutMutation(native, fresh);
   auto recovered = native.bindResearchBlock(code);
-  require(native.runResearchBlock(recovered, {.maxInstructions = 1})
+  require(runResearch(native, recovered, {.maxInstructions = 1})
                   .progress.retiredInstructions == 1,
           "checkpoint failed to recover research fault");
 }
@@ -350,7 +374,7 @@ template <class Core> void interruptState(const CompiledBlock &code) {
     prepare(baseline, code);
     baseline.load_state(pending.path);
     Compare<Core> compare(baseline, native);
-    require(native.runResearchBlock(bound, {.maxInstructions = 1}, &compare)
+    require(runResearch(native, bound, {.maxInstructions = 1}, &compare)
                     .progress.retiredInstructions == 1,
             "Game Boy delayed EI retirement");
   } else {
@@ -408,6 +432,7 @@ template <class Core> void interruptState(const CompiledBlock &code) {
 }
 } // namespace
 int main() try {
+ for(bool mode:{false,true}) { directMode=mode;
   std::cout << "Game Boy RAM\n" << std::flush;
   ram<GB::GameBoyMachine>(emittedGameBoyRamCode());
   std::cout << "Game Gear RAM\n" << std::flush;
@@ -422,6 +447,8 @@ int main() try {
   bank<GB::GameBoyMachine>(emittedGameBoyBankBoundary());
   std::cout << "Game Gear bank boundary\n" << std::flush;
   bank<GameGearMachine>(emittedGameGearBankBoundary());
+  rebindChangedCode<GB::GameBoyMachine>(emittedGameBoyBank());
+  rebindChangedCode<GameGearMachine>(emittedGameGearBank());
   bios<GB::GameBoyMachine>(emittedGameBoyRamCode());
   bios<GameGearMachine>(emittedGameGearRamCode());
   transitions<GB::GameBoyMachine>(emittedGameBoyBank());
@@ -436,6 +463,7 @@ int main() try {
   interruptState<GameGearMachine>(emittedGameGearRamCode());
   std::cout << "real-core RAM, bank, checkpoint and interrupt boundary checks "
                "passed\n";
+}
 } catch (const std::exception &e) {
   std::cerr << e.what() << '\n';
   return 1;

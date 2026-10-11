@@ -70,12 +70,28 @@ BoundBlock bindMachineBlock(const CompiledBlock &code, IIrCoreAdapter &adapter,
     if (!same(block.instructions[n], canonical->instructions[n]))
       throw std::invalid_argument(
           "whole-block differs from canonical CPU lowering");
-  auto bound = std::make_shared<Block>(block);
-  bound->mappingGeneration = mapping;
-  for (auto &guard : bound->guards)
-    if (guard.kind == GuardKind::MappingGeneration)
-      guard.expected = mapping;
-  return {CompiledBlock(bound, code.entry(), code.architectureId()), owner,
-          generation};
+  BoundBlock result{code, owner, generation};
+  result.mapping_ = mapping;
+  result.canonical_ = true;
+  return result;
+}
+BoundBlock BoundBlock::remap(const Owner& owner, std::uint64_t generation, std::uint64_t mapping) const {
+  if (!canonical_ || !scalarValid_ || !matches(owner, generation) || !hasLowRomCode())
+    throw std::invalid_argument("binding cannot reuse canonical validation");
+  auto result = *this; // Shared immutable artifact; no metadata allocation/copy.
+  result.mapping_ = mapping;
+  return result;
+}
+BoundBlock BoundBlock::remapCopied(const Owner& owner, std::uint64_t generation, std::uint64_t mapping) const {
+  if (!canonical_ || !scalarValid_ || !matches(owner, generation) || !hasLowRomCode())
+    throw std::invalid_argument("binding cannot reuse canonical validation");
+  TIME_RESEARCH_COPY(code_.block());
+  auto block = std::make_shared<Block>(code_.block());
+  block->mappingGeneration = mapping;
+  for (auto& guard : block->guards)
+    if (guard.kind == GuardKind::MappingGeneration) guard.expected = mapping;
+  BoundBlock result{CompiledBlock(block, code_.entry(), code_.architectureId(), code_.directEntry()), owner, generation};
+  result.canonical_ = true;
+  return result;
 }
 } // namespace BMMQ::IR::Research

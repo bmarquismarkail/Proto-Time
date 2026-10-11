@@ -1300,18 +1300,32 @@ BMMQ::IR::Research::BoundBlock GameBoyMachine::bindResearchBlock(const BMMQ::IR:
        impl_->memoryMap.debugEngine || !impl_->nativeTrampolines.empty() || impl_->bootEntryPending ||
        attachedExecutorPolicy().backend()!=BMMQ::ExecutionBackend::Baseline)
         throw std::invalid_argument("whole-block research requires an exclusive healthy baseline machine");
-    IRExecution::GameBoyCoreAdapter adapter;
+    IRExecution::GameBoyCoreAdapter adapter(true);
     auto binding=BMMQ::IR::Research::bindMachineBlock(code,adapter,impl_->researchOwner,observationGeneration(),impl_->cpu.cpu().researchMappingGeneration());
-    if(impl_->cpu.cpu().irGuardFailure(binding.code().block())!=IRExecution::GuardFailure::None)
+    if(!binding.guardsMatch(impl_->cpu.cpu().researchMappingGeneration(), impl_->cpu.cpu().irExecutionState(), IRExecution::kAbiVersion, [&](uint16_t a, uint8_t& b){return impl_->memoryMap.peekExecutableByte(a,b);}))
         throw std::invalid_argument("whole-block research guards rejected the machine");
     return binding;
 }
+BMMQ::IR::Research::BoundBlock GameBoyMachine::rebindResearchBlock(const BMMQ::IR::Research::BoundBlock& prior) { return rebindResearchBlock(prior, false); }
+BMMQ::IR::Research::BoundBlock GameBoyMachine::rebindResearchBlock(const BMMQ::IR::Research::BoundBlock& prior, bool copyMetadata) {
+    if(!impl_->romLoaded || impl_->researchFaulted || impl_->context->capture || impl_->context->snapshotExecution ||
+       impl_->memoryMap.debugEngine || !impl_->nativeTrampolines.empty() || impl_->bootEntryPending ||
+       attachedExecutorPolicy().backend()!=BMMQ::ExecutionBackend::Baseline)
+        throw std::invalid_argument("whole-block rebind requires exclusive baseline execution");
+    auto binding=copyMetadata ? prior.remapCopied(impl_->researchOwner,observationGeneration(),impl_->cpu.cpu().researchMappingGeneration()) : prior.remap(impl_->researchOwner,observationGeneration(),impl_->cpu.cpu().researchMappingGeneration());
+    if(!binding.guardsMatch(impl_->cpu.cpu().researchMappingGeneration(), impl_->cpu.cpu().irExecutionState(), IRExecution::kAbiVersion, [&](uint16_t a, uint8_t& b){return impl_->memoryMap.peekExecutableByte(a,b);}))
+        throw std::invalid_argument("whole-block rebind live guards rejected");
+    return binding;
+}
+
 BMMQ::IR::Research::MachineBlockState GameBoyMachine::researchBlockState() const {
     const auto& cpu = impl_->cpu.cpu();
     return {cpu.researchMappingGeneration(), cpu.irExecutionState()};
 }
 BMMQ::ExecutionSliceResult GameBoyMachine::runResearchBlock(BMMQ::IR::Research::BoundBlock& binding,
-        const BMMQ::ExecutionBudget& budget,BMMQ::InstructionRetirementSink* observer) {
+        const BMMQ::ExecutionBudget& budget,BMMQ::InstructionRetirementSink* observer) { return runResearchBlock(binding, budget, observer, false); }
+BMMQ::ExecutionSliceResult GameBoyMachine::runResearchBlock(BMMQ::IR::Research::BoundBlock& binding,
+        const BMMQ::ExecutionBudget& budget,BMMQ::InstructionRetirementSink* observer, bool directRegisters) {
     if(impl_->researchFaulted)throw std::runtime_error("research fault requires ROM reload or checkpoint restore");
     if(impl_->context->capture || impl_->context->snapshotExecution || impl_->memoryMap.debugEngine ||
        !impl_->nativeTrampolines.empty() || attachedExecutorPolicy().backend()!=BMMQ::ExecutionBackend::Baseline)
@@ -1319,20 +1333,21 @@ BMMQ::ExecutionSliceResult GameBoyMachine::runResearchBlock(BMMQ::IR::Research::
     auto& cpu=impl_->cpu.cpu();
     const auto abi=cpu.irExecutionAbi();
     WholeBlockAbiHost host(abi);
+    BMMQ::IR::Research::DirectRegisters registers{{&cpu.cpuRegisters_.af->value, &cpu.cpuRegisters_.bc->value,
+        &cpu.cpuRegisters_.de->value, &cpu.cpuRegisters_.hl->value, &cpu.spRegister_->value, &cpu.pcRegister_->value}, 0xf0};
     // Validate every byte at entry. Only immutable ROM/BIOS can reuse that
     // result within this invocation; arbitrary retirement observers retain
     // full checks, and writable code is re-read before every instruction.
     const bool reuseCodeGuard = !observer && binding.hasLowRomCode();
     return BMMQ::IR::Research::executeMachineBlock(binding,host,budget,observer,
         [&](const BMMQ::IR::Block& block,size_t index) {
+            TIME_RESEARCH_SCOPE(guardPhase, index == 0 || !reuseCodeGuard ? BMMQ::IR::Research::Phase::EntryGuard : BMMQ::IR::Research::Phase::ContinuationGuard);
             if(!impl_->romLoaded || impl_->bootEntryPending || !binding.matches(impl_->researchOwner,observationGeneration()) ||
                attachedExecutorPolicy().backend()!=BMMQ::ExecutionBackend::Baseline || impl_->context->capture ||
                impl_->context->snapshotExecution || impl_->memoryMap.debugEngine || !impl_->nativeTrampolines.empty() ||
                cpu.pcRegister_->value!=block.instructions[index].address ||
-               (index == 0 || !reuseCodeGuard
-                    ? cpu.irGuardFailure(block) != IRExecution::GuardFailure::None
-                    : !binding.scalarGuardsMatch(cpu.researchMappingGeneration(),
-                        cpu.irExecutionState(), IRExecution::kAbiVersion)))return false;
+               !binding.guardsMatch(cpu.researchMappingGeneration(), cpu.irExecutionState(), IRExecution::kAbiVersion,
+                   [&](uint16_t a, uint8_t& b){return impl_->memoryMap.peekExecutableByte(a,b);}, index == 0 || !reuseCodeGuard))return false;
             cpu.feedback.pcBefore=block.instructions[index].address;
             cpu.feedback.isControlFlow=block.instructions[index].controlFlow;
             cpu.feedback.segmentBoundaryHint=block.instructions[index].controlFlow || block.instructions[index].interruptSensitive;
@@ -1340,6 +1355,7 @@ BMMQ::ExecutionSliceResult GameBoyMachine::runResearchBlock(BMMQ::IR::Research::
             return true;
         },
         [&](const BMMQ::IR::GuestInstruction& i,const BMMQ::IR::InterpreterResult& r) {
+            TIME_RESEARCH_SCOPE(cpuPhase, BMMQ::IR::Research::Phase::CpuRetirement);
             cpu.feedback.isControlFlow=i.controlFlow || r.branchTaken;
             cpu.feedback.segmentBoundaryHint=i.controlFlow || i.interruptSensitive || r.exitRequested;
             cpu.feedback.retiredCycles=r.cycleCondition?i.cyclesTaken:i.cyclesNotTaken;
@@ -1349,7 +1365,7 @@ BMMQ::ExecutionSliceResult GameBoyMachine::runResearchBlock(BMMQ::IR::Research::
             return cpu.feedback;
         },
         [&](const BMMQ::CpuFeedback& f,const BMMQ::ExecutionSliceProgress& p){return onInstructionRetired(f,p);},
-        [&]{impl_->researchFaulted=true;});
+        [&]{impl_->researchFaulted=true;}, directRegisters ? &registers : nullptr);
 }
 
 BMMQ::ExecutionSliceResult GameBoyMachine::runSlice(
@@ -1429,6 +1445,7 @@ BMMQ::InstructionRetirementDecision GameBoyMachine::onInstructionRetired(
     const BMMQ::CpuFeedback& feedback,
     const BMMQ::ExecutionSliceProgress&)
 {
+    TIME_RESEARCH_SCOPE(machinePhase, BMMQ::IR::Research::Phase::MachineRetirement);
     ++impl_->stepCounter;
 
     // Advance PPU by retired cycles

@@ -11,7 +11,7 @@
   "features": [
     {
       "id": "acceleration.native",
-      "acceptance": "Fresh whole-block host-work design preserves per-instruction side exits and guards; both hosts meet >=10% median corpus gain and <=5% repeatable regression, or a new measured no-go is reviewed.",
+      "acceptance": "Criteria v2: exact whole-block differential correctness and guards, per-case <=5% repeatable regression with paired confidence, repeatable active benefit in two independent sessions, full CTest and unchanged latency gates on both native hosts; default promotion additionally requires representative benefit and active-ROM diversity, or a new measured no-go is reviewed.",
       "automated": [
         "targeted engine/service/transport/failure regression coverage",
         "full CTest and applicable conformance/performance gates"
@@ -19,12 +19,13 @@
       "live": false,
       "references": [
         ".internal/docs/proto-time-phase-11e-native-backend-spike.md",
-        ".internal/docs/time-acceleration-evaluation.md"
+        ".internal/docs/time-acceleration-evaluation.md",
+        "tools/acceleration-criteria-v2.json"
       ],
       "allowReviewedNoGo": true,
       "coreAcceptance": {
-        "gameboy": "Fresh whole-block host-work design preserves per-instruction side exits and guards; both hosts meet >=10% median corpus gain and <=5% repeatable regression, or a new measured no-go is reviewed. Apply the contract to the Game Boy machine-owned execution and lifecycle paths.",
-        "gamegear": "Fresh whole-block host-work design preserves per-instruction side exits and guards; both hosts meet >=10% median corpus gain and <=5% repeatable regression, or a new measured no-go is reviewed. Apply the contract to the Game Gear machine-owned execution and lifecycle paths."
+        "gameboy": "Criteria v2: exact whole-block differential correctness and guards, per-case <=5% repeatable regression with paired confidence, repeatable active benefit in two independent sessions, full CTest and unchanged latency gates on both native hosts; default promotion additionally requires representative benefit and active-ROM diversity, or a new measured no-go is reviewed. Apply to the Game Boy machine-owned execution and lifecycle paths.",
+        "gamegear": "Criteria v2: exact whole-block differential correctness and guards, per-case <=5% repeatable regression with paired confidence, repeatable active benefit in two independent sessions, full CTest and unchanged latency gates on both native hosts; default promotion additionally requires representative benefit and active-ROM diversity, or a new measured no-go is reviewed. Apply to the Game Gear machine-owned execution and lifecycle paths."
       },
       "hostCoverage": [
         "linux-x86_64",

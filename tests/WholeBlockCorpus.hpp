@@ -71,11 +71,11 @@ inline CorpusProgram corpusProgram(bool gb, unsigned workload) {
   return program;
 }
 
-inline BlockPtr lowerCorpusSegment(bool gb, const CorpusSegment &segment) {
+inline BlockPtr lowerCorpusSegment(bool gb, const CorpusSegment &segment, bool extended = false) {
   LoweringRequest request{.instructions = segment.instructions,
                           .mappingGeneration = 7, .executionState = 0};
-  GB::IRExecution::GameBoyCoreAdapter gameboy;
-  GameGearIR::CoreAdapter gamegear;
+  GB::IRExecution::GameBoyCoreAdapter gameboy(extended);
+  GameGearIR::CoreAdapter gamegear(extended);
   auto &adapter = gb ? static_cast<IIrCoreAdapter &>(gameboy)
                      : static_cast<IIrCoreAdapter &>(gamegear);
   std::string error;

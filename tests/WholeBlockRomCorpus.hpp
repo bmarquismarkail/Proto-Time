@@ -7,6 +7,8 @@ namespace BMMQ::IR::Research {
 // generated code are embedded together at build time. No runtime ROM override.
 const nlohmann::json &romCorpusManifest();
 std::vector<CompiledBlock> emittedRomCorpus(unsigned);
+const nlohmann::json& expandedRomCorpusManifest();
+std::vector<CompiledBlock> emittedExpandedRomCorpus(unsigned);
 inline CorpusSegment romCorpusSegment(const nlohmann::json &value) {
   CorpusSegment segment{.instructions = {}, .emitted = value.at("emitted")};
   for (const auto &item : value.at("instructions")) {

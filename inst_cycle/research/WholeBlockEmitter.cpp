@@ -68,7 +68,7 @@ void metadata(std::ostream &s, const Block &b, const std::string &id, std::uint3
     }
     s << "b->instructions.push_back(std::move(i));}\n";
   }
-  s << "return CompiledBlock(std::move(b),&" << id << "_entry," << architecture << ");}\n";
+  s << "return CompiledBlock(std::move(b),&" << id << "_entry<false>," << architecture << ",&" << id << "_entry<true>);}\n";
 }
 } // namespace
 std::string emitWholeBlock(const Block &block, const std::string &id, std::uint32_t architecture) {
@@ -95,7 +95,7 @@ std::string emitWholeBlock(const Block &block, const std::string &id, std::uint3
       throw std::invalid_argument("emission guard budget exceeded");
   std::ostringstream s;
   s << "#include \"inst_cycle/research/WholeBlock.hpp\"\n#include <array>\n"
-    << "namespace BMMQ::IR::Research {\nstatic void " << id
+    << "namespace BMMQ::IR::Research {\ntemplate<bool Direct> static void " << id
     << "_entry(Invocation& c){ auto& h=c.host(); (void)h;\n";
   for (std::size_t index = 0; index < block.instructions.size(); ++index) {
     const auto &i = block.instructions[index];
@@ -113,12 +113,10 @@ std::string emitWholeBlock(const Block &block, const std::string &id, std::uint3
         expr = arg(0);
         break;
       case Opcode::ReadRegister:
-        expr = "h.readRegister(" + number(o.operands[0].payload) + "," +
-               type(o.resultType) + ")";
+        expr = "(Direct?c.registers().read(" + number(o.operands[0].payload) + "):h.readRegister(" + number(o.operands[0].payload) + "," + type(o.resultType) + "))";
         break;
       case Opcode::WriteRegister:
-        expr = "h.writeRegister(" + number(o.operands[0].payload) + "," +
-               type(o.operands[0].type) + "," + arg(1) + ")";
+        expr = "if constexpr(Direct){c.registers().write(" + number(o.operands[0].payload) + "," + arg(1) + ");}else{h.writeRegister(" + number(o.operands[0].payload) + "," + type(o.operands[0].type) + "," + arg(1) + ");}";
         statement = true;
         break;
       case Opcode::LoadMemory:
@@ -166,17 +164,15 @@ std::string emitWholeBlock(const Block &block, const std::string &id, std::uint3
         expr = arg(0) + "?" + arg(1) + ":" + arg(2);
         break;
       case Opcode::SetProgramCounter:
-        expr = "h.setProgramCounter(" + arg(0) + ")";
+        expr = "if constexpr(Direct){c.registers().write(13," + arg(0) + ");}else{h.setProgramCounter(" + arg(0) + ");}";
         statement = true;
         break;
       case Opcode::Branch:
-        expr = "h.setProgramCounter(" + number(o.operands[0].payload) +
-               ");r.branchTaken=true";
+        expr = "if constexpr(Direct){c.registers().write(13," + number(o.operands[0].payload) + ");}else{h.setProgramCounter(" + number(o.operands[0].payload) + ");}r.branchTaken=true";
         statement = true;
         break;
       case Opcode::BranchIf:
-        expr = "if(" + arg(0) + "){h.setProgramCounter(" +
-               number(o.operands[1].payload) + ");r.branchTaken=true;}";
+        expr = "if(" + arg(0) + "){if constexpr(Direct){c.registers().write(13," + number(o.operands[1].payload) + ");}else{h.setProgramCounter(" + number(o.operands[1].payload) + ");}r.branchTaken=true;}";
         statement = true;
         break;
       case Opcode::CallHelper: {
@@ -187,7 +183,7 @@ std::string emitWholeBlock(const Block &block, const std::string &id, std::uint3
         for (std::size_t k = 1; k < o.operands.size(); ++k)
           s << arg(k) << ",";
         s << "};\n";
-        expr = "h.callHelper(" + number(o.operands[0].payload) + "," +
+        expr = "c.callHelper(" + number(o.operands[0].payload) + "," +
                type(o.resultType) + ",args" + std::to_string(index) + "_" +
                std::to_string(&o - i.operations.data()) + ")";
         statement = !o.result;

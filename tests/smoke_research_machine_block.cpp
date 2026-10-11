@@ -17,6 +17,8 @@ std::vector<uint8_t> rom(const CompiledBlock &code) {
       std::copy(g.bytes.begin(), g.bytes.end(), bytes.begin() + g.subject);
   return bytes;
 }
+bool directMode=false;
+template<class Core>ExecutionSliceResult runResearch(Core& machine,BoundBlock& binding,const ExecutionBudget& budget,InstructionRetirementSink* observer=nullptr){return machine.runResearchBlock(binding,budget,observer,directMode);}
 template <class Core> struct Compare final : InstructionRetirementSink {
   Core &baseline;
   Core &native;
@@ -75,7 +77,7 @@ template <class Core> void check(const CompiledBlock &code) {
     auto bound = native.bindResearchBlock(code);
     Compare<Core> observer(baseline, native);
     for (unsigned loop = 0; loop < 128; ++loop) {
-      auto s = native.runResearchBlock(
+      auto s = runResearch(native,
           bound,
           {.maxInstructions = code.block().instructions.size(),
            .stopOnSegmentBoundary = false},
@@ -95,7 +97,7 @@ template <class Core> void check(const CompiledBlock &code) {
       const ExecutionBudget budget{.maxInstructions = limit,
                                    .stopOnSegmentBoundary = false};
       const auto expected = baseline.runSlice(budget);
-      const auto actual = native.runResearchBlock(bound, budget);
+      const auto actual = runResearch(native, bound, budget);
       require(actual.progress.retiredInstructions == limit &&
                   actual.progress.retiredCycles == expected.progress.retiredCycles,
               "unobserved retirement accounting");
@@ -113,23 +115,23 @@ template <class Core> void check(const CompiledBlock &code) {
     start[5] = code.block().guestStart;
     native.debugCommitRegisters(start);
     const auto before = native.deterministicStateFingerprint();
-    auto zero = native.runResearchBlock(bound, {.maxInstructions = 0});
+    auto zero = runResearch(native, bound, {.maxInstructions = 0});
     require(zero.progress.retiredInstructions == 0, "zero budget");
     require(before == native.deterministicStateFingerprint(),
             "zero budget mutation");
     Core sibling;
     sibling.loadRom(bytes);
-    require(sibling.runResearchBlock(bound, {.maxInstructions = 1})
+    require(runResearch(sibling, bound, {.maxInstructions = 1})
                     .progress.retiredInstructions == 0,
             "owner guard");
     auto fresh = native.bindResearchBlock(code);
     Throwing throwing;
     rejects([&] {
-      native.runResearchBlock(fresh, {.maxInstructions = 1}, &throwing);
+      runResearch(native, fresh, {.maxInstructions = 1}, &throwing);
     });
     rejects([&] { native.runSlice({.maxInstructions = 1}); });
     native.loadRom(bytes);
-    require(native.runResearchBlock(bound, {.maxInstructions = 1})
+    require(runResearch(native, bound, {.maxInstructions = 1})
                     .progress.retiredInstructions == 0,
             "reload generation guard");
   }
@@ -172,6 +174,7 @@ void scalarGuards(const CompiledBlock &code) {
           "duplicate guard acquired scalar eligibility");
 }
 int main() try {
+ for(bool mode:{false,true}) { directMode=mode;
   GB::GameBoyMachine gb;
   gb.loadRom(rom(emittedGameBoyCompute()));
   GameGearMachine gg;
@@ -185,6 +188,7 @@ int main() try {
   scalarGuards(emittedGameBoyCompute());
   scalarGuards(emittedGameGearCompute());
   std::cout << "real-core whole-block differential checks passed\n";
+}
 } catch (const std::exception &e) {
   std::cerr << e.what() << '\n';
   return 1;

@@ -73,6 +73,8 @@ replays both authored Collect and Exit revisions and ports with ROM-bound input,
 bank-aware execution accounting and differential evidence.
 The [native x86-64 acceptance procedure](../.internal/docs/time-x86-acceleration-acceptance.md)
 collects and evaluates source/build-bound throughput and repeated latency evidence.
+Criteria v2 separate active benefit, gameplay non-regression and default eligibility;
+`tools/measure_x86_acceptance_v2.py` retains two independent native confirmations.
 
 ## Execution and concurrency records
 

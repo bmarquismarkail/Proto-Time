@@ -1,5 +1,6 @@
 // Real-machine comparisons of synthetic representative execution patterns.
 #include "WholeBlockCorpus.hpp"
+#include "AccelerationExperimentOptions.hpp"
 #include "cores/gameboy/GameBoyMachine.hpp"
 #include "cores/gamegear/GameGearMachine.hpp"
 #include "inst_cycle/executor/PluginContract.hpp"
@@ -63,8 +64,8 @@ struct Accounting {
 template <class Core> class Runner {
 public:
   Runner(Core &machine, const CorpusProgram &program,
-         const std::vector<CompiledBlock> &code, bool emitted)
-      : machine_(machine), program_(program), emitted_(emitted), dispatch_(65536) {
+         const std::vector<CompiledBlock> &code, bool emitted, ReplayExperimentOptions options = {})
+      : machine_(machine), program_(program), emitted_(emitted), dispatch_(65536), options_(options) {
     const auto saved = machine_.debugRegisters();
     unsigned block = 0;
     for (std::size_t s = 0; s < program.segments.size(); ++s) {
@@ -102,7 +103,7 @@ public:
       const bool native = emitted_ && segment.emitted && entry.offset == 0;
       const ExecutionBudget budget{.maxInstructions = requested, .stopOnSegmentBoundary = false};
       const auto result = native
-          ? machine_.runResearchBlock(bindings_.at(entry.block), budget, observer)
+          ? machine_.runResearchBlock(bindings_.at(entry.block), budget, observer, options_.directRegisters)
           : machine_.runSlice(budget, observer);
       require(result.progress.retiredInstructions == requested,
               "corpus guard/retirement failure; no implicit fallback");
@@ -130,6 +131,7 @@ private:
   bool emitted_;
   std::vector<Entry> dispatch_;
   std::vector<BoundBlock> bindings_;
+  ReplayExperimentOptions options_;
 };
 
 template <class Core> struct Compare final : InstructionRetirementSink {

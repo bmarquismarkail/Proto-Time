@@ -21,15 +21,17 @@ def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(',', ':'))
 
 
-def supported(encoded):
+def supported(encoded, expanded=False, gb=True):
     # Exact current built-in IR envelope. This does not add lowerings, prefixes,
     # conditional branches, stack operations, or device/absolute-memory opcodes.
     op = encoded[0]
+    if expanded and (op & 0xcf in (0x01,0x03,0x0b,0xc1,0xc5) or op in (0x20,0x28,0x30,0x38,0xc3,0xcd) or op in ((0xea,0xfa,0xe0,0xf0,0xe2,0xf2) if gb else (0x32,0x3a))):
+        return True
     return (op == 0 or 0x40 <= op <= 0xbf and op != 0x76 or
             op & 0xc7 in (4, 5, 6) or op == 0x18)
 
 
-def inventory(data, labels, gb, forward, reverse):
+def inventory(data, labels, gb, forward, reverse, expanded=False):
     routines = ['Entry', 'Irq', 'Init', 'CallBank1', 'CallBank2',
                 'ResetGame', 'ReadInput', 'Render', 'SoundTick', 'Tick', 'Attempt']
     if not gb:
@@ -46,7 +48,7 @@ def inventory(data, labels, gb, forward, reverse):
             if offset in used or offset + len(encoded) > end:
                 raise ValueError('overlapping or truncated ROM inventory')
             used.add(offset)
-            emit = supported(encoded)
+            emit = supported(encoded, expanded, gb)
             if (pending is None or not emit or not pending['emitted'] or
                     offset in entries or len(pending['instructions']) == 8):
                 pending = dict(region=name, bank=offset // 16384,
@@ -55,12 +57,16 @@ def inventory(data, labels, gb, forward, reverse):
             pending['instructions'].append(dict(offset=offset,
                 address=(0 if offset < 16384 else 16384) + offset % 16384,
                 bytes=list(encoded)))
-            if encoded[0] == 0x18:
+            # Tick commits are the replay's observation/input boundary. Longer
+            # blocks must not execute past it before the host checks the oracle.
+            commit = (len(encoded) == 3 and encoded[0] == (0xea if gb else 0x32)
+                      and int.from_bytes(encoded[1:], 'little') in (0xc010, 0xc011))
+            if encoded[0] == 0x18 or expanded and (commit or encoded[0] in (0x20,0x28,0x30,0x38,0xc3,0xcd)):
                 pending = None
     return segments
 
 
-def build(output):
+def build(output, expanded=False):
     contract = json.loads(CONTRACT.read_text())
     # Use the existing reviewed instruction inventories, never a disassembly of
     # padding/assets. Imports are isolated from the caller's module search path.
@@ -96,7 +102,7 @@ def build(output):
                 symbolsSha256=sha(symbol_file.read_bytes()),
                 build=json.loads((directory / 'build.json').read_text()),
                 readInput=labels['ReadInput'],
-                segments=inventory(data, labels, gb, forward, reverse)))
+                segments=inventory(data, labels, gb, forward, reverse, expanded)))
     manifest = dict(schema='proto-time-rom-corpus-build-v1',
                     contract=contract, contractSha256=sha(CONTRACT.read_bytes()), cases=cases)
     (output / 'rom-corpus.json').write_text(canonical(manifest) + '\n')
@@ -106,6 +112,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=Path, nargs='?')
     parser.add_argument('--check-tools', action='store_true')
+    parser.add_argument('--expanded', action='store_true')
     args = parser.parse_args()
     missing = [name for name in ('wla-gb', 'wla-z80', 'wlalink') if not shutil.which(name)]
     if missing:
@@ -114,4 +121,4 @@ if __name__ == '__main__':
         parser.exit(2, 'Standalone ROM corpus not run: reconfigure and build the ROM corpus target\n')
     if args.output is None:
         parser.error('output is required')
-    build(args.output.resolve())
+    build(args.output.resolve(), args.expanded)

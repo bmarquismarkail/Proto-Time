@@ -43,6 +43,9 @@ public:
     IR::Research::BoundBlock bindResearchBlock(const IR::Research::CompiledBlock&);
     BMMQ::ExecutionSliceResult runResearchBlock(IR::Research::BoundBlock&, const BMMQ::ExecutionBudget&, BMMQ::InstructionRetirementSink* = nullptr);
     IR::Research::MachineBlockState researchBlockState() const;
+    IR::Research::BoundBlock rebindResearchBlock(const IR::Research::BoundBlock&);
+    IR::Research::BoundBlock rebindResearchBlock(const IR::Research::BoundBlock&, bool copyMetadata);
+    BMMQ::ExecutionSliceResult runResearchBlock(IR::Research::BoundBlock&, const BMMQ::ExecutionBudget&, BMMQ::InstructionRetirementSink*, bool directRegisters);
     void connectDebugEngine(BMMQ::Debug::DebugEngine*) override;
     bool debugPortBus() const noexcept override { return true; }
     std::span<const char* const> debugRegisterNames() const noexcept override;

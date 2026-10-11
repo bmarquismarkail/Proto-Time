@@ -1,5 +1,27 @@
 # Native x86-64 acceleration acceptance
 
+## Current criteria v2
+
+Use `python3 tools/measure_x86_acceptance_v2.py --build build-working --output
+build-working/completion-validation/acceleration-v2/qualification` for a fresh,
+preregistered two-session evaluation. The default fixed candidate is
+`halt512-reuse` with generic generated entries. Both core decisions, raw paired
+samples, criteria/authority hashes, complete retirement windows, nine verbose
+latency rounds and full CTest are retained. Recheck with `--check --output PATH`.
+A 27-repeat follow-up requires `--followup-of PRIOR_PATH` with inconclusive nine-
+repeat evidence for the same source, build and candidate. Native ARM64 remains
+deferred and global admission never changes automatically.
+
+V2 distinguishes correctness-qualified research, competitive opt-in eligibility
+and default eligibility. The additional independent active-ROM diversity gate
+is currently not run, so this collector cannot promote default execution. See
+[the current criteria](time-acceleration-evaluation.md) and numerical contract
+`tools/acceleration-criteria-v2.json`.
+
+## Historical v1 procedure and evidence
+
+The following procedure and dated results retain their original 10% rules.
+
 This evaluates the approved whole-block design on Linux x86-64 for both current
 cores. Native ARM64 performance remains user-deferred. Baseline execution and
 third-family admission are unchanged; a passing local measurement still requires

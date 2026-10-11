@@ -59,6 +59,9 @@ public:
     BMMQ::IR::Research::BoundBlock bindResearchBlock(const BMMQ::IR::Research::CompiledBlock&);
     BMMQ::ExecutionSliceResult runResearchBlock(BMMQ::IR::Research::BoundBlock&, const BMMQ::ExecutionBudget&, BMMQ::InstructionRetirementSink* = nullptr);
     BMMQ::IR::Research::MachineBlockState researchBlockState() const;
+    BMMQ::IR::Research::BoundBlock rebindResearchBlock(const BMMQ::IR::Research::BoundBlock&);
+    BMMQ::IR::Research::BoundBlock rebindResearchBlock(const BMMQ::IR::Research::BoundBlock&, bool copyMetadata);
+    BMMQ::ExecutionSliceResult runResearchBlock(BMMQ::IR::Research::BoundBlock&, const BMMQ::ExecutionBudget&, BMMQ::InstructionRetirementSink*, bool directRegisters);
     void connectDebugEngine(BMMQ::Debug::DebugEngine*) override;
     std::span<const char* const> debugRegisterNames() const noexcept override;
     std::array<uint16_t,20> debugRegisters() const override;
