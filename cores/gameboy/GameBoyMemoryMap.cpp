@@ -83,6 +83,27 @@ bool GameBoyMemoryMap::peekExecutableByte(uint16_t address, uint8_t& value) cons
     return true;
 }
 
+std::span<const uint8_t> GameBoyMemoryMap::checkedCodeView(uint16_t address, std::size_t size) const noexcept {
+    if (!size || size > 0x10000u - address) return {};
+    const std::size_t end = address + size;
+    if (bootRomActive_ && address < bootRom_.size()) {
+        if (end > bootRom_.size() || end > 0x4000u) return {};
+        return std::span<const uint8_t>(bootRom_).subspan(address, size);
+    }
+    if (address < 0x8000u) {
+        const auto base = address < 0x4000u ? 0u : 0x4000u;
+        const auto& window = base == 0 ? romWindow0x0000_ : romWindow0x4000_;
+        const std::size_t offset = address - base;
+        if (end > base + 0x4000u || !window.active || offset > window.data.size() || size > window.data.size() - offset) return {};
+        return std::span<const uint8_t>(window.data).subspan(offset, size);
+    }
+    if (address >= 0xc000u && end <= 0xe000u)
+        return std::span<const uint8_t>(wram_).subspan(address - 0xc000u, size);
+    if (address >= 0xff80u && end <= 0xffffu)
+        return std::span<const uint8_t>(hram_).subspan(address - 0xff80u, size);
+    return {};
+}
+
 uint8_t GameBoyMemoryMap::readRaw(uint16_t addr) const {
     // Boot ROM overlay (0x0000-0x00FF)
     if (bootRomActive_ && addr < bootRom_.size()) {

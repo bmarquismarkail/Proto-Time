@@ -90,6 +90,11 @@ public:
     // stable, and free of mapper/MMIO/device side effects.
     [[nodiscard]] bool peekExecutableByte(uint16_t address, uint8_t& value) const noexcept;
 
+    // Borrow only for an immediate machine-lane comparison; never retain across
+    // callbacks, retirement, mapping changes or lifecycle operations. Empty means
+    // unsupported/non-contiguous: fall back to peekExecutableByte.
+    [[nodiscard]] std::span<const uint8_t> checkedCodeView(uint16_t address, std::size_t size) const noexcept;
+
     // Save state export/import.
     std::vector<uint8_t> exportState() const;
     void importState(const std::vector<uint8_t>& state);

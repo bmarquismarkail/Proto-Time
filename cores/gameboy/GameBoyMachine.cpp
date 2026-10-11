@@ -33,8 +33,8 @@ class WholeBlockAbiHost final : public BMMQ::IR::InterpreterHost {
     IRExecution::ExecutionAbiV1 abi_;
 public:
     explicit WholeBlockAbiHost(IRExecution::ExecutionAbiV1 abi):abi_(abi) {}
-    uint64_t readRegister(uint32_t id,BMMQ::IR::ValueType) override {return abi_.readRegister(abi_.opaque,static_cast<IRExecution::Register>(id));}
-    void writeRegister(uint32_t id,BMMQ::IR::ValueType,uint64_t value) override {abi_.writeRegister(abi_.opaque,static_cast<IRExecution::Register>(id),value);}
+    uint64_t readRegister(uint32_t id,BMMQ::IR::ValueType) override {TIME_RESEARCH_SCOPE(registerPhase, BMMQ::IR::Research::Phase::RegisterRead);return abi_.readRegister(abi_.opaque,static_cast<IRExecution::Register>(id));}
+    void writeRegister(uint32_t id,BMMQ::IR::ValueType,uint64_t value) override {TIME_RESEARCH_SCOPE(registerPhase, BMMQ::IR::Research::Phase::RegisterWrite);abi_.writeRegister(abi_.opaque,static_cast<IRExecution::Register>(id),value);}
     uint64_t loadMemory(uint64_t address,BMMQ::IR::ValueType,BMMQ::IR::MemoryClass) override {return abi_.readMemory8(abi_.opaque,static_cast<uint16_t>(address));}
     void storeMemory(uint64_t address,BMMQ::IR::ValueType,BMMQ::IR::MemoryClass,uint64_t value) override {abi_.writeMemory8(abi_.opaque,static_cast<uint16_t>(address),static_cast<uint8_t>(value));}
     uint64_t callHelper(uint32_t id,BMMQ::IR::ValueType,std::span<const uint64_t> arguments) override {return abi_.callHelper(abi_.opaque,static_cast<IRExecution::Helper>(id),arguments.data(),arguments.size());}
@@ -891,6 +891,7 @@ protected:
     }
 
     BMMQ::CpuFeedback stepWithinExecutionSlice() override {
+        TIME_RESEARCH_SCOPE(cpuStepPhase, BMMQ::IR::Research::Phase::CpuStep);
         if (fastExecutionAllowed() &&
             runtime_.cpu().tryExecutePortableIrBlockInstruction()) {
             return runtime_.getLastFeedback();
@@ -1346,8 +1347,18 @@ BMMQ::ExecutionSliceResult GameBoyMachine::runResearchBlock(BMMQ::IR::Research::
                attachedExecutorPolicy().backend()!=BMMQ::ExecutionBackend::Baseline || impl_->context->capture ||
                impl_->context->snapshotExecution || impl_->memoryMap.debugEngine || !impl_->nativeTrampolines.empty() ||
                cpu.pcRegister_->value!=block.instructions[index].address ||
-               !binding.guardsMatch(cpu.researchMappingGeneration(), cpu.irExecutionState(), IRExecution::kAbiVersion,
-                   [&](uint16_t a, uint8_t& b){return impl_->memoryMap.peekExecutableByte(a,b);}, index == 0 || !reuseCodeGuard))return false;
+               !binding.
+#ifdef TIME_RESEARCH_CONTIGUOUS_CODE_VIEW
+                guardsMatchView(
+#else
+                guardsMatch(
+#endif
+cpu.researchMappingGeneration(), cpu.irExecutionState(), IRExecution::kAbiVersion,
+                   [&](uint16_t a, uint8_t& b){return impl_->memoryMap.peekExecutableByte(a,b);},
+#ifdef TIME_RESEARCH_CONTIGUOUS_CODE_VIEW
+                   [&](uint16_t a, std::size_t n){return impl_->memoryMap.checkedCodeView(a,n);},
+#endif
+                   index == 0 || !reuseCodeGuard))return false;
             cpu.feedback.pcBefore=block.instructions[index].address;
             cpu.feedback.isControlFlow=block.instructions[index].controlFlow;
             cpu.feedback.segmentBoundaryHint=block.instructions[index].controlFlow || block.instructions[index].interruptSensitive;

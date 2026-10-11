@@ -331,7 +331,6 @@ template <class Core> Json replay(const Json &record, const std::vector<Compiled
                  {"windows", checks}, {"warmupState", warmState}, {"warmup", warm}, {"finalState", timeline.back()}});
 #ifdef TIME_RESEARCH_PHASES
   Json phaseRows=Json::array();
-  constexpr const char* phaseNames[]={"bind","remap","entry-guard","continuation-guard","operations","helper","helper-0","cpu-retirement","machine-retirement"};
   for(unsigned i=0;i<ledger.phases.size();++i){const auto& d=ledger.phases[i];phaseRows.push_back({{"phase",phaseNames[i]},{"calls",d.calls},{"samples",d.samples},{"nanoseconds",d.nanoseconds}});}
   result["phaseDiagnostics"]={{"phases",phaseRows},{"metadataCopies",ledger.metadataCopies},{"estimatedMetadataBytes",ledger.estimatedMetadataBytes},{"sampling","independent xorshift per phase, 1/64"},{"operationsIncludeHelpers",true}};
 #endif

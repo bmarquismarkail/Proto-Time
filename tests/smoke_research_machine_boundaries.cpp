@@ -430,9 +430,46 @@ template <class Core> void interruptState(const CompiledBlock &code) {
   rejectedWithoutMutation(native, halted);
   rejects([&] { native.bindResearchBlock(code); });
 }
+// Virtual policy behavior must be re-read after observer mutation/replacement.
+struct LivePolicy final : Plugin::IExecutorPolicyPlugin {
+  std::shared_ptr<bool> changed = std::make_shared<bool>(false);
+  std::shared_ptr<std::size_t> lookups = std::make_shared<std::size_t>(0);
+  Plugin::DefaultStepPolicy baseline;
+  std::unique_ptr<Plugin::IExecutorPolicyPlugin> clone() const override {return std::make_unique<LivePolicy>(*this);}
+  const Plugin::PluginMetadata& metadata() const override {return baseline.metadata();}
+  ExecutionBackend backend() const override {++*lookups;return *changed?ExecutionBackend::PortableIr:ExecutionBackend::Baseline;}
+  ExecutionGuarantee guarantee() const override {return baseline.guarantee();}
+  bool shouldRecord(const Plugin::FetchBlock& f,const CpuFeedback& c) const override {return baseline.shouldRecord(f,c);}
+  bool shouldSegment(const Plugin::FetchBlock& f,const CpuFeedback& c) const override {return baseline.shouldSegment(f,c);}
+};
+template<class Core> void livePolicy(const CompiledBlock& code) {
+  for (bool replace : {false,true}) {
+    Core machine; prepare(machine,code); LivePolicy policy;
+    machine.attachExecutorPolicy(policy);
+    auto binding=machine.bindResearchBlock(code);
+    struct Observer : InstructionRetirementSink {
+      Core& machine; LivePolicy& policy; bool replace;
+      Observer(Core& m,LivePolicy& p,bool r):machine(m),policy(p),replace(r){}
+      InstructionRetirementDecision retireInstruction(const CpuFeedback&,
+          const ExecutionSliceProgress&) override {
+        if(replace){Plugin::PortableIrStepPolicy next;machine.attachExecutorPolicy(next);}
+        else *policy.changed=true;
+        return InstructionRetirementDecision::continueSlice();
+      }
+    } observer(machine,policy,replace);
+    *policy.lookups=0;
+    auto result=runResearch(machine,binding,
+        {.maxInstructions=7,.stopOnSegmentBoundary=false},&observer);
+    require(result.progress.retiredInstructions==1,
+            "live virtual policy was hoisted across retirement");
+    if(!replace) require(*policy.lookups>=3,"virtual policy lookup omitted");
+  }
+}
 } // namespace
 int main() try {
  for(bool mode:{false,true}) { directMode=mode;
+  livePolicy<GB::GameBoyMachine>(emittedGameBoyBank());
+  livePolicy<GameGearMachine>(emittedGameGearBank());
   std::cout << "Game Boy RAM\n" << std::flush;
   ram<GB::GameBoyMachine>(emittedGameBoyRamCode());
   std::cout << "Game Gear RAM\n" << std::flush;

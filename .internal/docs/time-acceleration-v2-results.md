@@ -1,6 +1,6 @@
 # Acceleration criteria v2: implementation and native evaluation
 
-Status: implemented; measured native x86-64 no-go, 2026-10-09. Changes remain uncommitted.
+Status: implemented; measured native x86-64 no-go, 2026-10-09. Implementation committed as `60afc9f` on 2026-10-10.
 Default execution and family admission are unchanged. Native ARM64 performance
 remains deferred.
 
@@ -158,4 +158,4 @@ Exit code 1 represents the measured failed decision. Rechecking reproduces the
 JSON decision exactly. `final-verification.json` records source/archive checks,
 identical C++ binaries, and the retained gate exits. No promotion, commit, system
 configuration change or native ARM64 timing claim occurred. No ownership/handoff
-changed, so a new TSAN run was not needed. All changes remain uncommitted.
+changed, so a new TSAN run was not needed. Changes were uncommitted at the time of this verification; implementation is now in `60afc9f`.

@@ -92,6 +92,8 @@ def main():
     parser.add_argument('--build', type=Path, default=Path('build-working'))
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--synthetic', action='store_true')
+    parser.add_argument('--guard-reference', action='store_true')
+    parser.add_argument('--code-view', action='store_true')
     parser.add_argument('--screen', action='store_true')
     parser.add_argument('--smoke', action='store_true')
     parser.add_argument('--variant')
@@ -105,6 +107,12 @@ def main():
     args = parser.parse_args()
     build = args.build.resolve()
     binary = build / ('time-measure-acceleration-synthetic-experiments' if args.synthetic else 'time-measure-acceleration-experiments')
+    if args.guard_reference:
+        if not args.synthetic or args.diagnostic: raise ValueError('guard reference requires normal synthetic measurement')
+        binary = build / 'time-measure-acceleration-guard-reference'
+    if args.code_view:
+        if not args.synthetic or args.diagnostic or args.guard_reference: raise ValueError('code view requires separate normal synthetic measurement')
+        binary = build / 'time-measure-acceleration-code-view'
     if args.diagnostic: binary = build / 'time-diagnose-acceleration-experiments'
     files = [binary, build / 'CMakeCache.txt', build / 'research-whole-blocks.cpp', build / 'research-rom-blocks.cpp',
              build / 'research-expanded-rom-blocks.cpp', build / 'acceleration-roms/rom-corpus.json',

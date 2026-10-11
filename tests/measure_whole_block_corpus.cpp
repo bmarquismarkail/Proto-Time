@@ -83,6 +83,7 @@ public:
           auto registers = saved;
           registers[5] = segment.instructions.front().address;
           machine_.debugCommitRegisters(registers);
+          TIME_RESEARCH_SCOPE(bindPhase, Phase::Bind);
           bindings_.push_back(machine_.bindResearchBlock(code[block]));
         }
         ++block;
@@ -94,17 +95,23 @@ public:
   Accounting advance(std::uint64_t count, InstructionRetirementSink *observer = nullptr) {
     Accounting total;
     while (total.instructions < count) {
-      const auto pc = machine_.runtimeContext().readRegister16("PC");
-      const auto &entry = dispatch_.at(pc);
+      const auto &entry = [&]() -> const Entry& {
+        TIME_RESEARCH_SCOPE(dispatchPhase, Phase::Dispatch);
+        const auto pc = machine_.runtimeContext().readRegister16("PC");
+        return dispatch_.at(pc);
+      }();
       require(entry.valid, "corpus left its declared instruction map");
       const auto &segment = program_.segments[entry.segment];
       const auto requested = std::min<std::uint64_t>(count - total.instructions,
           segment.instructions.size() - entry.offset);
       const bool native = emitted_ && segment.emitted && entry.offset == 0;
       const ExecutionBudget budget{.maxInstructions = requested, .stopOnSegmentBoundary = false};
-      const auto result = native
-          ? machine_.runResearchBlock(bindings_.at(entry.block), budget, observer, options_.directRegisters)
-          : machine_.runSlice(budget, observer);
+      const auto result = [&] {
+        TIME_RESEARCH_SCOPE(slicePhase, Phase::Slice);
+        return native
+            ? machine_.runResearchBlock(bindings_.at(entry.block), budget, observer, options_.directRegisters)
+            : machine_.runSlice(budget, observer);
+      }();
       require(result.progress.retiredInstructions == requested,
               "corpus guard/retirement failure; no implicit fallback");
       total.instructions += requested;

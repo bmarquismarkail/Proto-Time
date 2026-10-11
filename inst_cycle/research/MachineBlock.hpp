@@ -2,6 +2,7 @@
 #include "WholeBlock.hpp"
 #include "machine/ExecutionSlice.hpp"
 #include <array>
+#include <algorithm>
 
 namespace BMMQ::IR::Research {
 inline constexpr std::uint32_t kMachineBlockBindingVersion = 2;
@@ -44,6 +45,7 @@ public:
         stateExpected_ = guard.expected & guard.mask;
         break;
       case GuardKind::CodeBytes:
+        codeGuard_ = &guard;
         if (guard.bytes.empty() || guard.subject > 0xffff || guard.bytes.size() > 0x10000 - guard.subject) scalarValid_ = false;
         lowRomCode_ = !guard.bytes.empty() && guard.subject < 0x8000 &&
                       guard.bytes.size() <= 0x8000 - guard.subject;
@@ -67,11 +69,42 @@ public:
   bool guardsMatch(std::uint64_t mapping, std::uint64_t state,
                    std::uint64_t helperAbi, Peek peek, bool checkBytes = true) const {
     if (!scalarGuardsMatch(mapping, state, helperAbi)) return false;
-    if (checkBytes) for (const auto& guard : code_.block().guards) {
+    if (!checkBytes) return true;
+#ifdef TIME_RESEARCH_REFERENCE_GUARDS
+    // Controlled research comparator: retain the original metadata search.
+    for (const auto& guard : code_.block().guards) {
       if (guard.kind != GuardKind::CodeBytes) continue;
+#else
+    // scalarValid_ proves exactly one code guard. The pointer belongs to the
+    // immutable shared artifact, so copies/remaps retain its owning lifetime.
+    {
+      const auto& guard = *codeGuard_;
+#endif
       for (std::size_t n = 0; n < guard.bytes.size(); ++n) {
         std::uint8_t byte = 0;
         if (!peek(static_cast<std::uint16_t>(guard.subject + n), byte) || byte != guard.bytes[n]) return false;
+      }
+    }
+    return true;
+  }
+  // Separate candidate: deliberately retains the reference metadata search.
+  // The returned view is local to this exact comparison, never binding-owned.
+  template<class Peek, class View>
+  bool guardsMatchView(std::uint64_t mapping, std::uint64_t state,
+                       std::uint64_t helperAbi, Peek peek, View view,
+                       bool checkBytes = true) const {
+    if (!scalarGuardsMatch(mapping, state, helperAbi)) return false;
+    if (!checkBytes) return true;
+    for (const auto& guard : code_.block().guards) {
+      if (guard.kind != GuardKind::CodeBytes) continue;
+      const auto bytes = view(static_cast<std::uint16_t>(guard.subject), guard.bytes.size());
+      if (bytes.size() == guard.bytes.size()) {
+        if (!std::equal(bytes.begin(), bytes.end(), guard.bytes.begin())) return false;
+      } else {
+        for (std::size_t n = 0; n < guard.bytes.size(); ++n) {
+          std::uint8_t byte = 0;
+          if (!peek(static_cast<std::uint16_t>(guard.subject + n), byte) || byte != guard.bytes[n]) return false;
+        }
       }
     }
     return true;
@@ -92,6 +125,7 @@ private:
   Owner owner_;
   std::uint64_t generation_;
   friend BoundBlock bindMachineBlock(const CompiledBlock&, IIrCoreAdapter&, const Owner&, std::uint64_t, std::uint64_t);
+  const Guard* codeGuard_ = nullptr;
   bool canonical_ = false;
   bool faulted_ = false;
   bool lowRomCode_ = false;

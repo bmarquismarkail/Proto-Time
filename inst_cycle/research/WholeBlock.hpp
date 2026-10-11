@@ -43,11 +43,13 @@ struct DirectRegisters {
   std::uint8_t flagsMask = 0xff;
   bool valid() const noexcept { for (auto* p : words) if (!p) return false; return true; }
   std::uint64_t read(std::uint32_t id) const {
+    TIME_RESEARCH_SCOPE(registerPhase, Phase::RegisterRead);
     if (id < 8) return (*words[id / 2] >> ((id & 1) ? 0 : 8)) & 255;
     if (id < 14) return *words[id - 8];
     throw std::invalid_argument("unknown direct register");
   }
   void write(std::uint32_t id, std::uint64_t value) const {
+    TIME_RESEARCH_SCOPE(registerPhase, Phase::RegisterWrite);
     if (id < 8) {
       auto& word = *words[id / 2];
       auto byte = static_cast<std::uint8_t>(value);

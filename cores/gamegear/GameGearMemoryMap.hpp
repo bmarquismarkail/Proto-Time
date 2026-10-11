@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <array>
 #include <vector>
+#include <span>
 #include "space/Capture.hpp"
 
 class GameGearInput;
@@ -27,6 +28,9 @@ public:
     void reset();
     uint8_t read(uint16_t addr) const;
     [[nodiscard]] bool peekCodeByte(uint16_t addr, uint8_t& value) const noexcept;
+    // Immediate machine-lane comparison only. Empty requires byte-peek fallback.
+    // No view may survive callbacks, retirement or mapping/lifecycle changes.
+    [[nodiscard]] std::span<const uint8_t> checkedCodeView(uint16_t addr, std::size_t size) const noexcept;
     [[nodiscard]] uint64_t analysisLocation(uint16_t addr,bool write=false) const noexcept;
     [[nodiscard]] bool analysisRam(uint16_t addr) const noexcept;
     [[nodiscard]] std::size_t analysisRamCapacity() const noexcept;

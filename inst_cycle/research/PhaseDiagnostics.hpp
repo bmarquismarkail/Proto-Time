@@ -5,7 +5,9 @@
 #include <chrono>
 #include <cstdint>
 namespace BMMQ::IR::Research {
-enum class Phase : unsigned { Bind, Remap, EntryGuard, ContinuationGuard, Operations, Helper, Helper0, CpuRetirement, MachineRetirement, Count };
+enum class Phase : unsigned { Bind, Remap, EntryGuard, ContinuationGuard, Operations, Helper, Helper0, CpuRetirement, MachineRetirement, RegisterRead, RegisterWrite, Dispatch, Slice, CpuStep, Count };
+inline constexpr const char* phaseNames[]={"bind","remap","entry-guard","continuation-guard","operations","helper","helper-0","cpu-retirement","machine-retirement","register-read","register-write","dispatch","slice","cpu-step"};
+static_assert(std::size(phaseNames)==static_cast<unsigned>(Phase::Count));
 struct PhaseData {std::uint64_t calls=0,samples=0,nanoseconds=0;std::uint32_t rng=0xabcdef01u;};
 struct PhaseLedger {
   std::array<PhaseData,static_cast<unsigned>(Phase::Count)> phases{};

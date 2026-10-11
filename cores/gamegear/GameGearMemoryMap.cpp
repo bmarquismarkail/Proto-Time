@@ -1,4 +1,5 @@
 #include "GameGearMemoryMap.hpp"
+#include <typeinfo>
 
 #include "GameGearCartridge.hpp"
 #include "GameGearInput.hpp"
@@ -252,6 +253,32 @@ bool GameGearMemoryMap::peekCodeByte(uint16_t addr, uint8_t& value) const noexce
         return true;
     }
     return false;
+}
+
+std::span<const uint8_t> GameGearMemoryMap::checkedCodeView(uint16_t addr, std::size_t size) const noexcept {
+    if (!size || size > 0x10000u - addr) return {};
+    const std::size_t end = addr + size;
+    if (end > 0xfe00u || (addr <= 0xddu && end > 0xdcu)) return {};
+    if (addr < 0x400u && !bios_.empty() && !(memoryControl_ & kMemoryControlBiosDisabled)) {
+        const std::size_t offset = addr % bios_.size();
+        if (end > 0x400u || size > bios_.size() - offset) return {};
+        return std::span<const uint8_t>(bios_).subspan(offset, size);
+    }
+    if (addr < 0xc000u) {
+        // Mapper virtual read semantics are authoritative. Only the exact built-in
+        // type is proven here; custom mappers and subclasses use the old peeks.
+        if (!cartridge || typeid(*cartridge) != typeid(GameGearCartridge) || !cartridge->loaded()) return {};
+        std::size_t bank = 0;
+        if (!cartridge->romBankForAddress(addr, bank)) return {};
+        const auto& rom = cartridge->romData();
+        const std::size_t offset = addr < 0x400u ? addr % rom.size() : bank * 0x4000u + addr % 0x4000u;
+        const std::size_t boundary = addr < 0x400u ? 0x400u : (addr / 0x4000u + 1u) * 0x4000u;
+        if (end > boundary || offset > rom.size() || size > rom.size() - offset) return {};
+        return std::span<const uint8_t>(rom).subspan(offset, size);
+    }
+    const std::size_t base = addr < 0xe000u ? 0xc000u : 0xe000u;
+    if (end > (base == 0xc000u ? 0xe000u : 0xfe00u)) return {};
+    return std::span<const uint8_t>(ram).subspan(addr - base, size);
 }
 
 void GameGearMemoryMap::writeCanonical(uint16_t addr, uint8_t value) {

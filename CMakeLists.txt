@@ -1236,3 +1236,46 @@ add_executable(time-smoke-research-remap tests/smoke_research_remap.cpp)
 target_link_libraries(time-smoke-research-remap PRIVATE time-research-whole-blocks time-gameboy-interpreter-core time-gamegear-core)
 add_test(NAME smoke-research-remap COMMAND time-smoke-research-remap)
 add_test(NAME smoke-acceleration-criteria-v2 COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_acceleration_criteria_v2.py)
+
+# Active-only phase attribution, isolated from normal throughput binaries.
+add_executable(time-diagnose-acceleration-active
+    tests/diagnose_acceleration_active.cpp
+    cores/gameboy/GameBoyMachine.cpp cores/gamegear/GameGearMachine.cpp
+    inst_cycle/research/MachineBlock.cpp ${TIME_RESEARCH_BLOCK_SOURCE})
+target_compile_definitions(time-diagnose-acceleration-active PRIVATE TIME_RESEARCH_PHASES=1)
+target_link_libraries(time-diagnose-acceleration-active PRIVATE time-gameboy-interpreter-core time-gamegear-core)
+add_test(NAME smoke-acceleration-active-diagnostics COMMAND time-diagnose-acceleration-active --smoke)
+set_tests_properties(smoke-acceleration-active-diagnostics PROPERTIES TIMEOUT 120)
+
+add_test(NAME smoke-active-phase-report COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_active_phase_diagnostics.py)
+
+# Same source/flags/artifact layout, with the original guard metadata search.
+add_executable(time-measure-acceleration-guard-reference
+    tests/measure_acceleration_synthetic_experiments.cpp
+    cores/gameboy/GameBoyMachine.cpp cores/gamegear/GameGearMachine.cpp
+    inst_cycle/research/MachineBlock.cpp ${TIME_RESEARCH_BLOCK_SOURCE})
+target_compile_definitions(time-measure-acceleration-guard-reference PRIVATE TIME_RESEARCH_REFERENCE_GUARDS=1)
+target_link_libraries(time-measure-acceleration-guard-reference PRIVATE time-gameboy-interpreter-core time-gamegear-core)
+add_test(NAME smoke-acceleration-guard-reference COMMAND time-measure-acceleration-guard-reference --smoke)
+set_tests_properties(smoke-acceleration-guard-reference PROPERTIES TIMEOUT 120)
+
+# Independent mapped-view candidate, retaining reference metadata lookup.
+add_executable(time-measure-acceleration-code-view
+    tests/measure_acceleration_synthetic_experiments.cpp
+    cores/gameboy/GameBoyMachine.cpp cores/gamegear/GameGearMachine.cpp
+    inst_cycle/research/MachineBlock.cpp ${TIME_RESEARCH_BLOCK_SOURCE})
+target_compile_definitions(time-measure-acceleration-code-view PRIVATE TIME_RESEARCH_REFERENCE_GUARDS=1 TIME_RESEARCH_CONTIGUOUS_CODE_VIEW=1)
+target_link_libraries(time-measure-acceleration-code-view PRIVATE time-gameboy-interpreter-core time-gamegear-core)
+add_test(NAME smoke-acceleration-code-view COMMAND time-measure-acceleration-code-view --smoke)
+set_tests_properties(smoke-acceleration-code-view PROPERTIES TIMEOUT 120)
+add_executable(time-smoke-code-view tests/smoke_code_view.cpp ${TIME_RESEARCH_BLOCK_SOURCE})
+target_link_libraries(time-smoke-code-view PRIVATE time-gameboy-interpreter-core time-gamegear-core)
+add_test(NAME smoke-code-view COMMAND time-smoke-code-view)
+
+add_executable(time-smoke-code-view-boundaries
+    tests/smoke_research_machine_boundaries.cpp
+    cores/gameboy/GameBoyMachine.cpp cores/gamegear/GameGearMachine.cpp
+    inst_cycle/research/MachineBlock.cpp ${TIME_RESEARCH_BLOCK_SOURCE})
+target_compile_definitions(time-smoke-code-view-boundaries PRIVATE TIME_RESEARCH_REFERENCE_GUARDS=1 TIME_RESEARCH_CONTIGUOUS_CODE_VIEW=1)
+target_link_libraries(time-smoke-code-view-boundaries PRIVATE time-gameboy-interpreter-core time-gamegear-core)
+add_test(NAME smoke-code-view-boundaries COMMAND time-smoke-code-view-boundaries)

@@ -132,6 +132,7 @@ public:
 
     std::uint64_t readRegister(std::uint32_t id, IR::ValueType) override
     {
+        TIME_RESEARCH_SCOPE(registerPhase, IR::Research::Phase::RegisterRead);
         using GameGearIR::Register;
         switch (static_cast<Register>(id)) {
         case Register::A: return static_cast<std::uint8_t>(cpu_.AF >> 8u);
@@ -154,6 +155,7 @@ public:
 
     void writeRegister(std::uint32_t id, IR::ValueType type, std::uint64_t value) override
     {
+        TIME_RESEARCH_SCOPE(registerPhase, IR::Research::Phase::RegisterWrite);
         using GameGearIR::Register;
         const auto byte = static_cast<std::uint8_t>(value);
         const auto word = static_cast<std::uint16_t>(value);
@@ -293,6 +295,7 @@ public:
     std::function<void()> analysisBegin;
     std::function<void()> analysisCpuComplete;
     CpuFeedback step() override {
+        TIME_RESEARCH_SCOPE(cpuStepPhase, IR::Research::Phase::CpuStep);
         if (!romLoaded_) {
             return lastFeedback_;
         }
@@ -1411,8 +1414,18 @@ ExecutionSliceResult GameGearMachine::runResearchBlock(IR::Research::BoundBlock&
                impl->capture || impl->snapshotExecution || impl->mem.debugEngine || !impl->nativeTrampolines.empty() ||
                attachedExecutorPolicy().backend()!=ExecutionBackend::Baseline || impl->cpu.PC!=block.instructions[index].address ||
                (impl->cpu.hasInstructionFetchObserver() ||
-                !binding.guardsMatch(impl->mem.codeMappingGeneration(), impl->context.researchExecutionState(), GameGearIR::kHelperAbiVersion,
-                   [&](uint16_t a,uint8_t& b){return impl->mem.peekCodeByte(a,b);}, index == 0 || !reuseCodeGuard)))return false;
+                !binding.
+#ifdef TIME_RESEARCH_CONTIGUOUS_CODE_VIEW
+                guardsMatchView(
+#else
+                guardsMatch(
+#endif
+impl->mem.codeMappingGeneration(), impl->context.researchExecutionState(), GameGearIR::kHelperAbiVersion,
+                   [&](uint16_t a,uint8_t& b){return impl->mem.peekCodeByte(a,b);},
+#ifdef TIME_RESEARCH_CONTIGUOUS_CODE_VIEW
+                   [&](uint16_t a, std::size_t n){return impl->mem.checkedCodeView(a,n);},
+#endif
+                   index == 0 || !reuseCodeGuard)))return false;
             impl->context.researchBegin(impl->cpu.PC);return true;
         },
         [&](const IR::GuestInstruction& i,const IR::InterpreterResult& r){TIME_RESEARCH_SCOPE(cpuPhase, IR::Research::Phase::CpuRetirement);return impl->context.researchRetire(i,r);},
