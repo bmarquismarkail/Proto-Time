@@ -353,6 +353,21 @@ BMMQ::RealtimeVideoSubmission GameBoyPPU::buildRealtimeFrame(const BMMQ::VideoDe
     return BMMQ::RealtimeVideoSubmission{.packet = std::move(packet)};
 }
 
+uint32_t GameBoyPPU::cyclesUntilNextEvent() const {
+    if (!memoryMap || scanlineReadyPending_ || vblankPending_ || dotCounter_ >= kCyclesPerScanline) return 0u;
+    if ((memoryMap->peek(0xFF40) & 0x80u) == 0u) {
+        return lcdEnabledLastStep_ || dotCounter_ || ly_ || ppuMode_ || lastReadyScanline_ || hasCapturedScanlines_
+            ? 1u : UINT32_MAX;
+    }
+    if (!lcdEnabledLastStep_) return 1u;
+    if (ly_ < 144u) {
+        if (dotCounter_ >= kScanlineCaptureCycle && !capturedScanlines_[ly_]) return 1u;
+        if (dotCounter_ < 80u) return 80u - dotCounter_;
+        if (dotCounter_ < 252u) return 252u - dotCounter_;
+    }
+    return kCyclesPerScanline - dotCounter_;
+}
+
 void GameBoyPPU::step(uint32_t cpuCycles) {
     if (!memoryMap) return;
 

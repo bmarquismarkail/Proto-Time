@@ -1,4 +1,5 @@
 #pragma once
+#include "machine/plugins/debug/DebugEngine.hpp"
 // Game Boy memory map abstraction.
 // References: Pan Docs (https://gbdev.io/pandocs/)
 //
@@ -29,6 +30,12 @@ class GameBoyMemoryMap final : public BMMQ::MemoryStorage<uint16_t, uint8_t> {
 public:
     GameBoyMemoryMap();
     ~GameBoyMemoryMap() = default;
+    GameBoyMemoryMap(const GameBoyMemoryMap&) = default;
+    GameBoyMemoryMap& operator=(const GameBoyMemoryMap&) = default;
+    GameBoyMemoryMap(GameBoyMemoryMap&&) = default;
+    GameBoyMemoryMap& operator=(GameBoyMemoryMap&&) = default;
+    BMMQ::Debug::DebugEngine* debugEngine = nullptr;
+    void debugCommitRam(uint16_t address, uint8_t value) noexcept;
 
     void reset();
     BMMQ::Space::ExecutionController* snapshotExecution=nullptr;
@@ -82,6 +89,11 @@ public:
     // Phase 11 IR code guards may inspect only regions whose reads are direct,
     // stable, and free of mapper/MMIO/device side effects.
     [[nodiscard]] bool peekExecutableByte(uint16_t address, uint8_t& value) const noexcept;
+
+    // Borrow only for an immediate machine-lane comparison; never retain across
+    // callbacks, retirement, mapping changes or lifecycle operations. Empty means
+    // unsupported/non-contiguous: fall back to peekExecutableByte.
+    [[nodiscard]] std::span<const uint8_t> checkedCodeView(uint16_t address, std::size_t size) const noexcept;
 
     // Save state export/import.
     std::vector<uint8_t> exportState() const;

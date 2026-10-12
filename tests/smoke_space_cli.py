@@ -94,5 +94,12 @@ with tempfile.TemporaryDirectory(prefix='time-space-execution-cli-') as work:
     assert int(replies[8]['execution']['baselineInstructions'])==2
     evidence=json.loads(project.read_text())
     assert any(d.get('executionSource')=='snapshot' and 'executionSupplier' in d for d in evidence['dependencies'])
-    assert json.loads((checkpoint/'manifest.json').read_text())['schemaVersion']==2
+    manifest=json.loads((checkpoint/'manifest.json').read_text())
+    assert manifest['schemaVersion']==3 and manifest['core']=='gameboy'
+    manifest['schemaVersion']=2
+    manifest.pop('core')
+    (checkpoint/'manifest.json').write_text(json.dumps(manifest))
+    batch.write_text(json.dumps({'op':'restore','path':str(checkpoint)})+'\n'+json.dumps({'op':'status'})+'\n')
+    legacy=subprocess.run([space,'explore','--rom',str(rom),'--project',str(project),'--execution','snapshot','--commands',str(batch)],capture_output=True,text=True)
+    assert legacy.returncode==0,legacy.stdout+legacy.stderr
 print('S.P.A.C.E. snapshot CLI replay and explicit mode switch passed')

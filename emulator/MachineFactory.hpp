@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <utility>
 
 #include "machine/Machine.hpp"
 
@@ -22,6 +23,9 @@ struct MachineDescriptor {
     std::string displayName;
     int defaultFrameWidth = 160;
     int defaultFrameHeight = 144;
+    // Stable hardware family, independent of a provider's display/alias ID.
+    // Empty preserves the existing built-in ID convention.
+    std::string familyId;
 };
 
 class MachineRegistry {
@@ -29,6 +33,8 @@ public:
     using Factory = std::function<std::unique_ptr<Machine>()>;
 
     void registerProvider(MachineDescriptor descriptor, Factory factory);
+    // All-or-nothing registration for an externally validated module.
+    void registerProviders(std::vector<std::pair<MachineDescriptor, Factory>> providers);
     [[nodiscard]] bool contains(std::string_view id) const noexcept;
     [[nodiscard]] const MachineDescriptor& descriptor(std::string_view id) const;
     [[nodiscard]] std::unique_ptr<Machine> create(std::string_view id) const;

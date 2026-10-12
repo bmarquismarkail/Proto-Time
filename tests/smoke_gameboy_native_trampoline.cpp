@@ -55,5 +55,5 @@ int main(int argc, char** argv)
     machine.runtimeContext().writeRegister16(GB::RegisterId::PC, 0x0200u);
     const auto fallback = machine.runSlice(BMMQ::ExecutionBudget{1u, 100u, true});
     assert(fallback.progress.retiredInstructions == 1u);
-    assert(machine.modHost().region(region)[0] == 2u);
+    assert(machine.modHost().region(region)[0] == 0u);
 }

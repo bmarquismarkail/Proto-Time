@@ -57,6 +57,8 @@ using ExecutionStateCallback = std::uint64_t (*)(const void*) noexcept;
 
 class CoreAdapter final : public IR::IIrCoreAdapter {
 public:
+    explicit CoreAdapter(bool researchExtended) noexcept : researchExtended_(researchExtended) {}
+
     CoreAdapter() = default;
     CoreAdapter(const void* opaque, ExecutionStateCallback executionState) noexcept
         : opaque_(opaque), executionState_(executionState)
@@ -75,6 +77,7 @@ public:
     validateExecutionState(const IR::Block& block) const override;
 
 private:
+    bool researchExtended_ = false;
     const void* opaque_ = nullptr;
     ExecutionStateCallback executionState_ = nullptr;
 };

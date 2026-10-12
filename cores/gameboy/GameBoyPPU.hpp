@@ -30,11 +30,17 @@ public:
 
     GameBoyPPU();
     ~GameBoyPPU() = default;
+    GameBoyPPU(const GameBoyPPU&) = default;
+    GameBoyPPU& operator=(const GameBoyPPU&) = default;
+    GameBoyPPU(GameBoyPPU&&) = default;
+    GameBoyPPU& operator=(GameBoyPPU&&) = default;
 
     void reset();
 
     // Advance PPU by CPU cycles (Pan Docs: 4 cycles per dot)
     void step(uint32_t cpuCycles);
+    [[nodiscard]] uint32_t cyclesUntilNextEvent() const;
+
 
     // Event consumption (like GameGearVDP::takeScanlineReady)
     [[nodiscard]] bool takeScanlineReady();

@@ -1,4 +1,5 @@
 #include "GameGearIrExecution.hpp"
+#include "inst_cycle/research/ExtendedLowering.hpp"
 
 #include <optional>
 #include <utility>
@@ -76,7 +77,7 @@ void nextPc(BlockBuilder& builder, std::uint16_t address)
     builder.emit(Opcode::SetProgramCounter, {Operand::immediate(address, ValueType::I16)});
 }
 
-bool lowerInstruction(BlockBuilder& builder, const SourceInstruction& instruction)
+bool lowerInstruction(BlockBuilder& builder, const SourceInstruction& instruction, bool extended)
 {
     if (instruction.length == 0u || instruction.length > instruction.bytes.size()) return false;
     const auto opcode = instruction.bytes[0];
@@ -157,7 +158,7 @@ bool lowerInstruction(BlockBuilder& builder, const SourceInstruction& instructio
         builder.endInstruction();
         return true;
     }
-    return false;
+    return extended && IR::Research::lowerExtended(builder, instruction, false);
 }
 
 bool validRegister(std::uint64_t id) noexcept
@@ -190,14 +191,14 @@ IR::BlockPtr CoreAdapter::lower(const IR::LoweringRequest& request, std::string*
     auto exit = BlockExit::Sequential;
     std::size_t lowered = 0u;
     for (const auto& instruction : request.instructions) {
-        if (!lowerInstruction(builder, instruction)) {
+        if (!lowerInstruction(builder, instruction, researchExtended_)) {
             exit = BlockExit::Unsupported;
             break;
         }
         codeBytes.insert(codeBytes.end(), instruction.bytes.begin(),
                          instruction.bytes.begin() + instruction.length);
         ++lowered;
-        if (instruction.bytes[0] == 0x18u) {
+        if (instruction.bytes[0] == 0x18u || (researchExtended_ && BMMQ::IR::Research::extendedControl(instruction.bytes[0]))) {
             exit = BlockExit::ControlFlow;
             break;
         }

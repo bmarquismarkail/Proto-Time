@@ -175,6 +175,10 @@ public:
 
     void invalidateAll() noexcept
     {
+        ++mappingGeneration_;
+        // Construction and clearEntries leave every slot empty. Baseline
+        // mapping guards need a new generation, not a full index rewrite.
+        if (blocks_.empty()) return;
         for (auto& block : blocks_) {
             if (block->valid) {
                 block->valid = false;
@@ -183,7 +187,6 @@ public:
         }
         slots_.fill(Slot{});
         activeBlocksByPage_.fill(0u);
-        ++mappingGeneration_;
     }
 
     void noteUnsupportedFallback(DataType opcode) noexcept {

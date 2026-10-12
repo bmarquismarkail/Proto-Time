@@ -1,5 +1,6 @@
 #include "Analysis.hpp"
 #include "Porting.hpp"
+#include "Meaning.hpp"
 #include "cores/gameboy/hardware_registers.hpp"
 #include <map>
 #include <set>
@@ -28,6 +29,28 @@ std::string writeOperand(const Json& instruction){
     switch(op){case 0x02:case 0x12:case 0x22:case 0x32:case 0xe0:case 0xe2:case 0xea:return "memory";
         case 0x0a:case 0x1a:case 0x2a:case 0x3a:case 0xf0:case 0xf2:case 0xfa:return "r:A";default:return "";}
 }
+std::pair<std::string,std::string> gearCopyOperands(const Json& instruction){
+    auto code=bytes(instruction);size_t i=0;uint8_t index=0;
+    while(i<code.size()&&(code[i]==0xdd||code[i]==0xfd))index=code[i++];
+    if(i==code.size())return {};
+    auto op=code[i++];constexpr const char* regs[]={"r:B","r:C","r:D","r:E","r:H","r:L","memory","r:A"};
+    if(op>=0x40&&op<0x80&&op!=0x76){
+        auto src=op&7,dst=(op>>3)&7;
+        // Index-byte aliases are captured as whole IX/IY lanes: do not pretend
+        // that matching a byte proves a copy of the complete pair.
+        if(index&&src!=6&&dst!=6&&(src==4||src==5||dst==4||dst==5))return {};
+        return {regs[src],regs[dst]};
+    }
+    if(op==0x02||op==0x12||op==0x32||op==0xd3)return {"r:A","memory"};
+    if(op==0x0a||op==0x1a||op==0x3a||op==0xdb)return {"memory","r:A"};
+    if(op==0xed&&i<code.size()){
+        auto ed=code[i];
+        if((ed&0xc7)==0x40&&((ed>>3)&7)!=6)return {"memory",regs[(ed>>3)&7]};
+        if((ed&0xc7)==0x41&&((ed>>3)&7)!=6)return {regs[(ed>>3)&7],"memory"};
+        if(ed==0xa0||ed==0xa8||ed==0xb0||ed==0xb8)return {"memory","memory"};
+    }
+    return {};
+}
 bool operand(const std::string& expected,const Json& d){auto location=d.at("location").get<std::string>();return expected=="memory"?location.starts_with("m:"):location==expected;}
 using Visit=std::pair<std::string,std::string>;
 using Writer=std::tuple<std::string,std::string,std::string,std::string>;
@@ -36,8 +59,30 @@ bool cpu(const Json& d){return d.value("origin",std::string("unknown"))=="cpu"&&
 void references(const Json& list,const Strings& ids){if(!list.is_array())throw std::invalid_argument("invalid analysis references");for(auto& x:list)if(!x.is_string()||!ids.contains(x.get<std::string>()))throw std::invalid_argument("unknown analysis reference");}
 size_t bounded(const Json& request,const char* key,size_t fallback,size_t max){if(!request.contains(key))return fallback;auto& n=request[key];if(!n.is_number_integer()||n<0||n>max)throw std::invalid_argument(std::string("invalid ")+key);return n.get<size_t>();}
 }
-Json hardwareDescriptor(uint64_t loc,bool write){
+Json hardwareDescriptor(uint64_t loc,bool write,std::string_view core){
     auto space=loc>>32;auto a=uint16_t(loc);std::string category,role,name;
+    if(core=="gamegear"){
+        (void)coreModel(core);
+        if(space==1&&write){category="cartridge.mapping";role="bank.control";}
+        else if(space==7){
+            if(a<=5){category=a==0?"input":"serial";role=a==0?"input.sampling":"serial.io";}
+            else if(a==6){category="audio.stereo";role="audio.configuration";}
+            else if(a>=7&&a<=0x3f){category=(a&1)?"input":"mapping";role=(a&1)?"input.selection":"bank.control";}
+            else if((a&0xc0)==0x80){category="graphics.display";role=(a&1)?"display.configuration":"graphics.port-transfer";}
+            else if((a&0xc0)==0x40){category=write?"audio.channel":"timer";role=write?"audio.configuration":"timer.sampling";}
+            else if((a&0xfe)==0xdc){category="input";role="input.sampling";}
+            name="port "+std::to_string(a);
+        }else if(space==8){category="graphics.vram";role=write?"graphics.vram-output":"graphics.vram-read";name="VDP VRAM";}
+        else if(space==9){category="graphics.palette";role=write?"graphics.palette-output":"graphics.palette-read";name="VDP CRAM";}
+        else if(space==10){category="graphics.display";role="display.configuration";name="VDP register "+std::to_string(a);}
+        else if(space==11){category="graphics.state";role="device.state-transition";name="VDP internal byte "+std::to_string(a);}
+        else if(space==4){category="graphics.display";role="graphics.compatibility-window";}
+        else if(space==5){category="audio.channel";role="audio.compatibility-window";}
+        else if(space==6){category="input";role="input.sampling";}
+        if(category.empty())return nullptr;
+        if(!write&&category!="input"&&category!="serial"&&category!="timer"&&category!="graphics.display")role="";
+        return {{"category",category},{"role",role},{"name",name},{"address",a},{"location",decimal(loc)},{"model","gamegear/current"}};
+    }
     if(space==1&&write){category="cartridge.mapping";role="bank.control";}
     else if(space==4){if(a>=0x8000&&a<=0x97ff){category="graphics.tile-data";role="graphics.tile-data-output";}
         else if(a>=0x9800&&a<=0x9fff){category="graphics.tile-map";role="graphics.tile-map-output";}
@@ -62,14 +107,15 @@ Json hardwareDescriptor(uint64_t loc,bool write){
     return {{"category",category},{"role",role},{"name",name},{"address",a},{"location",decimal(loc)},{"model",cgbOnly?"cgb-specific / unassessed in DMG":"dmg/shared"}};
 }
 std::string evidenceDigest(const Json& p){Json facts;
-    for(auto key:{"romSha256","core","instructions","edges","dependencies","gaps","transfers","boundaries"})if(p.contains(key))facts[key]=p[key];
+    for(auto key:{"romSha256","core","instructions","edges","dependencies","gaps","transfers","boundaries","symbolImports","purposeClaims"})if(p.contains(key))facts[key]=p[key];
     return hash(facts.dump());
 }
 Json analyzeProject(Json p,size_t limit){
+    const std::string version=p.value("core",std::string("gameboy"))=="gamegear"?"gamegear-hardware-roles-1":analyzerVersion;
     if(limit>Project::defaultBudget)throw std::invalid_argument("analysis budget exceeds project limit");
     Project::validate(p);p.erase("analysis");
-    auto source=evidenceDigest(p);auto identity=hash(p.at("romSha256").get<std::string>()+":"+analyzerVersion+":"+p.at("revision").get<std::string>()+":"+source);
-    Json a={{"schemaVersion",1},{"analyzerVersion",analyzerVersion},{"id",identity},{"romSha256",p["romSha256"]},{"core",p["core"]},
+    auto source=evidenceDigest(p);auto identity=hash(p.at("romSha256").get<std::string>()+":"+version+":"+p.at("revision").get<std::string>()+":"+source);
+    Json a={{"schemaVersion",1},{"analyzerVersion",version},{"id",identity},{"romSha256",p["romSha256"]},{"core",p["core"]},
         {"sourceRevision",p["revision"]},{"evidenceDigest",source},{"incomplete",false},{"limitations",Json::array({"Execution-driven evidence; unvisited paths and gameplay meaning remain unassessed."})}};
     for(auto key:{"routines","loops","findings","hardwareFacts","dataTransfers","dependencyEdges"})a[key]=Json::array();
     if(!p["gaps"].empty()){a["incomplete"]=true;a["limitations"].push_back("Capture contains gaps; conclusions cover retained evidence only.");}
@@ -78,6 +124,8 @@ Json analyzeProject(Json p,size_t limit){
     if(unknown){a["incomplete"]=true;a["limitations"].push_back("Unknown origins in "+std::to_string(unknown)+" access records; excluded from CPU-role inference.");}
     try {
         Budget budget{limit};budget.use(p.dump().size()*2);
+        if(p.contains("purposeClaims"))budget.use(p["purposeClaims"].dump().size()*2);
+        a["purposeFindings"]=purposeFindings(p);
         Graph graph,reverse;std::map<std::string,std::string> at;Strings ambiguous,entries;
         for(auto it=p["instructions"].begin();it!=p["instructions"].end();++it){budget.use(768);graph[it.key()];reverse[it.key()];auto loc=it.value()["location"].get<std::string>();if(at.contains(loc))ambiguous.insert(loc);at[loc]=it.key();}
         auto resolve=[&](const Json& t){if(t.contains("nextInstruction"))return t["nextInstruction"].get<std::string>();auto loc=t["targetLocation"].get<std::string>();return at.contains(loc)&&!ambiguous.contains(loc)?at[loc]:std::string();};
@@ -120,7 +168,8 @@ Json analyzeProject(Json p,size_t limit){
         std::map<std::string,std::string> ancestry;
         for(auto& [id,d]:dependencies)if(cpu(*d)&&(*d)["access"]=="read"){auto w=writers.find(writerKey(*d,true));if(w!=writers.end()&&w->second.size()==1){ancestry[id]=w->second.front();a["dependencyEdges"].push_back({{"from",id},{"to",w->second.front()},{"kind","supplier"}});}}
         for(auto& [_,group]:visits){if(group.empty())continue;auto inst=(*group.front())["instruction"].get<std::string>();if(inst.empty())continue;
-            auto src=readOperand(p["instructions"][inst]),dst=writeOperand(p["instructions"][inst]);if(src.empty())continue;
+            auto copy=p["core"]=="gameboy"?std::pair{readOperand(p["instructions"][inst]),writeOperand(p["instructions"][inst])}:gearCopyOperands(p["instructions"][inst]);
+            auto& [src,dst]=copy;if(src.empty())continue;
             std::vector<const Json*> reads;for(auto* d:group)if(cpu(*d)&&(*d)["access"]=="read"&&operand(src,*d))reads.push_back(d);
             if(reads.size()!=1)continue;
             for(auto* d:group)if(cpu(*d)&&(*d)["access"]=="write"&&operand(dst,*d)&&(*d)["value"]==(*reads.front())["value"]){
@@ -133,7 +182,7 @@ Json analyzeProject(Json p,size_t limit){
                 {"limitations",Json::array({"Observed hardware role; gameplay purpose is not established."})}};
             f["dependencies"].push_back(d["id"]);auto branch=d["branch"];if(std::find(f["branches"].begin(),f["branches"].end(),branch)==f["branches"].end())f["branches"].push_back(branch);};
         std::map<Visit,size_t> inputCounts;
-        for(auto& d:p["dependencies"]){auto key=d["location"].get<std::string>();if(!key.starts_with("m:"))continue;auto descriptor=hardwareDescriptor(counter(Json(key.substr(2))),d["access"]=="write");
+        for(auto& d:p["dependencies"]){auto key=d["location"].get<std::string>();if(!key.starts_with("m:"))continue;auto descriptor=hardwareDescriptor(counter(Json(key.substr(2))),d["access"]=="write",p.at("core").get<std::string>());
             if(!descriptor.is_null()){budget.use(768);a["hardwareFacts"].push_back({{"dependency",d["id"]},{"descriptor",descriptor},{"origin",d.value("origin",std::string("unknown"))},{"accepted",d["accepted"]},{"access",d["access"]}});}
             if(!cpu(d))continue;
             auto role=descriptor.is_null()?std::string():descriptor["role"].get<std::string>();if(!role.empty())finding(d,role,"accepted-cpu-hardware-access");
@@ -146,7 +195,9 @@ Json analyzeProject(Json p,size_t limit){
             if(!sourceId.empty()){Json transfer={{"id",hash(d["id"].get<std::string>()+":"+sourceId)},{"source",sourceId},{"target",d["id"]},{"path",path},{"branch",d["branch"]},{"truncated",truncated},
                 {"limitations",Json::array({"Load-only observed path; unsupported transformations terminate provenance."})}};budget.use(transfer.dump().size()*2);a["dataTransfers"].push_back(std::move(transfer));}
         }
-        for(auto& d:p["dependencies"]){auto inst=d["instruction"].get<std::string>();if(cpu(d)&&loopOf.contains(inst)&&d["access"]=="read"&&d["location"]=="m:"+decimal(location(6,0,0xff00))&&inputCounts[{d["branch"].get<std::string>(),inst}]>1){
+        for(auto& d:p["dependencies"]){auto inst=d["instruction"].get<std::string>();auto loc=d["location"].get<std::string>();
+            auto descriptor=loc.starts_with("m:")?hardwareDescriptor(counter(Json(loc.substr(2))),false,p.at("core").get<std::string>()):Json();
+            if(cpu(d)&&loopOf.contains(inst)&&d["access"]=="read"&&!descriptor.is_null()&&descriptor["role"]=="input.sampling"&&inputCounts[{d["branch"].get<std::string>(),inst}]>1){
             finding(d,"input.polling","repeated-input-read-in-structural-cycle");auto& f=findings[{inst,"input.polling"}];f["transfers"]=a["loops"][loopOf[inst]]["transfers"];}}
         for(auto& [_,f]:findings){budget.use(f.dump().size()*2);a["findings"].push_back(f);}
         Graph routineCalls;std::map<std::string,Strings> body;
@@ -171,10 +222,11 @@ Json analyzeProject(Json p,size_t limit){
     p["analysis"]=std::move(a);validateAnalysis(p);return p;
 }
 void validateAnalysis(const Json& p){
+    const std::string version=p.value("core",std::string("gameboy"))=="gamegear"?"gamegear-hardware-roles-1":analyzerVersion;
     auto& a=p.at("analysis");
-    if(a.at("schemaVersion")!=1||a.at("analyzerVersion")!=analyzerVersion||a.at("romSha256")!=p.at("romSha256")||a.at("core")!=p.at("core"))throw std::invalid_argument("unsupported analysis identity");
+    if(a.at("schemaVersion")!=1||a.at("analyzerVersion")!=version||a.at("romSha256")!=p.at("romSha256")||a.at("core")!=p.at("core"))throw std::invalid_argument("unsupported analysis identity");
     auto rev=counter(a.at("sourceRevision"));if(rev>counter(p.at("revision"))||a.at("evidenceDigest")!=evidenceDigest(p))throw std::invalid_argument("stale analysis evidence");
-    if(a.at("id")!=hash(p.at("romSha256").get<std::string>()+":"+analyzerVersion+":"+a.at("sourceRevision").get<std::string>()+":"+a.at("evidenceDigest").get<std::string>()))throw std::invalid_argument("invalid analysis ID");
+    if(a.at("id")!=hash(p.at("romSha256").get<std::string>()+":"+version+":"+a.at("sourceRevision").get<std::string>()+":"+a.at("evidenceDigest").get<std::string>()))throw std::invalid_argument("invalid analysis ID");
     a.at("incomplete").get<bool>();if(a.contains("retainedBytes")&&counter(a["retainedBytes"])>Project::defaultBudget)throw std::invalid_argument("invalid retained storage");if(!a.at("limitations").is_array()||counter(a.at("chargedBytes"))>Project::defaultBudget)throw std::invalid_argument("invalid analysis limits");
     for(auto& x:a["limitations"])x.get<std::string>();
     Strings instructions,blocks,deps,transfers,routines,loops,findings,branches;
@@ -192,7 +244,7 @@ void validateAnalysis(const Json& p){
         auto rule=f.at("rule").get<std::string>();if(rule!="accepted-cpu-hardware-access"&&rule!="repeated-input-read-in-structural-cycle")throw std::invalid_argument("unknown finding rule");
         for(auto& id:f["dependencies"]){auto& d=*dependency.at(id.get<std::string>());if(!cpu(d)||d["instruction"]!=f["instruction"])throw std::invalid_argument("finding has non-CPU evidence");
             auto key=d["location"].get<std::string>();if(!key.starts_with("m:"))throw std::invalid_argument("finding requires hardware evidence");
-            auto h=hardwareDescriptor(counter(Json(key.substr(2))),d["access"]=="write");
+            auto h=hardwareDescriptor(counter(Json(key.substr(2))),d["access"]=="write",p.at("core").get<std::string>());
             if(h.is_null()||(rule=="accepted-cpu-hardware-access"?h["role"]!=f["role"]:h["role"]!="input.sampling"||f["role"]!="input.polling"))throw std::invalid_argument("finding role differs from hardware evidence");}
         references(f.at("branches"),branches);
         for(auto& id:f["dependencies"])if(std::find(f["branches"].begin(),f["branches"].end(),dependency.at(id.get<std::string>())->at("branch"))==f["branches"].end())throw std::invalid_argument("missing finding origin branch");
@@ -206,7 +258,8 @@ void validateAnalysis(const Json& p){
         if(!l.at("repetition").is_object())throw std::invalid_argument("invalid repetition");
         for(auto it=l["repetition"].begin();it!=l["repetition"].end();++it){if(!branches.contains(it.key()))throw std::invalid_argument("unknown repetition branch");counter(it.value());}}
     for(auto& f:a["hardwareFacts"]){auto id=f.at("dependency").get<std::string>();if(!deps.contains(id))throw std::invalid_argument("invalid hardware fact");
-        auto& d=*dependency.at(id);auto key=d.at("location").get<std::string>();if(!key.starts_with("m:")||f.at("descriptor")!=hardwareDescriptor(counter(Json(key.substr(2))),d["access"]=="write")||f.at("origin")!=d.value("origin",std::string("unknown"))||f.at("accepted")!=d["accepted"]||f.at("access")!=d["access"])throw std::invalid_argument("hardware fact differs from evidence");}
+        auto& d=*dependency.at(id);auto key=d.at("location").get<std::string>();if(!key.starts_with("m:")||f.at("descriptor")!=hardwareDescriptor(counter(Json(key.substr(2))),d["access"]=="write",p.at("core").get<std::string>())||f.at("origin")!=d.value("origin",std::string("unknown"))||f.at("accepted")!=d["accepted"]||f.at("access")!=d["access"])throw std::invalid_argument("hardware fact differs from evidence");}
+    if(a.contains("purposeFindings")&&a["purposeFindings"]!=purposeFindings(p))throw std::invalid_argument("purpose findings differ from linked claims");
     Strings dataIds;collect(a["dataTransfers"],dataIds);
     for(auto& t:a["dataTransfers"]){if(!deps.contains(t.at("source").get<std::string>())||!deps.contains(t.at("target").get<std::string>()))throw std::invalid_argument("invalid data transfer");references(t.at("path"),deps);
         if(t["path"].empty()||t["path"][0]!=t["target"]||std::find(t["path"].begin(),t["path"].end(),t["source"])==t["path"].end()||t.at("branch")!=dependency.at(t["target"].get<std::string>())->at("branch"))throw std::invalid_argument("invalid transfer provenance");
@@ -239,6 +292,8 @@ Json queryAnalysis(const Json& p,const Json& request){
     }else if(type=="hardware"){
         auto category=request.value("category",std::string());for(auto& f:a["hardwareFacts"])if((id.empty()||f["dependency"]==id)&&(category.empty()||f["descriptor"]["category"]==category))add(f);
     }else if(type=="dependencies"){for(auto& d:p["dependencies"])if(id.empty()||d["id"]==id||d["instruction"]==id)add(d);}
+    else if(type=="purposes"){if(a.contains("purposeFindings"))collection("purposeFindings");}
+    else if(type=="symbols"){if(p.contains("symbolImports"))for(auto it=p["symbolImports"].begin();it!=p["symbolImports"].end();++it)for(auto& symbol:it.value()["symbols"])if(id.empty()||symbol["name"]==id)add(symbol);}
     else if(type=="data_transfers")collection("dataTransfers");
     else if(type=="instructions"){for(auto it=p["instructions"].begin();it!=p["instructions"].end();++it)if(id.empty()||it.key()==id)add(it.value());}
     else if(type=="transfers"){if(p.contains("transfers"))for(auto& t:p["transfers"])if(id.empty()||t["id"]==id||t["instruction"]==id)add(t);}

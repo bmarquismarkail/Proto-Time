@@ -1,0 +1,4 @@
+{
+    global: time_get_machine_runtime_module_v2;
+    local: *;
+};

@@ -1,0 +1,19 @@
+{
+  "schema": "proto-time-rom-corpus-contract-v1",
+  "cases": [
+    {"core": "gameboy", "workload": "collect-forward", "fixture": "port-game", "romSha256": "bdb75e0cf94d1bca4379cdd2fb92dbebb61edcd1a6a3511db3cb81667bdf1ae5"},
+    {"core": "gamegear", "workload": "collect-forward", "fixture": "port-game", "romSha256": "40587c4d376e6b254477b11368dfff34d098dc26ad740d3443b6052d457c48d9"},
+    {"core": "gameboy", "workload": "collect-reverse", "fixture": "port-reverse-game", "romSha256": "8dddf0067247e35d38701684ee9cfc7868b12ba22793f233b2da15e5f9d3a7bd"},
+    {"core": "gamegear", "workload": "collect-reverse", "fixture": "port-reverse-game", "romSha256": "fd082cf059ea570e69aba9c7e188315e7e8ee3177099d54858a277a15e36dbbd"}
+  ],
+  "scenarioEndpoints": {
+    "idle": [1,1,0,0], "first": [4,1,1,0], "leave-item": [3,1,1,0],
+    "revisit-item": [4,1,1,0], "wall": [5,1,1,0], "back-from-wall": [4,1,1,0],
+    "down": [4,5,2,0], "up-gap": [4,4,2,0], "cross-gap": [10,4,2,0],
+    "locked-exit": [10,4,2,0], "to-item": [8,4,2,0], "third": [8,5,3,0],
+    "win": [10,5,3,1], "victory": [10,5,3,1], "reset": [1,1,0,0],
+    "priority": [2,1,0,0], "start-edge-move": [2,1,0,0], "start-held": [3,1,0,0]
+  },
+  "requiredRegions": ["Irq", "Init", "CallBank1", "CallBank2", "ReadInput", "Render", "SoundTick", "Tick", "Attempt"],
+  "scope": "Two repository-owned games and their two standalone ports; bounded fixture coverage, not general game compatibility."
+}

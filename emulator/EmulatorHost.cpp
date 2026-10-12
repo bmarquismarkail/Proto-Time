@@ -1,4 +1,5 @@
 #include "emulator/EmulatorHost.hpp"
+#include "emulator/DynamicMachineProvider.hpp"
 
 #include <cstdio>
 #include <exception>
@@ -48,8 +49,7 @@ BootstrappedMachine bootstrapMachine(const EmulatorConfig& options)
 
 BootstrappedMachine bootstrapMachine(const EmulatorConfig& options, std::span<const std::uint8_t> suppliedRom)
 {
-    const auto kind = parseMachineKind(options.machineKind.value());
-    auto instance = createMachine(kind);
+    auto instance = createProvidedMachine(options.machineKind.value(), options.machineProviderPath);
 
     if (auto* romPathAware = dynamic_cast<IRomPathAwareMachine*>(instance.machine.get()); romPathAware != nullptr) {
         romPathAware->setRomSourcePath(options.romPath);
@@ -61,7 +61,9 @@ BootstrappedMachine bootstrapMachine(const EmulatorConfig& options, std::span<co
             throw std::invalid_argument(
                 std::string(instance.descriptor.displayName) + " does not support external boot ROM loading");
         }
-        bootRomMachine->loadExternalBootRom(readBinaryFile(*options.bootRomPath));
+        auto bytes = readBinaryFile(*options.bootRomPath);
+        bootRomMachine->loadExternalBootRom(bytes);
+        instance.machine->setProviderBootRom(std::move(bytes));
     }
 
     const std::vector<std::uint8_t> romBytes(suppliedRom.begin(), suppliedRom.end());

@@ -11,6 +11,7 @@
 //   - Audio frame counter for event emission
 
 #include <array>
+#include <algorithm>
 #include <cstdint>
 #include <deque>
 #include <vector>
@@ -108,11 +109,21 @@ class GameBoyAPU {
 public:
     GameBoyAPU();
     ~GameBoyAPU() = default;
+    GameBoyAPU(const GameBoyAPU&) = default;
+    GameBoyAPU& operator=(const GameBoyAPU&) = default;
+    GameBoyAPU(GameBoyAPU&&) = default;
+    GameBoyAPU& operator=(GameBoyAPU&&) = default;
 
     void reset();
 
     // Advance APU by CPU cycles (4194304 Hz master clock)
     void step(uint32_t cpuCycles);
+    [[nodiscard]] uint32_t cyclesUntilNextEvent() const noexcept {
+        if (apu_.sampleAccumulator >= kMasterClockHz ||
+            (apu_.masterEnabled && apu_.frameSequencerCounter >= kCyclesPerFrameStep)) return 0u;
+        const auto sample = (kMasterClockHz - apu_.sampleAccumulator + kSampleRate - 1u) / kSampleRate;
+        return apu_.masterEnabled ? std::min(sample, kCyclesPerFrameStep - apu_.frameSequencerCounter) : sample;
+    }
 
     // Register access (called from LR3592_DMG or memory map intercept)
     void writeRegister(uint16_t address, uint8_t value);
