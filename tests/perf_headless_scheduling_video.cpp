@@ -1,3 +1,6 @@
+#ifdef TIME_RESEARCH_HALTED_LATENCY
+#include "inst_cycle/research/HaltedAdvance.hpp"
+#endif
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
@@ -432,6 +435,10 @@ int main()
     });
 
     std::thread emulationLane([&]() {
+#ifdef TIME_RESEARCH_HALTED_LATENCY
+        BMMQ::IR::Research::haltedAdvanceEnabled=true;
+        BMMQ::IR::Research::haltedAdvanceStats={};
+#endif
         const auto deadline = startedAt + std::chrono::seconds(2);
         std::uint64_t servicedInputRevision = 0u;
         auto lastUpdate = startedAt;
@@ -491,6 +498,11 @@ int main()
             }
 
         }
+#ifdef TIME_RESEARCH_HALTED_LATENCY
+        std::cout << "halt advance bulk_calls=" << BMMQ::IR::Research::haltedAdvanceStats.bulkCalls
+                  << " logical_idle_polls=" << BMMQ::IR::Research::haltedAdvanceStats.logicalIdlePolls
+                  << " canonical_steps=" << BMMQ::IR::Research::haltedAdvanceStats.canonicalSteps << '\n';
+#endif
         emulationDone.store(true, std::memory_order_release);
     });
 

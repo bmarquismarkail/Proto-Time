@@ -3,6 +3,7 @@
 #include "machine/ExecutionSlice.hpp"
 #include <array>
 #include <algorithm>
+#include <type_traits>
 
 namespace BMMQ::IR::Research {
 inline constexpr std::uint32_t kMachineBlockBindingVersion = 2;
@@ -139,11 +140,13 @@ BoundBlock bindMachineBlock(const CompiledBlock &, IIrCoreAdapter &,
                             const Owner &, std::uint64_t generation,
                             std::uint64_t mapping);
 
-template <class Check, class CpuRetire, class MachineRetire, class Fault>
+template <class Host, class Check, class CpuRetire, class MachineRetire, class Fault,
+          class TypedEntry = std::nullptr_t>
 ExecutionSliceResult executeMachineBlock(
-    BoundBlock &binding, InterpreterHost &host, const ExecutionBudget &budget,
+    BoundBlock &binding, Host &host, const ExecutionBudget &budget,
     InstructionRetirementSink *observer, Check check, CpuRetire cpuRetire,
-    MachineRetire machineRetire, Fault fault, DirectRegisters* registers = nullptr) {
+    MachineRetire machineRetire, Fault fault, DirectRegisters* registers = nullptr,
+    TypedEntry typedEntry = nullptr) {
   struct State {
     Check &check;
     CpuRetire &cpuRetire;
@@ -191,9 +194,20 @@ ExecutionSliceResult executeMachineBlock(
   } state{check, cpuRetire, machineRetire, budget, observer};
   state.slice.exitReason = ExecutionSliceExitReason::MachineBoundary;
   try {
-    const auto progress =
-        binding.code().execute(host, {&state, &State::before, &State::retire},
-                               budget.maxInstructions, budget.maxCycles, registers);
+    const auto progress = [&] {
+      if constexpr (std::is_same_v<TypedEntry, std::nullptr_t>) {
+        return binding.code().execute(host, {&state, &State::before, &State::retire},
+                                      budget.maxInstructions, budget.maxCycles, registers);
+      } else {
+#ifdef TIME_RESEARCH_TYPED_INVOCATION
+        if (!typedInvocationEnabled)
+          return binding.code().execute(host, {&state, &State::before, &State::retire},
+              budget.maxInstructions, budget.maxCycles, registers);
+#endif
+        return binding.code().executeTyped(host, TypedHooks<State>{state},
+            budget.maxInstructions, budget.maxCycles, registers, typedEntry);
+      }
+    }();
     if (progress.exit == Exit::InstructionBudget)
       state.slice.exitReason = ExecutionSliceExitReason::InstructionBudget;
     if (progress.exit == Exit::CycleBudget)

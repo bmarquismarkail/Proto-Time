@@ -95,8 +95,8 @@ std::string emitWholeBlock(const Block &block, const std::string &id, std::uint3
       throw std::invalid_argument("emission guard budget exceeded");
   std::ostringstream s;
   s << "#include \"inst_cycle/research/WholeBlock.hpp\"\n#include <array>\n"
-    << "namespace BMMQ::IR::Research {\ntemplate<bool Direct> static void " << id
-    << "_entry(Invocation& c){ auto& h=c.host(); (void)h;\n";
+    << "namespace BMMQ::IR::Research {\ntemplate<bool Direct, class Context = Invocation> void " << id
+    << "_entry(Context& c){ auto& h=c.host(); (void)h;\n";
   for (std::size_t index = 0; index < block.instructions.size(); ++index) {
     const auto &i = block.instructions[index];
     if (i.operations.size() > 64)
@@ -218,7 +218,9 @@ std::string emitWholeBlock(const Block &block, const std::string &id, std::uint3
     s << "if(!c.retire(" << index << ",r))return;}\n";
   }
   s << "}\n";
+  s << "#ifndef TIME_RESEARCH_TYPED_BODIES_ONLY\n";
   metadata(s, block, id, architecture);
+  s << "#endif\n";
   s << "}\n";
   return s.str();
 }

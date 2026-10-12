@@ -40,6 +40,12 @@ public:
     void reset();
     void setSmsMode(bool enabled) noexcept;
     void step(uint32_t cpuCycles);
+    [[nodiscard]] uint32_t cyclesUntilNextScanline() const noexcept {
+        return pendingCycles_ < kCyclesPerScanline ? kCyclesPerScanline - pendingCycles_ : 0u;
+    }
+    [[nodiscard]] bool hasPendingRetirementEvent() const noexcept {
+        return scanlineReadyPending_ || vblankPending_ || irqAsserted_;
+    }
     [[nodiscard]] uint8_t readVram(uint16_t address) const;
     void writeVram(uint16_t address, uint8_t value);
     [[nodiscard]] uint8_t readOam(uint16_t address) const;

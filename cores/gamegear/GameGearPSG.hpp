@@ -19,6 +19,11 @@ public:
 
     void reset();
     void step(uint32_t cpuCycles);
+    // Fresh integer deadline; no cached state survives reset/restore.
+    [[nodiscard]] uint32_t cyclesUntilNextSample() const noexcept {
+        return samplePhase_ < kClockHz
+            ? static_cast<uint32_t>((kClockHz - samplePhase_ + kSampleRate - 1u) / kSampleRate) : 0u;
+    }
     void writeData(uint8_t value);
     void writeStereoControl(uint8_t value);
     [[nodiscard]] uint8_t readCompatRegister(uint16_t addr) const noexcept;

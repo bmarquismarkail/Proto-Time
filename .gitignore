@@ -47,3 +47,7 @@ graphify-out/
 !.internal/docs/time-representative-rom-corpus.md
 !.internal/docs/scheduling-latency-repair.md
 !.internal/docs/time-x86-acceleration-acceptance.md
+!.internal/docs/time-whole-block-next-experiments-plan.md
+!.internal/docs/time-invocation-specialization-experiment.md
+!.internal/docs/time-concrete-host-experiment.md
+!.internal/docs/time-halted-advance-experiment.md

@@ -174,6 +174,10 @@ void scalarGuards(const CompiledBlock &code) {
           "duplicate guard acquired scalar eligibility");
 }
 int main() try {
+#ifdef TIME_RESEARCH_CONCRETE_HOST_TEST
+  typedInvocationEnabled = true;
+  concreteGameGearHostEnabled = true;
+#endif
  for(bool mode:{false,true}) { directMode=mode;
   GB::GameBoyMachine gb;
   gb.loadRom(rom(emittedGameBoyCompute()));

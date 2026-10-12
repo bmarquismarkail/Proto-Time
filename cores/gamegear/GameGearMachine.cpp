@@ -1,3 +1,7 @@
+#ifdef TIME_RESEARCH_HALTED_ADVANCE
+#include "inst_cycle/research/HaltedAdvance.hpp"
+#include <typeinfo>
+#endif
 #include <type_traits>
 #include "GameGearMachine.hpp"
 #include "space/CoreModel.hpp"
@@ -30,6 +34,12 @@
 #include "GameGearSaveManager.hpp"
 #include "GameGearIrExecution.hpp"
 #include "GameGearVisualDebugAdapter.hpp"
+
+#ifdef TIME_RESEARCH_TYPED_INVOCATION
+#define TIME_RESEARCH_TYPED_BODIES_ONLY
+#include "research-whole-blocks.cpp"
+#undef TIME_RESEARCH_TYPED_BODIES_ONLY
+#endif
 
 namespace BMMQ {
 
@@ -382,6 +392,9 @@ public:
     const IInvalidationCapability* invalidationCapability() const override { return this; }
 
     IR::InterpreterHost& researchHost() noexcept {return irHost_;}
+#ifdef TIME_RESEARCH_TYPED_INVOCATION
+    GameGearIrHost& researchConcreteHost() noexcept {return irHost_;}
+#endif
     uint64_t researchExecutionState() const noexcept {return executionState();}
     bool researchGuards(const IR::Block& block, bool checkCodeBytes = true) const noexcept {
         return !cpu_.hasInstructionFetchObserver() && guardsMatch(block, checkCodeBytes);
@@ -394,6 +407,19 @@ public:
         lastFeedback_.executionPath=ExecutionPathHint::NativeIr;
         return lastFeedback_;
     }
+#ifdef TIME_RESEARCH_HALTED_ADVANCE
+    bool researchBuiltinIrComponents() const noexcept {
+        return !dynamicIrAdapter_ && !dynamicIrBackend_;
+    }
+    CpuFeedback researchSliceStep() { return stepWithinExecutionSlice(); }
+    CpuFeedback researchIdleFeedback() noexcept {
+        lastFeedback_.pcBefore = lastFeedback_.pcAfter = cpu_.PC;
+        lastFeedback_.retiredCycles = 4u;
+        lastFeedback_.segmentBoundaryHint = lastFeedback_.isControlFlow = false;
+        lastFeedback_.executionPath = ExecutionPathHint::CanonicalFetchDecodeExecute;
+        return lastFeedback_;
+    }
+#endif
     void researchBegin(uint16_t pc) noexcept {lastFeedback_.pcBefore=pc;}
     void clearIrCache() noexcept {
         clearIrSession();
@@ -1407,7 +1433,8 @@ ExecutionSliceResult GameGearMachine::runResearchBlock(IR::Research::BoundBlock&
     const bool reuseCodeGuard = !observer && binding.hasLowRomCode();
     IR::Research::DirectRegisters registers{{&impl->cpu.AF, &impl->cpu.BC, &impl->cpu.DE,
         &impl->cpu.HL, &impl->cpu.SP, &impl->cpu.PC}, 0xff};
-    return IR::Research::executeMachineBlock(binding,impl->context.researchHost(),budget,observer,
+    auto execute = [&](auto& host) {
+    return IR::Research::executeMachineBlock(binding,host,budget,observer,
         [&](const IR::Block& block,size_t index) {
             TIME_RESEARCH_SCOPE(guardPhase, index == 0 || !reuseCodeGuard ? IR::Research::Phase::EntryGuard : IR::Research::Phase::ContinuationGuard);
             if(!impl->romLoaded || !binding.matches(impl->researchOwner,observationGeneration()) ||
@@ -1430,7 +1457,19 @@ impl->mem.codeMappingGeneration(), impl->context.researchExecutionState(), GameG
         },
         [&](const IR::GuestInstruction& i,const IR::InterpreterResult& r){TIME_RESEARCH_SCOPE(cpuPhase, IR::Research::Phase::CpuRetirement);return impl->context.researchRetire(i,r);},
         [&](const CpuFeedback& f,const ExecutionSliceProgress& p){return onInstructionRetired(f,p);},
-        [&]{impl->researchFaulted=true;}, directRegisters ? &registers : nullptr);
+        [&]{impl->researchFaulted=true;}, directRegisters ? &registers : nullptr
+#ifdef TIME_RESEARCH_TYPED_INVOCATION
+        , [&](auto& invocation) {
+            return IR::Research::dispatchTypedResearchBlock(binding.code(), invocation, directRegisters);
+        }
+#endif
+        );
+    };
+#ifdef TIME_RESEARCH_TYPED_INVOCATION
+    if (IR::Research::concreteGameGearHostEnabled)
+        return execute(impl->context.researchConcreteHost());
+#endif
+    return execute(impl->context.researchHost());
 }
 
 ExecutionSliceResult GameGearMachine::runSlice(
@@ -1444,7 +1483,84 @@ ExecutionSliceResult GameGearMachine::runSlice(
         result.exitReason = ExecutionSliceExitReason::MachineBoundary;
         return result;
     }
-    try {return Machine::runSlice(budget, observer);}catch(...){if(impl->capture)impl->capture->phase=Space::Kind::Inspection;impl->snapshotMemory=nullptr;throw;}
+    try {
+#ifdef TIME_RESEARCH_HALTED_ADVANCE
+        auto eligible = [&] {
+            const bool knownPolicy = IR::Research::haltedAdvanceEnabled &&
+                (typeid(*impl->activePolicy) == typeid(Plugin::DefaultStepPolicy) ||
+                typeid(*impl->activePolicy) == typeid(Plugin::VisibleStatePreservingStepPolicy) ||
+                typeid(*impl->activePolicy) == typeid(Plugin::PortableIrStepPolicy));
+            return knownPolicy && !observer &&
+                impl->pluginManager.size() == 0u && !impl->mem.analysisCapture && !impl->capture && !impl->snapshotExecution &&
+                !impl->mem.debugEngine && !impl->context.analysisEnabled && impl->context.researchBuiltinIrComponents() &&
+                impl->nativeTrampolines.empty() && !impl->cpu.hasInstructionFetchObserver();
+        };
+        if (impl->cpu.halted() && eligible()) {
+            ExecutionSliceResult result;
+            if (!budget.maxInstructions) return result;
+            if (!budget.maxCycles) {
+                result.exitReason = ExecutionSliceExitReason::CycleBudget;
+                return result;
+            }
+            impl->context.beginExecutionSlice(budget);
+            struct Scope {
+                GameGearRuntimeContext& context;
+                ~Scope() { context.endExecutionSlice(); }
+            } scope{impl->context};
+            auto addCycles = [&](uint64_t cycles) {
+                const auto left = std::numeric_limits<uint64_t>::max() - result.progress.retiredCycles;
+                result.progress.retiredCycles += std::min(left, cycles);
+            };
+            while (result.progress.retiredInstructions < budget.maxInstructions &&
+                   result.progress.retiredCycles < budget.maxCycles) {
+                uint64_t polls = 0;
+                if (eligible() && impl->cpu.halted() && !impl->interruptRequested &&
+                    !impl->vdp.hasPendingRetirementEvent() &&
+                    impl->psg.frameCounter() == impl->lastAudioFrameCounter) {
+                    const auto deadline = std::min(impl->vdp.cyclesUntilNextScanline(),
+                                                  impl->psg.cyclesUntilNextSample());
+                    const auto remaining = budget.maxCycles - result.progress.retiredCycles;
+                    polls = std::min<uint64_t>(deadline ? (deadline - 1u) / 4u : 0u,
+                        std::min(budget.maxInstructions - result.progress.retiredInstructions,
+                                 remaining / 4u + (remaining % 4u != 0u)));
+                }
+                if (polls >= 2u) {
+                    // Credits match existing HALT poll accounting, not active CPU instructions.
+                    // Strict interior only: no sample, scanline, IRQ or plugin boundary crossed.
+                    const auto cycles = static_cast<uint32_t>(polls * 4u);
+                    result.lastFeedback = impl->context.researchIdleFeedback();
+                    impl->vdp.step(cycles);
+                    impl->psg.step(cycles);
+                    impl->stepCounter += polls;
+                    result.progress.retiredInstructions += polls;
+                    addCycles(cycles);
+                    ++IR::Research::haltedAdvanceStats.bulkCalls;
+                    IR::Research::haltedAdvanceStats.logicalIdlePolls += polls;
+                } else {
+                    result.lastFeedback = impl->context.researchSliceStep();
+                    ++result.progress.retiredInstructions;
+                    addCycles(result.lastFeedback.retiredCycles);
+                    ++IR::Research::haltedAdvanceStats.canonicalSteps;
+                    const auto decision = onInstructionRetired(result.lastFeedback, result.progress);
+                    if (!decision.continueExecution) {
+                        result.exitReason = decision.exitReason;
+                        return result;
+                    }
+                }
+                if (budget.stopOnSegmentBoundary && result.lastFeedback.segmentBoundaryHint) {
+                    result.exitReason = ExecutionSliceExitReason::SegmentBoundary;
+                    return result;
+                }
+                if (result.progress.retiredCycles >= budget.maxCycles) {
+                    result.exitReason = ExecutionSliceExitReason::CycleBudget;
+                    return result;
+                }
+            }
+            return result;
+        }
+#endif
+        return Machine::runSlice(budget, observer);
+    }catch(...){if(impl->capture)impl->capture->phase=Space::Kind::Inspection;impl->snapshotMemory=nullptr;throw;}
 }
 
 void GameGearMachine::step() {

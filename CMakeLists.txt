@@ -1279,3 +1279,76 @@ add_executable(time-smoke-code-view-boundaries
 target_compile_definitions(time-smoke-code-view-boundaries PRIVATE TIME_RESEARCH_REFERENCE_GUARDS=1 TIME_RESEARCH_CONTIGUOUS_CODE_VIEW=1)
 target_link_libraries(time-smoke-code-view-boundaries PRIVATE time-gameboy-interpreter-core time-gamegear-core)
 add_test(NAME smoke-code-view-boundaries COMMAND time-smoke-code-view-boundaries)
+
+# Isolated equivalent-work invocation experiment. No default/core policy change.
+# One override archive is shared by the measurement and boundary executables.
+# Link it before the ordinary core archives so machine definitions stay isolated.
+add_library(time-research-typed-invocation STATIC
+    cores/gameboy/GameBoyMachine.cpp cores/gamegear/GameGearMachine.cpp
+    inst_cycle/research/MachineBlock.cpp ${TIME_RESEARCH_BLOCK_SOURCE})
+add_dependencies(time-research-typed-invocation time-research-whole-blocks)
+target_include_directories(time-research-typed-invocation PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_compile_definitions(time-research-typed-invocation PUBLIC TIME_RESEARCH_TYPED_INVOCATION=1)
+set_property(TARGET time-research-typed-invocation PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
+target_link_libraries(time-research-typed-invocation PUBLIC time-gameboy-interpreter-core time-gamegear-core)
+add_executable(time-measure-invocation-specialization tests/measure_invocation_specialization.cpp tests/InvocationHookControl.cpp)
+add_executable(time-smoke-invocation-boundaries tests/smoke_research_machine_boundaries.cpp)
+add_executable(time-smoke-invocation-machine-block tests/smoke_research_machine_block.cpp)
+foreach(invocation_target IN ITEMS time-measure-invocation-specialization time-smoke-invocation-boundaries time-smoke-invocation-machine-block)
+    target_link_libraries(${invocation_target} PRIVATE time-research-typed-invocation)
+    set_property(TARGET ${invocation_target} PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
+endforeach()
+add_test(NAME smoke-invocation-specialization COMMAND time-measure-invocation-specialization --smoke)
+add_test(NAME smoke-invocation-boundaries COMMAND time-smoke-invocation-boundaries)
+add_test(NAME smoke-invocation-machine-block COMMAND time-smoke-invocation-machine-block)
+set_tests_properties(smoke-invocation-specialization smoke-invocation-boundaries smoke-invocation-machine-block PROPERTIES TIMEOUT 180)
+add_test(NAME smoke-invocation-report COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_invocation_specialization.py)
+add_executable(time-smoke-invocation-contract tests/smoke_invocation_contract.cpp)
+target_include_directories(time-smoke-invocation-contract PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(time-smoke-invocation-contract PRIVATE time-research-typed-invocation)
+add_test(NAME smoke-invocation-contract COMMAND time-smoke-invocation-contract)
+
+# B: concrete-host Game Gear screen; A and ordinary backends remain controls.
+add_test(NAME smoke-concrete-gamegear COMMAND time-measure-invocation-specialization --concrete-gamegear --smoke)
+set_tests_properties(smoke-concrete-gamegear PROPERTIES TIMEOUT 180)
+foreach(concrete_case IN ITEMS boundaries machine-block)
+    add_executable(time-smoke-concrete-${concrete_case} tests/smoke_concrete_gamegear.cpp)
+    target_link_libraries(time-smoke-concrete-${concrete_case} PRIVATE time-research-typed-invocation)
+    set_property(TARGET time-smoke-concrete-${concrete_case} PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
+    add_test(NAME smoke-concrete-${concrete_case} COMMAND time-smoke-concrete-${concrete_case})
+    set_tests_properties(smoke-concrete-${concrete_case} PROPERTIES TIMEOUT 180)
+endforeach()
+target_compile_definitions(time-smoke-concrete-boundaries PRIVATE TIME_RESEARCH_CONCRETE_BOUNDARIES=1)
+
+# D: isolated event-aware HALT pilot, shared by every eligible backend.
+add_library(time-research-halt-advance STATIC cores/gamegear/GameGearMachine.cpp cores/gameboy/GameBoyMachine.cpp)
+target_compile_definitions(time-research-halt-advance PUBLIC TIME_RESEARCH_HALTED_ADVANCE=1)
+target_link_libraries(time-research-halt-advance PUBLIC time-gamegear-core time-gameboy-interpreter-core time-research-whole-blocks)
+set_property(TARGET time-research-halt-advance PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
+add_executable(time-smoke-halted-advance tests/smoke_halted_advance.cpp)
+target_link_libraries(time-smoke-halted-advance PRIVATE time-research-halt-advance)
+add_test(NAME smoke-halted-advance COMMAND time-smoke-halted-advance)
+set_tests_properties(smoke-halted-advance PROPERTIES TIMEOUT 180)
+add_executable(time-smoke-halted-advance-gameboy tests/smoke_halted_advance_gameboy.cpp)
+target_link_libraries(time-smoke-halted-advance-gameboy PRIVATE time-research-halt-advance)
+add_test(NAME smoke-halted-advance-gameboy COMMAND time-smoke-halted-advance-gameboy)
+set_tests_properties(smoke-halted-advance-gameboy PROPERTIES TIMEOUT 180)
+
+if(TARGET time-research-rom-blocks)
+    add_executable(time-measure-halted-runtime tests/measure_halted_runtime.cpp)
+    target_link_libraries(time-measure-halted-runtime PRIVATE time-research-halt-advance time-research-rom-blocks)
+    add_test(NAME smoke-halted-runtime COMMAND time-measure-halted-runtime --smoke)
+    set_tests_properties(smoke-halted-runtime PROPERTIES TIMEOUT 600)
+endif()
+
+add_executable(time-perf-halted-scheduling-video tests/perf_halted_scheduling_video.cpp)
+target_link_libraries(time-perf-halted-scheduling-video PRIVATE time-research-halt-advance)
+add_test(NAME perf_halted_scheduling_video COMMAND time-perf-halted-scheduling-video)
+set_tests_properties(perf_halted_scheduling_video PROPERTIES TIMEOUT 120)
+
+add_test(NAME smoke-halted-runtime-report COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_halted_runtime.py)
+
+add_executable(time-smoke-halted-fifo tests/smoke_halted_fifo.cpp)
+target_link_libraries(time-smoke-halted-fifo PRIVATE time-research-halt-advance)
+add_test(NAME smoke-halted-fifo COMMAND time-smoke-halted-fifo)
+set_tests_properties(smoke-halted-fifo PROPERTIES TIMEOUT 180)

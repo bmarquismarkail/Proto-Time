@@ -1,3 +1,7 @@
+#ifdef TIME_RESEARCH_HALTED_ADVANCE
+#include "inst_cycle/research/HaltedAdvance.hpp"
+#include <typeinfo>
+#endif
 #include <type_traits>
 #include "GameBoyMachine.hpp"
 #include <algorithm>
@@ -25,6 +29,12 @@
 #include "hardware_registers.hpp"
 #include "register_id.hpp"
 #include "video/GameBoyVisualDebugAdapter.hpp"
+
+#ifdef TIME_RESEARCH_TYPED_INVOCATION
+#define TIME_RESEARCH_TYPED_BODIES_ONLY
+#include "research-whole-blocks.cpp"
+#undef TIME_RESEARCH_TYPED_BODIES_ONLY
+#endif
 
 namespace GB {
 
@@ -883,6 +893,11 @@ public:
         return allowFastPath_ && !nativeDispatcher;
     }
 
+#ifdef TIME_RESEARCH_HALTED_ADVANCE
+    void researchBeginSlice(const BMMQ::ExecutionBudget& budget) { beginExecutionSlice(budget); }
+    BMMQ::CpuFeedback researchSliceStep() { return stepWithinExecutionSlice(); }
+    void researchEndSlice() noexcept { endExecutionSlice(); }
+#endif
     std::function<void(std::uint16_t)> nativeDispatcher;
 
 protected:
@@ -1376,7 +1391,13 @@ cpu.researchMappingGeneration(), cpu.irExecutionState(), IRExecution::kAbiVersio
             return cpu.feedback;
         },
         [&](const BMMQ::CpuFeedback& f,const BMMQ::ExecutionSliceProgress& p){return onInstructionRetired(f,p);},
-        [&]{impl_->researchFaulted=true;}, directRegisters ? &registers : nullptr);
+        [&]{impl_->researchFaulted=true;}, directRegisters ? &registers : nullptr
+#ifdef TIME_RESEARCH_TYPED_INVOCATION
+        , [&](auto& invocation) {
+            return BMMQ::IR::Research::dispatchTypedResearchBlock(binding.code(), invocation, directRegisters);
+        }
+#endif
+        );
 }
 
 BMMQ::ExecutionSliceResult GameBoyMachine::runSlice(
@@ -1392,6 +1413,101 @@ BMMQ::ExecutionSliceResult GameBoyMachine::runSlice(
         result.exitReason = BMMQ::ExecutionSliceExitReason::MachineBoundary;
         return result;
     }
+#ifdef TIME_RESEARCH_HALTED_ADVANCE
+    auto& cpu = impl_->cpu.cpu();
+    auto eligible = [&] {
+        const bool knownPolicy = BMMQ::IR::Research::haltedAdvanceEnabled &&
+            (typeid(*impl_->activePolicy) == typeid(BMMQ::Plugin::DefaultStepPolicy) ||
+             typeid(*impl_->activePolicy) == typeid(BMMQ::Plugin::VisibleStatePreservingStepPolicy) ||
+             typeid(*impl_->activePolicy) == typeid(BMMQ::Plugin::PortableIrStepPolicy));
+        return knownPolicy && impl_->romLoaded && cpu.haltFlag && !observer &&
+            impl_->pluginManager.size() == 0u && !impl_->memoryMap.analysisCapture &&
+            !impl_->context->capture && !impl_->context->snapshotExecution &&
+            !impl_->memoryMap.debugEngine && impl_->nativeTrampolines.empty() &&
+            !cpu.dynamicIrAdapter_ && !cpu.dynamicIrBackend_ && &cpu.mem.backingStore() == &impl_->memoryMap;
+    };
+    if (eligible()) {
+        BMMQ::ExecutionSliceResult result;
+        if (!budget.maxInstructions) return result;
+        if (!budget.maxCycles) { result.exitReason = BMMQ::ExecutionSliceExitReason::CycleBudget; return result; }
+        impl_->context->researchBeginSlice(budget);
+        struct Scope { GameBoyRuntimeContext& context; ~Scope() { context.researchEndSlice(); } } scope{*impl_->context};
+        auto addCycles = [&](uint64_t cycles) {
+            result.progress.retiredCycles += std::min(cycles,
+                std::numeric_limits<uint64_t>::max() - result.progress.retiredCycles);
+        };
+        auto cpuDeadline = [&]() -> uint32_t {
+            const auto read = [&](const auto& slot) { return LR3592_DMG::readCachedRegister(slot); };
+            if (!eligible() || !cpu.haltFlag || cpu.stopFlag || cpu.haltBugActive || cpu.haltBugPcAdjustPending ||
+                cpu.imeEnablePending || cpu.pendingCycleCharge_ || !cpu.pcRegister_ ||
+                (read(cpu.hardwareRegisters_.interruptFlags) & read(cpu.hardwareRegisters_.ie) & 0x1fu)) return 0u;
+            if (cpu.dmaActive) return 1u; // DMA byte cadence is at most four T cycles: no multi-poll interior.
+            uint32_t deadline = 256u - (cpu.dividerCounter & 255u);
+            const auto tac = read(cpu.hardwareRegisters_.tac);
+            if (tac & 4u) {
+                constexpr uint32_t periods[] = {1024,16,64,256};
+                const auto period = periods[tac & 3u];
+                deadline = std::min(deadline, period - (cpu.dividerCounter & (period - 1u)));
+            }
+            if (cpu.serialTransferActive) {
+                if (cpu.serialCycleProgress >= 4096u) return 0u;
+                deadline = std::min<uint32_t>(deadline, 4096u - cpu.serialCycleProgress);
+            }
+            if (cpu.apu_.sampleAccumulator >= LR3592_DMG::kCpuClockHz ||
+                (cpu.apu_.masterEnabled && cpu.apu_.frameSequencerCounter >= 8192u)) return 0u;
+            deadline = std::min(deadline, (LR3592_DMG::kCpuClockHz - cpu.apu_.sampleAccumulator +
+                LR3592_DMG::kApuSampleRate - 1u) / LR3592_DMG::kApuSampleRate);
+            if (cpu.apu_.masterEnabled) deadline = std::min(deadline, 8192u - cpu.apu_.frameSequencerCounter);
+            if (read(cpu.hardwareRegisters_.lcdc) & 0x80u) {
+                if (!cpu.lcdEnabledLastTick || cpu.ppuDotCounter >= 154u*456u) return 1u;
+                const auto dot = cpu.ppuDotCounter % 456u;
+                const auto ly = cpu.ppuDotCounter / 456u;
+                const auto mode = ly >= 144u ? 1u : dot < 80u ? 2u : dot < 252u ? 3u : 0u;
+                const auto stat = read(cpu.hardwareRegisters_.stat);
+                const bool request = (ly == read(cpu.hardwareRegisters_.lyc) && (stat & 0x40u)) ||
+                    (mode == 0u && (stat & 8u)) || (mode == 1u && (stat & 0x10u)) || (mode == 2u && (stat & 0x20u));
+                if (request != cpu.statInterruptLatched) return 1u;
+                deadline = std::min(deadline, ly >= 144u ? 456u-dot : dot < 80u ? 80u-dot : dot < 252u ? 252u-dot : 456u-dot);
+            }
+            return deadline;
+        };
+        while (result.progress.retiredInstructions < budget.maxInstructions && result.progress.retiredCycles < budget.maxCycles) {
+            auto deadline = std::min(cpuDeadline(), std::min(impl_->ppu.cyclesUntilNextEvent(), impl_->apu.cyclesUntilNextEvent()));
+            if (impl_->apu.frameCounter() != impl_->lastAudioFrameCounter) deadline = 0u;
+            const auto remaining = budget.maxCycles - result.progress.retiredCycles;
+            const auto polls = std::min<uint64_t>(deadline ? (deadline - 1u)/4u : 0u,
+                std::min<uint64_t>(4095u - (impl_->stepCounter % 4096u),
+                std::min(budget.maxInstructions - result.progress.retiredInstructions, remaining/4u + (remaining%4u != 0u))));
+            if (polls >= 2u) {
+                const auto cycles = static_cast<uint32_t>(polls * 4u);
+                cpu.retireInstruction(cycles); // Mandatory T-cycle device work remains; one accounting/dispatch boundary.
+                cpu.feedback = {false,false,uint32_t(cpu.pcRegister_->value),uint32_t(cpu.pcRegister_->value),4u,
+                    BMMQ::ExecutionPathHint::CanonicalFetchDecodeExecute};
+                result.lastFeedback = cpu.feedback;
+                impl_->ppu.step(cycles);
+                impl_->memoryMap.setIoRegisterRaw(0xFF44u,impl_->ppu.ly());
+                impl_->memoryMap.setIoRegisterRaw(0xFF41u,uint8_t((impl_->context->peek8(0xFF41u)&0xf8u)|(impl_->ppu.currentMode()&3u)));
+                impl_->apu.step(cycles);
+                impl_->memoryMap.setIoRegisterRaw(0xFF26u,impl_->apu.readRegister(0xFF26u));
+                impl_->stepCounter += polls;
+                result.progress.retiredInstructions += polls; addCycles(cycles);
+                ++BMMQ::IR::Research::haltedAdvanceStats.bulkCalls;
+                BMMQ::IR::Research::haltedAdvanceStats.logicalIdlePolls += polls;
+            } else {
+                result.lastFeedback = impl_->context->researchSliceStep();
+                ++result.progress.retiredInstructions; addCycles(result.lastFeedback.retiredCycles);
+                ++BMMQ::IR::Research::haltedAdvanceStats.canonicalSteps;
+                const auto decision = onInstructionRetired(result.lastFeedback,result.progress);
+                if (!decision.continueExecution) { result.exitReason = decision.exitReason; return result; }
+            }
+            if (budget.stopOnSegmentBoundary && result.lastFeedback.segmentBoundaryHint) {
+                result.exitReason=BMMQ::ExecutionSliceExitReason::SegmentBoundary; return result;
+            }
+            if (result.progress.retiredCycles >= budget.maxCycles) { result.exitReason=BMMQ::ExecutionSliceExitReason::CycleBudget; return result; }
+        }
+        return result;
+    }
+#endif
     return BMMQ::Machine::runSlice(budget, observer);
 }
 

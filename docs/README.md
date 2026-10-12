@@ -75,6 +75,14 @@ The [native x86-64 acceptance procedure](../.internal/docs/time-x86-acceleration
 collects and evaluates source/build-bound throughput and repeated latency evidence.
 Criteria v2 separate active benefit, gameplay non-regression and default eligibility;
 `tools/measure_x86_acceptance_v2.py` retains two independent native confirmations.
+The [next whole-block experiments plan](../.internal/docs/time-whole-block-next-experiments-plan.md)
+separates invocation specialization, useful control flow, shared event-aware HALT,
+and unchanged v2 requalification. Its completion audit records the bounded outcomes;
+the experiment reports retain the acceptance evidence and limitations.
+The [invocation specialization experiment](../.internal/docs/time-invocation-specialization-experiment.md)
+records the source-bound control and isolated equivalent-work experiment.
+- [Concrete Game Gear host experiment](../.internal/docs/time-concrete-host-experiment.md): B implementation, two-session engineering gate and retained no-go evidence.
+- [Event-aware HALT experiment](../.internal/docs/time-halted-advance-experiment.md): two-core deadline inventory, native shared-runtime results, FIFO checks and headless validation boundaries.
 
 ## Execution and concurrency records
 

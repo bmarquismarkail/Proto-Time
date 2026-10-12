@@ -33,6 +33,28 @@ struct Hooks {
   // once, before the next guard. False ends the invocation at this retirement.
   bool (*retire)(void *, const GuestInstruction &, const InterpreterResult &,
                  const Progress &) = nullptr;
+  bool valid() const noexcept { return before && retire; }
+  bool callBefore(const Block& block, std::size_t index) const {
+    return before(opaque, block, index);
+  }
+  bool callRetire(const GuestInstruction& instruction,
+                  const InterpreterResult& result, const Progress& progress) const {
+    return retire(opaque, instruction, result, progress);
+  }
+};
+
+// Invocation-local typed hooks. The state remains owned by the machine lane;
+// no callable or state pointer is stored in a compiled artifact or binding.
+template<class State> struct TypedHooks {
+  State& state;
+  bool valid() const noexcept { return true; }
+  bool callBefore(const Block& block, std::size_t index) const {
+    return State::before(&state, block, index);
+  }
+  bool callRetire(const GuestInstruction& instruction,
+                  const InterpreterResult& result, const Progress& progress) const {
+    return State::retire(&state, instruction, result, progress);
+  }
 };
 
 // Invocation-local register view for the two admitted cores' shared numeric
@@ -61,16 +83,16 @@ struct DirectRegisters {
   }
 };
 
-class Invocation {
+template<class HookSet, class Host = InterpreterHost> class BasicInvocation {
 public:
-  Invocation(const Block &block, InterpreterHost &host, Hooks hooks,
+  BasicInvocation(const Block &block, Host &host, HookSet hooks,
              std::uint64_t instructions, std::uint64_t cycles, DirectRegisters* registers = nullptr)
       : block_(block), host_(host), hooks_(hooks),
         maxInstructions_(instructions), maxCycles_(cycles), registers_(registers) {
-    if (!hooks.before || !hooks.retire)
+    if (!hooks.valid())
       throw std::invalid_argument("whole-block hooks are required");
   }
-  InterpreterHost &host() noexcept { return host_; }
+  Host &host() noexcept { return host_; }
   std::uint64_t callHelper(std::uint32_t id, ValueType type, std::span<const std::uint64_t> args) {
     TIME_RESEARCH_SCOPE(helperPhase, id == 0 ? Phase::Helper0 : Phase::Helper);
     return host_.callHelper(id, type, args);
@@ -92,7 +114,7 @@ public:
       stopped_ = true;
       return false;
     }
-    if (!hooks_.before(hooks_.opaque, block_, index)) {
+    if (!hooks_.callBefore(block_, index)) {
       progress_.exit = Exit::Guard;
       stopped_ = true;
       return false;
@@ -115,7 +137,7 @@ public:
         cycles > std::numeric_limits<std::uint64_t>::max() - progress_.cycles
             ? std::numeric_limits<std::uint64_t>::max()
             : progress_.cycles + cycles;
-    if (!hooks_.retire(hooks_.opaque, instruction, result, progress_)) {
+    if (!hooks_.callRetire(instruction, result, progress_)) {
       progress_.exit = Exit::Observer;
       stopped_ = true;
       return false;
@@ -141,14 +163,24 @@ public:
 
 private:
   const Block &block_;
-  InterpreterHost &host_;
-  Hooks hooks_;
+  Host &host_;
+  HookSet hooks_;
   std::uint64_t maxInstructions_, maxCycles_;
   Progress progress_;
   DirectRegisters* registers_ = nullptr;
   bool begun_ = false;
   bool stopped_ = false;
 };
+
+using Invocation = BasicInvocation<Hooks>;
+
+#ifdef TIME_RESEARCH_TYPED_INVOCATION
+// Only the isolated experiment binary can select the typed entry. Its generic
+// and typed rows share one executable, machine code and host environment.
+inline thread_local bool typedInvocationEnabled = true;
+// B exposes the concrete Game Gear host in the same isolated executable.
+inline thread_local bool concreteGameGearHostEnabled = false;
+#endif
 
 // Metadata and entry are emitted together into the same read-only executable
 // image. Construction is a trusted build-time pairing, not an external ABI.
@@ -177,6 +209,26 @@ public:
     // Exceptions propagate. Partially executed instructions are never
     // retried by this contract; the machine owner must fault the session.
     (registers ? directEntry_ : entry_)(invocation);
+    return verifyCompleted(invocation);
+  }
+  // Research-only entry. Generated bodies and hooks become visible together to
+  // the compiler; the host/register strategy and all retirement rules are shared
+  // with the generic path. Dispatch must authenticate the original entry pointer.
+  template<class Host, class HookSet, class EntryDispatch>
+  Progress executeTyped(Host& host, HookSet hooks,
+      std::uint64_t instructions, std::uint64_t cycles,
+      DirectRegisters* registers, EntryDispatch dispatch) const {
+    if (registers && (!registers->valid() || !directEntry_))
+      throw std::invalid_argument("invalid direct execution view");
+    BasicInvocation<HookSet, Host> invocation(*block_, host, hooks, instructions, cycles, registers);
+    if (!dispatch(invocation))
+      throw std::invalid_argument("unknown typed research entry");
+    return verifyCompleted(invocation);
+  }
+
+private:
+  template<class InvocationType>
+  Progress verifyCompleted(const InvocationType& invocation) const {
     if (invocation.pendingRetirement())
       throw std::logic_error("emitted entry omitted retirement");
     if (invocation.progress().exit == Exit::Completed &&
@@ -185,7 +237,6 @@ public:
     return invocation.progress();
   }
 
-private:
   BlockPtr block_;
   Entry entry_;
   std::uint32_t architecture_;

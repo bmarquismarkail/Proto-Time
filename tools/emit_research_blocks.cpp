@@ -3,6 +3,7 @@
 #include "tests/WholeBlockCorpus.hpp"
 #include <fstream>
 #include <iostream>
+#include <regex>
 
 int main(int argc, char **argv) try {
   if (argc != 2)
@@ -52,8 +53,22 @@ int main(int argc, char **argv) try {
       }
       factory += "};\n";
     }
-    source += factory + "default: throw std::invalid_argument(\"unknown corpus workload\"); } } }\n";
+    source += "#ifndef TIME_RESEARCH_TYPED_BODIES_ONLY\n" + factory +
+        "default: throw std::invalid_argument(\"unknown corpus workload\"); } } }\n#endif\n";
   }
+  // Same generated operations in the generic translation unit and in the
+  // experiment's core-owned invocation context. Authenticate by the generic
+  // entry's address, never by PC alone or mutable metadata.
+  const std::regex pattern("template<bool Direct, class Context = Invocation> void (emitted[A-Za-z0-9_]+)_entry");
+  std::string dispatch = "#ifdef TIME_RESEARCH_TYPED_BODIES_ONLY\nnamespace BMMQ::IR::Research {\n"
+      "template<class Context> bool dispatchTypedResearchBlock(const CompiledBlock& code, Context& c, bool direct){\n";
+  for (std::sregex_iterator it(source.begin(), source.end(), pattern), end; it != end; ++it) {
+    const auto id = (*it)[1].str();
+    dispatch += "if(code.entry()==&" + id + "_entry<false>){if(direct){"
+        "if(code.directEntry()!=&" + id + "_entry<true>)throw std::invalid_argument(\"typed direct entry mismatch\");"
+        + id + "_entry<true>(c);}else{" + id + "_entry<false>(c);}return true;}\n";
+  }
+  source += dispatch + "return false;} }\n#endif\n";
   std::ofstream file(argv[1], std::ios::binary | std::ios::trunc);
   file << source;
   file.close();

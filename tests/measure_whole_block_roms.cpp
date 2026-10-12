@@ -194,6 +194,13 @@ public:
       result = machine_.runResearchBlock(*binding, budget, observer, options_.directRegisters);
       ++total.emittedInvocations;
     } else {
+#ifdef TIME_RESEARCH_HALTED_ROM_STUDY
+      if(batchHalt) {
+        // Identical bounded slices in both controls and candidates. Retirement
+        // observation belongs to differential windows, where bulk falls back.
+        result=machine_.runSlice(budget); ++total.haltBatches;
+      } else result=machine_.runSlice(budget,observer);
+#else
       if(batchHalt) {
         struct HaltBoundary final : InstructionRetirementSink {
           Core& machine; MachineBlockState before; std::uint64_t polls=0;
@@ -209,6 +216,7 @@ public:
         result=machine_.runSlice(budget,&boundary); ++total.haltBatches;
         require(boundary.polls==result.progress.retiredInstructions,"HALT skipped a retirement");
       } else result = machine_.runSlice(budget, observer);
+#endif
     }
     const auto retired = result.progress.retiredInstructions;
     require(retired > 0 && retired <= requested, "unexpected zero retirement/guard rejection");
@@ -283,6 +291,9 @@ template <class Core> Json replay(const Json &record, const std::vector<Compiled
 #ifdef TIME_RESEARCH_PHASES
   ledger=PhaseLedger{};
 #endif
+#ifdef TIME_RESEARCH_HALTED_ROM_STUDY
+  haltedAdvanceStats={};
+#endif
   const auto start = std::chrono::steady_clock::now();
   for (const auto &command : record.at("scenarios")) {
     input.mask = command.at("mask");
@@ -327,6 +338,10 @@ template <class Core> Json replay(const Json &record, const std::vector<Compiled
     require(total.prefixedInstructions > 0 && total.shadowInstructions > 0, "missing indexed/shadow game coverage");
   if (mode == 3) require(total.emittedInstructions > 0 && total.nonEmittedInstructions > 0, "missing emitted/baseline ROM coverage");
   auto result = total.json();
+#ifdef TIME_RESEARCH_HALTED_ROM_STUDY
+  result["haltedAdvance"]={{"bulkCalls",haltedAdvanceStats.bulkCalls},
+      {"logicalIdlePolls",haltedAdvanceStats.logicalIdlePolls},{"canonicalSteps",haltedAdvanceStats.canonicalSteps}};
+#endif
   result.update({{"nanoseconds", elapsed}, {"timeline", timeline}, {"timelineSha256", hashJson(timeline)},
                  {"windows", checks}, {"warmupState", warmState}, {"warmup", warm}, {"finalState", timeline.back()}});
 #ifdef TIME_RESEARCH_PHASES
