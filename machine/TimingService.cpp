@@ -22,6 +22,11 @@ void mergeEngineStats(TimingStats& destination, const TimingStats& source) noexc
     destination.cycleDebt = source.cycleDebt;
     destination.effectiveClockHz = source.effectiveClockHz;
     destination.catchUpClampCount = source.catchUpClampCount;
+    destination.discardedCyclesTotal = source.discardedCyclesTotal;
+    destination.discardedCyclesLast = source.discardedCyclesLast;
+    destination.budgetUpdateGapLast = source.budgetUpdateGapLast;
+    destination.budgetUpdateGapHighWater = source.budgetUpdateGapHighWater;
+    destination.lastClampElapsed = source.lastClampElapsed;
     destination.wakeSleeps = source.wakeSleeps;
     destination.idleLoops = source.idleLoops;
     destination.singleStepsGranted = source.singleStepsGranted;
@@ -183,6 +188,7 @@ void TimingEngine::applyControl(const TimingControlState& control) noexcept
 void TimingEngine::start(std::chrono::steady_clock::time_point now) noexcept
 {
     lastTick_ = now;
+    startedAt_ = now;
     stats_.cycleBudget = 0.0;
     stats_.cycleDebt = 0.0;
     stats_.effectiveClockHz = config_.baseClockHz * control_.speedMultiplier;
@@ -200,6 +206,8 @@ void TimingEngine::update(std::chrono::steady_clock::time_point now) noexcept
         return;
     }
 
+    stats_.budgetUpdateGapLast = std::chrono::duration_cast<std::chrono::nanoseconds>(now - lastTick_);
+    stats_.budgetUpdateGapHighWater = std::max(stats_.budgetUpdateGapHighWater, stats_.budgetUpdateGapLast);
     const auto elapsedSec = std::chrono::duration<double>(now - lastTick_).count();
     lastTick_ = now;
     stats_.cycleBudget += elapsedSec * stats_.effectiveClockHz;
@@ -207,6 +215,9 @@ void TimingEngine::update(std::chrono::steady_clock::time_point now) noexcept
     const double maxBudget = std::max(config_.minInstructionCycles,
                                       stats_.effectiveClockHz * std::chrono::duration<double>(config_.maxCatchUp).count());
     if (stats_.cycleBudget > maxBudget) {
+        stats_.discardedCyclesLast = stats_.cycleBudget - maxBudget;
+        stats_.discardedCyclesTotal += stats_.discardedCyclesLast;
+        stats_.lastClampElapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(now - startedAt_);
         stats_.cycleBudget = maxBudget;
         ++stats_.catchUpClampCount;
     }
@@ -504,6 +515,18 @@ TimingStats TimingService::stats() const noexcept
 {
     std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
     return stats_;
+}
+
+void TimingService::noteExecutionBatch(std::chrono::nanoseconds wall,
+                                      std::chrono::nanoseconds cpu, bool cpuAvailable) noexcept
+{
+    std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
+    ++stats_.executionBatchSamples;
+    stats_.executionBatchWallLast = wall;
+    stats_.executionBatchWallHighWater = std::max(stats_.executionBatchWallHighWater, wall);
+    stats_.executionBatchCpuAvailable = cpuAvailable;
+    stats_.executionBatchCpuLast = cpuAvailable ? cpu : std::chrono::nanoseconds::zero();
+    if (cpuAvailable) stats_.executionBatchCpuHighWater = std::max(stats_.executionBatchCpuHighWater, cpu);
 }
 
 void TimingService::recordWakeBurst(double burstCycles, std::uint32_t burstSlices) noexcept

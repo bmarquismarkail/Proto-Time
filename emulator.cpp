@@ -19,13 +19,16 @@
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
+#include <ctime>
 #include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iomanip>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -64,6 +67,18 @@ using GameBoyMachine = GB::GameBoyMachine;
 #include "cores/gamegear/GameGearMachine.hpp"
 
 namespace {
+
+// Diagnostic-only CPU clock. Unsupported hosts publish null instead of zero.
+std::optional<std::chrono::nanoseconds> diagnosticThreadCpuTime() noexcept
+{
+#ifdef CLOCK_THREAD_CPUTIME_ID
+    timespec value{};
+    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &value) == 0) {
+        return std::chrono::seconds(value.tv_sec) + std::chrono::nanoseconds(value.tv_nsec);
+    }
+#endif
+    return std::nullopt;
+}
 
 volatile std::sig_atomic_t gStopRequested = 0;
 
@@ -1238,6 +1253,7 @@ int main(int argc, char** argv)
         refreshVisualReloadWatchList();
 
         std::ofstream diagnosticsReport;
+        std::ofstream diagnosticsEvents;
         const auto diagnosticsIntervalMs = std::max<std::uint32_t>(1u, options.diagnosticsIntervalMs);
         const auto diagnosticsInterval = std::chrono::milliseconds(diagnosticsIntervalMs);
         auto nextDiagnosticsReport = initialNow + diagnosticsInterval;
@@ -1251,6 +1267,11 @@ int main(int argc, char** argv)
             if (!diagnosticsReport) {
                 throw std::runtime_error("Unable to open diagnostics report file: " + diagnosticsPath.string());
             }
+            diagnosticsEvents.open(diagnosticsPath.string() + ".events.jsonl", std::ios::out | std::ios::trunc);
+            if (!diagnosticsEvents) {
+                throw std::runtime_error("Unable to open diagnostics event report");
+            }
+            diagnosticsEvents << std::setprecision(17);
             std::cout << "Diagnostics report: " << diagnosticsPath
                       << " (interval=" << diagnosticsIntervalMs << "ms)\n";
         }
@@ -1315,6 +1336,7 @@ int main(int argc, char** argv)
                                    activeExecutorPolicy.metadata().id,
                                    activeExecutorPolicy.backend());
             diagnosticsReport.flush();
+            diagnosticsEvents.flush();
         };
 
         auto pollVisualPackReload = [&]() {
@@ -1556,7 +1578,33 @@ int main(int argc, char** argv)
                     }
 
                     timingEngine.applyControl(timingService.takeControlSnapshot());
+                    const auto priorClampCount = timingEngine.stats().catchUpClampCount;
+                    const auto budgetBeforeUpdate = timingEngine.stats().cycleBudget;
                     timingEngine.update(now);
+                    if (diagnosticsEvents.is_open() && timingEngine.stats().catchUpClampCount != priorClampCount) {
+                        const auto& stats = timingEngine.stats();
+                        const auto previousBatch = timingService.stats();
+                        const auto audio = machine.audioService().transportStats();
+                        diagnosticsEvents << "{\"event\":\"catch_up_clamp\",\"host_elapsed_ns\":"
+                            << std::chrono::duration_cast<std::chrono::nanoseconds>(now - runStartedAt).count()
+                            << ",\"throttled\":" << (stats.throttled ? "true" : "false")
+                            << ",\"discarded_cycles\":" << stats.discardedCyclesLast
+                            << ",\"budget_before_update\":" << budgetBeforeUpdate
+                            << ",\"budget_update_gap_ns\":" << stats.budgetUpdateGapLast.count()
+                            << ",\"previous_batch_wall_ns\":" << previousBatch.executionBatchWallLast.count()
+                            << ",\"previous_batch_cpu_ns\":";
+                        if (previousBatch.executionBatchCpuAvailable) diagnosticsEvents << previousBatch.executionBatchCpuLast.count();
+                        else diagnosticsEvents << "null";
+                        diagnosticsEvents << ",\"previous_sleep_overshoot_ns\":" << previousBatch.sleepOvershootLast.count()
+                            << ",\"audio_output_active\":" << (audioOutput != nullptr ? "true" : "false")
+                            << ",\"ready_queue_depth\":" << audio.readyQueueDepth
+                            << ",\"source_buffered_samples\":" << machine.audioService().engine().bufferedSamples()
+                            << ",\"audio_underruns\":" << audio.underrunCount << "}\n";
+                    }
+
+                    const bool measureBatch = diagnosticsReport.is_open();
+                    const auto batchStarted = measureBatch ? SteadyClock::now() : SteadyClock::time_point{};
+                    const auto batchCpuStarted = measureBatch ? diagnosticThreadCpuTime() : std::nullopt;
 
                     bool executionSliceActive = false;
                     std::uint32_t wakeExecutionSlices = 0u;
@@ -1610,6 +1658,13 @@ int main(int argc, char** argv)
                         }
                     }
                     timingService.recordWakeBurst(wakeExecutionCycles, wakeExecutionSlices);
+                    if (measureBatch) {
+                        const auto batchCpuEnded = diagnosticThreadCpuTime();
+                        const auto wall = std::chrono::duration_cast<std::chrono::nanoseconds>(SteadyClock::now() - batchStarted);
+                        const bool cpuAvailable = batchCpuStarted.has_value() && batchCpuEnded.has_value();
+                        timingService.noteExecutionBatch(wall,
+                            cpuAvailable ? *batchCpuEnded - *batchCpuStarted : std::chrono::nanoseconds::zero(), cpuAvailable);
+                    }
                     timingService.publishEngineStats(timingEngine.stats());
                     emitDiagnostics(SteadyClock::now(), false);
 

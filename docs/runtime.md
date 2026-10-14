@@ -175,6 +175,11 @@ save/load states are currently rejected while native mod hooks are installed.
 
 ## Runtime Diagnostics and Performance Baseline
 
+Game Boy cartridge startup seeds audio configuration without executing the
+channel trigger bits in the post-boot register image. Output channels begin
+inactive (reflected by NR52 status); real guest trigger writes still produce
+sound, including before the first video frame. There is no first-frame mute.
+
 `timeEmulator` supports periodic runtime diagnostics snapshots without changing
 emulation behavior:
 
@@ -209,6 +214,17 @@ fresh/fallback presents, mailbox overwrites, publish-to-present age stats,
 presenter duration stats, audio underrun/silence counters, audio worker wake
 latency stats, frontend tick scheduled/executed/merged, wake jitter buckets,
 and active timing profile.
+
+With `--diagnostics-report`, timing samples also include discarded cycle totals,
+budget-update gaps, and emulation-batch wall/thread-CPU durations. Unsupported
+thread CPU clocks produce `null`. A companion `<report-path>.events.jsonl` records
+each catch-up clamp's timestamp, discarded cycles, update gap, preceding batch
+durations, and audio source/ready depth and underrun count. It is buffered and
+flushed with periodic samples. The preceding batch excludes sleep, housekeeping
+and diagnostic output; a large update gap alone does not identify OS descheduling.
+The extra clocks and event output are opt-in diagnostic overhead, not acceptance
+performance measurements. Unthrottled clamp events are marked separately because
+cycle budget does not constrain unthrottled execution.
 
 Perf baseline workflow (RelWithDebInfo):
 

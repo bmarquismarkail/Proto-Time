@@ -51,3 +51,4 @@ graphify-out/
 !.internal/docs/time-invocation-specialization-experiment.md
 !.internal/docs/time-concrete-host-experiment.md
 !.internal/docs/time-halted-advance-experiment.md
+!.internal/docs/time-gameboy-starvation-leads.md

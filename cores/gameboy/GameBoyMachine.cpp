@@ -1202,9 +1202,23 @@ void GameBoyMachine::loadRom(const std::vector<uint8_t>& bytes) {
         }
         auto* desc = impl_->cpu.cpu().getMemory().file.findDescriptor(name);
         if (desc != nullptr && desc->mappedAddress.has_value()) {
-            impl_->memoryMap.write(*desc->mappedAddress, value);
+            const auto address = *desc->mappedAddress;
+            // Startup register images are not guest trigger commands. Keep the
+            // readable image while configuring the output APU without starting
+            // pulse/wave/noise channels before the cartridge executes.
+            const bool triggerRegister = address == 0xFF14u || address == 0xFF19u ||
+                address == 0xFF1Eu || address == 0xFF23u;
+            impl_->memoryMap.write(address, triggerRegister ? value & 0x7Fu : value);
+            if (triggerRegister) {
+                impl_->memoryMap.setIoRegisterRaw(address, value);
+                core.syncCachedIoRegisterWrite(address, value);
+            }
         }
     }
+
+    // NR52 channel-status bits reflect the now-idle output channels.
+    impl_->memoryMap.setIoRegisterRaw(0xFF26u, impl_->apu.readRegister(0xFF26u));
+    core.syncCachedIoRegisterWrite(0xFF26u, impl_->apu.readRegister(0xFF26u));
 
     core.resetApu();
     impl_->lastAudioFrameCounter = core.audioFrameCounter();
