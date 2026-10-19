@@ -1,3 +1,6 @@
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <array>
 #include <cassert>
 #include <cstdint>
@@ -276,6 +279,31 @@ void testPostDispatchFailureIsFatal()
     assert(threw);
 }
 
+void testInvalidDispatchArtifactsAreFatalBeforeMutation()
+{
+    StubAdapter adapter;
+    StubBackend backend;
+    IrExecutionService service(adapter, backend, adapter);
+    const auto block = makeBlock();
+    const auto prepared = service.prepare(makeRequest(), block);
+    assert(prepared.prepared && prepared.artifact);
+    MockHost host;
+    const auto reject = [&](const Block& candidate, const BMMQ::BlockBackendArtifact& artifact,
+                            std::size_t index, std::string_view diagnostic) {
+        bool rejected = false;
+        try {
+            (void)service.tryExecute(candidate, artifact, index, host);
+        } catch (const std::logic_error& error) {
+            rejected = std::string_view(error.what()).find(diagnostic) != std::string_view::npos;
+        }
+        assert(rejected && backend.executeCalls_ == 0u && host.pc == 0u);
+    };
+    FakeArtifact unprepared;
+    reject(*block, unprepared, 0u, "unprepared artifact");
+    reject(*makeBlock(), *prepared.artifact, 0u, "does not match");
+    reject(*block, *prepared.artifact, block->instructions.size(), "out of range");
+}
+
 void testBuiltInPortableBackendExecutesValidatedIr()
 {
     StubAdapter adapter;
@@ -312,6 +340,7 @@ int main()
     testExecutionRetiresExactlyOneInstruction();
     testStateGuardRejectsBeforeBackendMutation();
     testPostDispatchFailureIsFatal();
+    testInvalidDispatchArtifactsAreFatalBeforeMutation();
     testBuiltInPortableBackendExecutesValidatedIr();
     return 0;
 }

@@ -16,15 +16,24 @@ import tracemalloc
 
 def main():
     request = json.load(sys.stdin)
-    maximum = request['heapBytes']
-    # Preserve interpreter startup mappings, then bound additional address space.
-    with open('/proc/self/statm', encoding='ascii') as stream:
-        current = int(stream.read().split()[0]) * os.sysconf('SC_PAGE_SIZE')
-    resource.setrlimit(resource.RLIMIT_AS, (current + maximum, current + maximum))
-    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-    resource.setrlimit(resource.RLIMIT_FSIZE, (1048576, 1048576))
-    resource.setrlimit(resource.RLIMIT_CPU, (math.ceil(request['timeoutMs'] / 1000) + 1,) * 2)
-    tracemalloc.start()
+    try:
+        maximum = request['heapBytes']
+        # Preserve interpreter startup mappings, then bound additional address space.
+        with open('/proc/self/statm', encoding='ascii') as stream:
+            current = int(stream.read().split()[0]) * os.sysconf('SC_PAGE_SIZE')
+        resource.setrlimit(resource.RLIMIT_AS, (current + maximum, current + maximum))
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        resource.setrlimit(resource.RLIMIT_FSIZE, (1048576, 1048576))
+        resource.setrlimit(resource.RLIMIT_CPU, (math.ceil(request['timeoutMs'] / 1000) + 1,) * 2)
+        tracemalloc.start()
+    except Exception as error:
+        # Fail closed before compiling user code when any limit cannot be set.
+        sys.stdout.write(json.dumps({
+            'success': False,
+            'error': 'Python resource setup failed: ' + str(error)[:4096],
+        }, ensure_ascii=True))
+        sys.stdout.flush()
+        return
     deadline = clock.monotonic() + request['timeoutMs'] / 1000
     remaining = request['instructions']
     failed = False

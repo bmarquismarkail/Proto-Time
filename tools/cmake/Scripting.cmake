@@ -45,6 +45,10 @@ if(TIME_SCRIPT_ENABLE_LUA)
     endif()
 endif()
 if(TIME_SCRIPT_ENABLE_PYTHON)
+    add_test(NAME smoke-python-worker-resource-setup
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke_python_worker.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/machine/plugins/script/adapters/PythonRuntime.py)
+    set_tests_properties(smoke-python-worker-resource-setup PROPERTIES TIMEOUT 20)
     target_compile_definitions(time-script-runtime PRIVATE TIME_SCRIPT_PYTHON=1
         TIME_SCRIPT_PYTHON_EXECUTABLE="${TIME_SCRIPT_PYTHON_EXECUTABLE}"
         TIME_SCRIPT_PYTHON_WORKER="${CMAKE_CURRENT_SOURCE_DIR}/machine/plugins/script/adapters/PythonRuntime.py")

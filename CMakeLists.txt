@@ -476,6 +476,9 @@ add_test(NAME smoke-dynamic-plugin-module
 add_library(time-test-c-ir-plugin MODULE tests/fixtures/test_ir_plugin.c)
 target_include_directories(time-test-c-ir-plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 set_target_properties(time-test-c-ir-plugin PROPERTIES PREFIX "")
+add_library(time-test-throwing-ir-plugin MODULE tests/fixtures/test_throwing_ir_plugin.cpp)
+target_include_directories(time-test-throwing-ir-plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+set_target_properties(time-test-throwing-ir-plugin PROPERTIES PREFIX "")
 add_library(time-test-malformed-ir-plugin MODULE
     tests/fixtures/test_malformed_ir_plugin.c)
 target_include_directories(time-test-malformed-ir-plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -518,7 +521,8 @@ target_link_libraries(time-smoke-dynamic-ir-module
 add_dependencies(time-smoke-dynamic-ir-module
     time-test-c-ir-plugin time-test-malformed-ir-plugin
     time-test-incompatible-ir-plugin time-test-ir-adapter-only-plugin
-    time-test-ir-backend-only-plugin time-test-ir-missing-guard-plugin)
+    time-test-ir-backend-only-plugin time-test-ir-missing-guard-plugin
+    time-test-throwing-ir-plugin)
 add_test(NAME smoke-dynamic-ir-module
     COMMAND time-smoke-dynamic-ir-module
         $<TARGET_FILE:time-test-c-ir-plugin>
@@ -526,7 +530,8 @@ add_test(NAME smoke-dynamic-ir-module
         $<TARGET_FILE:time-test-incompatible-ir-plugin>
         $<TARGET_FILE:time-test-ir-adapter-only-plugin>
         $<TARGET_FILE:time-test-ir-backend-only-plugin>
-        $<TARGET_FILE:time-test-ir-missing-guard-plugin>)
+        $<TARGET_FILE:time-test-ir-missing-guard-plugin>
+        $<TARGET_FILE:time-test-throwing-ir-plugin>)
 add_library(time-test-c-frontend-plugin MODULE tests/fixtures/test_frontend_plugin.c)
 target_include_directories(time-test-c-frontend-plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 set_target_properties(time-test-c-frontend-plugin PROPERTIES PREFIX "")

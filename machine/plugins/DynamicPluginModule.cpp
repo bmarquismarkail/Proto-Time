@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdint>
 #include <dlfcn.h>
+#include <exception>
 #include <limits>
 #include <mutex>
 #include <span>
@@ -832,76 +833,82 @@ public:
 
         struct HostBridge {
             BMMQ::IR::InterpreterHost* host = nullptr;
-            bool failed = false;
-        } bridge{&host, false};
+            std::exception_ptr failure;
+        } bridge{&host, {}};
         const auto readRegister = +[](void* opaque, std::uint32_t id,
                                       std::uint32_t type) noexcept -> std::uint64_t {
             auto& bridge = *static_cast<HostBridge*>(opaque);
+            if (bridge.failure) return 0u;
             try {
-                if (type > static_cast<std::uint32_t>(BMMQ::IR::ValueType::I64)) throw 0;
+                if (type > static_cast<std::uint32_t>(BMMQ::IR::ValueType::I64)) throw std::invalid_argument("invalid dynamic IR host callback arguments");
                 return bridge.host->readRegister(id, static_cast<BMMQ::IR::ValueType>(type));
-            } catch (...) { bridge.failed = true; return 0u; }
+            } catch (...) { bridge.failure = std::current_exception(); return 0u; }
         };
         const auto writeRegister = +[](void* opaque, std::uint32_t id, std::uint32_t type,
                                        std::uint64_t value) noexcept -> int32_t {
             auto& bridge = *static_cast<HostBridge*>(opaque);
+            if (bridge.failure) return TIME_IR_ERROR_V1;
             try {
-                if (type > static_cast<std::uint32_t>(BMMQ::IR::ValueType::I64)) throw 0;
+                if (type > static_cast<std::uint32_t>(BMMQ::IR::ValueType::I64)) throw std::invalid_argument("invalid dynamic IR host callback arguments");
                 bridge.host->writeRegister(id, static_cast<BMMQ::IR::ValueType>(type), value);
                 return TIME_IR_OK_V1;
-            } catch (...) { bridge.failed = true; return TIME_IR_ERROR_V1; }
+            } catch (...) { bridge.failure = std::current_exception(); return TIME_IR_ERROR_V1; }
         };
         const auto loadMemory = +[](void* opaque, std::uint64_t address, std::uint32_t type,
                                     std::uint32_t memoryClass) noexcept -> std::uint64_t {
             auto& bridge = *static_cast<HostBridge*>(opaque);
+            if (bridge.failure) return 0u;
             try {
                 if (type > static_cast<std::uint32_t>(BMMQ::IR::ValueType::I64) ||
-                    memoryClass > static_cast<std::uint32_t>(BMMQ::IR::MemoryClass::Cartridge)) throw 0;
+                    memoryClass > static_cast<std::uint32_t>(BMMQ::IR::MemoryClass::Cartridge)) throw std::invalid_argument("invalid dynamic IR host callback arguments");
                 return bridge.host->loadMemory(address, static_cast<BMMQ::IR::ValueType>(type),
                                                static_cast<BMMQ::IR::MemoryClass>(memoryClass));
-            } catch (...) { bridge.failed = true; return 0u; }
+            } catch (...) { bridge.failure = std::current_exception(); return 0u; }
         };
         const auto storeMemory = +[](void* opaque, std::uint64_t address, std::uint32_t type,
                                      std::uint32_t memoryClass,
                                      std::uint64_t value) noexcept -> int32_t {
             auto& bridge = *static_cast<HostBridge*>(opaque);
+            if (bridge.failure) return TIME_IR_ERROR_V1;
             try {
                 if (type > static_cast<std::uint32_t>(BMMQ::IR::ValueType::I64) ||
-                    memoryClass > static_cast<std::uint32_t>(BMMQ::IR::MemoryClass::Cartridge)) throw 0;
+                    memoryClass > static_cast<std::uint32_t>(BMMQ::IR::MemoryClass::Cartridge)) throw std::invalid_argument("invalid dynamic IR host callback arguments");
                 bridge.host->storeMemory(address, static_cast<BMMQ::IR::ValueType>(type),
                                          static_cast<BMMQ::IR::MemoryClass>(memoryClass), value);
                 return TIME_IR_OK_V1;
-            } catch (...) { bridge.failed = true; return TIME_IR_ERROR_V1; }
+            } catch (...) { bridge.failure = std::current_exception(); return TIME_IR_ERROR_V1; }
         };
         const auto callHelper = +[](void* opaque, std::uint32_t id, std::uint32_t resultType,
                                     const std::uint64_t* arguments,
                                     std::uint32_t argumentCount) noexcept -> std::uint64_t {
             auto& bridge = *static_cast<HostBridge*>(opaque);
+            if (bridge.failure) return 0u;
             try {
                 if (resultType > static_cast<std::uint32_t>(BMMQ::IR::ValueType::I64) ||
                     argumentCount > BMMQ::IR::IrExecutionService::Limits::kMaxOperandsPerOp ||
-                    (argumentCount != 0u && arguments == nullptr)) throw 0;
+                    (argumentCount != 0u && arguments == nullptr)) throw std::invalid_argument("invalid dynamic IR host callback arguments");
                 return bridge.host->callHelper(
                     id, static_cast<BMMQ::IR::ValueType>(resultType),
                     std::span<const std::uint64_t>(arguments, argumentCount));
-            } catch (...) { bridge.failed = true; return 0u; }
+            } catch (...) { bridge.failure = std::current_exception(); return 0u; }
         };
         const auto setPc = +[](void* opaque, std::uint64_t address) noexcept -> int32_t {
             auto& bridge = *static_cast<HostBridge*>(opaque);
+            if (bridge.failure) return TIME_IR_ERROR_V1;
             try { bridge.host->setProgramCounter(address); return TIME_IR_OK_V1; }
-            catch (...) { bridge.failed = true; return TIME_IR_ERROR_V1; }
+            catch (...) { bridge.failure = std::current_exception(); return TIME_IR_ERROR_V1; }
         };
         const TimeIrExecutionHostV1 cHost{
             sizeof(TimeIrExecutionHostV1), TIME_IR_ABI_VERSION_V1, &bridge,
             readRegister, writeRegister, loadMemory, storeMemory, callHelper, setPc};
         TimeIrExecutionResultV1 cResult{sizeof(TimeIrExecutionResultV1), 0u, 0u, 0u, 0u};
-        int32_t executed = TIME_IR_ERROR_V1;
-        try {
-            executed = lifetime_->api->execute(
-                lifetime_->instance, cArtifact->raw, static_cast<std::uint32_t>(instructionIndex),
-                &cHost, &cResult);
-        } catch (...) { return false; }
-        if (executed != TIME_IR_OK_V1 || bridge.failed ||
+        // Host exceptions cannot cross the C callbacks. Rethrow on the C++
+        // side after dispatch so IrExecutionService preserves the fatal cause.
+        const auto executed = lifetime_->api->execute(
+            lifetime_->instance, cArtifact->raw, static_cast<std::uint32_t>(instructionIndex),
+            &cHost, &cResult);
+        if (bridge.failure) std::rethrow_exception(bridge.failure);
+        if (executed != TIME_IR_OK_V1 ||
             cResult.struct_size < sizeof(TimeIrExecutionResultV1) ||
             cResult.branch_taken > 1u || cResult.exit_requested > 1u ||
             cResult.cycle_condition > 1u || cResult.retirement_reached > 1u) return false;

@@ -144,10 +144,12 @@ struct CustomPolicy:Plugin::IExecutorPolicyPlugin {
  bool shouldRecord(const Plugin::FetchBlock& f,const CpuFeedback& c)const override{return p.shouldRecord(f,c);}
  bool shouldSegment(const Plugin::FetchBlock& f,const CpuFeedback& c)const override{return p.shouldSegment(f,c);}
 };
+// Admission-only test double: custom IR components must disable bulk HALT.
+// Compilation deliberately declines; execution would violate this test contract.
 struct CustomBackend:IR::IIrExecutionBackend {
  bool supports(uint32_t a,uint32_t v)const noexcept override{return a==GB::IRExecution::GameBoyCoreAdapter::kArchitectureId && v==IR::kIrAbiVersion;}
  BlockBackendArtifactPtr compile(const IR::BlockPtr&,std::string*)override{return {};}
- bool execute(const BlockBackendArtifact&,size_t,IR::InterpreterHost&,IR::InterpreterResult*)override{return false;}
+ bool execute(const BlockBackendArtifact&,size_t,IR::InterpreterHost&,IR::InterpreterResult*)override{throw std::logic_error("declining HALT test backend was dispatched");}
 };
 void liveMutation(){
  GB::GameBoyMachine a,b;auto bytes=rom(true);

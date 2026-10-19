@@ -1,3 +1,6 @@
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cstdint>
 #include <filesystem>
@@ -23,7 +26,13 @@ public:
                      BMMQ::IR::MemoryClass, std::uint64_t) override {}
     std::uint64_t callHelper(std::uint32_t, BMMQ::IR::ValueType,
                              std::span<const std::uint64_t>) override { return 0u; }
-    void setProgramCounter(std::uint64_t address) override { pc = address; }
+    void setProgramCounter(std::uint64_t address) override {
+        pc = address;
+        if (throwNonStandard) throw 42;
+        if (throwPc) throw std::runtime_error("host PC callback failed");
+    }
+    bool throwPc = false;
+    bool throwNonStandard = false;
     std::uint64_t pc = 0u;
 };
 
@@ -112,7 +121,7 @@ void exerciseMissingGuardFallback(const std::filesystem::path& pluginPath)
 
 int main(int argc, char** argv)
 {
-    assert(argc == 7);
+    assert(argc == 8);
     assert(argv != nullptr);
     auto module = BMMQ::Plugin::DynamicPluginModule::load(std::filesystem::path(argv[1]));
     assert(module.irCoreAdapterIds() ==
@@ -142,6 +151,41 @@ int main(int argc, char** argv)
         BMMQ::IR::InterpreterResult result;
         assert(service.tryExecute(*block, *prepared.artifact, 0u, host, &result));
         assert(host.pc == 0x101u && result.retirementReached);
+        // The C callback must contain exceptions until dispatch returns, then
+        // the service must fail fatally with the cause, even after a mutation.
+        for (bool nonStandard : {false, true}) {
+            host.pc = 0u;
+            host.throwPc = true;
+            host.throwNonStandard = nonStandard;
+            result = {};
+            bool rejected = false;
+            try {
+                (void)service.tryExecute(*block, *prepared.artifact, 0u, host, &result);
+            } catch (const std::runtime_error& failure) {
+                const std::string message = failure.what();
+                rejected = message.find(nonStandard ? "non-standard exception" :
+                                                       "host PC callback failed") != std::string::npos;
+            }
+            assert(rejected && host.pc == 0x101u && !result.retirementReached);
+        }
+
+    }
+
+    {
+        auto throwingModule = BMMQ::Plugin::DynamicPluginModule::load(std::filesystem::path(argv[7]));
+        auto throwingBackend = throwingModule.createIrExecutionBackend("test.ir-backend.host-callback");
+        BMMQ::GameGearIR::CoreAdapter hostValidator;
+        BMMQ::IR::IrExecutionService service(*adapter, *throwingBackend, hostValidator);
+        const auto prepared = service.prepare(request, block);
+        assert(prepared.prepared && prepared.artifact);
+        Host host;
+        bool rejected = false;
+        try {
+            (void)service.tryExecute(*block, *prepared.artifact, 0u, host);
+        } catch (const std::runtime_error& failure) {
+            rejected = std::string(failure.what()).find("fixture IR execution exception") != std::string::npos;
+        }
+        assert(rejected && host.pc == 0x101u);
     }
 
     adapter.reset();
