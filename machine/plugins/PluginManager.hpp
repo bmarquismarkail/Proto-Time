@@ -27,12 +27,18 @@ struct PluginStatus {
 
 class PluginManager {
 public:
+    // Registration during event dispatch, input sampling, or teardown is rejected.
+    // Ordinary onAttach callbacks may register additional plugins. Nested attachment
+    // inside a dispatch remains subject to the dispatch registration restriction.
     template<typename PluginT>
     PluginT& add(std::unique_ptr<PluginT> plugin)
     {
         static_assert(std::is_base_of_v<IPlugin, PluginT>, "PluginT must derive from BMMQ::IPlugin");
         if (!plugin) {
             throw std::invalid_argument("plugin must not be null");
+        }
+        if (registrationBlocks_ != 0) {
+            throw std::logic_error("plugin registration is not allowed during dispatch or shutdown");
         }
         PluginT& ref = *plugin;
         Entry entry;
@@ -142,6 +148,7 @@ public:
 
     void shutdown(MutableMachineView view)
     {
+        RegistrationBlock block(registrationBlocks_);
         for (auto it = plugins_.rbegin(); it != plugins_.rend(); ++it) {
             if (!it->attached) {
                 continue;
@@ -158,6 +165,7 @@ public:
 
     void emit(const MachineView& view, const MachineEvent& event)
     {
+        RegistrationBlock block(registrationBlocks_);
         for (auto& entry : plugins_) {
             if (entry.disabled) {
                 continue;
@@ -179,6 +187,7 @@ public:
 
     std::optional<uint32_t> sampleDigitalInput(const MachineView& view)
     {
+        RegistrationBlock block(registrationBlocks_);
         for (auto& entry : plugins_) {
             if (entry.disabled) {
                 continue;
@@ -206,6 +215,7 @@ public:
 
     std::optional<IAnalogInputPlugin::AnalogState> sampleAnalogInput(const MachineView& view)
     {
+        RegistrationBlock block(registrationBlocks_);
         for (auto& entry : plugins_) {
             if (entry.disabled) {
                 continue;
@@ -232,6 +242,15 @@ public:
     }
 
 private:
+    // A depth counter keeps registration blocked across nested callback dispatch.
+    struct RegistrationBlock {
+        explicit RegistrationBlock(std::size_t& depth) : depth(depth) { ++depth; }
+        ~RegistrationBlock() { --depth; }
+        RegistrationBlock(const RegistrationBlock&) = delete;
+        RegistrationBlock& operator=(const RegistrationBlock&) = delete;
+        std::size_t& depth;
+    };
+
     struct Entry {
         std::unique_ptr<IPlugin> plugin;
         IVideoPlugin* video = nullptr;
@@ -334,6 +353,7 @@ private:
     }
 
     std::vector<Entry> plugins_;
+    std::size_t registrationBlocks_ = 0;
     bool initializing_ = false;
     bool initialized_ = false;
 };
