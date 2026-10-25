@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-import copy,importlib.util,json,subprocess,sys,tempfile,hashlib,shutil
+import copy,importlib.util,json,os,subprocess,sys,tempfile,hashlib,shutil
 from pathlib import Path
 ROOT=Path(__file__).resolve().parent/'fixtures/space/port-game'
 sys.path.insert(0,str(ROOT))
+sys.path.insert(0,str(ROOT.parent))
+from libretro import reference_cores
 from build import build
 from ledger import make,symbols
 sha=lambda b:hashlib.sha256(b).hexdigest()
@@ -12,7 +14,8 @@ def call(*args,ok=True):
     text=p.stdout if ok else p.stderr
     return json.loads(text) if text.strip() else {}
 def main():
-    if any(not shutil.which(t) for t in ['wla-gb','wla-z80','wlalink']):print('WLA unavailable: not run');return 77
+    if any(not shutil.which(t) for t in ['wla-gb','wla-z80','wlalink']):
+        print('WLA unavailable: not run');return 1 if os.environ.get('TIME_REQUIRE_EXTERNAL_PROOFS') == '1' else 77
     with tempfile.TemporaryDirectory(prefix='space-port-') as temp:
         out=Path(temp);build(out/'a',['gb','gg']);build(out/'b',['gb','gg']);a=out/'a'
         for ext in ['gb','gg']:assert (a/f'collect-and-exit.{ext}').read_bytes()==(out/'b'/f'collect-and-exit.{ext}').read_bytes()

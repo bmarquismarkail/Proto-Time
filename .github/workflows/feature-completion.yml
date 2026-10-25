@@ -27,7 +27,28 @@ jobs:
           python tools/check_feature_completion.py "${evidence[@]}" > admission.json
           python tests/smoke_feature_completion.py
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake g++ nodejs pkg-config zlib1g-dev libssl-dev nlohmann-json3-dev libsdl2-dev libglfw3-dev libasound2-dev
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ git nodejs pkg-config zlib1g-dev libssl-dev nlohmann-json3-dev libsdl2-dev libglfw3-dev libasound2-dev libretro-gambatte libretro-genesisplusgx
+      - name: Install WLA-DX ROM build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          wla_source="$RUNNER_TEMP/wla-dx"
+          wla_build="$RUNNER_TEMP/wla-dx-build"
+          wla_prefix="$RUNNER_TEMP/wla-dx-install"
+          git clone --depth 1 --branch v10.7 https://github.com/vhelin/wla-dx.git "$wla_source"
+          cmake -S "$wla_source" -B "$wla_build" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$wla_prefix"
+          cmake --build "$wla_build" -j2
+          cmake --install "$wla_build"
+          echo "$wla_prefix/bin" >> "$GITHUB_PATH"
+      - name: Verify ROM and port-proof dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v wla-gb
+          command -v wla-z80
+          command -v wlalink
+          test -n "$(find /usr/lib -type f -name gambatte_libretro.so -print -quit)"
+          test -n "$(find /usr/lib -type f -name genesis_plus_gx_libretro.so -print -quit)"
       - name: Fetch verified scripting sources
         run: python tools/fetch_script_dependencies.py --output build-working/script-dependencies
       - name: Configure and build
@@ -43,6 +64,7 @@ jobs:
         env:
           SDL_VIDEODRIVER: dummy
           SDL_AUDIODRIVER: dummy
+          TIME_REQUIRE_EXTERNAL_PROOFS: '1'
         run: ctest --test-dir build-working --output-on-failure
       - name: Preserve configuration and test results
         if: always()

@@ -5,6 +5,8 @@ from pathlib import Path
 from build import build,ROOT
 from ledger import make,symbols
 from verify import verify,KEYS
+sys.path.insert(0,str(ROOT.parent))
+from libretro import reference_cores
 sha=lambda b:hashlib.sha256(b).hexdigest()
 def run(args):subprocess.run(list(map(str,args)),check=True,stdout=subprocess.DEVNULL)
 def proof(out,space,capture,state):
@@ -26,8 +28,8 @@ def proof(out,space,capture,state):
     run([capture,out/'collect-and-exit.gb',ROOT/'scenarios.json',out/'target-windows.json',out/'target-captured'])
     run([state,out/'collect-and-exit.gg',ROOT/'scenarios.json',out/'internal-gg.json'])
     scenarios=json.loads((ROOT/'scenarios.json').read_text())
-    cores={'gb':Path('/usr/lib/libretro/gambatte_libretro.so'),'gg':Path('/usr/lib/libretro/genesis_plus_gx_libretro.so')}
-    if not all(c.exists() for c in cores.values()):
+    cores=reference_cores()
+    if not all(c is not None for c in cores.values()):
         (out/'reference-verification.json').write_text(json.dumps(dict(status='not run',reason='missing reference cores')));return False
     for s,c in cores.items():run([sys.executable,ROOT/'reference.py','--core',c,'--rom',out/f'collect-and-exit.{s}','--output',out/f'reference-{s}','--commands',ROOT/'scenarios.json'])
     report=verify(out)

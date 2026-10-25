@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-import json,shutil,sys,tempfile,subprocess
+import json,os,shutil,sys,tempfile,subprocess
 from pathlib import Path
 reverse=len(sys.argv)>4 and sys.argv[4]=='gamegear'
 ROOT=Path(__file__).resolve().parent/('fixtures/space/port-reverse-game' if reverse else 'fixtures/space/port-game');sys.path.insert(0,str(ROOT))
+sys.path.insert(0,str(ROOT.parent))
+from libretro import reference_cores
 from proof import proof
 from build import build
 
 def main():
-    if any(not shutil.which(t) for t in ['wla-gb','wla-z80','wlalink']) or not all(Path('/usr/lib/libretro/'+c).exists() for c in ['gambatte_libretro.so','genesis_plus_gx_libretro.so']):print('external tool/core unavailable: not run');return 77
+    if any(not shutil.which(t) for t in ['wla-gb','wla-z80','wlalink']) or not all(c is not None for c in reference_cores().values()):
+        print('external tool/core unavailable: not run')
+        return 1 if os.environ.get('TIME_REQUIRE_EXTERNAL_PROOFS') == '1' else 77
     with tempfile.TemporaryDirectory(prefix='space-port-proof-') as temp:
         out=Path(temp);assert proof(out,*[Path(a).resolve() for a in sys.argv[1:4]])
         check=json.loads((out/'check.json').read_text())['result'];assert check['complete'] and not check['stage5Gate'] and check['liveAcceptance']=='not run'
