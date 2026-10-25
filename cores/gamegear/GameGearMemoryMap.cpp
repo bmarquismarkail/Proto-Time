@@ -51,7 +51,9 @@ uint8_t GameGearMemoryMap::readIoCanonical(uint8_t port) {
     if ((port & 0xC1u) == 0x41u) {
         return vdp ? vdp->readHCounter() : 0xFFu;
     }
-    if ((port & 0xFEu) == 0xDCu) {
+    // Game Gear exposes the controller ports at both their canonical $DC/$DD
+    // addresses and the $C0/$C1 mirrors.
+    if ((port & 0xFEu) == 0xC0u || (port & 0xFEu) == 0xDCu) {
         return input ? input->readInputs() : 0xFFu;
     }
     return 0xFFu;

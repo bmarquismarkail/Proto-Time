@@ -47,6 +47,13 @@ int main()
         input.reset();
         psg.reset();
 
+        input.setLogicalButtons(BMMQ::inputButtonMask(BMMQ::InputButton::Button1));
+        const auto expectedInputs = input.readInputs();
+        assert(memory.readIoPort(0xC0u) == expectedInputs);
+        assert(memory.readIoPort(0xC1u) == expectedInputs);
+        assert(memory.readIoPort(0xDCu) == expectedInputs);
+        assert(memory.readIoPort(0xDDu) == expectedInputs);
+
         assert(memory.readIoPort(0x00u) == 0xC0u);
         assert(memory.readIoPort(0x01u) == 0x7Fu);
         assert(memory.readIoPort(0x02u) == 0xFFu);
