@@ -6,6 +6,7 @@
 #include <thread>
 
 #include "machine/AudioService.hpp"
+#include "emulator/AudioKpiStatus.hpp"
 
 int main()
 {
@@ -98,6 +99,30 @@ int main()
     if (audio.transportStats().underrunCount != 1u ||
         !std::all_of(output.begin(), output.end(), [](auto sample) { return sample == 4321; })) {
         std::cerr << "audio did not re-prime after starvation\n";
+        return 1;
+    }
+    // A real FIFO underrun can be hidden by an otherwise adequate average.
+    BMMQ::AudioService kpiAudio;
+    if (!kpiAudio.configureOutputTransport({48000, 1, 256, 1})) return 1;
+    for (unsigned i = 0; i < 100u; ++i) {
+        kpiAudio.appendRecentPcm(source, i + 1u);
+        if (!kpiAudio.produceReadyOutputBlock()) return 1;
+        kpiAudio.drainReadyOutput(output);
+    }
+    kpiAudio.drainReadyOutput(output);
+    const auto kpiStats = kpiAudio.transportStats();
+    const auto kpi = BMMQ::classifyAudioKpiStatus({
+        .elapsedSeconds = 25600.0 / 48000.0,
+        .generatedSamples = 25600u,
+        .expectedSamplesPerSecond = 48000.0,
+        .drainedReadySamples = kpiStats.drainReadySamples,
+        .drainRequestedSamples = kpiStats.drainRequestedSamples,
+        .underrunCount = kpiStats.underrunCount,
+        .silenceSamplesFilled = kpiStats.silenceSamplesFilled,
+    });
+    if (kpiStats.underrunCount != 1u || kpi.drainRatio < 0.95 ||
+        kpi.status != BMMQ::AudioKpiStatus::TransportLimited) {
+        std::cerr << "actual FIFO underrun was hidden by a healthy average KPI\n";
         return 1;
     }
     std::cout << "audio lifecycle callbacks=" << callbacks.load()

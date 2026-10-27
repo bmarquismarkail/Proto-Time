@@ -20,6 +20,10 @@ struct AudioKpiInputs {
     double expectedSamplesPerSecond = 0.0;
     std::uint64_t drainedReadySamples = 0;
     std::uint64_t drainRequestedSamples = 0;
+    // Post-prime failures from the same measurement interval as the ratios.
+    // Startup/epoch-transition priming silence is counted separately.
+    std::uint64_t underrunCount = 0;
+    std::uint64_t silenceSamplesFilled = 0;
 };
 
 struct AudioKpiClassification {
@@ -75,7 +79,8 @@ inline constexpr double kAudioKpiSourceDrainCloseTolerance = 0.05;
         std::abs(result.sourceRatio - result.drainRatio) <= kAudioKpiSourceDrainCloseTolerance) {
         result.status = AudioKpiStatus::SourceLimited;
     } else if (result.sourceRatio >= kAudioKpiSourceRealtimeThreshold &&
-               result.drainRatio < kAudioKpiDrainRealtimeThreshold) {
+               (result.drainRatio < kAudioKpiDrainRealtimeThreshold ||
+                inputs.underrunCount != 0u || inputs.silenceSamplesFilled != 0u)) {
         result.status = AudioKpiStatus::TransportLimited;
     } else if (result.sourceRatio >= kAudioKpiSourceRealtimeThreshold &&
                result.drainRatio >= kAudioKpiDrainRealtimeThreshold) {

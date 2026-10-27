@@ -76,5 +76,18 @@ int main()
         assert(result.status == AudioKpiStatus::SourceLimited);
     }
 
+    // High throughput alone cannot establish transport health.
+    for (bool underrun : {false, true}) {
+        const auto result = classifyAudioKpiStatus(AudioKpiInputs{
+            .elapsedSeconds = 1.0,
+            .generatedSamples = 48000u,
+            .expectedSamplesPerSecond = 48000.0,
+            .drainedReadySamples = 47999u,
+            .drainRequestedSamples = 48000u,
+            .underrunCount = underrun ? 1u : 0u,
+            .silenceSamplesFilled = underrun ? 0u : 1u,
+        });
+        if (result.status != AudioKpiStatus::TransportLimited) return 1;
+    }
     return 0;
 }

@@ -46,7 +46,7 @@ public:
 
     void onAttach(MutableMachineView& view) override;
     void onDetach(MutableMachineView&) override;
-    void onMachineEvent(const MachineEvent&, const MachineView&) override {}
+    void onMachineEvent(const MachineEvent& event, const MachineView&) override;
     void onAudioEvent(const MachineEvent& event, const MachineView& view) override;
     [[nodiscard]] AudioTransportPluginStats stats() const noexcept;
 
@@ -56,12 +56,14 @@ private:
     template<typename T>
     static void atomicMinNonZero(std::atomic<T>& target, T value) noexcept;
     void flushBatch();
+    void discardBatch() noexcept;
 
     AudioService* service_ = nullptr;
     std::size_t batchChunks_ = 1u;
     std::vector<std::int16_t> batchSamples_;
     std::size_t batchPackets_ = 0u;
     std::uint64_t batchFrameCounter_ = 0u;
+    std::uint64_t batchEpoch_ = 0u;
     std::atomic<std::size_t> events_{0u};
     std::atomic<std::size_t> accepted_{0u};
     std::atomic<std::size_t> skipped_{0u};

@@ -358,6 +358,8 @@ void writeDiagnosticsSample(std::ostream& output,
         .expectedSamplesPerSecond = audioExpectedSamplesPerSecond,
         .drainedReadySamples = stats.audioTransportDrainReadySamples,
         .drainRequestedSamples = stats.audioTransportDrainRequestedSamples,
+        .underrunCount = stats.audioTransportUnderrunCount,
+        .silenceSamplesFilled = stats.audioTransportSilenceSamplesFilled,
     });
 
     output << "{";
