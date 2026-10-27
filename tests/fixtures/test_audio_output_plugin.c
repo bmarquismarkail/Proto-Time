@@ -9,6 +9,7 @@ struct TestAudioOutput {
     struct TimeAudioOutputStatsV1 stats;
     uint32_t callback_samples;
     int32_t open;
+    int32_t fail_start;
 };
 
 static void* create_output(const struct TimeAudioOutputHostApiV1* host)
@@ -25,7 +26,11 @@ static void* create_output(const struct TimeAudioOutputHostApiV1* host)
     return output;
 }
 
-static void destroy_output(void* instance) { free(instance); }
+static void destroy_output(void* instance)
+{
+    if (((struct TestAudioOutput*)instance)->open) abort();
+    free(instance);
+}
 
 static int32_t open_output(void* instance, const struct TimeAudioOutputConfigV1* config,
                            struct TimeAudioOutputDeviceInfoV1* obtained)
@@ -35,6 +40,8 @@ static int32_t open_output(void* instance, const struct TimeAudioOutputConfigV1*
         config->struct_size < sizeof(*config) || obtained->struct_size < sizeof(*obtained) ||
         config->requested_sample_rate == 0u || config->requested_channels == 0u ||
         config->callback_samples == 0u) return 0;
+    if (output->open) abort();
+    output->fail_start = config->requested_sample_rate == 23456u;
     output->callback_samples = config->callback_samples;
     output->open = 1;
     output->stats.device_open = 1;
@@ -50,6 +57,7 @@ static int32_t start_output(void* instance)
     struct TestAudioOutput* output = (struct TestAudioOutput*)instance;
     int16_t samples[4096];
     if (output == NULL || !output->open) return 0;
+    if (output->fail_start) return 0;
     if (output->callback_samples > 4096u) return 0;
     memset(samples, 0, output->callback_samples * sizeof(*samples));
     output->host.drain_ready_audio(output->host.host_context, samples,
@@ -82,6 +90,7 @@ static void close_output(void* instance)
     struct TestAudioOutput* output = (struct TestAudioOutput*)instance;
     int16_t sample = 1;
     if (output == NULL) return;
+    if (!output->open) abort();
     pause_output(output);
     output->open = 0;
     output->stats.device_open = 0;
@@ -92,7 +101,11 @@ static const char* backend_name(const void* instance)
 {
     return instance != NULL ? "pure-c-test-audio" : "";
 }
-static const char* last_error(const void* instance) { (void)instance; return ""; }
+static const char* last_error(const void* instance)
+{
+    return ((const struct TestAudioOutput*)instance)->fail_start
+        ? "intentional start failure" : "";
+}
 static int32_t query_stats(const void* instance, struct TimeAudioOutputStatsV1* stats)
 {
     const struct TestAudioOutput* output = (const struct TestAudioOutput*)instance;

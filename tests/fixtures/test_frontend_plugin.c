@@ -7,6 +7,7 @@ struct TestFrontend {
     struct TimeFrontendHostApiV1 host;
     struct TimeFrontendStatsV1 stats;
     int32_t ready;
+    int32_t fail_initialize;
 };
 
 static void* create_frontend(const struct TimeFrontendHostApiV1* host,
@@ -17,6 +18,7 @@ static void* create_frontend(const struct TimeFrontendHostApiV1* host,
         host->abi_version != TIME_PLUGIN_ABI_VERSION_V1) return NULL;
     frontend = (struct TestFrontend*)calloc(1u, sizeof(*frontend));
     if (frontend != NULL) {
+        frontend->fail_initialize = strcmp(config->window_title, "fail-first-initialize") == 0;
         frontend->host = *host;
         frontend->stats.struct_size = sizeof(frontend->stats);
     }
@@ -28,6 +30,10 @@ static int32_t initialize_frontend(void* instance)
 {
     struct TestFrontend* frontend = (struct TestFrontend*)instance;
     if (frontend == NULL) return 0;
+    if (frontend->fail_initialize) {
+        frontend->fail_initialize = 0;
+        return 0;
+    }
     frontend->ready = 1;
     frontend->stats.backend_ready = 1;
     return 1;

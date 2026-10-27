@@ -323,6 +323,59 @@ void testCallbackRegistration()
     manager.shutdown(machine.mutableView());
 }
 
+struct ReentrantDetachPlugin final : BMMQ::IPlugin {
+    BMMQ::PluginManager& manager;
+    std::vector<int>& order;
+    int number;
+    bool throwOnDetach;
+    int attachCount = 0;
+    int detachCount = 0;
+
+    ReentrantDetachPlugin(BMMQ::PluginManager& manager, std::vector<int>& order,
+                          int number, bool throwOnDetach)
+        : manager(manager), order(order), number(number), throwOnDetach(throwOnDetach) {}
+    std::string_view id() const override {
+        return number == 1 ? "test.detach.first" : "test.detach.second";
+    }
+    void onAttach(BMMQ::MutableMachineView&) override { ++attachCount; }
+    void onDetach(BMMQ::MutableMachineView& view) override {
+        ++detachCount;
+        order.push_back(number);
+        if (detachCount == 1) {
+            manager.shutdown(view);
+            manager.initialize(view);
+        }
+        order.push_back(-number);
+        if (throwOnDetach) throw std::runtime_error("detach failure");
+    }
+};
+
+void testReentrantShutdown()
+{
+    for (bool throwing : {false, true}) {
+        GameBoyMachine machine;
+        auto& manager = machine.pluginManager();
+        std::vector<int> order;
+        auto& first = manager.add(std::make_unique<ReentrantDetachPlugin>(manager, order, 1, false));
+        auto& second = manager.add(std::make_unique<ReentrantDetachPlugin>(manager, order, 2, throwing));
+        manager.initialize(machine.mutableView());
+        manager.shutdown(machine.mutableView());
+        assert(first.detachCount == 1 && second.detachCount == 1);
+        assert(first.attachCount == 1 && second.attachCount == 1);
+        assert((order == std::vector<int>{2, -2, 1, -1}));
+        assert(!manager.initialized());
+        for (const auto& status : manager.statuses()) assert(!status.attached);
+        assert(manager.statusFor(second.id())->disabled == throwing);
+        manager.shutdown(machine.mutableView());
+        assert(first.detachCount == 1 && second.detachCount == 1);
+        manager.resetFailures();
+        manager.initialize(machine.mutableView());
+        assert(first.attachCount == 2 && second.attachCount == 2);
+        manager.shutdown(machine.mutableView());
+        assert(first.detachCount == 2 && second.detachCount == 2);
+    }
+}
+
 void testReentrantAttachmentOrdering()
 {
     GameBoyMachine machine;
@@ -369,6 +422,7 @@ void testFailedAttachmentRetry()
 int main()
 {
     testCallbackRegistration();
+    testReentrantShutdown();
     testReentrantAttachmentOrdering();
     testFailedAttachmentRetry();
 

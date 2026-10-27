@@ -120,7 +120,7 @@ public:
 
     void initialize(MutableMachineView view)
     {
-        if (initializing_) {
+        if (initializing_ || shuttingDown_ != 0) {
             return;
         }
         initializing_ = true;
@@ -148,17 +148,21 @@ public:
 
     void shutdown(MutableMachineView view)
     {
+        // Nested lifecycle calls must not interleave detach callbacks or reattach
+        // entries while reverse-order teardown is still in progress.
+        if (shuttingDown_ != 0) return;
+        RegistrationBlock teardown(shuttingDown_);
         RegistrationBlock block(registrationBlocks_);
         for (auto it = plugins_.rbegin(); it != plugins_.rend(); ++it) {
             if (!it->attached) {
                 continue;
             }
+            it->attached = false;
             try {
                 it->plugin->onDetach(view);
             } catch (...) {
                 markFailure(*it);
             }
-            it->attached = false;
         }
         initialized_ = false;
     }
@@ -354,6 +358,7 @@ private:
 
     std::vector<Entry> plugins_;
     std::size_t registrationBlocks_ = 0;
+    std::size_t shuttingDown_ = 0;
     bool initializing_ = false;
     bool initialized_ = false;
 };
