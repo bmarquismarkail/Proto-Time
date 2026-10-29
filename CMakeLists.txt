@@ -1042,6 +1042,10 @@ if(Python3_Interpreter_FOUND)
 endif()
 
 # Stage-5 fixture tooling; reference libretro harnesses remain separate processes.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME smoke-libretro-discovery COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke_libretro_discovery.py)
+endif()
 add_executable(time-space-port-capture tests/space_port_capture.cpp)
 target_link_libraries(time-space-port-capture PRIVATE time-space-analysis)
 add_executable(time-space-port-state tests/space_port_state.cpp)

@@ -1,6 +1,7 @@
 """Locate the packaged libretro cores on single- and multiarch Linux hosts."""
 
 import os
+import sysconfig
 from pathlib import Path
 
 
@@ -17,10 +18,18 @@ def _directories() -> list[Path]:
         [
             Path("/usr/lib/libretro"),
             Path("/usr/local/lib/libretro"),
-            *Path("/usr/lib").glob("*/libretro"),
-            *Path("/usr/local/lib").glob("*/libretro"),
         ]
     )
+    # The reference process uses this interpreter, so only search its ABI's
+    # multiarch directories, even when foreign-architecture cores are installed.
+    multiarch = sysconfig.get_config_var("MULTIARCH")
+    if multiarch:
+        candidates.extend(
+            [
+                Path("/usr/lib") / multiarch / "libretro",
+                Path("/usr/local/lib") / multiarch / "libretro",
+            ]
+        )
     result = []
     for directory in candidates:
         if directory not in result:
