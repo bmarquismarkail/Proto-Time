@@ -155,6 +155,7 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   CpuRegisterCache cpuRegisters_{};
   HardwareRegisterCache hardwareRegisters_{};
   bool stopFlag = false, haltFlag = false;
+  bool illegalOpcodeLockup = false;
   bool haltBugActive = false;
   bool haltBugPcAdjustPending = false;
   uint16_t dividerCounter = 0;
@@ -296,6 +297,7 @@ public:
     DataType imeEnableDelay = 0;
     bool stopFlag = false;
     bool haltFlag = false;
+    bool illegalOpcodeLockup = false;
     bool haltBugActive = false;
     bool haltBugPcAdjustPending = false;
     uint16_t dividerCounter = 0;
@@ -412,6 +414,7 @@ public:
   bool handleMemoryRead(AddressType address, std::span<DataType> value) const;
   bool handleMemoryWrite(AddressType address, std::span<const DataType> value);
   void setStopFlag(bool f);
+  void lockUpOnInvalidOpcode() noexcept { illegalOpcodeLockup = true; }
   void setHaltFlag(bool f);
   void clearHaltFlag();
   [[nodiscard]] SaveState exportState() const;

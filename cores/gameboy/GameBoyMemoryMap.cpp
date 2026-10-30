@@ -319,6 +319,11 @@ bool GameBoyMemoryMap::handleSpecialWrite(uint16_t addr, std::span<const uint8_t
             mapper_->copyRomBankWindow(mapper_->currentRomBank(), window);
             installRomWindow(0x4000u, window);
         }
+        if (result.fixedRomBankChanged) {
+            std::array<uint8_t, 0x4000> window{};
+            mapper_->copyRomBankWindow(mapper_->currentFixedRomBank(), window);
+            installRomWindow(0x0000u, window);
+        }
         return result.handled;
     }
 
