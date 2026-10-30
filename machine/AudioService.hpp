@@ -459,6 +459,8 @@ public:
 
     [[nodiscard]] bool produceReadyOutputBlock() noexcept
     {
+        // Epoch transitions must cover publication as well as source draining.
+        std::lock_guard<std::mutex> productionLock(outputProductionMutex_);
         drainSourceBlocks();
         transportWorkerProductionAttemptCount_.fetch_add(1u, std::memory_order_relaxed);
         if (!outputTransportConfigured_ || producerScratch_.empty()) {
@@ -507,10 +509,20 @@ public:
     void drainReadyOutput(std::span<int16_t> output) noexcept
     {
         transportDrainCallbackCount_.fetch_add(1u, std::memory_order_relaxed);
+        transportDrainRequestedSamples_.fetch_add(output.size(), std::memory_order_relaxed);
+        // A control-plane reset closes admission and waits for an existing
+        // drain. The callback never waits, takes a mutex, or touches the ring
+        // while its indices are being reset.
+        ReadyDrainScope drainScope(readyDrainState_);
+        if (!drainScope.entered()) {
+            std::fill(output.begin(), output.end(), 0);
+            transportPrimingSilenceCallbackCount_.fetch_add(1u, std::memory_order_relaxed);
+            transportPrimingSilenceSamples_.fetch_add(output.size(), std::memory_order_relaxed);
+            return;
+        }
         // T2.2 Phase 2: sample FIFO occupancy at each drain callback tick
         const auto fifoDepth = readyQueueDepth();
         recordReadyQueueDrainOccupancy(fifoDepth);
-        transportDrainRequestedSamples_.fetch_add(output.size(), std::memory_order_relaxed);
         if (output.empty()) {
             return;
         }
@@ -704,6 +716,31 @@ public:
     }
 
 private:
+    static constexpr unsigned kDrainActive = 1u;
+    static constexpr unsigned kDrainSuspended = 2u;
+
+    class ReadyDrainScope {
+    public:
+        explicit ReadyDrainScope(std::atomic<unsigned>& state) noexcept
+            : state_(state)
+        {
+            unsigned expected = 0u;
+            entered_ = state_.compare_exchange_strong(
+                expected, kDrainActive, std::memory_order_acquire, std::memory_order_relaxed);
+        }
+
+        ~ReadyDrainScope()
+        {
+            if (entered_) state_.fetch_and(~kDrainActive, std::memory_order_release);
+        }
+
+        [[nodiscard]] bool entered() const noexcept { return entered_; }
+
+    private:
+        std::atomic<unsigned>& state_;
+        bool entered_ = false;
+    };
+
     [[nodiscard]] bool allowLifecycleMutation() const noexcept
     {
         if (!enforceLifecycleContract_.load(std::memory_order_acquire)) {
@@ -910,13 +947,21 @@ private:
 
     void clearReadyQueue() noexcept
     {
+        // Called by the serialized control lane with production stopped or
+        // outputProductionMutex_ held. Only this lane may wait for a callback.
+        readyDrainState_.fetch_or(kDrainSuspended, std::memory_order_acq_rel);
+        while ((readyDrainState_.load(std::memory_order_acquire) & kDrainActive) != 0u) {
+            std::this_thread::yield();
+        }
         transportPrimedForDrain_.store(false, std::memory_order_release);
         readyReadIndex_.store(0u, std::memory_order_release);
         readyWriteIndex_.store(0u, std::memory_order_release);
+        readyDrainState_.store(0u, std::memory_order_release);
     }
 
     void bumpTransportEpochLocked() noexcept
     {
+        std::lock_guard<std::mutex> productionLock(outputProductionMutex_);
         std::lock_guard<std::mutex> sourceDrainLock(sourceDrainMutex_);
         const auto epoch = transportEpoch_.fetch_add(1u, std::memory_order_release) + 1u;
         transportEpochBumpCount_.fetch_add(1u, std::memory_order_relaxed);
@@ -1167,6 +1212,8 @@ private:
     std::size_t callbackCapacitySamples_ = 0;
     std::atomic<bool> backendPausedOrClosed_{true};
     mutable std::mutex nonRealTimeMutex_;
+    std::mutex outputProductionMutex_;
+    std::atomic<unsigned> readyDrainState_{0u};
 
     AudioOutputTransportConfig outputTransportConfig_{};
     bool outputTransportConfigured_ = false;

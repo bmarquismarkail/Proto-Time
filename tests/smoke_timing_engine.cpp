@@ -54,6 +54,21 @@ int main()
         const auto s = engine.stats();
         // With 1MHz and 8ms catch-up, max budget should be >= 8000 cycles
         CHECK_TRUE(s.cycleBudget <= std::max(4.0, cfg.baseClockHz * std::chrono::duration<double>(cfg.maxCatchUp).count()) + 1.0);
+        CHECK_TRUE(s.catchUpClampCount == 1);
+        CHECK_TRUE(std::abs(s.discardedCyclesTotal - 191996.0) < 0.001);
+        CHECK_TRUE(s.discardedCyclesLast == s.discardedCyclesTotal);
+        CHECK_TRUE(s.budgetUpdateGapLast == std::chrono::milliseconds(199));
+        CHECK_TRUE(s.lastClampElapsed == std::chrono::milliseconds(200));
+        BMMQ::TimingService publication;
+        publication.configure(cfg);
+        publication.noteExecutionBatch(std::chrono::milliseconds(12), std::chrono::milliseconds(2), true);
+        publication.publishEngineStats(s);
+        const auto published = publication.stats();
+        CHECK_TRUE(published.discardedCyclesTotal == s.discardedCyclesTotal);
+        CHECK_TRUE(published.lastClampElapsed == s.lastClampElapsed);
+        CHECK_TRUE(published.executionBatchSamples == 1);
+        CHECK_TRUE(published.executionBatchWallLast == std::chrono::milliseconds(12));
+        CHECK_TRUE(published.executionBatchCpuLast == std::chrono::milliseconds(2));
     }
 
     // Sub-quantum deficits should not trigger sleeping.

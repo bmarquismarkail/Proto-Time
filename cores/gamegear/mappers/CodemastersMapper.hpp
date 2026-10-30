@@ -32,7 +32,7 @@ public:
 
     bool handlesControlWrite(uint16_t addr) const noexcept override {
         // The control registers are mapped across the 3x16KB ROM slots.
-        return addr < 0xC000u;
+        return addr < 0xC000u && !(extraRamMapped_ && addr >= 0xA000u);
     }
 
     bool handlesMappedWrite(uint16_t addr) const noexcept override {
@@ -59,7 +59,7 @@ public:
     }
 
     void write(uint16_t addr, uint8_t value) override {
-        if (addr < 0xC000u) {
+        if (handlesControlWrite(addr)) {
             // Treat writes anywhere in a 16KB slot as a control write for that slot
             const std::size_t slot = static_cast<std::size_t>(addr / 0x4000u);
             const uint8_t bankVal = static_cast<uint8_t>(value & 0x7Fu);
@@ -87,6 +87,22 @@ public:
         }
 
         GameGearCartridge::write(addr, value);
+    }
+
+    std::size_t physicalRamCapacityV1() const noexcept override { return 0xa000; }
+    bool mappedRamOffsetV1(uint16_t addr, std::size_t& offset) const noexcept override {
+        if (extraRamMapped_ && addr >= 0xa000 && addr < 0xc000) {
+            offset = 0x8000 + addr - 0xa000;
+            return addr - 0xa000u < extraRam_.size();
+        }
+        // Describe the read backing even where writes are mapper controls.
+        return GameGearCartridge::mappedRamOffsetV1(addr, offset);
+    }
+    bool physicalRamByteV1(std::size_t offset, uint8_t& value) const noexcept override {
+        if (offset < 0x8000) return GameGearCartridge::physicalRamByteV1(offset, value);
+        offset -= 0x8000;
+        if (offset >= extraRam_.size()) return false;
+        value = extraRam_[offset]; return true;
     }
 
     [[nodiscard]] bool supportsSaveData() const noexcept override {

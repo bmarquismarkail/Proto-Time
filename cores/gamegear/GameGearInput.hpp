@@ -11,6 +11,10 @@ class GameGearInput {
 public:
     GameGearInput();
     ~GameGearInput();
+    GameGearInput(const GameGearInput&) = default;
+    GameGearInput& operator=(const GameGearInput&) = default;
+    GameGearInput(GameGearInput&&) = default;
+    GameGearInput& operator=(GameGearInput&&) = default;
 
     void reset();
     void setLogicalButtons(BMMQ::InputButtonMask mask);

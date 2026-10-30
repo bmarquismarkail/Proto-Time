@@ -52,6 +52,17 @@ int main()
 
     CodemastersMapper mapper;
     assert(mapper.load(rom.data(), rom.size()));
+    mapper.write(0x4000,0x81); // Enable Codemasters' distinct 8 KiB RAM.
+    const auto banksBeforeRamWrite=mapper.bankRegisters();
+    mapper.write(0xa000,0x5a);mapper.write(0xbfff,0x3c);
+    assert(!mapper.handlesControlWrite(0xa000)&&mapper.handlesMappedWrite(0xa000));
+    assert(mapper.bankRegisters()==banksBeforeRamWrite);
+    assert(mapper.read(0xa000)==0x5a&&mapper.read(0xbfff)==0x3c);
+    assert(mapper.hasDirtySaveData());
+    const auto save=mapper.exportSaveData();assert(save.size()==8192&&save.front()==0x5a&&save.back()==0x3c);
+    mapper.markSaveClean();assert(!mapper.hasDirtySaveData());
+    mapper.write(0x4000,1);assert(mapper.handlesControlWrite(0xa000));
+    mapper.write(0x4000,0x81);assert(mapper.read(0xa000)==0x5a);
     auto mapperState = mapper.exportState();
     assert(mapperState.size() >= 2u);
     mapperState[mapperState.size() - 1u] = 2u;

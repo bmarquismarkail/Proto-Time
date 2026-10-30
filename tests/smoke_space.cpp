@@ -1,3 +1,4 @@
+#include "cores/gameboy/GameBoyMachine.hpp"
 #include "space/Session.hpp"
 #include "machine/InputService.hpp"
 #include "machine/plugins/PluginManager.hpp"

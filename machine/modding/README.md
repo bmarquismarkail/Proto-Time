@@ -84,9 +84,47 @@ when a module is loaded. A failed call does not roll back module/region mutation
 `save` returns native bytes with mod ID, version, and state schema. `restore`
 rejects mismatched identities, schemas, or lengths before calling the module.
 State size is fixed per instance and limited to 16 MiB; stateless modules use zero.
-Modules must reject invalid payloads without partial mutation. Host region state
-is serialized separately by ModHost; combined machine save-state integration is
-still pending. Reset calls only the module reset callback.
+Modules must reject invalid payloads without partial mutation. `NativeMod::reset`
+calls only that instance's reset callback.
+
+Both console save states include separately versioned `time.host-regions` and
+`time.native-mods` chunks. Host schema 2 binds each region's ordered name, size,
+guest base and bank; standalone `ModHost::importState` still reads schema 1.
+Native schema 1 binds the loaded image SHA-256, package identity/version,
+region handles, declared hooks and actual installed trampoline address/bank/ID.
+Observer-only modules loaded against the same machine host participate too.
+Legacy machine files without these chunks load only when no corresponding
+regions/modules are configured. Missing, duplicate, corrupt, incompatible or
+stale records reject before publishing guest or host state.
+
+Restore creates replacement ABI-v1 instances against an owned staging host.
+Every module must reproduce its opaque saved bytes, and callbacks must agree
+with the saved region bytes. Only after all device imports and module restores
+succeed are instance pointers and region contents published on the machine lane.
+Existing trampoline/tooling `NativeMod` addresses and region storage addresses
+remain stable. Retired destroy callbacks receive an isolated host. This uses the
+existing ABI's per-instance state contract: mutable process globals, external
+I/O and retained pointers outside that contract cannot be rolled back. Save
+callbacks receive read-only host-region access. Module files must remain unchanged
+through loading and restore; concurrent hostile filesystem changes are outside
+the trusted local module contract.
+
+`Machine::resetModState()` stages module reset callbacks and host-region clearing
+as one transaction; a rejected reset leaves both unchanged. It is a paused,
+machine-lane operation and preserves guest CPU/device state. ROM replacement
+validates native resets before detaching guest trampolines, resets remaining
+observer instances and clears configured host-region bytes.
+Direct `NativeMod::restore` remains the ABI-v1 operation; coordinated restore is
+through the machine checkpoint or `prepareCohort` API. A prepared cohort cannot
+be committed after participant removal or state changes.
+
+Each native opaque state remains bounded at 16 MiB. Coordinated region and module
+payloads each have a 64 MiB limit, with at most 256 active instances and a 128 MiB
+module-image hashing limit. Allocation or callback failure rejects staging. These
+limits do not enable an uncaptured baseline fallback. S.P.A.C.E. capture continues
+to reject all active native instances, including observer-only modules; paired
+checkpoints support host regions without native modules by preserving their
+layout in the preflight candidate.
 
 ## Game Boy trampoline
 

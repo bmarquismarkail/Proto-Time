@@ -21,6 +21,10 @@ class GameBoyMapper {
 public:
     GameBoyMapper();
     ~GameBoyMapper() = default;
+    GameBoyMapper(const GameBoyMapper&) = default;
+    GameBoyMapper& operator=(const GameBoyMapper&) = default;
+    GameBoyMapper(GameBoyMapper&&) = default;
+    GameBoyMapper& operator=(GameBoyMapper&&) = default;
 
     void load(const std::vector<uint8_t>& romData);
     void reset();

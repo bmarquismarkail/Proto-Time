@@ -127,6 +127,26 @@ std::vector<int16_t> collectPulseToneSamples(uint16_t frequency)
 
 int main()
 {
+    {
+        GameBoyMachine startup;
+        std::vector<uint8_t> silentRom(0x8000, 0x00);
+        silentRom[0x100] = 0x18; // JR -2; no guest APU writes.
+        silentRom[0x101] = 0xFE;
+        for (int reload = 0; reload < 2; ++reload) {
+            startup.loadRom(silentRom);
+            assert(startup.runtimeContext().peek8(0xFF14) == 0xBF);
+            assert((startup.runtimeContext().peek8(0xFF26) & 0x0F) == 0);
+            for (int i = 0; i < 10000; ++i) startup.step();
+            const auto silent = startup.recentAudioSamples();
+            assert(!silent.empty());
+            assert(!hasNonZeroSample(silent));
+            // An actual guest trigger still produces sound immediately; there
+            // is no time-based or first-video-frame mute.
+            startup.runtimeContext().write8(0xFF14, 0xBF);
+            for (int i = 0; i < 10000; ++i) startup.step();
+            assert(hasNonZeroSample(startup.recentAudioSamples()));
+        }
+    }
     GameBoyMachine machine;
     std::vector<uint8_t> cartridgeRom(0x8000, 0x00);
     machine.loadRom(cartridgeRom);

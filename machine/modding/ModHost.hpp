@@ -3,6 +3,8 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -30,6 +32,12 @@ struct HookContext {
 
 class ModHost final {
 public:
+    ModHost() = default;
+    ModHost(const ModHost&);
+    ModHost(ModHost&&);
+    ModHost& operator=(const ModHost&);
+    ModHost& operator=(ModHost&&) noexcept;
+    [[nodiscard]] std::weak_ptr<const void> lifetime() const noexcept { return lifetime_; }
     using PatchVerifier = std::function<bool(std::uint8_t bank, std::uint16_t address,
                                              std::span<const std::uint8_t> expected)>;
     using PatchWriter = std::function<bool(std::uint8_t bank, std::uint16_t address,
@@ -58,6 +66,17 @@ public:
     [[nodiscard]] std::uint32_t registerHook(std::string symbolName, Hook hook);
     [[nodiscard]] bool invokeHook(std::string_view symbolName, HookContext& context) const;
 
+    // Prepared bytes are owned by the caller; publication keeps region addresses stable.
+    class PreparedState {
+        friend class ModHost;
+        struct Binding { std::string name; std::uint16_t base; std::uint8_t bank; };
+        std::vector<Binding> bindings_;
+        std::vector<std::vector<std::uint8_t>> bytes_;
+    };
+    [[nodiscard]] PreparedState prepareState(std::span<const std::uint8_t> state) const;
+    void commitState(PreparedState&& state);
+    [[nodiscard]] PreparedState prepareCheckpoint(std::optional<std::span<const std::uint8_t>> state) const;
+    [[nodiscard]] bool hasRegions() const noexcept { return !regions_.empty(); }
     void reset() noexcept;
     [[nodiscard]] std::vector<std::uint8_t> exportState() const;
     [[nodiscard]] bool importState(std::span<const std::uint8_t> state) noexcept;
@@ -75,6 +94,7 @@ private:
         }
     };
 
+    std::shared_ptr<const void> lifetime_ = std::make_shared<int>(0);
     std::vector<Region> regions_;
     std::unordered_map<std::string, Symbol> symbols_;
     std::unordered_map<std::string, Hook> hooks_;

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "emulator/MachineFactory.hpp"
+#include "TimeFeatureAdmission.hpp"
 
 int main()
 {
@@ -25,14 +26,30 @@ int main()
     assert(builtins.create("gameboy") != nullptr);
 
     BMMQ::MachineRegistry registry;
-    registry.registerProvider({"test", "Test Machine", 1, 1}, [] {
+    registry.registerProvider({"test", "Test Machine", 1, 1, "gameboy"}, [] {
         return BMMQ::MachineRegistry::builtins().create("gameboy");
     });
     assert(registry.contains("test"));
-    assert(registry.create("test") != nullptr);
+    if(!registry.contains("test")||!registry.create("test"))throw std::runtime_error("existing-family alias rejected");
+    bool thirdCoreRejected = false;
+    try {
+        registry.registerProvider({"third", "Third Core", 1, 1, "third"}, [] {
+            return BMMQ::MachineRegistry::builtins().create("gameboy");
+        });
+    } catch (const std::invalid_argument&) {
+        thirdCoreRejected = true;
+    }
+    if (thirdCoreRejected==BMMQ::FeatureAdmission::complete) throw std::runtime_error("third core admitted without completion");
+    registry.registerProvider({"wrong-family", "Wrong Family", 1, 1, "gamegear"}, [] {
+        return BMMQ::MachineRegistry::builtins().create("gameboy");
+    });
+    bool wrongFamilyRejected = false;
+    try { (void)registry.create("wrong-family"); }
+    catch (const std::runtime_error&) { wrongFamilyRejected = true; }
+    if (!wrongFamilyRejected) throw std::runtime_error("provider family mismatch accepted");
     bool duplicateProviderRejected = false;
     try {
-        registry.registerProvider({"test", "Duplicate", 1, 1}, [] {
+        registry.registerProvider({"test", "Duplicate", 1, 1, "gameboy"}, [] {
             return BMMQ::MachineRegistry::builtins().create("gameboy");
         });
     } catch (const std::invalid_argument&) {

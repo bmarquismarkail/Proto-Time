@@ -31,6 +31,14 @@ int main()
     assert(timingText.find("\"sleep_overshoot_last_ns\":23") != std::string::npos);
     assert(timingText.find("\"wake_burst_slice_limit_hits\":24") != std::string::npos);
     assert(timingText.find("\"wake_burst_cycle_limit_hits\":25") != std::string::npos);
+    assert(timingText.find("\"execution_batch_cpu_last_ns\":null") != std::string::npos);
+    timing.executionBatchCpuAvailable = true;
+    timing.executionBatchCpuLast = std::chrono::nanoseconds(1234);
+    timing.discardedCyclesTotal = 4567;
+    std::ostringstream measuredTiming;
+    BMMQ::writeTimingDiagnosticsJson(measuredTiming, timing);
+    assert(measuredTiming.str().find("\"execution_batch_cpu_last_ns\":1234") != std::string::npos);
+    assert(measuredTiming.str().find("\"discarded_cycles_total\":4567") != std::string::npos);
 
     BMMQ::BackgroundTaskStats background;
     background.workerCount = 3;

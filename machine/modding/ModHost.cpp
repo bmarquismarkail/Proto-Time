@@ -2,8 +2,25 @@
 
 #include <algorithm>
 #include <limits>
+#include <stdexcept>
 
 namespace BMMQ::Modding {
+
+ModHost::ModHost(const ModHost& other)
+    : regions_(other.regions_), symbols_(other.symbols_), hooks_(other.hooks_), patches_(other.patches_) {}
+ModHost::ModHost(ModHost&& other) { *this = std::move(other); }
+ModHost& ModHost::operator=(const ModHost& other) {
+    if (this != &other) { ModHost copy(other); *this = std::move(copy); }
+    return *this;
+}
+ModHost& ModHost::operator=(ModHost&& other) noexcept {
+    if (this != &other) {
+        regions_ = std::move(other.regions_); symbols_ = std::move(other.symbols_);
+        hooks_ = std::move(other.hooks_); patches_ = std::move(other.patches_);
+    }
+    return *this;
+}
+
 
 std::uint32_t ModHost::createRegion(std::string name, std::size_t size,
                                     std::uint16_t guestBase, std::uint8_t bank)
@@ -90,52 +107,112 @@ void ModHost::reset() noexcept
     for (auto& region : regions_) std::fill(region.bytes.begin(), region.bytes.end(), 0u);
 }
 
+namespace {
+constexpr std::size_t kStateBudget = 64u * 1024u * 1024u;
+void append32(std::vector<std::uint8_t>& out, std::uint32_t value)
+{
+    for (unsigned shift = 0; shift < 32; shift += 8)
+        out.push_back(static_cast<std::uint8_t>(value >> shift));
+}
+}
+
 std::vector<std::uint8_t> ModHost::exportState() const
 {
-    std::vector<std::uint8_t> out;
-    const auto append32 = [&out](std::uint32_t value) {
-        out.push_back(static_cast<std::uint8_t>(value));
-        out.push_back(static_cast<std::uint8_t>(value >> 8u));
-        out.push_back(static_cast<std::uint8_t>(value >> 16u));
-        out.push_back(static_cast<std::uint8_t>(value >> 24u));
-    };
-    append32(1u);
-    append32(static_cast<std::uint32_t>(regions_.size()));
+    std::size_t size = 8;
     for (const auto& region : regions_) {
-        append32(static_cast<std::uint32_t>(region.bytes.size()));
+        if (region.name.size() > kStateBudget || region.bytes.size() > kStateBudget ||
+            size > kStateBudget - 16 || region.name.size() > kStateBudget - size - 16 ||
+            region.bytes.size() > kStateBudget - size - 16 - region.name.size())
+            throw std::length_error("host-region state budget exhausted");
+        size += 16 + region.name.size() + region.bytes.size();
+    }
+    std::vector<std::uint8_t> out;
+    out.reserve(size);
+    append32(out, 2u);
+    append32(out, static_cast<std::uint32_t>(regions_.size()));
+    for (const auto& region : regions_) {
+        append32(out, static_cast<std::uint32_t>(region.name.size()));
+        out.insert(out.end(), region.name.begin(), region.name.end());
+        append32(out, region.guestBase);
+        append32(out, region.bank);
+        append32(out, static_cast<std::uint32_t>(region.bytes.size()));
         out.insert(out.end(), region.bytes.begin(), region.bytes.end());
     }
     return out;
 }
 
-bool ModHost::importState(std::span<const std::uint8_t> state) noexcept
+ModHost::PreparedState ModHost::prepareState(std::span<const std::uint8_t> state) const
 {
-    if (state.size() < 8u) return false;
+    if (state.size() > kStateBudget) throw std::length_error("host-region state budget exhausted");
     std::size_t pos = 0;
-    const auto read32 = [&state, &pos]() -> std::uint32_t {
-        if (pos + 4u > state.size()) return std::numeric_limits<std::uint32_t>::max();
-        const auto value = static_cast<std::uint32_t>(state[pos]) |
-            (static_cast<std::uint32_t>(state[pos + 1u]) << 8u) |
-            (static_cast<std::uint32_t>(state[pos + 2u]) << 16u) |
-            (static_cast<std::uint32_t>(state[pos + 3u]) << 24u);
-        pos += 4u;
+    const auto read32 = [&]() {
+        if (state.size() - pos < 4) throw std::invalid_argument("truncated host-region state");
+        std::uint32_t value = 0;
+        for (unsigned shift = 0; shift < 32; shift += 8)
+            value |= static_cast<std::uint32_t>(state[pos++]) << shift;
         return value;
     };
-    if (read32() != 1u || read32() != regions_.size()) return false;
-    std::vector<std::vector<std::uint8_t>> restored;
-    restored.reserve(regions_.size());
+    const auto version = read32();
+    if ((version != 1 && version != 2) || read32() != regions_.size())
+        throw std::invalid_argument("incompatible host-region state");
+    PreparedState prepared;
+    prepared.bytes_.reserve(regions_.size());
     for (const auto& region : regions_) {
+        if (version == 2) {
+            const auto length = read32();
+            if (length != region.name.size() || length > state.size() - pos ||
+                !std::equal(region.name.begin(), region.name.end(), state.begin() + pos,
+                    [](char name, std::uint8_t byte) { return static_cast<std::uint8_t>(name) == byte; }))
+                throw std::invalid_argument("host-region identity mismatch");
+            pos += length;
+            if (read32() != region.guestBase || read32() != region.bank)
+                throw std::invalid_argument("host-region mapping mismatch");
+        }
         const auto size = read32();
-        if (size != region.bytes.size() || pos + size > state.size()) return false;
-        restored.emplace_back(state.begin() + static_cast<std::ptrdiff_t>(pos),
-                              state.begin() + static_cast<std::ptrdiff_t>(pos + size));
+        if (size != region.bytes.size() || size > state.size() - pos)
+            throw std::invalid_argument("host-region size mismatch");
+        prepared.bindings_.push_back({region.name, region.guestBase, region.bank});
+        prepared.bytes_.emplace_back(state.begin() + pos, state.begin() + pos + size);
         pos += size;
     }
-    if (pos != state.size()) return false;
-    for (std::size_t i = 0; i < regions_.size(); ++i) {
-        std::copy(restored[i].begin(), restored[i].end(), regions_[i].bytes.begin());
+    if (pos != state.size()) throw std::invalid_argument("trailing host-region data");
+    return prepared;
+}
+
+ModHost::PreparedState ModHost::prepareCheckpoint(std::optional<std::span<const std::uint8_t>> state) const
+{
+    if (!state) {
+        if (hasRegions()) throw std::invalid_argument("checkpoint lacks required host-region state");
+        return {};
     }
-    return true;
+    // Machine checkpoints require identity-bound records. Schema 1 remains
+    // readable through importState for existing standalone ModHost clients.
+    if (state->size() < 4 || (*state)[0] != 2 || (*state)[1] || (*state)[2] || (*state)[3])
+        throw std::invalid_argument("checkpoint host-region schema is incompatible");
+    return prepareState(*state);
+}
+
+void ModHost::commitState(PreparedState&& state)
+{
+    // Reject stale layouts before writing any bytes.
+    if (state.bytes_.size() != regions_.size() || state.bindings_.size() != regions_.size())
+        throw std::invalid_argument("stale host-region preparation");
+    for (std::size_t i = 0; i < regions_.size(); ++i)
+        if (state.bytes_[i].size() != regions_[i].bytes.size() ||
+            state.bindings_[i].name != regions_[i].name ||
+            state.bindings_[i].base != regions_[i].guestBase || state.bindings_[i].bank != regions_[i].bank)
+            throw std::invalid_argument("stale host-region preparation");
+    for (std::size_t i = 0; i < regions_.size(); ++i)
+        std::copy(state.bytes_[i].begin(), state.bytes_[i].end(), regions_[i].bytes.begin());
+}
+
+bool ModHost::importState(std::span<const std::uint8_t> state) noexcept
+{
+    try {
+        auto prepared = prepareState(state);
+        commitState(std::move(prepared));
+        return true;
+    } catch (...) { return false; }
 }
 
 } // namespace BMMQ::Modding

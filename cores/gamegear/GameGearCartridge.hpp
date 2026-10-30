@@ -3,13 +3,14 @@
 // References: SMS Power, Charles MacDonald
 
 #include "GameGearMapper.hpp"
+#include "MapperRamV1.hpp"
 
 #include <cstdint>
 #include <cstddef>
 #include <array>
 #include <vector>
 
-class GameGearCartridge : public GameGearMapper {
+class GameGearCartridge : public GameGearMapper, public IGameGearMapperRamV1 {
 public:
     GameGearCartridge();
     ~GameGearCartridge() override;
@@ -31,6 +32,16 @@ public:
     void importSaveData(const std::vector<uint8_t>& saveData);
     [[nodiscard]] std::vector<uint8_t> exportState() const override;
     void importState(const std::vector<uint8_t>& state) override;
+    std::size_t physicalRamCapacityV1() const noexcept override { return kSramSize; }
+    bool mappedRamOffsetV1(uint16_t addr, std::size_t& offset) const noexcept override {
+        if (!loaded() || !handlesMappedWrite(addr) || !sramEnabled() || addr < 0x8000 || addr >= 0xc000) return false;
+        offset = sramOffset(addr);
+        return offset < sram.size();
+    }
+    bool physicalRamByteV1(std::size_t offset, uint8_t& value) const noexcept override {
+        if (offset >= sram.size()) return false;
+        value = sram[offset]; return true;
+    }
 
 private:
     static constexpr std::size_t kPageSize = 0x4000u;

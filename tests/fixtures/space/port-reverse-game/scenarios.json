@@ -1,0 +1,92 @@
+[
+  {
+    "name": "idle",
+    "mask": 0,
+    "frames": 8
+  },
+  {
+    "name": "first",
+    "mask": 1,
+    "frames": 24
+  },
+  {
+    "name": "leave-item",
+    "mask": 2,
+    "frames": 8
+  },
+  {
+    "name": "revisit-item",
+    "mask": 1,
+    "frames": 8
+  },
+  {
+    "name": "wall",
+    "mask": 1,
+    "frames": 16
+  },
+  {
+    "name": "back-from-wall",
+    "mask": 2,
+    "frames": 8
+  },
+  {
+    "name": "down",
+    "mask": 8,
+    "frames": 32
+  },
+  {
+    "name": "up-gap",
+    "mask": 4,
+    "frames": 8
+  },
+  {
+    "name": "cross-gap",
+    "mask": 1,
+    "frames": 48
+  },
+  {
+    "name": "locked-exit",
+    "mask": 8,
+    "frames": 8
+  },
+  {
+    "name": "to-item",
+    "mask": 2,
+    "frames": 16
+  },
+  {
+    "name": "third",
+    "mask": 8,
+    "frames": 8
+  },
+  {
+    "name": "win",
+    "mask": 1,
+    "frames": 16
+  },
+  {
+    "name": "victory",
+    "mask": 0,
+    "frames": 32
+  },
+  {
+    "name": "reset",
+    "mask": 128,
+    "frames": 8
+  },
+  {
+    "name": "priority",
+    "mask": 7,
+    "frames": 8
+  },
+  {
+    "name": "start-edge-move",
+    "mask": 129,
+    "frames": 16
+  },
+  {
+    "name": "start-held",
+    "mask": 129,
+    "frames": 1
+  }
+]

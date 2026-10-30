@@ -2909,17 +2909,19 @@ void LR3592_DMG::populateBlockCache(BMMQ::fetchBlock<AddressType, DataType>& fet
 
 void LR3592_DMG::invalidateBlockCacheForWrite(AddressType address, std::size_t size)
 {
-    if (!blockCacheEnabled_) {
-        return;
-    }
-
     address = normalizeAccessAddress(address);
     if (size == 0u) {
         return;
     }
 
     if (address < 0x8000u || address == 0xFF50u) {
+        // Mapping identity guards also protect baseline-owned research blocks.
+        // Disabling cached dispatch must not freeze their generation.
         invalidateAllBlockCache();
+        return;
+    }
+
+    if (!blockCacheEnabled_) {
         return;
     }
 
@@ -3043,7 +3045,11 @@ void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, Addre
     auto* snapshot = block.getSnapshot();
     if (snapshot == nullptr) return;
 
-    auto* view=dynamic_cast<BMMQ::Space::RegisterExecutionView*>(snapshot);
+    // decodeInto binds ordinary execution to this concrete memory pool. Only
+    // alternate snapshots can supply sparse execution registers; avoid a failed
+    // cross-cast through the memory hierarchy on every baseline instruction.
+    auto* view = snapshot == &mem ? nullptr
+        : dynamic_cast<BMMQ::Space::RegisterExecutionView*>(snapshot);
     auto* canonicalPc=pcRegister_;auto* canonicalSp=spRegister_;auto canonicalCache=cpuRegisters_;
     if(view){pcRegister_=view->executionRegisters().findRegister("PC")->reg.get();spRegister_=view->executionRegisters().findRegister("SP")->reg.get();}
     if(view){auto& file=view->executionRegisters();
@@ -3150,6 +3156,11 @@ DataType LR3592_DMG::currentPpuMode() const
 bool LR3592_DMG::snapshotBoundaryOnly()const {
     auto pc=pcRegister_->value;auto pending=(readCachedRegister(hardwareRegisters_.interruptFlags)&readCachedRegister(hardwareRegisters_.ie))&kInterruptMask;
     return stopFlag||(dmaActive&&!isHramAddress(pc))||(haltFlag&&pending==0)||(ime&&pending!=0);
+}
+AddressType LR3592_DMG::snapshotNextFetchAddress(AddressType pc,std::size_t offset)const noexcept {
+    const auto pending=(readCachedRegister(hardwareRegisters_.interruptFlags)&readCachedRegister(hardwareRegisters_.ie))&kInterruptMask;
+    const bool bug=haltBugActive||(haltFlag&&pending!=0&&!ime);
+    return static_cast<AddressType>(pc+offset-(bug&&offset!=0?1:0));
 }
 bool LR3592_DMG::handleMemoryRead(AddressType address,std::span<DataType> value)const {
     const bool handled=handleMemoryReadUntraced(address,value);

@@ -1,0 +1,20 @@
+{
+  "schema": "proto-time-acceleration-criteria-v2",
+  "version": 2,
+  "targetGameplayGainPercent": 10,
+  "maximumRegressionPercent": 5,
+  "confidence": 0.95,
+  "bootstrapResamples": 10000,
+  "bootstrapSeed": 20261009,
+  "repetitions": 9,
+  "inconclusiveFollowupRepetitions": 27,
+  "minimumPositivePairFraction": 0.8888888888888888,
+  "sessions": 2,
+  "activeBenefitWorkloads": ["compute-heavy", "mixed-devices"],
+  "activeRequiredWorkloads": ["compute-heavy", "mixed-devices", "ram-heavy"],
+  "representativeRequiredWorkloads": ["collect-forward", "collect-reverse"],
+  "cores": ["gameboy", "gamegear"],
+  "latencyLimitNs": 16000000,
+  "nativeArm64": "user-deferred",
+  "authority": ".internal/docs/time-acceleration-evaluation.md"
+}

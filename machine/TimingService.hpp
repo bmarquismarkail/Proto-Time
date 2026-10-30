@@ -42,6 +42,17 @@ struct TimingStats {
     double effectiveClockHz = 0.0;
     std::uint64_t wakeSleeps = 0;
     std::uint64_t catchUpClampCount = 0;
+    double discardedCyclesTotal = 0.0;
+    double discardedCyclesLast = 0.0;
+    std::chrono::nanoseconds budgetUpdateGapLast{};
+    std::chrono::nanoseconds budgetUpdateGapHighWater{};
+    std::chrono::nanoseconds lastClampElapsed{};
+    std::uint64_t executionBatchSamples = 0;
+    std::chrono::nanoseconds executionBatchWallLast{};
+    std::chrono::nanoseconds executionBatchWallHighWater{};
+    std::chrono::nanoseconds executionBatchCpuLast{};
+    std::chrono::nanoseconds executionBatchCpuHighWater{};
+    bool executionBatchCpuAvailable = false;
     std::uint64_t idleLoops = 0;
     std::uint64_t singleStepsGranted = 0;
     bool paused = false;
@@ -129,6 +140,7 @@ private:
     TimingControlState control_{};
     TimingStats stats_{};
     std::chrono::steady_clock::time_point lastTick_{};
+    std::chrono::steady_clock::time_point startedAt_{};
     double executionSliceCycles_ = 0.0;
     double frontendServiceSliceCycles_ = 0.0;
 };
@@ -164,6 +176,8 @@ public:
     [[nodiscard]] const TimingConfig& config() const noexcept { return config_; }
     [[nodiscard]] TimingStats stats() const noexcept;
     void recordWakeBurst(double burstCycles, std::uint32_t burstSlices) noexcept;
+    void noteExecutionBatch(std::chrono::nanoseconds wall,
+                            std::chrono::nanoseconds cpu, bool cpuAvailable) noexcept;
     void noteWakeBurstSliceLimitHit() noexcept;
     void noteWakeBurstCycleLimitHit() noexcept;
     void noteHostSleep(std::chrono::nanoseconds requested, std::chrono::nanoseconds actual) noexcept;

@@ -102,6 +102,9 @@ private:
 } // namespace BMMQ
 
 #include "templ/reg_base.impl.hpp"
+// All translation units must see the uint16_t pair specialization before
+// instantiating RegisterFile; byte aliases are part of its storage contract.
+#include "templ/reg_uint16.impl.hpp"
 #include "templ/RegisterFile.impl.hpp"
 #include "templ/RegisterInfo.impl.hpp"
 #endif // __REG_BASE

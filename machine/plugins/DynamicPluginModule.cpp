@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdint>
 #include <dlfcn.h>
+#include <exception>
 #include <limits>
 #include <mutex>
 #include <span>
@@ -832,76 +833,82 @@ public:
 
         struct HostBridge {
             BMMQ::IR::InterpreterHost* host = nullptr;
-            bool failed = false;
-        } bridge{&host, false};
+            std::exception_ptr failure;
+        } bridge{&host, {}};
         const auto readRegister = +[](void* opaque, std::uint32_t id,
                                       std::uint32_t type) noexcept -> std::uint64_t {
             auto& bridge = *static_cast<HostBridge*>(opaque);
+            if (bridge.failure) return 0u;
             try {
-                if (type > static_cast<std::uint32_t>(BMMQ::IR::ValueType::I64)) throw 0;
+                if (type > static_cast<std::uint32_t>(BMMQ::IR::ValueType::I64)) throw std::invalid_argument("invalid dynamic IR host callback arguments");
                 return bridge.host->readRegister(id, static_cast<BMMQ::IR::ValueType>(type));
-            } catch (...) { bridge.failed = true; return 0u; }
+            } catch (...) { bridge.failure = std::current_exception(); return 0u; }
         };
         const auto writeRegister = +[](void* opaque, std::uint32_t id, std::uint32_t type,
                                        std::uint64_t value) noexcept -> int32_t {
             auto& bridge = *static_cast<HostBridge*>(opaque);
+            if (bridge.failure) return TIME_IR_ERROR_V1;
             try {
-                if (type > static_cast<std::uint32_t>(BMMQ::IR::ValueType::I64)) throw 0;
+                if (type > static_cast<std::uint32_t>(BMMQ::IR::ValueType::I64)) throw std::invalid_argument("invalid dynamic IR host callback arguments");
                 bridge.host->writeRegister(id, static_cast<BMMQ::IR::ValueType>(type), value);
                 return TIME_IR_OK_V1;
-            } catch (...) { bridge.failed = true; return TIME_IR_ERROR_V1; }
+            } catch (...) { bridge.failure = std::current_exception(); return TIME_IR_ERROR_V1; }
         };
         const auto loadMemory = +[](void* opaque, std::uint64_t address, std::uint32_t type,
                                     std::uint32_t memoryClass) noexcept -> std::uint64_t {
             auto& bridge = *static_cast<HostBridge*>(opaque);
+            if (bridge.failure) return 0u;
             try {
                 if (type > static_cast<std::uint32_t>(BMMQ::IR::ValueType::I64) ||
-                    memoryClass > static_cast<std::uint32_t>(BMMQ::IR::MemoryClass::Cartridge)) throw 0;
+                    memoryClass > static_cast<std::uint32_t>(BMMQ::IR::MemoryClass::Cartridge)) throw std::invalid_argument("invalid dynamic IR host callback arguments");
                 return bridge.host->loadMemory(address, static_cast<BMMQ::IR::ValueType>(type),
                                                static_cast<BMMQ::IR::MemoryClass>(memoryClass));
-            } catch (...) { bridge.failed = true; return 0u; }
+            } catch (...) { bridge.failure = std::current_exception(); return 0u; }
         };
         const auto storeMemory = +[](void* opaque, std::uint64_t address, std::uint32_t type,
                                      std::uint32_t memoryClass,
                                      std::uint64_t value) noexcept -> int32_t {
             auto& bridge = *static_cast<HostBridge*>(opaque);
+            if (bridge.failure) return TIME_IR_ERROR_V1;
             try {
                 if (type > static_cast<std::uint32_t>(BMMQ::IR::ValueType::I64) ||
-                    memoryClass > static_cast<std::uint32_t>(BMMQ::IR::MemoryClass::Cartridge)) throw 0;
+                    memoryClass > static_cast<std::uint32_t>(BMMQ::IR::MemoryClass::Cartridge)) throw std::invalid_argument("invalid dynamic IR host callback arguments");
                 bridge.host->storeMemory(address, static_cast<BMMQ::IR::ValueType>(type),
                                          static_cast<BMMQ::IR::MemoryClass>(memoryClass), value);
                 return TIME_IR_OK_V1;
-            } catch (...) { bridge.failed = true; return TIME_IR_ERROR_V1; }
+            } catch (...) { bridge.failure = std::current_exception(); return TIME_IR_ERROR_V1; }
         };
         const auto callHelper = +[](void* opaque, std::uint32_t id, std::uint32_t resultType,
                                     const std::uint64_t* arguments,
                                     std::uint32_t argumentCount) noexcept -> std::uint64_t {
             auto& bridge = *static_cast<HostBridge*>(opaque);
+            if (bridge.failure) return 0u;
             try {
                 if (resultType > static_cast<std::uint32_t>(BMMQ::IR::ValueType::I64) ||
                     argumentCount > BMMQ::IR::IrExecutionService::Limits::kMaxOperandsPerOp ||
-                    (argumentCount != 0u && arguments == nullptr)) throw 0;
+                    (argumentCount != 0u && arguments == nullptr)) throw std::invalid_argument("invalid dynamic IR host callback arguments");
                 return bridge.host->callHelper(
                     id, static_cast<BMMQ::IR::ValueType>(resultType),
                     std::span<const std::uint64_t>(arguments, argumentCount));
-            } catch (...) { bridge.failed = true; return 0u; }
+            } catch (...) { bridge.failure = std::current_exception(); return 0u; }
         };
         const auto setPc = +[](void* opaque, std::uint64_t address) noexcept -> int32_t {
             auto& bridge = *static_cast<HostBridge*>(opaque);
+            if (bridge.failure) return TIME_IR_ERROR_V1;
             try { bridge.host->setProgramCounter(address); return TIME_IR_OK_V1; }
-            catch (...) { bridge.failed = true; return TIME_IR_ERROR_V1; }
+            catch (...) { bridge.failure = std::current_exception(); return TIME_IR_ERROR_V1; }
         };
         const TimeIrExecutionHostV1 cHost{
             sizeof(TimeIrExecutionHostV1), TIME_IR_ABI_VERSION_V1, &bridge,
             readRegister, writeRegister, loadMemory, storeMemory, callHelper, setPc};
         TimeIrExecutionResultV1 cResult{sizeof(TimeIrExecutionResultV1), 0u, 0u, 0u, 0u};
-        int32_t executed = TIME_IR_ERROR_V1;
-        try {
-            executed = lifetime_->api->execute(
-                lifetime_->instance, cArtifact->raw, static_cast<std::uint32_t>(instructionIndex),
-                &cHost, &cResult);
-        } catch (...) { return false; }
-        if (executed != TIME_IR_OK_V1 || bridge.failed ||
+        // Host exceptions cannot cross the C callbacks. Rethrow on the C++
+        // side after dispatch so IrExecutionService preserves the fatal cause.
+        const auto executed = lifetime_->api->execute(
+            lifetime_->instance, cArtifact->raw, static_cast<std::uint32_t>(instructionIndex),
+            &cHost, &cResult);
+        if (bridge.failure) std::rethrow_exception(bridge.failure);
+        if (executed != TIME_IR_OK_V1 ||
             cResult.struct_size < sizeof(TimeIrExecutionResultV1) ||
             cResult.branch_taken > 1u || cResult.exit_requested > 1u ||
             cResult.cycle_condition > 1u || cResult.retirement_reached > 1u) return false;
@@ -999,7 +1006,6 @@ public:
         try { instance_ = api_->create(&hostApi_, &cConfig); }
         catch (...) { throw std::runtime_error("C frontend factory threw across the ABI"); }
         if (instance_ == nullptr) throw std::runtime_error("C frontend factory returned null");
-        presenter_ = std::make_unique<Presenter>(*this);
     }
 
     ~CFrontendAdapter() override
@@ -1031,41 +1037,50 @@ public:
         videoService_ = &view.videoService();
         timingService_ = &view.timingService();
         inputService_ = &view.inputService();
-        if (config_.enableInput) {
-            (void)inputService_->attachExternalAdapter(*this);
-            (void)inputService_->configureMappingProfile("sdl-default");
-            (void)inputService_->resume();
-        }
-        if (config_.enableVideo) {
-            const uint32_t clampedHdScale = std::clamp(config_.hdScale, 1u, 8u);
-            const bool configured = videoService_->configure({
-                .frameWidth = std::max(config_.frameWidth, 1),
-                .frameHeight = std::max(config_.frameHeight, 1),
-                .mailboxDepthFrames = 1,
-                .hdScale = static_cast<int>(clampedHdScale),
-            });
-            videoService_->setPresenterPolicy(config_.videoPresenterPolicy);
-            const bool presenterConfigured = videoService_->configurePresenter({
-                .windowTitle = config_.windowTitle,
-                .scale = static_cast<int>(std::min<std::uint32_t>(
-                    std::max(config_.windowScale, 1u),
-                    static_cast<std::uint32_t>(std::numeric_limits<int>::max()))),
-                .frameWidth = std::max(config_.frameWidth, 1),
-                .frameHeight = std::max(config_.frameHeight, 1),
-                .mode = VideoPresenterMode::Hardware,
-                .createHiddenWindowOnOpen = config_.createHiddenWindowOnInitialize,
-                .showWindowOnPresent = config_.showWindowOnPresent,
-            });
-            auto presenter = std::move(presenter_);
-            const bool attached = configured && presenterConfigured &&
-                videoService_->attachPresenter(std::move(presenter));
-            const bool resumed = !config_.autoInitializeBackend ||
-                (attached && videoService_->resume());
-            if (!attached || !resumed) {
-                diagnostics_.push_back("frontend: video service initialization failed");
+        try {
+            if (config_.enableInput) {
+                if (!inputService_->attachExternalAdapter(*this) ||
+                    !inputService_->configureMappingProfile("sdl-default") ||
+                    !inputService_->resume()) {
+                    throw std::runtime_error("frontend: input service initialization failed");
+                }
             }
-        } else if (config_.autoInitializeBackend) {
-            (void)tryInitializeBackend();
+            if (config_.enableVideo) {
+                const uint32_t clampedHdScale = std::clamp(config_.hdScale, 1u, 8u);
+                const bool configured = videoService_->configure({
+                    .frameWidth = std::max(config_.frameWidth, 1),
+                    .frameHeight = std::max(config_.frameHeight, 1),
+                    .mailboxDepthFrames = 1,
+                    .hdScale = static_cast<int>(clampedHdScale),
+                });
+                videoService_->setPresenterPolicy(config_.videoPresenterPolicy);
+                const bool presenterConfigured = videoService_->configurePresenter({
+                    .windowTitle = config_.windowTitle,
+                    .scale = static_cast<int>(std::min<std::uint32_t>(
+                        std::max(config_.windowScale, 1u),
+                        static_cast<std::uint32_t>(std::numeric_limits<int>::max()))),
+                    .frameWidth = std::max(config_.frameWidth, 1),
+                    .frameHeight = std::max(config_.frameHeight, 1),
+                    .mode = VideoPresenterMode::Hardware,
+                    .createHiddenWindowOnOpen = config_.createHiddenWindowOnInitialize,
+                    .showWindowOnPresent = config_.showWindowOnPresent,
+                });
+                auto presenter = std::make_unique<Presenter>(*this);
+                const bool attached = configured && presenterConfigured &&
+                    videoService_->attachPresenter(std::move(presenter));
+                const bool resumed = !config_.autoInitializeBackend ||
+                    (attached && videoService_->resume());
+                if (!attached || !resumed) {
+                    throw std::runtime_error("frontend: video service initialization failed");
+                }
+            } else if (config_.autoInitializeBackend) {
+                if (!tryInitializeBackend()) {
+                    throw std::runtime_error("frontend: backend initialization failed");
+                }
+            }
+        } catch (...) {
+            detachServices();
+            throw;
         }
     }
 
@@ -1446,7 +1461,9 @@ private:
         videoService_ = nullptr;
         timingService_ = nullptr;
         if (inputService_ != nullptr) {
-            (void)inputService_->detachAdapter(inputService_->currentGeneration() + 1u);
+            // The machine owns input generations. Neutral fallback already clears
+            // queued samples; inventing an epoch here makes reattached input stale.
+            (void)inputService_->detachAdapter(inputService_->currentGeneration());
             inputService_ = nullptr;
         }
     }
@@ -1503,7 +1520,6 @@ private:
     std::string displayName_;
     FrontendConfig config_;
     TimeFrontendHostApiV1 hostApi_{};
-    std::unique_ptr<Presenter> presenter_;
     VideoService* videoService_ = nullptr;
     TimingService* timingService_ = nullptr;
     InputService* inputService_ = nullptr;
@@ -1660,7 +1676,9 @@ public:
             } else {
                 captureModuleError(AudioOutputErrorCode::RuntimeError,
                                    "Audio-output module failed to start");
-                opened_ = false;
+                // The device is still open even though start failed. Close it on
+                // this control lane before discarding the open state.
+                close();
             }
         } else if (!primed && started_) {
             try { api_->pause(instance_); } catch (...) {}

@@ -210,6 +210,15 @@ Blocking rules:
 - debugger backends may block on their own host APIs, but only on service-owned copies or prepared trace buffers
 - expensive formatting, symbolization, and report generation must happen off the machine thread
 
+Current enforcement lives in `machine/plugins/debug/`: `DebugService::lane()`
+rejects machine-lane calls from another thread, and `DebugBackendService::lane()`
+rejects tooling-lane changes. Transport APIs exchange owned fixed-size commands,
+replies, and trace records through bounded SPSC queues. A full reply queue defers
+execution until the transport drains it; it does not wait on the transport.
+`DebugEngine` only publishes prepared records and never invokes backend callbacks.
+These contracts require one transport producer/consumer and construction and
+teardown on the owning lane; they do not make arbitrary machine access thread-safe.
+
 ## Required Core Extensions
 
 This subsystem likely requires explicit API growth beyond current plugin categories.

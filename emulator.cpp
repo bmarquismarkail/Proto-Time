@@ -1,3 +1,6 @@
+#ifdef TIME_HAS_LINUX_CONTROLLER
+#include "machine/plugins/input/adapters/LinuxController.hpp"
+#endif
 /////////////////////////////////////////////////////////////////////////
 //
 //	2020 Emulator Project Idea Mk 2
@@ -16,13 +19,16 @@
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
+#include <ctime>
 #include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iomanip>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -53,6 +59,7 @@
 #include "machine/plugins/audio/AlsaMidiSink.hpp"
 #endif
 #include "machine/TimingService.hpp"
+#include "machine/HostPacing.hpp"
 #include "machine/modding/ModDirectoryLoader.hpp"
 #include "machine/modding/NativeMod.hpp"
 #include "cores/gameboy/GameBoyMachine.hpp"
@@ -60,6 +67,18 @@ using GameBoyMachine = GB::GameBoyMachine;
 #include "cores/gamegear/GameGearMachine.hpp"
 
 namespace {
+
+// Diagnostic-only CPU clock. Unsupported hosts publish null instead of zero.
+std::optional<std::chrono::nanoseconds> diagnosticThreadCpuTime() noexcept
+{
+#ifdef CLOCK_THREAD_CPUTIME_ID
+    timespec value{};
+    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &value) == 0) {
+        return std::chrono::seconds(value.tv_sec) + std::chrono::nanoseconds(value.tv_nsec);
+    }
+#endif
+    return std::nullopt;
+}
 
 volatile std::sig_atomic_t gStopRequested = 0;
 
@@ -74,6 +93,8 @@ void printUsage(std::string_view program)
               << "   or: " << program << " --core <gameboy|gamegear> <path> [options]\n\n"
               << "Options:\n"
               << "  --core <name>      Machine core to run: gameboy or gamegear\n"
+              << "  --machine-provider <path>\n"
+              << "                     Load versioned factories; --core selects a provider ID\n"
               << "  --config <path>    Optional INI-style emulator configuration file\n"
               << "  --rom <path>       Cartridge ROM to load\n"
               << "  --mod <directory>  Load and activate a native mod package (repeatable)\n"
@@ -124,7 +145,8 @@ void printUsage(std::string_view program)
               << "                     Background worker count; 0 selects the reserved-core default\n"
               << "  --background-queue-capacity <n>\n"
               << "                     Maximum queued background jobs (default: 1024)\n"
-              << "  --space-project <path>  Capture Game Boy baseline analysis to a project JSON\n"
+              << "  --input-evdev <device>  Linux controller device (absolute /dev/input/event* path)\n"
+              << "  --space-project <path>  Capture Game Boy/Game Gear baseline analysis to a project JSON\n"
               << "  --debug-snapshots  Enable optional background debug snapshots\n"
               << "  --visual-pack <path>\n"
               << "                     Load a visual override pack.json; repeat to load multiple packs\n"
@@ -336,6 +358,8 @@ void writeDiagnosticsSample(std::ostream& output,
         .expectedSamplesPerSecond = audioExpectedSamplesPerSecond,
         .drainedReadySamples = stats.audioTransportDrainReadySamples,
         .drainRequestedSamples = stats.audioTransportDrainRequestedSamples,
+        .underrunCount = stats.audioTransportUnderrunCount,
+        .silenceSamplesFilled = stats.audioTransportSilenceSamplesFilled,
     });
 
     output << "{";
@@ -817,6 +841,16 @@ int main(int argc, char** argv)
             ? BMMQ::bootstrapMachine(options)
             : BMMQ::bootstrapMachine(options, launchRom);
         auto& machine = *bootstrapped.machine;
+        if (options.linuxControllerPath) {
+#ifdef TIME_HAS_LINUX_CONTROLLER
+            auto controller = std::make_unique<BMMQ::LinuxController>(options.linuxControllerPath->string());
+            if (!machine.inputService().attachAdapter(std::move(controller)) || !machine.inputService().resume())
+                throw std::runtime_error("unable to start Linux controller input: " + machine.inputService().diagnostics().lastBackendError);
+            std::cout << "Linux controller: " << *options.linuxControllerPath << " (neutral while disconnected)\n";
+#else
+            throw std::invalid_argument("Linux controller input unavailable in this build");
+#endif
+        }
         const std::string frontendAppId = "timeEmulator-" + std::to_string(getpid());
         setenv("TIME_FRONTEND_APP_ID", frontendAppId.c_str(), 1);
         const auto& descriptor = bootstrapped.descriptor;
@@ -1221,6 +1255,7 @@ int main(int argc, char** argv)
         refreshVisualReloadWatchList();
 
         std::ofstream diagnosticsReport;
+        std::ofstream diagnosticsEvents;
         const auto diagnosticsIntervalMs = std::max<std::uint32_t>(1u, options.diagnosticsIntervalMs);
         const auto diagnosticsInterval = std::chrono::milliseconds(diagnosticsIntervalMs);
         auto nextDiagnosticsReport = initialNow + diagnosticsInterval;
@@ -1234,6 +1269,11 @@ int main(int argc, char** argv)
             if (!diagnosticsReport) {
                 throw std::runtime_error("Unable to open diagnostics report file: " + diagnosticsPath.string());
             }
+            diagnosticsEvents.open(diagnosticsPath.string() + ".events.jsonl", std::ios::out | std::ios::trunc);
+            if (!diagnosticsEvents) {
+                throw std::runtime_error("Unable to open diagnostics event report");
+            }
+            diagnosticsEvents << std::setprecision(17);
             std::cout << "Diagnostics report: " << diagnosticsPath
                       << " (interval=" << diagnosticsIntervalMs << "ms)\n";
         }
@@ -1298,6 +1338,7 @@ int main(int argc, char** argv)
                                    activeExecutorPolicy.metadata().id,
                                    activeExecutorPolicy.backend());
             diagnosticsReport.flush();
+            diagnosticsEvents.flush();
         };
 
         auto pollVisualPackReload = [&]() {
@@ -1373,11 +1414,11 @@ int main(int argc, char** argv)
 
         std::unique_ptr<BMMQ::Space::Session> spaceSession;
         if (options.spaceProjectPath) {
-            auto* gb = dynamic_cast<GameBoyMachine*>(&machine);
-            if (!gb) throw std::invalid_argument("S.P.A.C.E. requires Game Boy");
-            const auto loaded = gb->cartridge().romBytes();
-            launchRom.assign(loaded.begin(), loaded.end());
-            spaceSession = std::make_unique<BMMQ::Space::Session>(*gb, launchRom, *options.spaceProjectPath);
+            if(auto* gb=dynamic_cast<GameBoyMachine*>(&machine)){
+                const auto loaded=gb->cartridge().romBytes();launchRom.assign(loaded.begin(),loaded.end());
+            }else if(auto* gg=dynamic_cast<BMMQ::GameGearMachine*>(&machine))launchRom=gg->romData();
+            else throw std::invalid_argument("machine has no S.P.A.C.E. core adapter");
+            spaceSession=std::make_unique<BMMQ::Space::Session>(machine,launchRom,*options.spaceProjectPath);
         }
 
         auto runEmulationLane = [&]() {
@@ -1539,7 +1580,33 @@ int main(int argc, char** argv)
                     }
 
                     timingEngine.applyControl(timingService.takeControlSnapshot());
+                    const auto priorClampCount = timingEngine.stats().catchUpClampCount;
+                    const auto budgetBeforeUpdate = timingEngine.stats().cycleBudget;
                     timingEngine.update(now);
+                    if (diagnosticsEvents.is_open() && timingEngine.stats().catchUpClampCount != priorClampCount) {
+                        const auto& stats = timingEngine.stats();
+                        const auto previousBatch = timingService.stats();
+                        const auto audio = machine.audioService().transportStats();
+                        diagnosticsEvents << "{\"event\":\"catch_up_clamp\",\"host_elapsed_ns\":"
+                            << std::chrono::duration_cast<std::chrono::nanoseconds>(now - runStartedAt).count()
+                            << ",\"throttled\":" << (stats.throttled ? "true" : "false")
+                            << ",\"discarded_cycles\":" << stats.discardedCyclesLast
+                            << ",\"budget_before_update\":" << budgetBeforeUpdate
+                            << ",\"budget_update_gap_ns\":" << stats.budgetUpdateGapLast.count()
+                            << ",\"previous_batch_wall_ns\":" << previousBatch.executionBatchWallLast.count()
+                            << ",\"previous_batch_cpu_ns\":";
+                        if (previousBatch.executionBatchCpuAvailable) diagnosticsEvents << previousBatch.executionBatchCpuLast.count();
+                        else diagnosticsEvents << "null";
+                        diagnosticsEvents << ",\"previous_sleep_overshoot_ns\":" << previousBatch.sleepOvershootLast.count()
+                            << ",\"audio_output_active\":" << (audioOutput != nullptr ? "true" : "false")
+                            << ",\"ready_queue_depth\":" << audio.readyQueueDepth
+                            << ",\"source_buffered_samples\":" << machine.audioService().engine().bufferedSamples()
+                            << ",\"audio_underruns\":" << audio.underrunCount << "}\n";
+                    }
+
+                    const bool measureBatch = diagnosticsReport.is_open();
+                    const auto batchStarted = measureBatch ? SteadyClock::now() : SteadyClock::time_point{};
+                    const auto batchCpuStarted = measureBatch ? diagnosticThreadCpuTime() : std::nullopt;
 
                     bool executionSliceActive = false;
                     std::uint32_t wakeExecutionSlices = 0u;
@@ -1593,6 +1660,13 @@ int main(int argc, char** argv)
                         }
                     }
                     timingService.recordWakeBurst(wakeExecutionCycles, wakeExecutionSlices);
+                    if (measureBatch) {
+                        const auto batchCpuEnded = diagnosticThreadCpuTime();
+                        const auto wall = std::chrono::duration_cast<std::chrono::nanoseconds>(SteadyClock::now() - batchStarted);
+                        const bool cpuAvailable = batchCpuStarted.has_value() && batchCpuEnded.has_value();
+                        timingService.noteExecutionBatch(wall,
+                            cpuAvailable ? *batchCpuEnded - *batchCpuStarted : std::chrono::nanoseconds::zero(), cpuAvailable);
+                    }
                     timingService.publishEngineStats(timingEngine.stats());
                     emitDiagnostics(SteadyClock::now(), false);
 
@@ -1609,22 +1683,11 @@ int main(int argc, char** argv)
                             const auto requestedSleep =
                                 std::chrono::duration_cast<std::chrono::nanoseconds>(nextStepTime - idleNow);
                             const auto beforeSleep = SteadyClock::now();
-                            if (!timingEngine.stats().paused && timingConfig.adaptiveSleepEnabled &&
-                                requestedSleep > timingConfig.sleepSpinWindow &&
-                                timingConfig.sleepSpinWindow > std::chrono::nanoseconds::zero()) {
-                                const auto coarseWake = nextStepTime - timingConfig.sleepSpinWindow;
-                                std::this_thread::sleep_until(coarseWake);
-                                const auto spinStart = SteadyClock::now();
-                                while (!stopRequested.load(std::memory_order_acquire) &&
-                                       gStopRequested == 0 && SteadyClock::now() < nextStepTime) {
-                                    if (SteadyClock::now() - spinStart >= timingConfig.sleepSpinCap) {
-                                        break;
-                                    }
-                                    std::this_thread::yield();
-                                }
-                            } else {
-                                std::this_thread::sleep_until(nextStepTime);
-                            }
+                            BMMQ::waitForTimingWake(nextStepTime, requestedSleep,
+                                timingConfig, timingEngine.stats().paused, [&] {
+                                    return stopRequested.load(std::memory_order_acquire) ||
+                                           gStopRequested != 0;
+                                });
                             const auto afterSleep = SteadyClock::now();
                             const auto actualSleep =
                                 std::chrono::duration_cast<std::chrono::nanoseconds>(afterSleep - beforeSleep);

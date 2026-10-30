@@ -1,4 +1,5 @@
 #include "GameBoyIrExecution.hpp"
+#include "inst_cycle/research/ExtendedLowering.hpp"
 
 #include <algorithm>
 #include <optional>
@@ -117,7 +118,7 @@ void emitNextPc(BlockBuilder& builder, std::uint16_t address)
 }
 
 bool lowerInstruction(BlockBuilder& builder,
-                      const BMMQ::TranslatedInstruction<std::uint16_t, std::uint8_t>& instruction)
+                      const BMMQ::TranslatedInstruction<std::uint16_t, std::uint8_t>& instruction, bool extended)
 {
     if (instruction.length == 0u) return false;
     const auto opcode = instruction.bytes[0];
@@ -206,7 +207,7 @@ bool lowerInstruction(BlockBuilder& builder,
         return true;
     }
 
-    return false;
+    return extended && BMMQ::IR::Research::lowerExtended(builder, instruction, true);
 }
 
 } // namespace
@@ -392,14 +393,14 @@ BMMQ::IR::BlockPtr GameBoyCoreAdapter::lower(
     BMMQ::IR::BlockExit exit = BlockExit::Sequential;
     std::size_t lowered = 0u;
     for (const auto& instruction : copied) {
-        if (!lowerInstruction(builder, instruction)) {
+        if (!lowerInstruction(builder, instruction, researchExtended_)) {
             exit = BlockExit::Unsupported;
             break;
         }
         codeBytes.insert(codeBytes.end(), instruction.bytes.begin(),
                          instruction.bytes.begin() + instruction.length);
         ++lowered;
-        if (instruction.bytes[0] == 0x18u) {
+        if (instruction.bytes[0] == 0x18u || (researchExtended_ && BMMQ::IR::Research::extendedControl(instruction.bytes[0]))) {
             exit = BlockExit::ControlFlow;
             break;
         }

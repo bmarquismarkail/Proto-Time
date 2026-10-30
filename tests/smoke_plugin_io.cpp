@@ -216,6 +216,166 @@ struct RetryAttachPlugin final : BMMQ::IPlugin {
     }
 };
 
+enum class RegistrationSite { Attach, MachineEvent, VideoEvent, Digital, Analog, Detach };
+
+struct RegisteringPlugin final : BMMQ::IVideoPlugin,
+                                 BMMQ::IDigitalInputPlugin,
+                                 BMMQ::IAnalogInputPlugin {
+    BMMQ::PluginManager& manager;
+    RegistrationSite site;
+    bool catchRejection;
+    int rejections = 0;
+    int videoCalls = 0;
+    bool nesting = false;
+
+    RegisteringPlugin(BMMQ::PluginManager& manager, RegistrationSite site, bool catchRejection)
+        : manager(manager), site(site), catchRejection(catchRejection) {}
+
+    std::string_view id() const override { return "test.registering"; }
+
+    void attempt(RegistrationSite current) {
+        if (site != current) return;
+        try {
+            // Enough registrations to force growth in an unguarded manager.
+            for (int i = 0; i < 64; ++i)
+                manager.add(std::make_unique<RecordingAudioPlugin>());
+        } catch (const std::logic_error&) {
+            ++rejections;
+            if (!catchRejection) throw;
+        }
+    }
+    void onAttach(BMMQ::MutableMachineView&) override { attempt(RegistrationSite::Attach); }
+    void onDetach(BMMQ::MutableMachineView&) override { attempt(RegistrationSite::Detach); }
+    void onMachineEvent(const BMMQ::MachineEvent& event, const BMMQ::MachineView& view) override {
+        // Verify that leaving a nested dispatch does not lift the outer restriction.
+        if (!nesting && site == RegistrationSite::MachineEvent) {
+            nesting = true;
+            manager.emit(view, event);
+            nesting = false;
+        }
+        attempt(RegistrationSite::MachineEvent);
+    }
+    void onVideoEvent(const BMMQ::MachineEvent&, const BMMQ::MachineView&) override {
+        ++videoCalls;
+        attempt(RegistrationSite::VideoEvent);
+    }
+    std::optional<uint32_t> sampleDigitalInput(const BMMQ::MachineView&) override {
+        attempt(RegistrationSite::Digital);
+        return 7;
+    }
+    std::optional<AnalogState> sampleAnalogInput(const BMMQ::MachineView&) override {
+        attempt(RegistrationSite::Analog);
+        return AnalogState{0.5f};
+    }
+};
+
+void testCallbackRegistration()
+{
+    for (auto site : {RegistrationSite::MachineEvent, RegistrationSite::VideoEvent,
+                      RegistrationSite::Digital, RegistrationSite::Analog,
+                      RegistrationSite::Detach}) {
+        for (bool catchRejection : {false, true}) {
+            GameBoyMachine machine;
+            auto& manager = machine.pluginManager();
+            auto& plugin = manager.add(std::make_unique<RegisteringPlugin>(
+                manager, site, catchRejection));
+            auto& observer = manager.add(std::make_unique<RecordingVideoPlugin>());
+            manager.initialize(machine.mutableView());
+            if (site == RegistrationSite::Detach) {
+                manager.shutdown(machine.mutableView());
+                assert(observer.detachCount == 1);
+                assert(!manager.statusFor(plugin.id())->attached);
+            } else if (site == RegistrationSite::Digital) {
+                auto sample = manager.sampleDigitalInput(machine.view());
+                assert(sample.has_value() == catchRejection);
+            } else if (site == RegistrationSite::Analog) {
+                auto sample = manager.sampleAnalogInput(machine.view());
+                assert(sample.has_value() == catchRejection);
+            } else {
+                manager.emit(machine.view(), {BMMQ::MachineEventType::MemoryWriteObserved,
+                                              BMMQ::PluginCategory::Video});
+                assert(observer.videoEventCount >= 1);
+                if (catchRejection) assert(plugin.videoCalls >= 1);
+            }
+            assert(plugin.rejections >= 1);
+            assert(manager.size() == 2);
+            assert(manager.statusFor(plugin.id())->disabled == !catchRejection);
+            if (!catchRejection) {
+                assert(manager.statusFor(plugin.id())->lastError ==
+                       "plugin registration is not allowed during dispatch or shutdown");
+            }
+            // Both exception and early-return paths must restore registration.
+            manager.add(std::make_unique<RecordingAudioPlugin>());
+            assert(manager.size() == 3);
+            manager.shutdown(machine.mutableView());
+        }
+    }
+
+    GameBoyMachine machine;
+    auto& manager = machine.pluginManager();
+    manager.add(std::make_unique<RegisteringPlugin>(manager, RegistrationSite::Attach, false));
+    manager.initialize(machine.mutableView());
+    assert(manager.size() == 65);
+    for (const auto& status : manager.statuses()) {
+        assert(status.attached);
+        assert(!status.disabled);
+    }
+    manager.shutdown(machine.mutableView());
+}
+
+struct ReentrantDetachPlugin final : BMMQ::IPlugin {
+    BMMQ::PluginManager& manager;
+    std::vector<int>& order;
+    int number;
+    bool throwOnDetach;
+    int attachCount = 0;
+    int detachCount = 0;
+
+    ReentrantDetachPlugin(BMMQ::PluginManager& manager, std::vector<int>& order,
+                          int number, bool throwOnDetach)
+        : manager(manager), order(order), number(number), throwOnDetach(throwOnDetach) {}
+    std::string_view id() const override {
+        return number == 1 ? "test.detach.first" : "test.detach.second";
+    }
+    void onAttach(BMMQ::MutableMachineView&) override { ++attachCount; }
+    void onDetach(BMMQ::MutableMachineView& view) override {
+        ++detachCount;
+        order.push_back(number);
+        if (detachCount == 1) {
+            manager.shutdown(view);
+            manager.initialize(view);
+        }
+        order.push_back(-number);
+        if (throwOnDetach) throw std::runtime_error("detach failure");
+    }
+};
+
+void testReentrantShutdown()
+{
+    for (bool throwing : {false, true}) {
+        GameBoyMachine machine;
+        auto& manager = machine.pluginManager();
+        std::vector<int> order;
+        auto& first = manager.add(std::make_unique<ReentrantDetachPlugin>(manager, order, 1, false));
+        auto& second = manager.add(std::make_unique<ReentrantDetachPlugin>(manager, order, 2, throwing));
+        manager.initialize(machine.mutableView());
+        manager.shutdown(machine.mutableView());
+        assert(first.detachCount == 1 && second.detachCount == 1);
+        assert(first.attachCount == 1 && second.attachCount == 1);
+        assert((order == std::vector<int>{2, -2, 1, -1}));
+        assert(!manager.initialized());
+        for (const auto& status : manager.statuses()) assert(!status.attached);
+        assert(manager.statusFor(second.id())->disabled == throwing);
+        manager.shutdown(machine.mutableView());
+        assert(first.detachCount == 1 && second.detachCount == 1);
+        manager.resetFailures();
+        manager.initialize(machine.mutableView());
+        assert(first.attachCount == 2 && second.attachCount == 2);
+        manager.shutdown(machine.mutableView());
+        assert(first.detachCount == 2 && second.detachCount == 2);
+    }
+}
+
 void testReentrantAttachmentOrdering()
 {
     GameBoyMachine machine;
@@ -261,6 +421,8 @@ void testFailedAttachmentRetry()
 
 int main()
 {
+    testCallbackRegistration();
+    testReentrantShutdown();
     testReentrantAttachmentOrdering();
     testFailedAttachmentRetry();
 

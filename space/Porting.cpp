@@ -79,7 +79,9 @@ void validatePorting(const Json &j) {
   hash(source.at("sha256"));
   hash(target.at("sha256"));
   need(source.at("sha256") == j.at("romSha256") &&
-           source.at("core") == "gameboy" && target.at("core") == "gamegear",
+           source.at("core") == j.at("core") &&
+           ((source.at("core")=="gameboy"&&target.at("core")=="gamegear")||
+            (source.at("core")=="gamegear"&&target.at("core")=="gameboy")),
        "port ROM/core mismatch");
   auto size = counter(source.at("size")), ts = counter(target.at("size"));
   need(size > 0 && size <= 64u * 1024u * 1024u && ts > 0 &&
@@ -147,14 +149,14 @@ void validatePorting(const Json &j) {
     auto bank = natural(r.at("bank"), 4095),
          address = natural(r.at("address"), 65535);
     need(a / 16384 == bank && (b - 1) / 16384 == bank &&
-             address == (bank ? 16384 : 0) + a % 16384,
+             (source["core"]=="gameboy"?address == (bank ? 16384 : 0) + a % 16384:address<49152&&address%16384==a%16384),
          "invalid physical bank/address mapping");
     need(r.at("instructions").is_array(), "invalid instruction inventory");
     uint64_t cursor = a;
     for (auto &i : r["instructions"]) {
       need(kind == "code", "non-code instruction inventory");
       auto [x, y] = range(i, size);
-      need(x == cursor && y <= b && y - x <= 3,
+      need(x == cursor && y <= b && y - x <= coreModel(source["core"].get<std::string>()).maximumInstructionLength,
            "invalid inventory instruction boundary");
       cursor = y;
       auto id = i.at("id").get<std::string>();
@@ -171,6 +173,7 @@ void validatePorting(const Json &j) {
                ((uint64_t(1) << 32) | ((x / 16384) << 16) | (x % 16384)),
            "invalid inventory instruction location");
       auto identity = decimal(location) + ":" + hex;
+      if(source["core"]=="gamegear")identity+=":"+Json::array({Json{{"offset",0},{"location",decimal(location)},{"length",y-x}}}).dump();
       need(id == digest(std::span(
                      reinterpret_cast<const uint8_t *>(identity.data()),
                      identity.size())),
@@ -202,8 +205,7 @@ void validatePorting(const Json &j) {
                              address, 16);
     need(b.ec == std::errc{} && b.ptr == text.data() + colon &&
              a.ec == std::errc{} && a.ptr == text.data() + text.size() &&
-             banks.contains(bank) && address < 32768 &&
-             (bank ? address >= 16384 : address < 16384),
+             banks.contains(bank) && (source["core"]=="gameboy"?(address<32768&&(bank?address>=16384:address<16384)):address<49152),
          "invalid model bank/entry");
     auto location =
         (uint64_t(1) << 32) | (uint64_t(bank) << 16) | (address & 16383);
@@ -233,8 +235,7 @@ void validatePorting(const Json &j) {
       auto [a, b] = range(r, ts);
       need(natural(r.at("bank"), 4095) == a / 16384 &&
                (b - 1) / 16384 == a / 16384 &&
-               natural(r.at("address"), 65535) ==
-                   (a / 16384 ? 16384 : 0) + a % 16384,
+               (target["core"]=="gameboy"?natural(r.at("address"),65535)==(a/16384?16384:0)+a%16384:(natural(r.at("address"),65535)<49152&&natural(r.at("address"),65535)%16384==a%16384)),
            "invalid target bank/address mapping");
       hash(r.at("sha256"));
     }
@@ -431,8 +432,8 @@ void verifyPortArtifacts(const Json &j, const std::filesystem::path &source,
   auto build = bytes(source.parent_path() / "build.json");
   need(p["buildSha256"] == digest(build), "build manifest mismatch");
   auto manifest = Json::parse(build.begin(), build.end());
-  need(manifest.at("roms").at("gb").at("sha256") == p["source"]["sha256"] &&
-           manifest.at("roms").at("gg").at("sha256") == p["target"]["sha256"],
+  need(manifest.at("roms").at(p["source"]["core"]=="gameboy"?"gb":"gg").at("sha256") == p["source"]["sha256"] &&
+           manifest.at("roms").at(p["target"]["core"]=="gameboy"?"gb":"gg").at("sha256") == p["target"]["sha256"],
        "build ROM identity mismatch");
   auto sources = manifest.at("sources").dump();
   need(p["sourceSha256"] ==
@@ -485,6 +486,7 @@ void verifyPortArtifacts(const Json &j, const std::filesystem::path &source,
           op == 0xC4 || op == 0xCC || op == 0xD4 || op == 0xDC || op == 0xEA ||
           op == 0xFA)
         length = 3;
+      if(j["porting"]["source"]["core"]=="gamegear")length=z80InstructionLength(std::span(s).subspan(x,y-x));
       need(length == y - x, "inventory opcode boundary mismatch");
     }
     if (r["kind"] == "padding")

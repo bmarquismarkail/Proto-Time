@@ -125,6 +125,9 @@ struct InstructionResult {
 
 class GameBoyCoreAdapter final : public BMMQ::IR::IIrCoreAdapter {
 public:
+    explicit GameBoyCoreAdapter(bool researchExtended) noexcept : researchExtended_(researchExtended) {}
+    GameBoyCoreAdapter() = default;
+
     static constexpr std::uint32_t kArchitectureId = 0x47420001u;
 
     [[nodiscard]] std::uint32_t architectureId() const noexcept override { return kArchitectureId; }
@@ -140,6 +143,7 @@ public:
     validateExecutionState(const BMMQ::IR::Block& block) const override;
 
 private:
+    bool researchExtended_ = false;
     [[nodiscard]] static bool registerIdIsValid(std::uint32_t id) noexcept;
     [[nodiscard]] static bool helperIdIsValid(std::uint32_t id) noexcept;
     [[nodiscard]] static bool memoryOpIsI8(const BMMQ::IR::Operation& operation) noexcept;

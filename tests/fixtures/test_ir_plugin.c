@@ -193,6 +193,9 @@ static int32_t execute_block(void* opaque, void* raw_artifact,
         host->set_program_counter(host->host_context, artifact->next_pc) != TIME_IR_OK_V1) {
         return TIME_IR_ERROR_V1;
     }
+#if defined(TEST_IR_THROW_ON_EXECUTE)
+    throw std::runtime_error("fixture IR execution exception");
+#endif
     result->branch_taken = 0u;
     result->exit_requested = 0u;
     result->cycle_condition = 0u;

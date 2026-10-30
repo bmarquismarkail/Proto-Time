@@ -23,7 +23,9 @@ void AudioTransportPlugin::atomicMinNonZero(std::atomic<T>& target, T value) noe
 
 void AudioTransportPlugin::onAttach(MutableMachineView& view)
 {
+    discardBatch();
     service_ = &view.audioService();
+    batchEpoch_ = service_->lifecycleEpoch();
 }
 
 void AudioTransportPlugin::onDetach(MutableMachineView&)
@@ -32,9 +34,27 @@ void AudioTransportPlugin::onDetach(MutableMachineView&)
     service_ = nullptr;
 }
 
+void AudioTransportPlugin::discardBatch() noexcept
+{
+    batchSamples_.clear();
+    batchPackets_ = 0u;
+    currentSamples_.store(0u, std::memory_order_relaxed);
+}
+
+void AudioTransportPlugin::onMachineEvent(const MachineEvent& event, const MachineView&)
+{
+    // Native ROM loads also announce a stream boundary to attached plugins.
+    if (event.type == MachineEventType::RomLoaded) discardBatch();
+}
+
 void AudioTransportPlugin::onAudioEvent(const MachineEvent& event, const MachineView& view)
 {
     if (service_ == nullptr || event.type != MachineEventType::AudioFrameReady) return;
+    const auto epoch = service_->lifecycleEpoch();
+    if (batchEpoch_ != epoch) {
+        discardBatch();
+        batchEpoch_ = epoch;
+    }
     events_.fetch_add(1u, std::memory_order_relaxed);
     auto packet = view.realtimeAudioPacket();
     if (!packet.has_value() || packet->contractVersion != RealtimeAudioPacket::kContractVersion) {
@@ -108,15 +128,19 @@ void AudioTransportPlugin::onAudioEvent(const MachineEvent& event, const Machine
 void AudioTransportPlugin::flushBatch()
 {
     if (service_ == nullptr || batchSamples_.empty()) return;
+    // Detach may run before another audio event observes a reset/restart.
+    // Never relabel a partial batch from the previous stream with the new epoch.
+    if (batchEpoch_ != service_->lifecycleEpoch()) {
+        discardBatch();
+        return;
+    }
     service_->appendRecentPcm(batchSamples_, batchFrameCounter_);
     flushCount_.fetch_add(1u, std::memory_order_relaxed);
     flushLast_.store(batchSamples_.size(), std::memory_order_relaxed);
     atomicMinNonZero(flushMin_, batchSamples_.size());
     atomicMax(flushMax_, batchSamples_.size());
     packetsFlushed_.fetch_add(batchPackets_, std::memory_order_relaxed);
-    batchSamples_.clear();
-    batchPackets_ = 0u;
-    currentSamples_.store(0u, std::memory_order_relaxed);
+    discardBatch();
 }
 
 AudioTransportPluginStats AudioTransportPlugin::stats() const noexcept
