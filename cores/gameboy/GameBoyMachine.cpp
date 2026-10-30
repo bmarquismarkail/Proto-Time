@@ -290,6 +290,7 @@ std::vector<uint8_t> serializeCpuState(const LR3592_DMG::SaveState& state)
     writer.u16(state.currentVramBank);
     writer.u8(state.spriteContext);
     writer.boolean(state.bankSwitchingEnabled);
+    writer.boolean(state.illegalOpcodeLockup);
     return writer.take();
 }
 
@@ -328,6 +329,9 @@ LR3592_DMG::SaveState deserializeCpuState(std::span<const uint8_t> bytes)
     state.currentVramBank = reader.u16();
     state.spriteContext = reader.u8();
     state.bankSwitchingEnabled = reader.boolean();
+    if (!reader.done()) {
+        state.illegalOpcodeLockup = reader.boolean();
+    }
     if (!reader.done()) {
         throw std::invalid_argument("CPU save state has trailing data");
     }
@@ -1153,7 +1157,7 @@ void GameBoyMachine::loadRom(const std::vector<uint8_t>& bytes) {
     impl_->bootEntryPending = false;
 
     std::array<uint8_t, 0x4000> fixedWindow{};
-    impl_->mapper.copyRomBankWindow(0, fixedWindow);
+    impl_->mapper.copyRomBankWindow(impl_->mapper.currentFixedRomBank(), fixedWindow);
     impl_->memoryMap.installRomWindow(0x0000u, fixedWindow);
     std::array<uint8_t, 0x4000> switchableWindow{};
     impl_->mapper.copyRomBankWindow(impl_->mapper.currentRomBank(), switchableWindow);

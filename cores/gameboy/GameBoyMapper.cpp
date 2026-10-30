@@ -44,7 +44,7 @@ void GameBoyMapper::load(const std::vector<uint8_t>& romData) {
 }
 
 GameBoyMapper::WriteResult GameBoyMapper::write(uint16_t address, uint8_t value) {
-    WriteResult result{false, false};
+    WriteResult result{false, false, false};
 
     switch (mapperType_) {
     case CartridgeMapper::None:
@@ -67,32 +67,43 @@ GameBoyMapper::WriteResult GameBoyMapper::write(uint16_t address, uint8_t value)
             result.romBankChanged = true;
             result.handled = true;
         } else if (address < 0x6000u) {
-            // RAM bank select or ROM bank bits 5-6
+            // Upper ROM-bank bits in mode 0; RAM-bank bits in mode 1.
+            const auto oldFixedBank = currentFixedRomBank();
             if (ramBankMode_ == 0u) {
                 ramBankSelect_ = value & 0x03u;
-            } else {
-                romBankLow_ = (romBankLow_ & 0x01Fu) | ((value & 0x03u) << 5u);
                 updateMbc1Banking();
                 result.romBankChanged = true;
+            } else {
+                ramBankSelect_ = value & 0x03u;
+                result.fixedRomBankChanged = currentFixedRomBank() != oldFixedBank;
             }
             result.handled = true;
         } else if (address < 0x8000u) {
-            // ROM bank mode select
+            // Mode changes remap the switchable window and may remap the
+            // fixed window when upper bits are selected.
+            const auto oldFixedBank = currentFixedRomBank();
             ramBankMode_ = value & 0x01u;
+            updateMbc1Banking();
+            result.romBankChanged = true;
+            result.fixedRomBankChanged = currentFixedRomBank() != oldFixedBank;
             result.handled = true;
         }
         break;
 
     case CartridgeMapper::MBC2:
-        if (address < 0x2000u) {
-            // ROM bank select (lower 4 bits of address, value bits 0-3)
-            if ((address & 0x1000u) != 0) {
+        if (address < 0x4000u) {
+            // A8 selects RAM enable ($0000-$1FFF) versus ROM bank ($2000-$3FFF).
+            if ((address & 0x0100u) != 0u) {
                 romBankLow_ = value & 0x0Fu;
                 if (romBankLow_ == 0u) romBankLow_ = 1u;
-                updateMbc1Banking();
+                effectiveRomBank_ = static_cast<std::size_t>(romBankLow_) % romBankCount_;
+                if (effectiveRomBank_ == 0u && romBankCount_ > 1u) {
+                    effectiveRomBank_ = 1u;
+                }
                 result.romBankChanged = true;
+            } else if (address < 0x2000u) {
+                ramEnabled_ = ((value & 0x0Fu) == 0x0Au);
             }
-            ramEnabled_ = ((value & 0x0Au) == 0x0Au);
             result.handled = true;
         }
         break;
@@ -153,7 +164,8 @@ GameBoyMapper::WriteResult GameBoyMapper::write(uint16_t address, uint8_t value)
 }
 
 void GameBoyMapper::updateMbc1Banking() {
-    std::size_t bank = (static_cast<std::size_t>(ramBankSelect_ & 0x03u) << 5u) |
+    const auto upperBits = ramBankMode_ == 0u ? ramBankSelect_ : 0u;
+    std::size_t bank = (static_cast<std::size_t>(upperBits & 0x03u) << 5u) |
                        static_cast<std::size_t>(romBankLow_ & 0x1Fu);
     bank &= 0x7Fu;
     bank %= romBankCount_;
@@ -161,6 +173,13 @@ void GameBoyMapper::updateMbc1Banking() {
         bank = (bank + 1u) % romBankCount_;
     }
     effectiveRomBank_ = bank == 0u ? 1u % romBankCount_ : bank;
+}
+
+std::size_t GameBoyMapper::currentFixedRomBank() const noexcept {
+    if (mapperType_ != CartridgeMapper::MBC1 || ramBankMode_ == 0u || romBankCount_ == 0u) {
+        return 0u;
+    }
+    return ((static_cast<std::size_t>(ramBankSelect_ & 0x03u) << 5u) % romBankCount_);
 }
 
 void GameBoyMapper::updateMbc5Banking() {

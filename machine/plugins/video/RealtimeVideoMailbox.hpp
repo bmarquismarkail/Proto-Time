@@ -184,6 +184,24 @@ public:
         }
     }
 
+    // Safe while the producer and consumer are active. This only resets atomic
+    // counters; slot ownership and indices remain exclusively lane-owned.
+    void resetStatistics() noexcept
+    {
+        publishedFrameCount_.store(0u, std::memory_order_relaxed);
+        consumedFrameCount_.store(0u, std::memory_order_relaxed);
+        overwriteCount_.store(0u, std::memory_order_relaxed);
+        mailboxHighWaterMark_.store(0u, std::memory_order_relaxed);
+        publishedPixelBytes_.store(0u, std::memory_order_relaxed);
+        lastPublishedGeneration_.store(0u, std::memory_order_relaxed);
+        lastConsumedGeneration_.store(0u, std::memory_order_relaxed);
+        frameAgeLastNs_.store(0u, std::memory_order_relaxed);
+        frameAgeHighWaterNs_.store(0u, std::memory_order_relaxed);
+        for (auto& bucket : frameAgeBuckets_) {
+            bucket.store(0u, std::memory_order_relaxed);
+        }
+    }
+
 private:
     static constexpr std::uint8_t kDirty = 0x80u;
     static constexpr std::uint8_t kSlotMask = 0x03u;

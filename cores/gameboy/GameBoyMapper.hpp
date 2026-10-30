@@ -33,6 +33,7 @@ public:
     struct WriteResult {
         bool handled = false;
         bool romBankChanged = false;
+        bool fixedRomBankChanged = false;
     };
     WriteResult write(uint16_t address, uint8_t value);
 
@@ -44,6 +45,7 @@ public:
     // Install ROM window into memory map (bank change notification)
     void copyRomBankWindow(std::size_t bankIndex, std::span<uint8_t> window) const;
     [[nodiscard]] std::size_t currentRomBank() const noexcept { return effectiveRomBank_; }
+    [[nodiscard]] std::size_t currentFixedRomBank() const noexcept;
 
     // Metadata accessors
     [[nodiscard]] CartridgeMapper mapperType() const noexcept { return mapperType_; }
@@ -103,7 +105,7 @@ private:
     uint16_t romBankLow_ = 1U;
     std::size_t effectiveRomBank_ = 1U;
     uint8_t ramBankSelect_ = 0u;
-    uint8_t ramBankMode_ = 0u; // 0 = bank select, 1 = ROM bank bits 5-6
+    uint8_t ramBankMode_ = 0u; // 0 = ROM banking, 1 = RAM banking
     bool ramEnabled_ = false;
 
     // Dirty flag for save
