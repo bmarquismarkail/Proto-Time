@@ -59,22 +59,20 @@ uint8_t readByte(LR3592_DMG& cpu, uint16_t address)
     return value;
 }
 
-void requireDecodeFailure(const std::vector<uint8_t>& program)
+void requireUndefinedOpcodeLocksUp(uint8_t opcode)
 {
     LR3592_DMG cpu;
-    cpu.loadProgram(program);
-    auto fetchBlock = cpu.fetch();
+    cpu.loadProgram({opcode, 0x00, 0x00});
 
-    bool threw = false;
-    try {
-        (void)cpu.decode(fetchBlock);
-    } catch (const std::exception&) {
-        threw = true;
-    } catch (...) {
-        threw = true;
+    const auto first = step(cpu);
+    if (scalar(cpu, GB::RegisterId::PC) != 1u || first.retiredCycles != 4u) {
+        throw std::runtime_error("undefined opcode should decode and retire before locking the CPU");
     }
 
-    assert(threw);
+    const auto locked = step(cpu);
+    if (scalar(cpu, GB::RegisterId::PC) != 1u || locked.retiredCycles != 4u) {
+        throw std::runtime_error("undefined opcode should keep the CPU locked at the following PC");
+    }
 }
 
 void loadAndSetPc(LR3592_DMG& cpu, uint16_t address, const std::vector<uint8_t>& program)
@@ -722,7 +720,9 @@ int main()
         assert((static_cast<uint8_t>(statEntry->reg->value) & 0x03u) == 0x00u);
     }
 
-    requireDecodeFailure({0xD3, 0x00, 0x00});
+    for (const uint8_t opcode : {0xD3u, 0xDBu, 0xE3u, 0xE4u}) {
+        requireUndefinedOpcodeLocksUp(opcode);
+    }
 
     {
         LR3592_DMG cpu;
