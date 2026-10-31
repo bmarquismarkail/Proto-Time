@@ -105,7 +105,7 @@ private:
     uint16_t romBankLow_ = 1U;
     std::size_t effectiveRomBank_ = 1U;
     uint8_t ramBankSelect_ = 0u;
-    uint8_t ramBankMode_ = 0u; // 0 = ROM banking, 1 = RAM banking
+    uint8_t ramBankMode_ = 0u; // 0 = 16/8 mode, 1 = 4/32 mode
     bool ramEnabled_ = false;
 
     // Dirty flag for save

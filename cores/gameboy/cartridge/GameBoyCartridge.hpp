@@ -513,6 +513,7 @@ public:
             return bank == 0 ? 1 % metadata_.romBankCount : bank;
         }
         case CartridgeMapper::MBC2:
+            return currentRomBank_ % metadata_.romBankCount;
         case CartridgeMapper::MBC3:
             return currentRomBank_ % metadata_.romBankCount == 0
                 ? 1 % metadata_.romBankCount
@@ -647,21 +648,16 @@ private:
             mbc1BankingModeSelect_ = (data & 0x01u) != 0;
             return {true, true};
         case CartridgeMapper::MBC2:
-            if (address < 0x2000u) {
+            if (address < 0x4000u) {
                 if ((address & 0x0100u) == 0u) {
                     ramEnabled_ = (data & 0x0Fu) == 0x0Au;
+                    return {true, false};
                 }
-                return {true, false};
-            }
-            if (address < 0x4000u) {
-                if ((address & 0x0100u) != 0u) {
-                    currentRomBank_ = data & 0x0Fu;
-                    if (currentRomBank_ == 0) {
-                        currentRomBank_ = 1;
-                    }
-                    return {true, true};
+                currentRomBank_ = data & 0x0Fu;
+                if (currentRomBank_ == 0) {
+                    currentRomBank_ = 1;
                 }
-                return {true, false};
+                return {true, true};
             }
             return {true, false};
         case CartridgeMapper::MBC3:

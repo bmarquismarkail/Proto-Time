@@ -32,6 +32,7 @@ namespace BMMQ
 
         void addStep(step_t step) {
             code.push_back(std::move(step));
+            stepCycleEndOffsets_.push_back(cyclesIfNotTaken_);
         }
 
         void addCycleCharge(std::size_t notTakenCycles, std::size_t takenCycles) {
@@ -47,6 +48,7 @@ namespace BMMQ
             code.clear();
             cyclesIfNotTaken_ = 0;
             cyclesIfTaken_ = 0;
+            stepCycleEndOffsets_.clear();
         }
 
         void reserve(std::size_t count) {
@@ -65,8 +67,13 @@ namespace BMMQ
             return cyclesIfTaken_;
         }
 
+        std::size_t stepCycleEndOffset(std::size_t index) const {
+            return stepCycleEndOffsets_.at(index);
+        }
+
     private:
         std::vector<step_t> code;
+        std::vector<std::size_t> stepCycleEndOffsets_;
         IMemory<AddressType, DataType, RegType>* snapshot = nullptr;
         std::size_t cyclesIfNotTaken_ = 0;
         std::size_t cyclesIfTaken_ = 0;

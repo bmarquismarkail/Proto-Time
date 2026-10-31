@@ -5,6 +5,7 @@
 #include "inst_cycle/executor/PluginContract.hpp"
 #include "WholeBlockFixtures.hpp"
 #include "space/Capture.hpp"
+#include <array>
 #include <filesystem>
 #include <iostream>
 #include <random>
@@ -109,6 +110,42 @@ void timersSerialDma(){
   write(a,b,0xff50,1);compare(a,b,{100,400,false});
   write(a,b,0xff50,0);compare(a,b,{100,400,false});
   require(a.runtimeContext().read8(0)==0 && b.runtimeContext().read8(0)==0,"FF50 boot visibility was reversed");
+}
+void divWriteCycleAndUndefinedOpcodes(){
+  {
+    LR3592_DMG cpu;
+    auto& memory=cpu.getMemory();
+    const std::array<uint8_t,2> instruction{0xE0,0x04}; // LDH ($FF04),A
+    memory.backingStore().load(instruction,0x0100);
+    memory.file.findRegister("AF")->reg->value=0x0100;
+    memory.file.findRegister("PC")->reg->value=0x0100;
+    const std::array<uint8_t,1> zero{0x00};
+    const std::array<uint8_t,1> tac{0x05};
+    memory.write(zero,0xFF04);
+    memory.write(tac,0xFF07);
+    memory.write(zero,0xFF05);
+    auto fetched=cpu.fetch();
+    auto decoded=cpu.decode(fetched);
+    cpu.execute(decoded,fetched);
+    require(memory.backingStore().readableSpan(0xFF05,1)[0]==0x01,
+            "DIV write missed the timer falling edge at the instruction write cycle");
+    require(memory.backingStore().readableSpan(0xFF04,1)[0]==0x00,
+            "DIV write did not reset the divider at its write cycle");
+  }
+
+  for(const uint8_t opcode:{uint8_t(0xD3),uint8_t(0xDB),uint8_t(0xDD),uint8_t(0xE3),
+                            uint8_t(0xE4),uint8_t(0xEB),uint8_t(0xEC),uint8_t(0xED),
+                            uint8_t(0xF4),uint8_t(0xFC),uint8_t(0xFD)}){
+    auto bytes=rom();bytes[0x100]=opcode;bytes[0x101]=0x00;
+    GB::GameBoyMachine machine;haltedAdvanceEnabled=false;machine.loadRom(bytes);
+    machine.runtimeContext().writeRegister16(GB::RegisterId::PC,0x0100);
+    machine.step();
+    require(machine.readRegisterPair("PC")==0x0101,
+            "invalid opcode did not retire before entering CPU lockup");
+    machine.step();
+    require(machine.readRegisterPair("PC")==0x0101,
+            "invalid opcode failed to lock the CPU");
+  }
 }
 void interrupts(){
   for(bool ei:{false,true})for(uint8_t irq:{uint8_t(1),uint8_t(2),uint8_t(4),uint8_t(8),uint8_t(16)}){
@@ -217,5 +254,5 @@ void fallback(){
  e.connectDebugEngine(nullptr);f.connectDebugEngine(nullptr);
 }
 }
-int main()try{std::cerr<<"windows\n";windows();std::cerr<<"timers/serial/DMA\n";timersSerialDma();std::cerr<<"interrupts\n";interrupts();std::cerr<<"live mutation\n";liveMutation();std::cerr<<"emitted transition\n";emittedTransition();std::cerr<<"fallback\n";fallback();std::cout<<"Game Boy HALT budgets, clocks, IRQ/HALT bug, DMA/serial, audio/video and fallback parity passed\n";return 0;}
+int main()try{std::cerr<<"windows\n";windows();std::cerr<<"timers/serial/DMA\n";timersSerialDma();std::cerr<<"DIV cycle/undefined opcodes\n";divWriteCycleAndUndefinedOpcodes();std::cerr<<"interrupts\n";interrupts();std::cerr<<"live mutation\n";liveMutation();std::cerr<<"emitted transition\n";emittedTransition();std::cerr<<"fallback\n";fallback();std::cout<<"Game Boy HALT budgets, clocks, IRQ/HALT bug, DMA/serial, audio/video and fallback parity passed\n";return 0;}
 catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}

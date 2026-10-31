@@ -158,6 +158,14 @@ class LR3592_DMG : public BMMQ::CPU<AddressType, DataType, AddressType> {
   bool illegalOpcodeLockup = false;
   bool haltBugActive = false;
   bool haltBugPcAdjustPending = false;
+  struct DividerResetEvent {
+    std::size_t cycleOffset = 0;
+    DataType tac = 0;
+  };
+  std::array<DividerResetEvent, 64> dividerResetEvents_{};
+  std::size_t dividerResetEventCount_ = 0;
+  std::size_t instructionCycleEndOffset_ = 0;
+  bool instructionExecutionActive_ = false;
   uint16_t dividerCounter = 0;
   bool dmaActive = false;
   DmaController dma_controller_;
