@@ -1535,10 +1535,12 @@ bool GameBoyMachine::installNativeTrampoline(
 {
     if (impl_->context->capture) throw std::invalid_argument("native mods cannot be activated during S.P.A.C.E. capture");
     if (!module || !module->attachedTo(modHost()) || hookId == 0u || address < 0x150u || address >= 0x4000u ||
-        impl_->context->read8(address) != 0xC9u || impl_->nativeTrampolines.contains(address)) return false;
+        impl_->mapper.currentFixedRomBank() != 0u || impl_->context->read8(address) != 0xC9u ||
+        impl_->nativeTrampolines.contains(address)) return false;
     impl_->context->nativeDispatcher = [this](std::uint16_t pc) {
         const auto it = impl_->nativeTrampolines.find(pc);
         if (it == impl_->nativeTrampolines.end()) return;
+        if (it->second.fixedRomBank != impl_->mapper.currentFixedRomBank()) return;
         TimeModCallV1 call{sizeof(TimeModCallV1), it->second.hookId, pc,
             impl_->context->readRegister16(GB::RegisterId::HL), 0u};
         if (impl_->context->read8(pc) != 0xC9u || !it->second.module->invoke(call) || call.result > 0xFFFFu)
@@ -1546,9 +1548,10 @@ bool GameBoyMachine::installNativeTrampoline(
         impl_->context->writeRegister16(GB::RegisterId::HL, static_cast<std::uint16_t>(call.result));
         // The ordinary interpreter retires the fetched RET, including its timing.
     };
+    constexpr std::uint16_t fixedRomBank = 0u;
     module->setExecutionBinding("gameboy:" + std::to_string(address) + ":" + std::to_string(hookId));
     impl_->nativeTrampolines.emplace(address,
-        Impl::NativeTrampoline{std::move(module), hookId});
+        Impl::NativeTrampoline{std::move(module), hookId, fixedRomBank});
     return true;
 }
 
@@ -2158,6 +2161,9 @@ void GameBoyMachine::load_state(const std::filesystem::path& path) {
     LR3592_DMG::validateState(cpuState);
     GameBoyMemoryMap nextMemoryMap;
     nextMemoryMap.importState(memoryData);
+    std::array<uint8_t, 0x4000u> fixedRomWindow{};
+    nextMapper.copyRomBankWindow(nextMapper.currentFixedRomBank(), fixedRomWindow);
+    nextMemoryMap.installRomWindow(0x0000u, fixedRomWindow);
 
     // Preserve the existing memory write observer across the memory-map replacement.
     nextMemoryMap.setWriteObserver(impl_->memoryMap.writeObserver());

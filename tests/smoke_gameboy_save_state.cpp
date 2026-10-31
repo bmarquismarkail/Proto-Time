@@ -1,5 +1,7 @@
 #include <cassert>
+#include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <sstream>
@@ -8,7 +10,9 @@
 #include <unistd.h>
 
 #include "cores/gameboy/GameBoyMachine.hpp"
+#include "cores/gameboy/GameBoyMemoryMap.hpp"
 #include "machine/CPU.hpp"
+#include "machine/SaveState.hpp"
 
 namespace {
 
@@ -21,6 +25,22 @@ std::vector<uint8_t> makeRom()
     rom[0x0100u] = 0x3Eu; // LD A,$42
     rom[0x0101u] = 0x42u;
     rom[0x0102u] = 0x00u;
+    return rom;
+}
+
+std::vector<uint8_t> makeBankedMbc1Rom()
+{
+    constexpr std::size_t bankCount = 64u;
+    constexpr std::size_t bankSize = 0x4000u;
+    std::vector<uint8_t> rom(bankCount * bankSize, 0x00u);
+    for (std::size_t bank = 0; bank < bankCount; ++bank) {
+        std::fill_n(rom.begin() + static_cast<std::ptrdiff_t>(bank * bankSize),
+                    bankSize,
+                    static_cast<uint8_t>(bank));
+    }
+    rom[0x0147u] = 0x03u;
+    rom[0x0148u] = 0x05u;
+    rom[0x0149u] = 0x00u;
     return rom;
 }
 
@@ -105,6 +125,36 @@ int main()
         rejectedWithoutRom = true;
     }
     assert(rejectedWithoutRom);
+
+    const auto mbc1Rom = makeBankedMbc1Rom();
+    GB::GameBoyMachine mbc1Machine;
+    mbc1Machine.loadRom(mbc1Rom);
+    mbc1Machine.runtimeContext().write8(0x2000u, 0x01u);
+    mbc1Machine.runtimeContext().write8(0x4000u, 0x01u);
+    mbc1Machine.runtimeContext().write8(0x6000u, 0x01u);
+    assert(mbc1Machine.runtimeContext().read8(0x0200u) == 0x20u);
+    mbc1Machine.save_state(savePath);
+
+    auto legacyState = BMMQ::SaveStateReader::read(savePath);
+    GB::GameBoyMemoryMap legacyMemoryMap;
+    legacyMemoryMap.installRomWindow(
+        0x0000u, std::span<const uint8_t>(mbc1Rom.data(), 0x4000u));
+    legacyMemoryMap.installRomWindow(
+        0x4000u, std::span<const uint8_t>(mbc1Rom.data() + 0x4000u, 0x4000u));
+    const auto staleMemory = legacyMemoryMap.exportState();
+    bool replacedMemoryChunk = false;
+    for (auto& chunk : legacyState.chunks) {
+        if (chunk.name == "gb.memory") {
+            chunk.data = staleMemory;
+            chunk.size = static_cast<uint32_t>(chunk.data.size());
+            replacedMemoryChunk = true;
+            break;
+        }
+    }
+    assert(replacedMemoryChunk);
+    BMMQ::SaveStateReader::write(legacyState, savePath);
+    mbc1Machine.load_state(savePath);
+    assert(mbc1Machine.runtimeContext().read8(0x0200u) == 0x20u);
 
     removeIfExists(savePath);
     return 0;

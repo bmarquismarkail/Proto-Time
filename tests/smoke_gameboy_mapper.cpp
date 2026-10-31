@@ -1,4 +1,5 @@
 #include "cores/gameboy/GameBoyMapper.hpp"
+#include "cores/gameboy/GameBoyMemoryMap.hpp"
 
 #include <algorithm>
 #include <array>
@@ -150,6 +151,12 @@ int main()
     assert(upperWrite.fixedRomBankChanged);
     assert(mbc1Mapper.currentRomBank() == 0x41u);
     assert(mbc1Mapper.currentFixedRomBank() == 0x40u);
+
+    GB::GameBoyMemoryMap mappedBankView;
+    mappedBankView.setMapper(&mbc1Mapper);
+    const auto mappedLocationInMode1 = mappedBankView.analysisLocation(0x0200u);
+    assert(static_cast<uint16_t>(mappedLocationInMode1 >> 16u) == 0x40u);
+    assert(static_cast<uint16_t>(mappedLocationInMode1) == 0x0200u);
 
     const auto mbc2Rom = makeBankedRom(4u, 0x05u, 0x01u);
     GB::GameBoyMapper mbc2Mapper;

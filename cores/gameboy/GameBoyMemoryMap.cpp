@@ -362,7 +362,12 @@ uint64_t GameBoyMemoryMap::analysisLocation(uint16_t addr) const noexcept {
     using BMMQ::Space::location;
     addr = resolveEchoAddress(addr);
     if (bootRomActive_ && addr < bootRom_.size()) return location(2,0,addr);
-    if (addr < 0x8000) return location(1,addr < 0x4000 ? 0 : mapper_ ? static_cast<uint16_t>(mapper_->currentRomBank()) : 0,addr & 0x3fff);
+    if (addr < 0x8000) {
+        const auto bank = mapper_ == nullptr
+            ? 0u
+            : addr < 0x4000u ? mapper_->currentFixedRomBank() : mapper_->currentRomBank();
+        return location(1, static_cast<uint16_t>(bank), addr & 0x3FFFu);
+    }
     if (addr >= 0xA000 && addr < 0xC000) {
         std::size_t offset = 0;
         if (!cartridge_ || !cartridge_->analysisRamOffset(addr, offset)) return location(0,0,addr);
