@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <utility>
 #include <vector>
@@ -66,8 +67,14 @@ struct RealtimeVideoSurface {
 {
     RealtimeVideoSurface surface;
     surface.encoding = encoding;
-    if (width <= 0 || height <= 0 ||
-        indices.size() != static_cast<std::size_t>(width) * static_cast<std::size_t>(height)) {
+    if (width <= 0 || height <= 0) {
+        return surface;
+    }
+
+    const auto widthSize = static_cast<std::size_t>(width);
+    const auto heightSize = static_cast<std::size_t>(height);
+    if (widthSize > std::numeric_limits<std::size_t>::max() / heightSize ||
+        indices.size() != widthSize * heightSize) {
         return surface;
     }
 
@@ -77,12 +84,19 @@ struct RealtimeVideoSurface {
         return surface;
     }
 
+    if (widthSize > (std::numeric_limits<std::size_t>::max() - 7u) / bitsPerPixel) {
+        return surface;
+    }
+    const auto rowBits = widthSize * bitsPerPixel;
+    const auto strideBytes = (rowBits + 7u) / 8u;
+    if (strideBytes > std::numeric_limits<std::uint16_t>::max() ||
+        strideBytes > std::numeric_limits<std::size_t>::max() / heightSize) {
+        return surface;
+    }
+
     surface.paletteArgb.assign(paletteArgb.begin(), paletteArgb.end());
-    surface.strideBytes = static_cast<std::uint16_t>(
-        (static_cast<std::size_t>(width) * bitsPerPixel + 7u) / 8u);
-    surface.indexedBytes.assign(static_cast<std::size_t>(surface.strideBytes) *
-                                    static_cast<std::size_t>(height),
-                                0u);
+    surface.strideBytes = static_cast<std::uint16_t>(strideBytes);
+    surface.indexedBytes.assign(strideBytes * heightSize, 0u);
 
     const auto mask = static_cast<std::uint8_t>((std::uint16_t{1u} << bitsPerPixel) - 1u);
     for (int y = 0; y < height; ++y) {

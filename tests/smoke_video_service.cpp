@@ -107,12 +107,17 @@ public:
     bool capture(const BMMQ::VideoFramePacket& frame) noexcept override
     {
         lastGeneration.store(frame.generation, std::memory_order_release);
+        lastSource.store(frame.source, std::memory_order_release);
+        firstPixel.store(frame.pixels.empty() ? 0u : frame.pixels.front(),
+                         std::memory_order_release);
         captureCount.fetch_add(1u, std::memory_order_release);
         return true;
     }
 
     std::atomic<std::size_t> captureCount{0};
     std::atomic<std::uint64_t> lastGeneration{0};
+    std::atomic<BMMQ::VideoFrameSource> lastSource{BMMQ::VideoFrameSource::BlankFallback};
+    std::atomic<std::uint32_t> firstPixel{0};
 };
 
 BMMQ::VideoStateView makeSplitScrollState(uint8_t ly, uint8_t scx)
@@ -318,6 +323,41 @@ int main()
            noConsumerBefore.videoDebugFrameBuildExecutedCount);
     assert(noConsumerAfter.videoDebugFrameBuildSkippedNoConsumerCount >=
            noConsumerBefore.videoDebugFrameBuildSkippedNoConsumerCount + 2u);
+
+    BMMQ::VideoService epochFallbackService(BMMQ::VideoEngineConfig{
+        .frameWidth = 4,
+        .frameHeight = 4,
+        .mailboxDepthFrames = 1,
+    });
+    auto epochCapture = std::make_unique<RecordingCapture>();
+    auto* epochCapturePtr = epochCapture.get();
+    assert(epochFallbackService.addCapture(std::move(epochCapture)));
+    BMMQ::VideoFramePacket coloredFrame = BMMQ::makeBlankVideoFrame(4, 4, 11u);
+    std::fill(coloredFrame.pixels.begin(), coloredFrame.pixels.end(), 0xFF123456u);
+    assert(epochFallbackService.submitFrame(coloredFrame));
+    assert(epochFallbackService.presentOneFrame());
+    assert(epochCapturePtr->firstPixel.load(std::memory_order_acquire) == 0xFF123456u);
+    assert(epochFallbackService.submitVideoDebugModel(BMMQ::MachineEvent{
+        .type = BMMQ::MachineEventType::RomLoaded,
+        .category = BMMQ::PluginCategory::Video,
+    }, {}, false));
+    assert(epochFallbackService.presentOneFrame());
+    assert(epochCapturePtr->lastSource.load(std::memory_order_acquire) ==
+           BMMQ::VideoFrameSource::BlankFallback);
+    assert(epochCapturePtr->firstPixel.load(std::memory_order_acquire) != 0xFF123456u);
+
+    BMMQ::VideoService headlessEpochService(BMMQ::VideoEngineConfig{
+        .frameWidth = 4,
+        .frameHeight = 4,
+        .mailboxDepthFrames = 1,
+    });
+    assert(headlessEpochService.submitFrame(BMMQ::makeBlankVideoFrame(4, 4, 12u)));
+    assert(headlessEpochService.consumeHeadlessFrame().has_value());
+    assert(headlessEpochService.submitVideoDebugModel(BMMQ::MachineEvent{
+        .type = BMMQ::MachineEventType::RomLoaded,
+        .category = BMMQ::PluginCategory::Video,
+    }, {}, false));
+    assert(!headlessEpochService.consumeHeadlessFrame().has_value());
 
     assert(!machine.setVideoService(nullptr));
     auto replacement = std::make_unique<BMMQ::VideoService>(BMMQ::VideoEngineConfig{

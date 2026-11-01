@@ -7,11 +7,15 @@ int main(int argc, char** argv)
 {
     assert(argc == 2);
     GB::GameBoyMachine machine;
-    std::vector<std::uint8_t> rom(0x8000u, 0u);
+    std::vector<std::uint8_t> rom(0x100000u, 0u);
+    rom[0x0147u] = 0x03u; // MBC1 + RAM + battery.
+    rom[0x0148u] = 0x05u; // 64 ROM banks.
+    rom[0x0149u] = 0x00u;
     rom[0x100] = 0xCD; rom[0x101] = 0x00; rom[0x102] = 0x02; // CALL $0200
     rom[0x103] = 0x00; // return target: NOP
     rom[0x180] = 0x76; // HALT, used to verify stalled fetches do not invoke hooks.
     rom[0x200] = 0xC9; // native trampoline address: RET placeholder
+    rom[0x20u * 0x4000u + 0x0200u] = 0xC9; // Same logical address in fixed bank $20.
     machine.loadRom(rom);
     const auto region = machine.modHost().createRegion("fixture:pool", 4u);
     assert(region != 0u);
@@ -43,13 +47,38 @@ int main(int argc, char** argv)
     const auto empty = machine.runSlice(BMMQ::ExecutionBudget{0u, 100u, false});
     assert(empty.progress.retiredInstructions == 0u);
     assert(machine.modHost().region(region)[0] == 2u);
+
+    machine.runtimeContext().write8(0x6000u, 0x01u);
+    machine.runtimeContext().write8(0x4000u, 0x01u);
+    assert(machine.runtimeContext().read8(0x0200u) == 0xC9u);
+    machine.runtimeContext().writeRegister16(GB::RegisterId::PC, 0x0200u);
+    machine.runtimeContext().writeRegister16(GB::RegisterId::HL, 0u);
+    machine.runtimeContext().writeRegister16(GB::RegisterId::SP, 0xFF80u);
+    machine.runtimeContext().write8(0xFF80u, 0x03u);
+    machine.runtimeContext().write8(0xFF81u, 0x01u);
+    const auto unmappedBank = machine.runSlice(BMMQ::ExecutionBudget{1u, 100u, true});
+    assert(unmappedBank.progress.retiredInstructions == 1u);
+    assert(machine.modHost().region(region)[0] == 2u);
+
+    machine.runtimeContext().write8(0x4000u, 0x00u);
+    assert(machine.runtimeContext().read8(0x0200u) == 0xC9u);
+    machine.runtimeContext().writeRegister16(GB::RegisterId::PC, 0x0200u);
+    machine.runtimeContext().writeRegister16(GB::RegisterId::HL, 0u);
+    machine.runtimeContext().writeRegister16(GB::RegisterId::SP, 0xFF80u);
+    machine.runtimeContext().write8(0xFF80u, 0x03u);
+    machine.runtimeContext().write8(0xFF81u, 0x01u);
+    const auto mappedBank = machine.runSlice(BMMQ::ExecutionBudget{1u, 100u, true});
+    assert(mappedBank.progress.retiredInstructions == 1u);
+    assert(machine.modHost().region(region)[0] == 3u);
+
     machine.runtimeContext().writeRegister16(GB::RegisterId::PC, 0x0180u);
     machine.runtimeContext().write8(0xFFFFu, 0u);
     machine.step();
     machine.runtimeContext().writeRegister16(GB::RegisterId::PC, 0x0200u);
     (void)machine.runSlice(BMMQ::ExecutionBudget{1u, 100u, false});
-    assert(machine.modHost().region(region)[0] == 2u);
+    assert(machine.modHost().region(region)[0] == 3u);
     assert(machine.runtimeContext().readRegister16(GB::RegisterId::PC) == 0x0200u);
+
     // Reloading also ends HALT and invalidates the native registration.
     machine.loadRom(rom);
     machine.runtimeContext().writeRegister16(GB::RegisterId::PC, 0x0200u);

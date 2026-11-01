@@ -336,6 +336,7 @@ private:
         struct NativeTrampoline {
             std::unique_ptr<BMMQ::Modding::NativeMod> module;
             std::uint32_t hookId = 0;
+            std::uint16_t fixedRomBank = 0;
         };
         std::unordered_map<std::uint16_t, NativeTrampoline> nativeTrampolines;
     };

@@ -453,6 +453,17 @@ bool isControlFlowOpcode(DataType opcode)
     }
 }
 
+bool isUndefinedOpcode(DataType opcode) noexcept
+{
+    switch (opcode) {
+    case 0xD3: case 0xDB: case 0xDD: case 0xE3: case 0xE4:
+    case 0xEB: case 0xEC: case 0xED: case 0xF4: case 0xFC: case 0xFD:
+        return true;
+    default:
+        return false;
+    }
+}
+
 // Keep block formation aligned with the byte fast path. Unsupported opcodes
 // remain baseline-interpreter work and must never become a cached guard failure.
 constexpr bool supportsFastOpcode(DataType opcode) noexcept
@@ -1578,6 +1589,7 @@ void LR3592_DMG::retireInstruction(std::size_t executedCycles)
     bool interruptDirty = false;
     bool statDirty = false;
     bool lyDirty = false;
+    std::size_t nextDividerReset = 0u;
 
     for (uint32_t i = 0; i < cycles; ++i) {
         if (dmaActive) {
@@ -1628,6 +1640,25 @@ void LR3592_DMG::retireInstruction(std::size_t executedCycles)
                 tima = static_cast<DataType>(tima + 1u);
             }
             timerDirty = true;
+        }
+
+        while (nextDividerReset < dividerResetEventCount_ &&
+               dividerResetEvents_[nextDividerReset].cycleOffset <= static_cast<std::size_t>(i + 1u)) {
+            const auto event = dividerResetEvents_[nextDividerReset++];
+            const auto resetBitMask = timerBitMaskForTac(event.tac);
+            const bool resetSignalWasHigh = (event.tac & 0x04u) != 0u &&
+                                             (dividerCounter & resetBitMask) != 0u;
+            dividerCounter = 0u;
+            if (resetSignalWasHigh) {
+                if (tima == 0xFFu) {
+                    tima = tma;
+                    interruptFlags = static_cast<DataType>((interruptFlags | kInterruptTimer) & kInterruptMask);
+                    interruptDirty = true;
+                } else {
+                    tima = static_cast<DataType>(tima + 1u);
+                }
+                timerDirty = true;
+            }
         }
 
         stepApuOneCycle();
@@ -1726,6 +1757,16 @@ void LR3592_DMG::retireInstruction(std::size_t executedCycles)
             imeEnablePending = false;
         }
     }
+
+    const auto remainingDividerResets = dividerResetEventCount_ - nextDividerReset;
+    if (remainingDividerResets != 0u) {
+        for (std::size_t i = 0; i < remainingDividerResets; ++i) {
+            auto event = dividerResetEvents_[nextDividerReset + i];
+            event.cycleOffset -= std::min<std::size_t>(event.cycleOffset, cycles);
+            dividerResetEvents_[i] = event;
+        }
+    }
+    dividerResetEventCount_ = remainingDividerResets;
 }
 
 BMMQ::fetchBlock<AddressType, DataType> LR3592_DMG::fetch()
@@ -1746,7 +1787,7 @@ void LR3592_DMG::fetchInto(BMMQ::fetchBlock<AddressType, DataType>& f)
         blockData.resize(1);
     }
 
-    if (stopFlag) {
+    if (stopFlag || illegalOpcodeLockup) {
         f.setbaseAddress(0);
         blockData[0].offset = 0;
         blockData[0].data.clear();
@@ -1870,7 +1911,7 @@ void LR3592_DMG::decodeInto(BMMQ::fetchBlock<AddressType, DataType>& fetchData,
             i += opcodeLength;
             consumedBytes += opcodeLength;
 
-            if (isControlFlowOpcode(opcodeByte)) {
+            if (isControlFlowOpcode(opcodeByte) || isUndefinedOpcode(opcodeByte)) {
                 break;
             }
         }
@@ -1893,6 +1934,8 @@ bool LR3592_DMG::tryFastExecuteBytes(std::span<const DataType> data)
     if (data.empty()) return false;
     const DataType opcode = data[0];
     if (!supportsFastOpcode(opcode)) return false;
+    instructionExecutionActive_ = true;
+    instructionCycleEndOffset_ = opcodeCyclesFor(opcode).notTaken;
     const auto immediate8 = [&]() noexcept { return data[1]; };
     const auto immediate16 = [&]() noexcept {
         return static_cast<AddressType>(
@@ -1933,6 +1976,7 @@ bool LR3592_DMG::tryFastExecuteBytes(std::span<const DataType> data)
             }
         }
         feedback.retiredCycles = static_cast<uint32_t>(retiredCycles);
+        instructionExecutionActive_ = false;
         retireInstruction(retiredCycles);
         return true;
     };
@@ -2325,6 +2369,7 @@ bool LR3592_DMG::tryFastExecuteBytes(std::span<const DataType> data)
         return finalizeFast(1);
     }
 
+    instructionExecutionActive_ = false;
     return false;
 }
 
@@ -2337,7 +2382,7 @@ bool LR3592_DMG::tryExecuteTranslatedBlock()
     }
 
     const auto pcAddress = pcRegister_ != nullptr ? pcRegister_->value : AddressType{0};
-    if (stopFlag || haltBugPcAdjustPending || pendingCycleCharge_ != 0u ||
+    if (stopFlag || illegalOpcodeLockup || haltBugPcAdjustPending || pendingCycleCharge_ != 0u ||
         (dmaActive && !isHramAddress(pcAddress))) return false;
     const DataType pending = static_cast<DataType>(
         (readCachedRegister(hardwareRegisters_.interruptFlags) &
@@ -2505,7 +2550,7 @@ GB::IRExecution::ExecutionAbiV1 LR3592_DMG::irExecutionAbi()
 std::uint64_t LR3592_DMG::irExecutionState() const
 {
     std::uint64_t state = 0u;
-    if (stopFlag) state |= GB::IRExecution::Stop;
+    if (stopFlag || illegalOpcodeLockup) state |= GB::IRExecution::Stop;
     if (haltFlag) state |= GB::IRExecution::Halt;
     if (dmaActive && pcRegister_ != nullptr && !isHramAddress(pcRegister_->value)) {
         state |= GB::IRExecution::DmaRestricted;
@@ -3059,8 +3104,19 @@ void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, Addre
         cpuRegisters_.hl=dynamic_cast<LR3592_RegisterPair*>(file.findRegister("HL")->reg.get());
         cpuRegisters_.pc=pcRegister_;cpuRegisters_.sp=spRegister_;
     }
-    try { for (const auto& step : block.getSteps()) step(*snapshot, fb); }
-    catch(...) {if(view)view->publishRegisters();pcRegister_=canonicalPc;spRegister_=canonicalSp;cpuRegisters_=canonicalCache;throw;}
+    try {
+        const auto& steps = block.getSteps();
+        for (std::size_t i = 0; i < steps.size(); ++i) {
+            instructionCycleEndOffset_ = block.stepCycleEndOffset(i);
+            instructionExecutionActive_ = true;
+            steps[i](*snapshot, fb);
+        }
+        instructionExecutionActive_ = false;
+    } catch(...) {
+        instructionExecutionActive_ = false;
+        dividerResetEventCount_ = 0;
+        if(view)view->publishRegisters();pcRegister_=canonicalPc;spRegister_=canonicalSp;cpuRegisters_=canonicalCache;throw;
+    }
 
 
     std::size_t pcAdvance = executedByteCount;
@@ -3080,7 +3136,7 @@ void LR3592_DMG::execute(const BMMQ::executionBlock<AddressType, DataType, Addre
     std::size_t retiredCycles = pendingCycleCharge_;
     pendingCycleCharge_ = 0;
     if (retiredCycles == 0) {
-        if (executedByteCount == 0 && (haltFlag || stopFlag || dmaActive)) {
+        if (executedByteCount == 0 && (haltFlag || stopFlag || illegalOpcodeLockup || dmaActive)) {
             retiredCycles = 4u;
         } else {
             const auto sequentialPc = static_cast<AddressType>(feedback.pcBefore + executedByteCount);
@@ -3115,7 +3171,26 @@ void LR3592_DMG::scheduleImeEnable()
 
 void LR3592_DMG::resetDivider()
 {
-    dividerCounter = 0;
+    const auto tac = readCachedRegister(hardwareRegisters_.tac);
+    if (instructionExecutionActive_ && dividerResetEventCount_ < dividerResetEvents_.size()) {
+        dividerResetEvents_[dividerResetEventCount_++] = DividerResetEvent{
+            .cycleOffset = instructionCycleEndOffset_,
+            .tac = tac,
+        };
+    } else {
+        const auto bitMask = timerBitMaskForTac(tac);
+        const bool oldTimerSignal = (tac & 0x04u) != 0u && (dividerCounter & bitMask) != 0u;
+        dividerCounter = 0;
+        if (oldTimerSignal) {
+            const auto tima = readCachedRegister(hardwareRegisters_.tima);
+            if (tima == 0xFFu) {
+                writeIoRegister("TIMA", readCachedRegister(hardwareRegisters_.tma));
+                requestInterrupt(kInterruptTimer);
+            } else {
+                writeIoRegister("TIMA", static_cast<DataType>(tima + 1u));
+            }
+        }
+    }
     writeIoRegister("DIV", 0);
 }
 
@@ -3155,7 +3230,8 @@ DataType LR3592_DMG::currentPpuMode() const
 
 bool LR3592_DMG::snapshotBoundaryOnly()const {
     auto pc=pcRegister_->value;auto pending=(readCachedRegister(hardwareRegisters_.interruptFlags)&readCachedRegister(hardwareRegisters_.ie))&kInterruptMask;
-    return stopFlag||(dmaActive&&!isHramAddress(pc))||(haltFlag&&pending==0)||(ime&&pending!=0);
+    return stopFlag || illegalOpcodeLockup || (dmaActive&&!isHramAddress(pc)) ||
+           (haltFlag&&pending==0) || (ime&&pending!=0);
 }
 AddressType LR3592_DMG::snapshotNextFetchAddress(AddressType pc,std::size_t offset)const noexcept {
     const auto pending=(readCachedRegister(hardwareRegisters_.interruptFlags)&readCachedRegister(hardwareRegisters_.ie))&kInterruptMask;
@@ -3329,6 +3405,9 @@ bool LR3592_DMG::handleMemoryWriteUntraced(AddressType address, std::span<const 
 void LR3592_DMG::setStopFlag(bool f)
 {
     stopFlag = f;
+    if (!f) {
+        illegalOpcodeLockup = false;
+    }
 }
 
 void LR3592_DMG::setHaltFlag(bool f)
@@ -3923,42 +4002,39 @@ void LR3592_DMG::populateOpcodes()
         });
     }));
 
-    // Undefined opcodes - treat as NOP to handle Z80-specific or invalid instructions gracefully
-    // 0xED, 0xDD, 0xFD, 0xF4, 0xFC, 0xEB, 0xEC are base opcodes requiring extended handling
-    setOpcode(0xED, emitOpcodeStep(0xED, 1, [](auto& block, const auto&, std::size_t, DataType) {
-        block.addStep([](auto& snapshot, auto&) {
-            // NOP - extended opcode without proper handling
-        });
+    // Undefined LR35902 opcodes lock the CPU until reset.
+    setOpcode(0xD3, emitOpcodeStep(0xD3, 1, [this](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([this](auto&, auto&) { lockUpOnInvalidOpcode(); });
     }));
-    setOpcode(0xDD, emitOpcodeStep(0xDD, 1, [](auto& block, const auto&, std::size_t, DataType) {
-        block.addStep([](auto& snapshot, auto&) {
-            // NOP - extended opcode without proper handling
-        });
+    setOpcode(0xDB, emitOpcodeStep(0xDB, 1, [this](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([this](auto&, auto&) { lockUpOnInvalidOpcode(); });
     }));
-    setOpcode(0xFD, emitOpcodeStep(0xFD, 1, [](auto& block, const auto&, std::size_t, DataType) {
-        block.addStep([](auto& snapshot, auto&) {
-            // NOP - extended opcode without proper handling
-        });
+    setOpcode(0xED, emitOpcodeStep(0xED, 1, [this](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([this](auto&, auto&) { lockUpOnInvalidOpcode(); });
     }));
-    setOpcode(0xF4, emitOpcodeStep(0xF4, 1, [](auto& block, const auto&, std::size_t, DataType) {
-        block.addStep([](auto& snapshot, auto&) {
-            // NOP - BCF f (Bit Clear Flag) - Z80 instruction, not supported by Game Boy
-        });
+    setOpcode(0xDD, emitOpcodeStep(0xDD, 1, [this](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([this](auto&, auto&) { lockUpOnInvalidOpcode(); });
     }));
-    setOpcode(0xFC, emitOpcodeStep(0xFC, 1, [](auto& block, const auto&, std::size_t, DataType) {
-        block.addStep([](auto& snapshot, auto&) {
-            // NOP - CCF (Complement Carry Flag) - Z80 instruction, not supported by Game Boy
-        });
+    setOpcode(0xFD, emitOpcodeStep(0xFD, 1, [this](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([this](auto&, auto&) { lockUpOnInvalidOpcode(); });
     }));
-    setOpcode(0xEB, emitOpcodeStep(0xEB, 1, [](auto& block, const auto&, std::size_t, DataType) {
-        block.addStep([](auto& snapshot, auto&) {
-            // NOP - XOR HL,HL - Z80 instruction, not supported by Game Boy
-        });
+    setOpcode(0xE3, emitOpcodeStep(0xE3, 1, [this](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([this](auto&, auto&) { lockUpOnInvalidOpcode(); });
     }));
-    setOpcode(0xEC, emitOpcodeStep(0xEC, 1, [](auto& block, const auto&, std::size_t, DataType) {
-        block.addStep([](auto& snapshot, auto&) {
-            // NOP - RRCA - Z80 instruction, not supported by Game Boy
-        });
+    setOpcode(0xE4, emitOpcodeStep(0xE4, 1, [this](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([this](auto&, auto&) { lockUpOnInvalidOpcode(); });
+    }));
+    setOpcode(0xF4, emitOpcodeStep(0xF4, 1, [this](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([this](auto&, auto&) { lockUpOnInvalidOpcode(); });
+    }));
+    setOpcode(0xFC, emitOpcodeStep(0xFC, 1, [this](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([this](auto&, auto&) { lockUpOnInvalidOpcode(); });
+    }));
+    setOpcode(0xEB, emitOpcodeStep(0xEB, 1, [this](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([this](auto&, auto&) { lockUpOnInvalidOpcode(); });
+    }));
+    setOpcode(0xEC, emitOpcodeStep(0xEC, 1, [this](auto& block, const auto&, std::size_t, DataType) {
+        block.addStep([this](auto&, auto&) { lockUpOnInvalidOpcode(); });
     }));
 
 }
@@ -3980,6 +4056,7 @@ LR3592_DMG::SaveState LR3592_DMG::exportState() const
     state.imeEnableDelay = imeEnableDelay;
     state.stopFlag = stopFlag;
     state.haltFlag = haltFlag;
+    state.illegalOpcodeLockup = illegalOpcodeLockup;
     state.haltBugActive = haltBugActive;
     state.haltBugPcAdjustPending = haltBugPcAdjustPending;
     state.dividerCounter = dividerCounter;
@@ -4028,6 +4105,7 @@ void LR3592_DMG::importState(const SaveState& state)
     imeEnableDelay = state.imeEnableDelay;
     stopFlag = state.stopFlag;
     haltFlag = state.haltFlag;
+    illegalOpcodeLockup = state.illegalOpcodeLockup;
     haltBugActive = state.haltBugActive;
     haltBugPcAdjustPending = state.haltBugPcAdjustPending;
     dividerCounter = state.dividerCounter;

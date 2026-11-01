@@ -210,15 +210,16 @@ public:
         if (!configurationAllowed()) {
             return false;
         }
+        std::lock_guard<std::mutex> engineLock(engineMutex_);
         engine_.configure(config);
-        realtimeMailbox_.resetQuiescent(true);
+        realtimeMailbox_.resetStatistics();
         realtimeGeneration_.store(engine_.currentGeneration(), std::memory_order_release);
         bumpLifecycleEpochLocked();
         resetScanlineCapture();
         const int hdScale = std::max(engine_.config().hdScale, 1);
         presenterConfig_.frameWidth = engine_.config().frameWidth * hdScale;
         presenterConfig_.frameHeight = engine_.config().frameHeight * hdScale;
-        syncEngineDiagnostics();
+        syncEngineDiagnosticsLocked();
         return true;
     }
 
@@ -400,29 +401,33 @@ public:
                                              bool debugConsumerActive = false)
     {
         std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
+        std::lock_guard<std::mutex> engineLock(engineMutex_);
         if (event.type == MachineEventType::RomLoaded) {
-            engine_.advanceGeneration();
+            realtimeGeneration_.fetch_add(1u, std::memory_order_acq_rel);
+            pendingEngineGenerationAdvances_.fetch_add(1u, std::memory_order_release);
             bumpLifecycleEpochLocked();
             resetScanlineCapture();
             return true;
         }
 
+        applyPendingEngineGenerationAdvancesLocked();
+
         if (event.type == MachineEventType::VideoScanlineReady) {
             if (!debugConsumerActive) {
                 ++videoDebugFrameBuildSkippedNoConsumerCount_;
                 resetScanlineCapture();
-                syncEngineDiagnostics();
+                syncEngineDiagnosticsLocked();
                 return false;
             }
             captureScanline(event, model, debugConsumerActive);
-            syncEngineDiagnostics();
+            syncEngineDiagnosticsLocked();
             return false;
         }
 
         if (!debugConsumerActive) {
             ++videoDebugFrameBuildSkippedNoConsumerCount_;
             resetScanlineCapture();
-            syncEngineDiagnostics();
+            syncEngineDiagnosticsLocked();
             return false;
         }
 
@@ -432,7 +437,7 @@ public:
             !model.displayEnabled ||
             event.type == MachineEventType::MemoryWriteObserved;
         if (!shouldBuildFrame) {
-            syncEngineDiagnostics();
+            syncEngineDiagnosticsLocked();
             return false;
         }
 
@@ -440,7 +445,7 @@ public:
         if (event.type == MachineEventType::VBlank && hasCompleteScanlineFrameLocked()) {
             auto frame = *scanlineFrame_;
             resetScanlineCapture();
-            return submitFrame(frame);
+            return submitFrameLocked(frame);
         }
         if (event.type == MachineEventType::VBlank && hasPartialScanlineFrameLocked()) {
             ++videoDebugFrameBuildExecutedCount_;
@@ -450,15 +455,15 @@ public:
                                                  debugConsumerActive);
             overlayCapturedScanlines(frame);
             resetScanlineCapture();
-            return submitFrame(frame);
+            return submitFrameLocked(frame);
         }
 
         resetScanlineCapture();
         ++videoDebugFrameBuildExecutedCount_;
-        return submitFrame(engine_.buildDebugFrame(model,
-                                                   generation,
-                                                   VideoEngine::BuildDebugFrameReason::Debug,
-                                                   debugConsumerActive));
+        return submitFrameLocked(engine_.buildDebugFrame(model,
+                                                         generation,
+                                                         VideoEngine::BuildDebugFrameReason::Debug,
+                                                         debugConsumerActive));
     }
 
     [[nodiscard]] bool submitRealtimeVideoPacket(const MachineEvent& event,
@@ -466,9 +471,8 @@ public:
     {
         if (event.type == MachineEventType::RomLoaded) {
             std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
-            engine_.advanceGeneration();
-            realtimeGeneration_.store(engine_.currentGeneration(), std::memory_order_release);
-            realtimeMailbox_.resetQuiescent(false);
+            realtimeGeneration_.fetch_add(1u, std::memory_order_acq_rel);
+            pendingEngineGenerationAdvances_.fetch_add(1u, std::memory_order_release);
             bumpLifecycleEpochLocked();
             resetScanlineCapture();
             return true;
@@ -507,6 +511,11 @@ public:
     // omitted; timing metadata is consumed under the frontend's render lock.
     [[nodiscard]] std::optional<RealtimeVideoDiagnostics> takeConsumedRealtimeMetadata() noexcept
     {
+        if (lastConsumedRealtimeMetadataEpoch_ !=
+            realtimeLifecycleEpoch_.load(std::memory_order_acquire)) {
+            lastConsumedRealtimeMetadata_.reset();
+            return std::nullopt;
+        }
         auto metadata = std::move(lastConsumedRealtimeMetadata_);
         lastConsumedRealtimeMetadata_.reset();
         return metadata;
@@ -514,30 +523,28 @@ public:
 
     [[nodiscard]] bool submitFrame(const VideoFramePacket& frame)
     {
-        auto adjusted = frame;
-        adjusted.lifecycleEpoch = lifecycleEpoch_;
-        const auto submitResult = engine_.submitFrame(adjusted);
-        syncEngineDiagnostics();
-        return submitResult.accepted;
+        std::lock_guard<std::mutex> engineLock(engineMutex_);
+        return submitFrameLocked(frame);
     }
 
-    // consumeAndProcessFrame: consume the next frame from the engine, run the
-    // processor pipeline, and return the processed packet ready for presentation.
-    // Returns std::nullopt when in Headless mode (no presenter — caller should
-    // treat this as a successful headless present and skip the backend call).
-    // The sentinel VideoFramePacket with width==0 is used to signal Headless.
-    // Caller must hold sharedStateMutex_ (or equivalent serialisation) for all
-    // VideoService/VideoEngine state while this runs.
     [[nodiscard]] std::optional<VideoFramePacket> consumeAndProcessFrame()
     {
+        {
+            std::lock_guard<std::mutex> engineLock(engineMutex_);
+            applyPendingEngineGenerationAdvancesLocked();
+        }
+        if (pendingEngineGenerationAdvances_.load(std::memory_order_acquire) != 0u) {
+            return std::nullopt;
+        }
+        const auto activeEpoch = realtimeLifecycleEpoch_.load(std::memory_order_acquire);
         std::optional<VideoPresentPacket> frame{};
         while (auto published = realtimeMailbox_.tryConsumeLatest()) {
-            if (published->lifecycleEpoch !=
-                realtimeLifecycleEpoch_.load(std::memory_order_acquire)) {
+            if (published->lifecycleEpoch != activeEpoch) {
                 ++diagnostics_.staleEpochDropCount;
                 continue;
             }
             lastConsumedRealtimeMetadata_ = std::move(published->diagnostics);
+            lastConsumedRealtimeMetadataEpoch_ = published->lifecycleEpoch;
             VideoPresentPacket present;
             present.width = published->packet.width;
             present.height = published->packet.height;
@@ -551,11 +558,14 @@ public:
         }
         if (!frame.has_value()) {
             while (true) {
-                frame = engine_.tryConsumeLatestFrame();
+                {
+                    std::lock_guard<std::mutex> engineLock(engineMutex_);
+                    frame = engine_.tryConsumeLatestFrame();
+                }
                 if (!frame.has_value()) {
                     break;
                 }
-                if (frame->lifecycleEpoch == lifecycleEpoch_) {
+                if (frame->lifecycleEpoch == activeEpoch) {
                     break;
                 }
                 ++diagnostics_.staleEpochDropCount;
@@ -563,13 +573,29 @@ public:
         }
         bool usedFallback = false;
         if (!frame.has_value()) {
-            if (lastProcessedFrame_.has_value()) {
+            if (lastProcessedFrame_.has_value() &&
+                lastProcessedFrame_->lifecycleEpoch == activeEpoch) {
                 frame = makePresentPacket(*lastProcessedFrame_);
                 frame->source = VideoFrameSource::LastValidFallback;
             } else {
-                frame = engine_.fallbackFrame();
+                {
+                    std::lock_guard<std::mutex> engineLock(engineMutex_);
+                    frame = engine_.fallbackFrame();
+                    if (frame->source == VideoFrameSource::LastValidFallback &&
+                        frame->lifecycleEpoch != activeEpoch) {
+                        const auto& config = engine_.config();
+                        const auto scale = std::max(config.hdScale, 1);
+                        auto blank = makeBlankVideoFrame(config.frameWidth * scale,
+                                                         config.frameHeight * scale,
+                                                         engine_.currentGeneration());
+                        blank.lifecycleEpoch = activeEpoch;
+                        frame = makePresentPacket(std::move(blank));
+                    }
+                }
             }
-            frame->lifecycleEpoch = lifecycleEpoch_;
+            if (frame->source == VideoFrameSource::BlankFallback) {
+                frame->lifecycleEpoch = activeEpoch;
+            }
             ++diagnostics_.presentFallbackCount;
             if (frame->source == VideoFrameSource::BlankFallback) {
                 ++diagnostics_.presentFallbackBlankCount;
@@ -609,6 +635,11 @@ public:
                 continue;
             }
             processed = std::move(output);
+        }
+
+        if (activeEpoch != realtimeLifecycleEpoch_.load(std::memory_order_acquire)) {
+            ++diagnostics_.staleEpochDropCount;
+            return std::nullopt;
         }
 
         dispatchCaptures(processed);
@@ -653,9 +684,11 @@ public:
             return processed;
         }
         auto fallback = lastProcessedFrame_;
-        if (fallback.has_value()) {
-            (void)materializeVideoFrameArgb(*fallback);
+        if (!fallback.has_value() ||
+            fallback->lifecycleEpoch != realtimeLifecycleEpoch_.load(std::memory_order_acquire)) {
+            return std::nullopt;
         }
+        (void)materializeVideoFrameArgb(*fallback);
         return fallback;
     }
 
@@ -694,12 +727,11 @@ public:
     void advanceGeneration() noexcept
     {
         std::lock_guard<std::mutex> lock(nonRealTimeMutex_);
-        engine_.advanceGeneration();
-        realtimeGeneration_.store(engine_.currentGeneration(), std::memory_order_release);
-        realtimeMailbox_.resetQuiescent(false);
+        realtimeGeneration_.fetch_add(1u, std::memory_order_acq_rel);
+        pendingEngineGenerationAdvances_.fetch_add(1u, std::memory_order_release);
+        realtimeMailbox_.resetStatistics();
         bumpLifecycleEpochLocked();
         resetScanlineCapture();
-        syncEngineDiagnostics();
     }
 
     [[nodiscard]] bool hasCompleteScanlineFrame() const noexcept
@@ -721,6 +753,16 @@ public:
     }
 
 private:
+    [[nodiscard]] bool submitFrameLocked(const VideoFramePacket& frame)
+    {
+        applyPendingEngineGenerationAdvancesLocked();
+        auto adjusted = frame;
+        adjusted.lifecycleEpoch = realtimeLifecycleEpoch_.load(std::memory_order_acquire);
+        const auto submitResult = engine_.submitFrame(adjusted);
+        syncEngineDiagnosticsLocked();
+        return submitResult.accepted;
+    }
+
     [[nodiscard]] bool allowLifecycleMutation() const noexcept
     {
         if (!enforceLifecycleContract_.load(std::memory_order_acquire)) {
@@ -759,6 +801,21 @@ private:
 
     void syncEngineDiagnostics() const noexcept
     {
+        std::lock_guard<std::mutex> engineLock(engineMutex_);
+        syncEngineDiagnosticsLocked();
+    }
+
+    void applyPendingEngineGenerationAdvancesLocked() noexcept
+    {
+        auto pending = pendingEngineGenerationAdvances_.exchange(0u, std::memory_order_acq_rel);
+        while (pending != 0u) {
+            (void)engine_.advanceGeneration();
+            --pending;
+        }
+    }
+
+    void syncEngineDiagnosticsLocked() const noexcept
+    {
         const auto engineStats = engine_.stats();
         const auto realtimeStats = realtimeMailbox_.stats();
         diagnostics_.publishedFrameCount =
@@ -785,8 +842,8 @@ private:
             engineStats.publishedPixelBytes + realtimeStats.publishedPixelBytes;
         diagnostics_.lastPublishedGeneration = std::max(
             engineStats.lastPublishedGeneration, realtimeStats.lastPublishedGeneration);
-        diagnostics_.lifecycleEpoch = lifecycleEpoch_;
-        diagnostics_.lifecycleEpochBumpCount = lifecycleEpochBumpCount_;
+        diagnostics_.lifecycleEpoch = lifecycleEpoch_.load(std::memory_order_acquire);
+        diagnostics_.lifecycleEpochBumpCount = lifecycleEpochBumpCount_.load(std::memory_order_relaxed);
         diagnostics_.configuredPresenterMode = presenterConfig_.mode;
         diagnostics_.configuredPresenterPolicy = presenterPolicy_;
         diagnostics_.simdBackendName = SimdPixelOps::active_backend_name();
@@ -1016,11 +1073,9 @@ private:
 
     void bumpLifecycleEpochLocked() noexcept
     {
-        ++lifecycleEpoch_;
-        realtimeLifecycleEpoch_.store(lifecycleEpoch_, std::memory_order_release);
-        ++lifecycleEpochBumpCount_;
-        lastConsumedRealtimeMetadata_.reset();
-        lastProcessedFrame_.reset();
+        const auto nextEpoch = lifecycleEpoch_.fetch_add(1u, std::memory_order_acq_rel) + 1u;
+        realtimeLifecycleEpoch_.store(nextEpoch, std::memory_order_release);
+        lifecycleEpochBumpCount_.fetch_add(1u, std::memory_order_relaxed);
     }
 
     struct CaptureRegistration {
@@ -1041,13 +1096,15 @@ private:
     mutable VideoServiceDiagnostics diagnostics_{};
     VideoLifecycleState state_ = VideoLifecycleState::Headless;
     mutable std::mutex nonRealTimeMutex_;
+    mutable std::mutex engineMutex_;
     std::optional<VideoFramePacket> scanlineFrame_{};
     std::vector<bool> scanlinesCaptured_{};
     std::size_t scanlineCaptureCount_ = 0;
-    uint64_t lifecycleEpoch_ = 1;
+    std::atomic<uint64_t> lifecycleEpoch_{1u};
     std::atomic<uint64_t> realtimeLifecycleEpoch_{1u};
     std::atomic<uint64_t> realtimeGeneration_{0u};
-    std::size_t lifecycleEpochBumpCount_ = 0;
+    std::atomic<uint64_t> pendingEngineGenerationAdvances_{0u};
+    std::atomic<std::size_t> lifecycleEpochBumpCount_{0u};
     VideoPresenterPolicy presenterPolicy_ = VideoPresenterPolicy::HardwarePreferredWithFallback;
     std::atomic<bool> enforceLifecycleContract_{false};
     std::atomic<std::size_t> lifecycleMutationScopeDepth_{0};
@@ -1055,6 +1112,7 @@ private:
     std::size_t videoDebugFrameBuildSkippedNoConsumerCount_ = 0;
     std::size_t videoDebugFrameBuildExecutedCount_ = 0;
     std::optional<RealtimeVideoDiagnostics> lastConsumedRealtimeMetadata_{};
+    std::uint64_t lastConsumedRealtimeMetadataEpoch_ = 0;
     std::optional<VideoFramePacket> lastProcessedFrame_{};
 };
 
