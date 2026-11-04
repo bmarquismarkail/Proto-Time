@@ -58,7 +58,7 @@ int main()
         return 1;
     }
 
-    std::vector<int16_t> samples(512, 0);
+    std::vector<int16_t> samples(768, 0);
     for (std::size_t i = 0; i < samples.size(); ++i) {
         samples[i] = static_cast<int16_t>(i);
     }

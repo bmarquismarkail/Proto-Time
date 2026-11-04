@@ -1,0 +1,816 @@
+{
+  "schema": "proto-time-gamegear-corpus-v1",
+  "default_duration_seconds": 120,
+  "repetitions": 3,
+  "startup_seconds": 10,
+  "soak_seconds": 600,
+  "cases": [
+    {
+      "id": "sonic2",
+      "label": "Sonic 2",
+      "rom": "~/Downloads/sonic2.gg",
+      "sha256": "2826d679932566411003334cd4b9d8b3618248b6693e98822f5b2425430623e0",
+      "soak": true,
+      "inputs": [
+        {
+          "at": 12,
+          "key": "Return",
+          "hold": 0.2
+        },
+        {
+          "at": 24,
+          "key": "Return",
+          "hold": 0.2
+        },
+        {
+          "at": 34,
+          "key": "Right",
+          "hold": 3
+        },
+        {
+          "at": 35,
+          "key": "z",
+          "hold": 0.3
+        },
+        {
+          "at": 40,
+          "key": "Left",
+          "hold": 2
+        },
+        {
+          "at": 45,
+          "key": "x",
+          "hold": 0.3
+        },
+        {
+          "at": 55,
+          "key": "Up",
+          "hold": 0.3
+        },
+        {
+          "at": 57,
+          "key": "Down",
+          "hold": 0.3
+        },
+        {
+          "at": 60,
+          "key": "Right",
+          "hold": 4
+        },
+        {
+          "at": 61,
+          "key": "z",
+          "hold": 0.3
+        },
+        {
+          "at": 70,
+          "key": "Right",
+          "hold": 4
+        },
+        {
+          "at": 71,
+          "key": "z",
+          "hold": 0.3
+        },
+        {
+          "at": 80,
+          "key": "Right",
+          "hold": 4
+        },
+        {
+          "at": 81,
+          "key": "z",
+          "hold": 0.3
+        },
+        {
+          "at": 90,
+          "key": "Right",
+          "hold": 4
+        },
+        {
+          "at": 91,
+          "key": "z",
+          "hold": 0.3
+        },
+        {
+          "at": 100,
+          "key": "Right",
+          "hold": 4
+        },
+        {
+          "at": 101,
+          "key": "z",
+          "hold": 0.3
+        }
+      ],
+      "checkpoints": [
+        {
+          "at": 20,
+          "name": "phase-20"
+        },
+        {
+          "at": 28,
+          "name": "phase-28"
+        },
+        {
+          "at": 33,
+          "name": "phase-33"
+        },
+        {
+          "at": 38,
+          "name": "phase-38"
+        },
+        {
+          "at": 44,
+          "name": "phase-44"
+        },
+        {
+          "at": 50,
+          "name": "phase-50"
+        },
+        {
+          "at": 60,
+          "name": "phase-60"
+        },
+        {
+          "at": 80,
+          "name": "phase-80"
+        },
+        {
+          "at": 105,
+          "name": "late"
+        }
+      ],
+      "expected_checkpoints": [
+        "Title after the first Start skips the intro",
+        "Underground Zone Act 1 after Start at 24 seconds",
+        "Gameplay HUD timer advances; right/jump inputs move Sonic and collect rings",
+        "Review scrolling, sprite priority and palette against aligned reference scenes"
+      ],
+      "scenario_note": "Calibrated live title-to-Underground-Zone sequence. No further Start presses during gameplay."
+    },
+    {
+      "id": "megaman",
+      "label": "mm.gg; cartridge identity bound by hash/header",
+      "rom": "~/Downloads/mm.gg",
+      "sha256": "b313e90469133da5d0d39f683cc098993c3b137458804dd0aafb173eb39cd98a",
+      "soak": true,
+      "inputs": [
+        {
+          "at": 45,
+          "key": "Return",
+          "hold": 0.2
+        },
+        {
+          "at": 50,
+          "key": "Return",
+          "hold": 0.2
+        },
+        {
+          "at": 55,
+          "key": "Return",
+          "hold": 0.2
+        },
+        {
+          "at": 60,
+          "key": "Return",
+          "hold": 0.3
+        },
+        {
+          "at": 65,
+          "key": "Right",
+          "hold": 3
+        },
+        {
+          "at": 67,
+          "key": "z",
+          "hold": 0.3
+        },
+        {
+          "at": 70,
+          "key": "x",
+          "hold": 0.3
+        },
+        {
+          "at": 75,
+          "key": "Left",
+          "hold": 2
+        },
+        {
+          "at": 80,
+          "key": "Up",
+          "hold": 0.3
+        },
+        {
+          "at": 82,
+          "key": "Down",
+          "hold": 0.3
+        },
+        {
+          "at": 90,
+          "key": "Right",
+          "hold": 4
+        },
+        {
+          "at": 91,
+          "key": "z",
+          "hold": 0.3
+        },
+        {
+          "at": 92,
+          "key": "x",
+          "hold": 0.3
+        },
+        {
+          "at": 100,
+          "key": "Right",
+          "hold": 4
+        },
+        {
+          "at": 101,
+          "key": "z",
+          "hold": 0.3
+        },
+        {
+          "at": 102,
+          "key": "x",
+          "hold": 0.3
+        }
+      ],
+      "checkpoints": [
+        {
+          "at": 40,
+          "name": "phase-40"
+        },
+        {
+          "at": 48,
+          "name": "phase-48"
+        },
+        {
+          "at": 52,
+          "name": "phase-52"
+        },
+        {
+          "at": 57,
+          "name": "phase-57"
+        },
+        {
+          "at": 62,
+          "name": "phase-62"
+        },
+        {
+          "at": 68,
+          "name": "phase-68"
+        },
+        {
+          "at": 75,
+          "name": "phase-75"
+        },
+        {
+          "at": 85,
+          "name": "phase-85"
+        },
+        {
+          "at": 105,
+          "name": "late"
+        }
+      ],
+      "expected_checkpoints": [
+        "Start at 45 skips story; 50 selects game; 55 selects Normal; 60 selects Stone Man",
+        "Stage introduction transitions to gameplay",
+        "Directions, jump and fire produce visible gameplay responses",
+        "Review sprite, text, scrolling and palette fidelity against aligned reference scenes"
+      ],
+      "scenario_note": "Calibrated explicit title, difficulty and stage-menu Start presses. No Start presses after stage admission."
+    },
+    {
+      "id": "dracula",
+      "label": "Dracula no Shiro",
+      "rom": "~/Downloads/Dracula no Shiro (Japan) (Unl).gg",
+      "sha256": "aedc025f470cc8839110e3fef0d296e1206aeb21efe774515aa51b463330b002",
+      "soak": false,
+      "inputs": [
+        {
+          "at": 12,
+          "key": "Return",
+          "hold": 0.2
+        },
+        {
+          "at": 25,
+          "key": "Right",
+          "hold": 3
+        },
+        {
+          "at": 29,
+          "key": "z",
+          "hold": 0.5
+        },
+        {
+          "at": 32,
+          "key": "x",
+          "hold": 0.5
+        },
+        {
+          "at": 36,
+          "key": "Left",
+          "hold": 2
+        },
+        {
+          "at": 40,
+          "key": "Up",
+          "hold": 0.5
+        },
+        {
+          "at": 42,
+          "key": "Down",
+          "hold": 0.5
+        },
+        {
+          "at": 55,
+          "key": "Right",
+          "hold": 4
+        },
+        {
+          "at": 56,
+          "key": "z",
+          "hold": 0.3
+        },
+        {
+          "at": 65,
+          "key": "Right",
+          "hold": 4
+        },
+        {
+          "at": 66,
+          "key": "z",
+          "hold": 0.3
+        },
+        {
+          "at": 75,
+          "key": "Right",
+          "hold": 4
+        },
+        {
+          "at": 76,
+          "key": "z",
+          "hold": 0.3
+        },
+        {
+          "at": 85,
+          "key": "Right",
+          "hold": 4
+        },
+        {
+          "at": 86,
+          "key": "z",
+          "hold": 0.3
+        },
+        {
+          "at": 95,
+          "key": "Right",
+          "hold": 4
+        },
+        {
+          "at": 96,
+          "key": "z",
+          "hold": 0.3
+        },
+        {
+          "at": 105,
+          "key": "Right",
+          "hold": 4
+        },
+        {
+          "at": 106,
+          "key": "z",
+          "hold": 0.3
+        }
+      ],
+      "checkpoints": [
+        {
+          "at": 8,
+          "name": "startup"
+        },
+        {
+          "at": 22,
+          "name": "after-start"
+        },
+        {
+          "at": 31,
+          "name": "button1"
+        },
+        {
+          "at": 44,
+          "name": "directions"
+        },
+        {
+          "at": 60,
+          "name": "gameplay"
+        },
+        {
+          "at": 105,
+          "name": "late"
+        }
+      ],
+      "expected_checkpoints": [
+        "Startup display renders without corruption",
+        "Start enters gameplay/menu where supported",
+        "Directions and buttons change the visible game or diagnostic state",
+        "Button releases clear in ButtonTest; audio test produces expected tones"
+      ],
+      "scenario_note": "One initial Start and subsequent buttons advance story into gameplay. No repeated gameplay Start presses."
+    },
+    {
+      "id": "buttons",
+      "label": "ButtonTest",
+      "rom": "~/Downloads/ButtonTest.gg",
+      "sha256": "9100cbee5b84692be02a8ec2e039349c46fa691ea972c5e4040227d67e4f38ca",
+      "soak": false,
+      "inputs": [
+        {
+          "at": 12,
+          "key": "Return",
+          "hold": 2
+        },
+        {
+          "at": 18,
+          "key": "Up",
+          "hold": 2
+        },
+        {
+          "at": 24,
+          "key": "Down",
+          "hold": 2
+        },
+        {
+          "at": 30,
+          "key": "Left",
+          "hold": 2
+        },
+        {
+          "at": 36,
+          "key": "Right",
+          "hold": 2
+        },
+        {
+          "at": 42,
+          "key": "z",
+          "hold": 2
+        },
+        {
+          "at": 48,
+          "key": "x",
+          "hold": 2
+        }
+      ],
+      "checkpoints": [
+        {
+          "at": 8,
+          "name": "startup"
+        },
+        {
+          "at": 13,
+          "name": "start-down"
+        },
+        {
+          "at": 14.5,
+          "name": "start-released"
+        },
+        {
+          "at": 19,
+          "name": "up-down"
+        },
+        {
+          "at": 20.5,
+          "name": "up-released"
+        },
+        {
+          "at": 25,
+          "name": "down-down"
+        },
+        {
+          "at": 26.5,
+          "name": "down-released"
+        },
+        {
+          "at": 31,
+          "name": "left-down"
+        },
+        {
+          "at": 32.5,
+          "name": "left-released"
+        },
+        {
+          "at": 37,
+          "name": "right-down"
+        },
+        {
+          "at": 38.5,
+          "name": "right-released"
+        },
+        {
+          "at": 43,
+          "name": "button1-down"
+        },
+        {
+          "at": 44.5,
+          "name": "button1-released"
+        },
+        {
+          "at": 49,
+          "name": "button2-down"
+        },
+        {
+          "at": 50.5,
+          "name": "button2-released"
+        },
+        {
+          "at": 105,
+          "name": "late"
+        }
+      ],
+      "expected_checkpoints": [
+        "Each named checkbox becomes checked during the corresponding held input",
+        "Every checkbox clears on its paired released image",
+        "No unrelated input remains held after the sequence"
+      ],
+      "scenario_note": "Wall-time scripted host events. Compare images manually; delivery does not prove guest acceptance. Soaks repeat the initial sequence then observe sustained execution."
+    },
+    {
+      "id": "psg",
+      "label": "SN76489 test",
+      "rom": "~/Downloads/SN76489_TestRom.gg",
+      "sha256": "82cb6e83ffbbd0178c5fd40842ec39f933bc4e3ab485738813b3a31fa6fb1122",
+      "soak": false,
+      "inputs": [
+        {
+          "at": 12,
+          "key": "Return",
+          "hold": 0.2
+        },
+        {
+          "at": 16,
+          "key": "Return",
+          "hold": 0.2
+        },
+        {
+          "at": 25,
+          "key": "Right",
+          "hold": 3
+        },
+        {
+          "at": 29,
+          "key": "z",
+          "hold": 0.5
+        },
+        {
+          "at": 32,
+          "key": "x",
+          "hold": 0.5
+        },
+        {
+          "at": 36,
+          "key": "Left",
+          "hold": 2
+        },
+        {
+          "at": 40,
+          "key": "Up",
+          "hold": 0.5
+        },
+        {
+          "at": 42,
+          "key": "Down",
+          "hold": 0.5
+        },
+        {
+          "at": 46,
+          "key": "Return",
+          "hold": 0.2
+        },
+        {
+          "at": 48,
+          "key": "Return",
+          "hold": 0.2
+        },
+        {
+          "at": 60,
+          "key": "z",
+          "hold": 2
+        },
+        {
+          "at": 70,
+          "key": "Down",
+          "hold": 0.2
+        },
+        {
+          "at": 72,
+          "key": "z",
+          "hold": 2
+        },
+        {
+          "at": 82,
+          "key": "Down",
+          "hold": 0.2
+        },
+        {
+          "at": 84,
+          "key": "z",
+          "hold": 2
+        }
+      ],
+      "checkpoints": [
+        {
+          "at": 8,
+          "name": "startup"
+        },
+        {
+          "at": 22,
+          "name": "after-start"
+        },
+        {
+          "at": 31,
+          "name": "button1"
+        },
+        {
+          "at": 44,
+          "name": "directions"
+        },
+        {
+          "at": 61,
+          "name": "tone-test"
+        },
+        {
+          "at": 73,
+          "name": "tone-test-next"
+        },
+        {
+          "at": 105,
+          "name": "late"
+        }
+      ],
+      "expected_checkpoints": [
+        "Sound test menu text is readable",
+        "Directional selection and buttons activate expected tone/noise tests",
+        "Monitor WAV and subsequent listening identify tone/noise output; transport counters alone do not prove correct synthesis"
+      ],
+      "scenario_note": "Wall-time scripted host events. Compare images manually; delivery does not prove guest acceptance. Soaks repeat the initial sequence then observe sustained execution."
+    },
+    {
+      "id": "collect-forward",
+      "label": "Collect and Exit forward",
+      "rom": "build-working/gamegear-baseline-fixtures/forward/collect-and-exit.gg",
+      "sha256": "40587c4d376e6b254477b11368dfff34d098dc26ad740d3443b6052d457c48d9",
+      "soak": false,
+      "inputs": [
+        {
+          "at": 25,
+          "key": "Right",
+          "hold": 3
+        },
+        {
+          "at": 29,
+          "key": "z",
+          "hold": 0.5
+        },
+        {
+          "at": 32,
+          "key": "x",
+          "hold": 0.5
+        },
+        {
+          "at": 36,
+          "key": "Left",
+          "hold": 2
+        },
+        {
+          "at": 40,
+          "key": "Up",
+          "hold": 0.5
+        },
+        {
+          "at": 42,
+          "key": "Down",
+          "hold": 0.5
+        },
+        {
+          "at": 46,
+          "key": "Return",
+          "hold": 0.2
+        },
+        {
+          "at": 48,
+          "key": "Return",
+          "hold": 0.2
+        }
+      ],
+      "checkpoints": [
+        {
+          "at": 8,
+          "name": "startup"
+        },
+        {
+          "at": 22,
+          "name": "after-start"
+        },
+        {
+          "at": 31,
+          "name": "button1"
+        },
+        {
+          "at": 44,
+          "name": "directions"
+        },
+        {
+          "at": 105,
+          "name": "late"
+        }
+      ],
+      "expected_checkpoints": [
+        "Startup display renders without corruption",
+        "Start enters gameplay/menu where supported",
+        "Directions and buttons change the visible game or diagnostic state",
+        "Button releases clear in ButtonTest; audio test produces expected tones"
+      ],
+      "scenario_note": "Wall-time scripted host events. Compare images manually; delivery does not prove guest acceptance. Soaks repeat the initial sequence then observe sustained execution."
+    },
+    {
+      "id": "collect-reverse",
+      "label": "Collect and Exit reverse",
+      "rom": "build-working/gamegear-baseline-fixtures/reverse/collect-and-exit.gg",
+      "sha256": "fd082cf059ea570e69aba9c7e188315e7e8ee3177099d54858a277a15e36dbbd",
+      "soak": false,
+      "inputs": [
+        {
+          "at": 25,
+          "key": "Right",
+          "hold": 3
+        },
+        {
+          "at": 29,
+          "key": "z",
+          "hold": 0.5
+        },
+        {
+          "at": 32,
+          "key": "x",
+          "hold": 0.5
+        },
+        {
+          "at": 36,
+          "key": "Left",
+          "hold": 2
+        },
+        {
+          "at": 40,
+          "key": "Up",
+          "hold": 0.5
+        },
+        {
+          "at": 42,
+          "key": "Down",
+          "hold": 0.5
+        },
+        {
+          "at": 46,
+          "key": "Return",
+          "hold": 0.2
+        },
+        {
+          "at": 48,
+          "key": "Return",
+          "hold": 0.2
+        }
+      ],
+      "checkpoints": [
+        {
+          "at": 8,
+          "name": "startup"
+        },
+        {
+          "at": 22,
+          "name": "after-start"
+        },
+        {
+          "at": 31,
+          "name": "button1"
+        },
+        {
+          "at": 44,
+          "name": "directions"
+        },
+        {
+          "at": 105,
+          "name": "late"
+        }
+      ],
+      "expected_checkpoints": [
+        "Startup display renders without corruption",
+        "Start enters gameplay/menu where supported",
+        "Directions and buttons change the visible game or diagnostic state",
+        "Button releases clear in ButtonTest; audio test produces expected tones"
+      ],
+      "scenario_note": "Wall-time scripted host events. Compare images manually; delivery does not prove guest acceptance. Soaks repeat the initial sequence then observe sustained execution."
+    }
+  ]
+}

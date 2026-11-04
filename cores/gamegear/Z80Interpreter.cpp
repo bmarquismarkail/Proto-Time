@@ -545,16 +545,16 @@ uint32_t Z80Interpreter::executeEdOpcode(uint8_t opcode) {
 
 uint32_t Z80Interpreter::executeIndexedOpcode(uint8_t prefix, uint8_t opcode) {
     uint16_t& index = (prefix == 0xDDu) ? IX : IY;
-    // For indexed opcodes, register codes 4 and 5 (H/L) refer to the
-    // normal HL high/low bytes. Do not mutate the index register itself
-    // when writing to H/L; write to HL instead.
+    // Register-only DD/FD forms substitute the selected index byte for H/L.
+    // Indexed memory and DD/FD-CB forms have ordinary H/L exceptions below.
     auto readIndexedReg = [&](uint8_t r) -> uint8_t {
-        if (r == 4u) return hi(HL);
-        if (r == 5u) return lo(HL);
+        if (r == 4u) return hi(index);
+        if (r == 5u) return lo(index);
         return readReg8(r);
     };
     auto writeIndexedReg = [&](uint8_t r, uint8_t value) {
-        if (r == 4u || r == 5u) writeReg8(r, value);
+        if (r == 4u) index = word(lo(index), value);
+        else if (r == 5u) index = word(value, hi(index));
         else writeReg8(r, value);
     };
     auto indexedAddress = [&]() -> uint16_t {
@@ -567,7 +567,7 @@ uint32_t Z80Interpreter::executeIndexedOpcode(uint8_t prefix, uint8_t opcode) {
         uint8_t destination = 0u;
         uint8_t* destPtr = ((cb & 0xC0u) != 0x40u && (cb & 7u) != 6u) ? &destination : nullptr;
         const uint32_t cycles = executeCbOpcode(cb, true, address, destPtr);
-        if (destPtr != nullptr) writeIndexedReg(cb & 7u, destination);
+        if (destPtr != nullptr) writeReg8(cb & 7u, destination);
         return cycles;
     }
 
@@ -644,12 +644,12 @@ uint32_t Z80Interpreter::executeIndexedOpcode(uint8_t prefix, uint8_t opcode) {
         const uint8_t src = static_cast<uint8_t>(opcode & 7u);
         if (src == 6u) {
             const uint16_t address = indexedAddress();
-            writeIndexedReg(dst, memRead(address));
+            writeReg8(dst, memRead(address));
             return 19u;
         }
         if (dst == 6u) {
             const uint16_t address = indexedAddress();
-            memWrite(address, readIndexedReg(src));
+            memWrite(address, readReg8(src));
             return 19u;
         }
         writeIndexedReg(dst, readIndexedReg(src));

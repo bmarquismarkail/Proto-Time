@@ -1,0 +1,308 @@
+{
+  "schema": "proto-time-gamegear-acceptance-v1",
+  "selected_master": "6e5ffd62ef6e20b8483aaf557b1653acc9927dd4",
+  "candidate_source": "Uncommitted changes; source snapshot and binary hashes retained",
+  "baseline_completed_runs": 23,
+  "candidate_completed_runs": 9,
+  "protocol_note": "Baseline three120s per ROM plus two600s; candidate one120s per ROM plus two600s. Results are bounded Linux desktop evidence.",
+  "roms": [
+    {
+      "id": "sonic2",
+      "sha256": "2826d679932566411003334cd4b9d8b3618248b6693e98822f5b2425430623e0",
+      "baseline": {
+        "statuses": {
+          "rendering": "unverified",
+          "audio": "fail",
+          "input": "unverified",
+          "timing": "pass"
+        },
+        "completed_runs": 4,
+        "post_prime_underruns": 13,
+        "zero_filled_samples": 6656,
+        "after_startup_underruns": 8,
+        "artifacts": [
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/campaign-20261103/sonic2-1",
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/campaign-20261103/sonic2-2",
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/campaign-20261103/sonic2-3",
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/gameplay-soaks-20261103/sonic2-soak"
+        ]
+      },
+      "candidate": {
+        "statuses": {
+          "rendering": "unverified",
+          "audio": "fail",
+          "input": "unverified",
+          "timing": "pass"
+        },
+        "completed_runs": 2,
+        "post_prime_underruns": 1,
+        "zero_filled_samples": 512,
+        "after_startup_underruns": 1,
+        "artifacts": [
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/candidate-corpus-20261103/sonic2-1",
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/candidate-soaks-20261103/sonic2-soak"
+        ]
+      },
+      "human_review": {
+        "visible_gameplay": "pending",
+        "audible_output": "pending",
+        "physical_keyboard": "pending",
+        "controller": "unavailable"
+      }
+    },
+    {
+      "id": "megaman",
+      "sha256": "b313e90469133da5d0d39f683cc098993c3b137458804dd0aafb173eb39cd98a",
+      "baseline": {
+        "statuses": {
+          "rendering": "unverified",
+          "audio": "fail",
+          "input": "unverified",
+          "timing": "fail"
+        },
+        "completed_runs": 4,
+        "post_prime_underruns": 54,
+        "zero_filled_samples": 27648,
+        "after_startup_underruns": 50,
+        "artifacts": [
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/campaign-20261103/megaman-1",
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/campaign-20261103/megaman-2",
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/campaign-20261103/megaman-3",
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/gameplay-soaks-20261103/megaman-soak"
+        ]
+      },
+      "candidate": {
+        "statuses": {
+          "rendering": "unverified",
+          "audio": "unverified",
+          "input": "unverified",
+          "timing": "pass"
+        },
+        "completed_runs": 2,
+        "post_prime_underruns": 0,
+        "zero_filled_samples": 0,
+        "after_startup_underruns": 0,
+        "artifacts": [
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/candidate-corpus-20261103/megaman-1",
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/candidate-soaks-20261103/megaman-soak"
+        ]
+      },
+      "human_review": {
+        "visible_gameplay": "pending",
+        "audible_output": "pending",
+        "physical_keyboard": "pending",
+        "controller": "unavailable"
+      }
+    },
+    {
+      "id": "dracula",
+      "sha256": "aedc025f470cc8839110e3fef0d296e1206aeb21efe774515aa51b463330b002",
+      "baseline": {
+        "statuses": {
+          "rendering": "unverified",
+          "audio": "fail",
+          "input": "unverified",
+          "timing": "pass"
+        },
+        "completed_runs": 3,
+        "post_prime_underruns": 3,
+        "zero_filled_samples": 1536,
+        "after_startup_underruns": 0,
+        "artifacts": [
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/campaign-20261103/dracula-1",
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/campaign-20261103/dracula-2",
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/campaign-20261103/dracula-3"
+        ]
+      },
+      "candidate": {
+        "statuses": {
+          "rendering": "unverified",
+          "audio": "unverified",
+          "input": "unverified",
+          "timing": "pass"
+        },
+        "completed_runs": 1,
+        "post_prime_underruns": 0,
+        "zero_filled_samples": 0,
+        "after_startup_underruns": 0,
+        "artifacts": [
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/candidate-corpus-20261103/dracula-1"
+        ]
+      },
+      "human_review": {
+        "visible_gameplay": "pending",
+        "audible_output": "pending",
+        "physical_keyboard": "pending",
+        "controller": "unavailable"
+      }
+    },
+    {
+      "id": "buttons",
+      "sha256": "9100cbee5b84692be02a8ec2e039349c46fa691ea972c5e4040227d67e4f38ca",
+      "baseline": {
+        "statuses": {
+          "rendering": "unverified",
+          "audio": "fail",
+          "input": "unverified",
+          "timing": "pass"
+        },
+        "completed_runs": 3,
+        "post_prime_underruns": 3,
+        "zero_filled_samples": 1536,
+        "after_startup_underruns": 0,
+        "artifacts": [
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/campaign-20261103/buttons-1",
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/campaign-20261103/buttons-2",
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/campaign-20261103/buttons-3"
+        ]
+      },
+      "candidate": {
+        "statuses": {
+          "rendering": "unverified",
+          "audio": "fail",
+          "input": "unverified",
+          "timing": "pass"
+        },
+        "completed_runs": 1,
+        "post_prime_underruns": 1,
+        "zero_filled_samples": 512,
+        "after_startup_underruns": 1,
+        "artifacts": [
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/candidate-corpus-20261103/buttons-1"
+        ]
+      },
+      "human_review": {
+        "visible_gameplay": "pending",
+        "audible_output": "pending",
+        "physical_keyboard": "pending",
+        "controller": "unavailable"
+      }
+    },
+    {
+      "id": "psg",
+      "sha256": "82cb6e83ffbbd0178c5fd40842ec39f933bc4e3ab485738813b3a31fa6fb1122",
+      "baseline": {
+        "statuses": {
+          "rendering": "fail",
+          "audio": "fail",
+          "input": "unverified",
+          "timing": "pass"
+        },
+        "completed_runs": 3,
+        "post_prime_underruns": 3,
+        "zero_filled_samples": 1536,
+        "after_startup_underruns": 0,
+        "artifacts": [
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/campaign-20261103/psg-1",
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/campaign-20261103/psg-2",
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/campaign-20261103/psg-3"
+        ]
+      },
+      "candidate": {
+        "statuses": {
+          "rendering": "unverified",
+          "audio": "unverified",
+          "input": "unverified",
+          "timing": "pass"
+        },
+        "completed_runs": 1,
+        "post_prime_underruns": 0,
+        "zero_filled_samples": 0,
+        "after_startup_underruns": 0,
+        "artifacts": [
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/candidate-psg-20261103/psg-1"
+        ]
+      },
+      "human_review": {
+        "visible_gameplay": "pending",
+        "audible_output": "pending",
+        "physical_keyboard": "pending",
+        "controller": "unavailable"
+      }
+    },
+    {
+      "id": "collect-forward",
+      "sha256": "40587c4d376e6b254477b11368dfff34d098dc26ad740d3443b6052d457c48d9",
+      "baseline": {
+        "statuses": {
+          "rendering": "unverified",
+          "audio": "fail",
+          "input": "unverified",
+          "timing": "pass"
+        },
+        "completed_runs": 3,
+        "post_prime_underruns": 3,
+        "zero_filled_samples": 1536,
+        "after_startup_underruns": 0,
+        "artifacts": [
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/campaign-20261103/collect-forward-1",
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/campaign-20261103/collect-forward-2",
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/campaign-20261103/collect-forward-3"
+        ]
+      },
+      "candidate": {
+        "statuses": {
+          "rendering": "unverified",
+          "audio": "unverified",
+          "input": "unverified",
+          "timing": "pass"
+        },
+        "completed_runs": 1,
+        "post_prime_underruns": 0,
+        "zero_filled_samples": 0,
+        "after_startup_underruns": 0,
+        "artifacts": [
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/candidate-corpus-20261103/collect-forward-1"
+        ]
+      },
+      "human_review": {
+        "visible_gameplay": "pending",
+        "audible_output": "pending",
+        "physical_keyboard": "pending",
+        "controller": "unavailable"
+      }
+    },
+    {
+      "id": "collect-reverse",
+      "sha256": "fd082cf059ea570e69aba9c7e188315e7e8ee3177099d54858a277a15e36dbbd",
+      "baseline": {
+        "statuses": {
+          "rendering": "unverified",
+          "audio": "fail",
+          "input": "unverified",
+          "timing": "pass"
+        },
+        "completed_runs": 3,
+        "post_prime_underruns": 5,
+        "zero_filled_samples": 2560,
+        "after_startup_underruns": 2,
+        "artifacts": [
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/campaign-20261103/collect-reverse-1",
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/campaign-20261103/collect-reverse-2",
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/campaign-20261103/collect-reverse-3"
+        ]
+      },
+      "candidate": {
+        "statuses": {
+          "rendering": "unverified",
+          "audio": "unverified",
+          "input": "unverified",
+          "timing": "pass"
+        },
+        "completed_runs": 1,
+        "post_prime_underruns": 0,
+        "zero_filled_samples": 0,
+        "after_startup_underruns": 0,
+        "artifacts": [
+          "build-working/gamegear-baseline/6e5ffd62ef6e20b8483aaf557b1653acc9927dd4/candidate-corpus-20261103/collect-reverse-1"
+        ]
+      },
+      "human_review": {
+        "visible_gameplay": "pending",
+        "audible_output": "pending",
+        "physical_keyboard": "pending",
+        "controller": "unavailable"
+      }
+    }
+  ]
+}

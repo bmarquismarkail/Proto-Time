@@ -581,6 +581,16 @@ public:
         stats.readyQueueHighWaterChunks = transportReadyQueueHighWaterChunks_.load(std::memory_order_relaxed);
         stats.readyQueueLowWaterChunks = transportReadyQueueLowWaterChunks_.load(std::memory_order_relaxed);
         stats.readyQueueEmptyCount = transportReadyQueueEmptyCount_.load(std::memory_order_relaxed);
+        stats.readyQueueDrainOccupancyDepthLast = transportReadyQueueDrainOccupancyDepthLast_.load(std::memory_order_relaxed);
+        stats.readyQueueDrainOccupancyHighWaterChunks = transportReadyQueueDrainOccupancyHighWaterChunks_.load(std::memory_order_relaxed);
+        stats.readyQueueDrainOccupancyLowWaterChunks = transportReadyQueueDrainOccupancyLowWaterChunks_.load(std::memory_order_relaxed);
+        stats.readyQueueDrainOccupancySampleCount = transportReadyQueueDrainOccupancySampleCount_.load(std::memory_order_relaxed);
+        stats.readyQueueDrainOccupancyUnder1ChunkCount = transportReadyQueueDrainOccupancyUnder1ChunkCount_.load(std::memory_order_relaxed);
+        stats.readyQueueDrainOccupancy1ChunkCount = transportReadyQueueDrainOccupancy1ChunkCount_.load(std::memory_order_relaxed);
+        stats.readyQueueDrainOccupancy2ChunksCount = transportReadyQueueDrainOccupancy2ChunksCount_.load(std::memory_order_relaxed);
+        stats.readyQueueDrainOccupancy3ChunksCount = transportReadyQueueDrainOccupancy3ChunksCount_.load(std::memory_order_relaxed);
+        stats.readyQueueDrainOccupancy4ChunksCount = transportReadyQueueDrainOccupancy4ChunksCount_.load(std::memory_order_relaxed);
+        stats.readyQueueDrainOccupancy5PlusChunksCount = transportReadyQueueDrainOccupancy5PlusChunksCount_.load(std::memory_order_relaxed);
         stats.drainCallbackCount = transportDrainCallbackCount_.load(std::memory_order_relaxed);
         stats.drainRequestedSamples = transportDrainRequestedSamples_.load(std::memory_order_relaxed);
         stats.drainReadySamples = transportDrainReadySamples_.load(std::memory_order_relaxed);
@@ -929,7 +939,7 @@ private:
     [[nodiscard]] std::size_t prefillTargetChunks() const noexcept
     {
         const auto capacity = readyBlocks_.empty() ? 0u : readyBlocks_.size() - 1u;
-        return std::min<std::size_t>(2u, capacity);
+        return std::min<std::size_t>(3u, capacity);
     }
 
     void maybeMarkTransportPrimed(std::size_t depth) noexcept
@@ -1021,9 +1031,11 @@ private:
                 transportWorkerEmulationWakeCount_.fetch_add(1u, std::memory_order_relaxed);
                 noteWorkerEmulationWakeLatency();
             }
-            // Fill the startup prefill target before the backend begins draining,
-            // then maintain that same low-water depth during steady state.
-            const auto targetDepth = prefillTargetChunks();
+            // Prepare the initial device burst before starting/restarting drain.
+            // Preserve the two-block steady-state low-water policy.
+            const auto capacity = readyBlocks_.empty() ? 0u : readyBlocks_.size() - 1u;
+            const auto targetDepth = primedForDrain()
+                ? std::min<std::size_t>(2u, capacity) : prefillTargetChunks();
             if (targetDepth != 0u && readyQueueDepth() >= targetDepth) {
                 transportWorkerWakeProducedBlocks0Count_.fetch_add(1u, std::memory_order_relaxed);
                 continue;

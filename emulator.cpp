@@ -279,6 +279,16 @@ void populateAudioDiagnostics(BMMQ::FrontendStats& result,
     result.audioReadyQueueHighWaterChunks = transport.readyQueueHighWaterChunks;
     result.audioReadyQueueLowWaterChunks = transport.readyQueueLowWaterChunks;
     result.audioReadyQueueEmptyCount = transport.readyQueueEmptyCount;
+    result.audioReadyQueueDrainOccupancyDepthLast = transport.readyQueueDrainOccupancyDepthLast;
+    result.audioReadyQueueDrainOccupancyHighWaterChunks = transport.readyQueueDrainOccupancyHighWaterChunks;
+    result.audioReadyQueueDrainOccupancyLowWaterChunks = transport.readyQueueDrainOccupancyLowWaterChunks;
+    result.audioReadyQueueDrainOccupancySampleCount = transport.readyQueueDrainOccupancySampleCount;
+    result.audioReadyQueueDrainOccupancyUnder1ChunkCount = transport.readyQueueDrainOccupancyUnder1ChunkCount;
+    result.audioReadyQueueDrainOccupancy1ChunkCount = transport.readyQueueDrainOccupancy1ChunkCount;
+    result.audioReadyQueueDrainOccupancy2ChunksCount = transport.readyQueueDrainOccupancy2ChunksCount;
+    result.audioReadyQueueDrainOccupancy3ChunksCount = transport.readyQueueDrainOccupancy3ChunksCount;
+    result.audioReadyQueueDrainOccupancy4ChunksCount = transport.readyQueueDrainOccupancy4ChunksCount;
+    result.audioReadyQueueDrainOccupancy5PlusChunksCount = transport.readyQueueDrainOccupancy5PlusChunksCount;
     result.audioTransportDrainCallbackCount = transport.drainCallbackCount;
     result.audioTransportDrainRequestedSamples = transport.drainRequestedSamples;
     result.audioTransportDrainReadySamples = transport.drainReadySamples;

@@ -52,3 +52,7 @@ graphify-out/
 !.internal/docs/time-concrete-host-experiment.md
 !.internal/docs/time-halted-advance-experiment.md
 !.internal/docs/time-gameboy-starvation-leads.md
+
+# Share the reproducible post-merge Game Gear baseline manifest and report.
+!.internal/docs/gamegear-baseline/
+!.internal/docs/gamegear-baseline/**

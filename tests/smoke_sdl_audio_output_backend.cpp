@@ -45,7 +45,7 @@ int main(int argc, char** argv)
     assert(output->deviceInfo().callbackChunkSamples > 0u);
     assert(output->deviceInfo().channels == 1);
 
-    std::vector<int16_t> recent(512, 0);
+    std::vector<int16_t> recent(768, 0);
     for (std::size_t i = 0; i < recent.size(); ++i) {
         recent[i] = static_cast<int16_t>(i);
     }
@@ -109,7 +109,7 @@ int main(int argc, char** argv)
         return 1;
     }
     assert(output->deviceInfo().channels == 2);
-    std::vector<int16_t> stereoRecent(1024, 0);
+    std::vector<int16_t> stereoRecent(1536, 0);
     for (std::size_t i = 0; i < stereoRecent.size(); i += 2u) {
         stereoRecent[i] = 1000;
         stereoRecent[i + 1u] = -1000;
